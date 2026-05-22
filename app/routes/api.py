@@ -1,0 +1,305 @@
+import io
+import json
+import re
+import zipfile
+from html.parser import HTMLParser
+from xml.etree import ElementTree
+
+from fastapi import APIRouter, Depends, Request
+import httpx
+from pypdf import PdfReader
+from sqlalchemy import desc, select
+from sqlalchemy.orm import Session
+
+from app.auth import hash_password, password_rule_errors, require_current_user, verify_password
+from app.database import get_db
+from app.models import AppUser, UserChatMessage, UserSession
+from app.schemas import ChatRequest, ChatResponse
+from app.services.chat_session import session_store
+from app.services.chat_service import ChatService
+
+router = APIRouter(prefix="/api", tags=["chat"])
+
+MAX_EVIDENCE_CHARS = 5000
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> ChatResponse:
+    payload = await _chat_payload(request)
+    service = ChatService(db, user_id=current_user.id)
+    return await service.handle_message(payload.message, payload.session_id)
+
+
+@router.get("/sessions")
+async def sessions(
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, list[dict[str, str | int | None]]]:
+    rows = db.scalars(
+        select(UserSession)
+        .where(UserSession.user_id == current_user.id)
+        .order_by(desc(UserSession.updated_at))
+    ).all()
+    return {
+        "sessions": [
+            {
+                "session_id": row.session_key,
+                "title": row.title or "New policy session",
+                "country": row.country_id,
+                "region": row.region_id,
+                "sector": row.sector_id,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.get("/sessions/{session_key}")
+async def restore_session(
+    session_key: str,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    user_session = db.scalar(
+        select(UserSession).where(
+            UserSession.session_key == session_key,
+            UserSession.user_id == current_user.id,
+        )
+    )
+    if user_session is None:
+        return {"error": True, "detail": "Session not found."}
+
+    session_data = {}
+    if user_session.session_data:
+        try:
+            session_data = json.loads(user_session.session_data)
+        except json.JSONDecodeError:
+            session_data = {}
+    chat_session = session_store.put(session_key, session_data)
+    service = ChatService(db, user_id=current_user.id)
+    current_prompt = service._repeat_current_options(session_key, chat_session, "", False)
+    messages = db.scalars(
+        select(UserChatMessage)
+        .where(UserChatMessage.user_session_id == user_session.id)
+        .order_by(UserChatMessage.created_at, UserChatMessage.id)
+    ).all()
+    return {
+        "error": False,
+        "session_id": session_key,
+        "title": user_session.title or "New policy session",
+        "session": chat_session.summary().model_dump(),
+        "step": current_prompt.step,
+        "options": [option.model_dump() for option in current_prompt.options],
+        "input_mode": current_prompt.input_mode,
+        "messages": [
+            {
+                "role": message.role,
+                "content": message.content,
+                "is_error": message.is_error,
+            }
+            for message in messages
+        ],
+    }
+
+
+@router.patch("/sessions/{session_key}")
+async def rename_session(
+    session_key: str,
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    payload = await request.json()
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        return {"error": True, "detail": "Session title is required."}
+
+    user_session = db.scalar(
+        select(UserSession).where(
+            UserSession.session_key == session_key,
+            UserSession.user_id == current_user.id,
+        )
+    )
+    if user_session is None:
+        return {"error": True, "detail": "Session not found."}
+
+    user_session.title = title[:220]
+    db.commit()
+    return {
+        "error": False,
+        "session_id": session_key,
+        "title": user_session.title,
+    }
+
+
+@router.patch("/profile/password")
+async def change_password(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    payload = await request.json()
+    current_password = str(payload.get("current_password") or "")
+    new_password = str(payload.get("new_password") or "")
+    confirm_password = str(payload.get("confirm_password") or "")
+
+    if not verify_password(current_password, current_user.password_hash):
+        return {"error": True, "detail": "Current password is incorrect."}
+    if new_password != confirm_password:
+        return {"error": True, "detail": "New passwords do not match."}
+    password_errors = password_rule_errors(new_password)
+    if password_errors:
+        return {
+            "error": True,
+            "detail": "Password must include: " + ", ".join(password_errors) + ".",
+        }
+
+    user = db.scalar(select(AppUser).where(AppUser.id == current_user.id))
+    if user is None:
+        return {"error": True, "detail": "User not found."}
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    return {"error": False, "detail": "Password updated."}
+
+
+async def _chat_payload(request: Request) -> ChatRequest:
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        return ChatRequest.model_validate(await request.json())
+
+    form = await request.form()
+    message = str(form.get("message") or "")
+    session_id = str(form.get("session_id") or "") or None
+    evidence_parts: list[str] = []
+
+    evidence_url = str(form.get("evidence_url") or "").strip()
+    if evidence_url:
+        evidence_parts.append(f"Evidence URL: {evidence_url}")
+        url_text = await _extract_url_text(evidence_url)
+        if url_text:
+            evidence_parts.append(f"Evidence content: {url_text}")
+
+    evidence_file = form.get("evidence_file")
+    filename = getattr(evidence_file, "filename", "")
+    if isinstance(filename, str) and filename.strip():
+        filename = filename.strip()
+        if _allowed_evidence_file(filename) and hasattr(evidence_file, "read"):
+            evidence_parts.append(f"Evidence file: {filename}")
+            file_bytes = await evidence_file.read()
+            file_text = _extract_file_text(filename, file_bytes)
+            if file_text:
+                evidence_parts.append(f"Evidence content: {file_text}")
+
+    if evidence_parts:
+        message = "\n".join([message.strip(), *evidence_parts]).strip()
+
+    return ChatRequest(message=message, session_id=session_id)
+
+
+def _allowed_evidence_file(filename: str) -> bool:
+    return filename.casefold().endswith((".pdf", ".docx"))
+
+
+async def _extract_url_text(url: str) -> str:
+    if not url.casefold().startswith(("http://", "https://")):
+        return "Unable to extract evidence: URL must start with http:// or https://."
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        return f"Unable to extract evidence from URL: {exc}."
+
+    content_type = response.headers.get("content-type", "").casefold()
+    content = response.content
+    if "pdf" in content_type or url.casefold().split("?", 1)[0].endswith(".pdf"):
+        return _extract_pdf_text(content) or "Unable to extract readable text from PDF URL."
+    if (
+        "wordprocessingml.document" in content_type
+        or url.casefold().split("?", 1)[0].endswith(".docx")
+    ):
+        return _extract_docx_text(content) or "Unable to extract readable text from DOCX URL."
+
+    encoding = response.encoding or "utf-8"
+    text = content.decode(encoding, errors="ignore")
+    if "html" in content_type or "<html" in text[:500].casefold():
+        text = _html_to_text(text)
+    return _compact_text(text)
+
+
+def _extract_file_text(filename: str, content: bytes) -> str:
+    lowered = filename.casefold()
+    if lowered.endswith(".pdf"):
+        return _extract_pdf_text(content) or "Unable to extract readable text from uploaded PDF."
+    if lowered.endswith(".docx"):
+        return _extract_docx_text(content) or "Unable to extract readable text from uploaded DOCX."
+    return "Unable to extract evidence: only PDF and DOCX files are supported."
+
+
+def _extract_pdf_text(content: bytes) -> str:
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages[:15])
+    except Exception as exc:
+        return f"Unable to extract evidence from PDF: {exc}."
+    return _compact_text(text)
+
+
+def _extract_docx_text(content: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            document_xml = archive.read("word/document.xml")
+    except (KeyError, zipfile.BadZipFile) as exc:
+        return f"Unable to extract evidence from DOCX: {exc}."
+
+    try:
+        root = ElementTree.fromstring(document_xml)
+    except ElementTree.ParseError as exc:
+        return f"Unable to parse DOCX evidence: {exc}."
+
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    paragraphs: list[str] = []
+    for paragraph in root.iter(f"{namespace}p"):
+        text = "".join(node.text or "" for node in paragraph.iter(f"{namespace}t")).strip()
+        if text:
+            paragraphs.append(text)
+    return _compact_text("\n".join(paragraphs))
+
+
+def _html_to_text(html: str) -> str:
+    parser = _TextExtractor()
+    parser.feed(html)
+    return parser.text()
+
+
+def _compact_text(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:MAX_EVIDENCE_CHARS]
+
+
+class _TextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript"} and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            self._parts.append(data)
+
+    def text(self) -> str:
+        return " ".join(self._parts)

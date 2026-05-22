@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <img
+            class="brand-icon"
+            src="{{ url_for('static', path='/img/logo.png') }}"
+            alt="Dr Transition logo"
+          />
+          <div>
+            <h1>Dr Transition</h1>
+            <p>A digital coach for Twin-Transition policy</p>
+          </div>
+        </div>
+        <div id="voiceAnalyzer" class="voice-analyzer" aria-hidden="true" hidden></div>
+        <div class="topbar-actions">
+          <label class="voice-switch">
+            <input id="voiceAssistantToggle" type="checkbox" />
+            <span class="switch-track" aria-hidden="true"></span>
+            <span>Voice</span>
+          </label>
+          <label class="voice-select">
+            <select id="voicePreferenceSelect" aria-label="Voice preference">
+              <option value="auto" selected>Auto</option>
+              <option value="female">Female</option>
+              <option value="male">Male</option>
+            </select>
+          </label>
+          <div class="session-menu">
+            <button id="sessionsButton" class="reset-button" type="button">Manage Sessions</button>
+            <div id="sessionsPanel" class="sessions-panel" hidden>
+              <div class="sessions-panel-header">
+                <strong>Manage sessions</strong>
+                <button id="closeSessionsButton" type="button" aria-label="Close sessions">×</button>
+              </div>
+              <div id="sessionsList" class="sessions-list"></div>
+            </div>
+          </div>
+          <button id="resetButton" class="reset-button" type="button">New Session</button>
+          <div class="profile-menu">
+            <button id="profileButton" class="profile-button" type="button" aria-label="User profile">
+              <span>{{ current_user.name[:1] | upper }}</span>
+            </button>
+            <div id="profilePanel" class="profile-panel" hidden>
+              <div class="profile-panel-header">
+                <strong>{{ current_user.name }}</strong>
+                <button id="closeProfileButton" type="button" aria-label="Close profile">×</button>
+              </div>
+              <dl class="profile-details">
+                <div>
+                  <dt>Email</dt>
+                  <dd>{{ current_user.email }}</dd>
+                </div>
+                <div>
+                  <dt>Designation</dt>
+                  <dd>{{ current_user.designation }}</dd>
+                </div>
+                <div>
+                  <dt>Organisation type</dt>
+                  <dd>{{ current_user.organisation_type }}</dd>
+                </div>
+                <div>
+                  <dt>Organisation</dt>
+                  <dd>{{ current_user.organisation_name }}</dd>
+                </div>
+              </dl>
+              <button id="changePasswordLink" class="profile-link-button" type="button">
+                Change password
+              </button>
+              <form class="logout-form" method="post" action="/logout">
+                <button class="reset-button profile-link-button" type="submit" style="background: #c70000;">Logout</button>
+              </form>
+            </div>
+          </div>
+          
+        </div>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="workspace">
+        <section class="chat-card" aria-label="Guided policy chat">
+          <div id="chatLog" class="chat-log" aria-live="polite"></div>
+          <div id="optionTray" class="option-tray"></div>
+          <form id="chatForm" class="chat-form">
+            <div id="messageInputRow" class="message-input-row">
+              <input
+                id="messageInput"
+                type="text"
+                autocomplete="off"
+                placeholder="Type a country, region, or sector..."
+                aria-label="Chat message"
+              />
+              <button
+                id="micButton"
+                class="mic-button"
+                type="button"
+                aria-label="Speak message"
+                title="Speak message"
+              >
+                ◉
+              </button>
+            </div>
+            <div id="reasonEvidenceFields" class="reason-evidence-fields" hidden>
+              <label class="reason-field">
+                <span id="primaryInputLabel">Reason</span>
+                <textarea
+                  id="reasonInput"
+                  rows="3"
+                  placeholder="Why should this be treated as a hazard?"
+                  aria-label="Hazard reason"
+                ></textarea>
+              </label>
+              <label>
+                <span id="secondaryInputLabel">Evidence</span>
+                <textarea
+                  id="secondaryReasonInput"
+                  rows="3"
+                  placeholder="Why is this mitigation measure appropriate?"
+                  aria-label="Mitigation reason"
+                ></textarea>
+              </label>
+              <label id="evidenceUrlField">
+                <span>Evidence URL <small>(optional)</small></span>
+                <input
+                  id="evidenceInput"
+                  type="url"
+                  autocomplete="off"
+                  placeholder="https://example.org/source"
+                  aria-label="Evidence URL"
+                />
+              </label>
+              <label id="evidenceFileField">
+                <span>Evidence file <small>(PDF/DOCX, optional)</small></span>
+                <input
+                  id="evidenceFileInput"
+                  type="file"
+                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  aria-label="Evidence file"
+                />
+              </label>
+            </div>
+            <div id="evaluationFields" class="evaluation-fields" hidden>
+              <label class="score-field">
+                <span>Score</span>
+                <div class="range-row">
+                  <input
+                    id="scoreInput"
+                    type="range"
+                    min="1"
+                    max="10"
+                    value="5"
+                    aria-label="Evaluation score"
+                  />
+                  <strong id="scoreValue">5</strong>
+                </div>
+              </label>
+              <label>
+                <span>Reason <small>(optional)</small></span>
+                <textarea
+                  id="evaluationReasonInput"
+                  rows="3"
+                  placeholder="Why did you choose this score?"
+                  aria-label="Evaluation reason"
+                ></textarea>
+              </label>
+              <label>
+                <span>Evidence URL <small>(optional)</small></span>
+                <input
+                  id="evaluationEvidenceInput"
+                  type="url"
+                  autocomplete="off"
+                  placeholder="https://example.org/source"
+                  aria-label="Evaluation evidence URL"
+                />
+              </label>
+              <label>
+                <span>Evidence file <small>(PDF/DOCX, optional)</small></span>
+                <input
+                  id="evaluationEvidenceFileInput"
+                  type="file"
+                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  aria-label="Evaluation evidence file"
+                />
+              </label>
+            </div>
+            <button id="sendButton" type="submit">Send</button>
+          </form>
+        </section>
+      </section>
+
+      <aside class="sidebar">
+        <section class="side-card">
+          <h2>Your Session</h2>
+          <p id="sessionEmpty" class="session-empty">Session not started yet.</p>
+          <dl class="session-list" hidden>
+            <div>
+              <dt>Country</dt>
+              <dd id="sessionCountry">Not selected</dd>
+            </div>
+            <div>
+              <dt>Region</dt>
+              <dd id="sessionRegion">Not selected</dd>
+            </div>
+            <div>
+              <dt>Sector</dt>
+              <dd id="sessionSector">Not selected</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="side-card">
+          <h2>About This Tool</h2>
+          <p>
+            Dr Transition guides you through a 7-step learning journey to understand the social hazards of Twin-Transition policies in Europe and how to mitigate them.
+          </p>
+          <div class="coverage-table-wrap">
+            <table class="coverage-table">
+              <thead>
+                <tr>
+                  <th scope="col">Coverage</th>
+                  <th scope="col">Sector</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in coverage_rows %}
+                  <tr>
+                    <td>{{ row.coverage }}</td>
+                    <td>{{ row.sectors }}</td>
+                  </tr>
+                {% else %}
+                  <tr>
+                    <td colspan="2">No coverage data configured.</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <dialog id="renameSessionDialog" class="rename-dialog">
+      <form id="renameSessionForm" class="rename-dialog-form">
+        <h2>Rename session</h2>
+        <label>
+          <span>Session name</span>
+          <input id="renameSessionInput" type="text" maxlength="220" required />
+        </label>
+        <div class="dialog-actions">
+          <button id="cancelRenameButton" class="secondary-button" type="button">Cancel</button>
+          <button type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="changePasswordDialog" class="rename-dialog">
+      <form id="changePasswordForm" class="rename-dialog-form">
+        <h2>Change password</h2>
+        <p id="changePasswordMessage" class="dialog-message" hidden></p>
+        <label>
+          <span>Current password</span>
+          <input id="currentPasswordInput" type="password" autocomplete="current-password" required />
+        </label>
+        <label>
+          <span>New password</span>
+          <input
+            id="newPasswordInput"
+            type="password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          />
+        </label>
+        <label>
+          <span>Confirm new password</span>
+          <input id="confirmNewPasswordInput" type="password" autocomplete="new-password" required />
+        </label>
+        <div class="dialog-actions">
+          <button id="cancelPasswordButton" class="secondary-button" type="button">Cancel</button>
+          <button type="submit">Update password</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="{{ url_for('static', path='/js/app.js') }}"></script>
+  </body>
+</html>

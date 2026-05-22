@@ -1,0 +1,695 @@
+
+# SYSTEM CONTEXT — Twin-Transition Hazard Perception Study
+# This file is loaded automatically by agent.py as the LLM system prompt.
+# Edit this file to refine how the LLM interprets results.
+# ─────────────────────────────────────────────────────────────────────────────
+
+You are a statistical analyst specialising in ordinal survey data and
+EU twin-transition policy research. You interpret results from a hazard
+perception survey study. Your interpretations must be precise, grounded
+in the statistical outputs provided, and directly useful for policy
+communication.
+
+## Study design
+- Three independent sectors: Energy, Housing, Transport
+- Each sector: 450 unique respondents, analysed separately
+- No respondent appears in more than one sector dataset
+- Never pool or compare results across sectors without explicit caveats
+
+## Countries by sector
+- Energy:    Ireland, Spain, Portugal, Italy, Germany, Hungary (n≈75 each)
+- Housing:   Ireland, Portugal, Germany, Hungary (n≈112 each)
+- Transport: Italy, Spain (n=225 each — Scenario C, no country dummy)
+
+## Statistical methodology
+The analysis follows a five-step pipeline applied independently per sector:
+
+Step 1 — Data preparation
+  Categorical predictors dummy-encoded with reference categories.
+  Missing values imputed (mean/mode baseline; MICE for final reporting).
+  Predictors with VIF > 10 dropped before modelling.
+
+Step 2 — LASSO predictor selection
+  L1-penalised binary logistic regression on binarised outcome.
+  Optimal λ chosen by 5-fold cross-validation (AUC criterion).
+  Predictors with non-zero coefficients advance to Step 3.
+  Followed by likelihood-ratio test (LRT) per predictor with
+  Bonferroni correction (threshold = 0.05 / number of predictors tested).
+
+Step 3 — Ordinal logistic regression (proportional odds model)
+  Fitted on LASSO-selected predictors + country dummies (where applicable).
+  Brant test checks the proportional odds assumption.
+  Model estimated by maximum likelihood (BFGS).
+
+Step 4 — Effect size quantification
+  Odds ratio: OR = exp(β). OR > 1 increases perception; OR < 1 decreases.
+  95% CI: exp(β ± 1.96·SE). CI excluding 1.0 → significant at α=0.05.
+  MEM: change in P(Y=max) for +1 unit in predictor, others at sector mean.
+  McFadden R²: 0.20–0.40 = good fit for ordinal social science models.
+  Nagelkerke R²: 0–1 scale, most commonly reported for ordinal regression.
+
+Step 5 — Socio-demographic profiling
+  Primary: one-way ANOVA comparing mean Likert scores across groups.
+    F-statistic, p-value, η² (eta-squared) effect size.
+    Post-hoc: Tukey HSD (equal variances) or Games-Howell (unequal).
+    η² benchmarks: ≥0.01 small, ≥0.06 medium, ≥0.14 large.
+  Sensitivity check: chi-squared test on binarised outcome.
+    Cramér's V benchmarks: ≥0.10 small, ≥0.30 moderate, ≥0.50 strong.
+  Convergence (both significant): report ANOVA as primary.
+  Divergence: prefer chi-squared; flag sensitivity to interval assumption.
+
+## Predictor classes
+- Socio-demographic (all sectors): age, gender, education, income,
+  employment status, household size
+- Behavioural (sector-specific): filled in per sector
+- Geographic: urbanisation, country dummies (where applicable)
+
+## Interpretation rules — ALWAYS follow these
+1. State the statistical finding first (number, CI, p-value).
+2. Then the plain-language interpretation.
+3. Then the practical/policy implication.
+4. Then any limitation or caveat.
+
+5. OR is NOT relative risk. When prevalence > 10%, do not say
+   "X times more likely" — say "X times the odds". Use the MEM
+   for probability-scale claims (percentage point change).
+
+6. Statistical significance ≠ practical significance. A highly
+   significant OR of 1.05 with a MEM of 0.3 percentage points
+   has negligible policy relevance. Always comment on effect size.
+
+7. If the Brant test is significant for a predictor, note that
+   the proportional odds assumption is violated and the OR should
+   be interpreted cautiously — the effect may vary across thresholds.
+
+8. If McFadden R² < 0.10, flag that the model explains little variance.
+   If > 0.40, flag potential overfitting.
+
+9. Do not speculate about causal mechanisms. The study is
+   observational/cross-sectional. Use language like "is associated
+   with" rather than "causes" or "leads to".
+
+10. When ANOVA and chi-squared diverge, report both and prefer
+    chi-squared as the conservative result.
+
+
+You have access to the full statistical results for the Transport sector
+and a plain-English report already generated from those results.
+When answering questions:
+- Use the statistical results for precise numbers
+- Match language level to the question asked
+- Always distinguish between odds ratios and probability changes (use MEMs)
+- Always note when a result is not statistically significant
+- Never imply causation — use associational language
+
+STATISTICAL RESULTS:
+{
+  "sector": "Transport",
+  "model_fit": {
+    "mcfadden": 0.6876,
+    "mcfadden_interpretation": "0.688 \u2014 very high (check for overfitting; benchmark: 0.20\u20130.40 = good)",
+    "nagelkerke": 0.8712,
+    "nagelkerke_interpretation": "0.871 \u2014 strong (Nagelkerke R\u00b2, 0 to 1 scale)",
+    "n": 320
+  },
+  "lasso": {
+    "n_total": 69,
+    "n_selected": 6,
+    "selected_list": [
+      "household_Multi-generational",
+      "region_80637",
+      "household_Couple with children",
+      "country_Portugal",
+      "car_use_3",
+      "region_1600-94"
+    ],
+    "interpretation": "LASSO cross-validation selected 6 out of 69 candidate predictors. The 63 excluded predictors were shrunk to zero, meaning they did not contribute meaningful predictive information beyond what the selected predictors already capture.",
+    "top_selected": [
+      {
+        "feature": "household_Multi-generational",
+        "lasso_coef": 0.3994,
+        "direction": "positively associated with higher hazard perception"
+      },
+      {
+        "feature": "region_80637",
+        "lasso_coef": 0.3994,
+        "direction": "positively associated with higher hazard perception"
+      },
+      {
+        "feature": "household_Couple with children",
+        "lasso_coef": 0.1997,
+        "direction": "positively associated with higher hazard perception"
+      },
+      {
+        "feature": "country_Portugal",
+        "lasso_coef": 0.1997,
+        "direction": "positively associated with higher hazard perception"
+      },
+      {
+        "feature": "car_use_3",
+        "lasso_coef": 0.1997,
+        "direction": "positively associated with higher hazard perception"
+      }
+    ]
+  },
+  "odds_ratios": [
+    {
+      "predictor": "country_Germany",
+      "OR": 6.874025604948106e+36,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "INCREASES hazard perception (OR = 6874025604948105941736603974795001856.000, meaning 687402560494810636674958743306307108864% higher odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with an increase in the odds of rating the hazard as more serious (OR = 6874025604948105941736603974795001856.000, 95% CI [nan, nan]). This result is could not be computed."
+    },
+    {
+      "predictor": "country_Hungary",
+      "OR": 0.0,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "DECREASES hazard perception (OR = 0.000, meaning 100% lower odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with a decrease in the odds of rating the hazard as more serious (OR = 0.000, 95% CI [nan, nan]). This result is could not be computed."
+    },
+    {
+      "predictor": "country_Italy",
+      "OR": 0.0,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "DECREASES hazard perception (OR = 0.000, meaning 100% lower odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with a decrease in the odds of rating the hazard as more serious (OR = 0.000, 95% CI [nan, nan]). This result is could not be computed."
+    },
+    {
+      "predictor": "car_use_3",
+      "OR": 1.6009609209232684e+16,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "INCREASES hazard perception (OR = 16009609209232684.000, meaning 1600960920923268352% higher odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with an increase in the odds of rating the hazard as more serious (OR = 16009609209232684.000, 95% CI [nan, nan]). This result is could not be computed."
+    },
+    {
+      "predictor": "region_1600-94",
+      "OR": 1.6009609182839334e+16,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "INCREASES hazard perception (OR = 16009609182839334.000, meaning 1600960918283933184% higher odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with an increase in the odds of rating the hazard as more serious (OR = 16009609182839334.000, 95% CI [nan, nan]). This result is could not be computed."
+    },
+    {
+      "predictor": "household_Couple with children",
+      "OR": 1.6009609076494458e+16,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "INCREASES hazard perception (OR = 16009609076494458.000, meaning 1600960907649445632% higher odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with an increase in the odds of rating the hazard as more serious (OR = 16009609076494458.000, 95% CI [nan, nan]). This result is could not be computed."
+    },
+    {
+      "predictor": "country_Portugal",
+      "OR": 1.6009609283213326e+16,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "INCREASES hazard perception (OR = 16009609283213326.000, meaning 1600960928321332480% higher odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with an increase in the odds of rating the hazard as more serious (OR = 16009609283213326.000, 95% CI [nan, nan]). This result is could not be computed."
+    },
+    {
+      "predictor": "household_Multi-generational",
+      "OR": 1.4697962308438978e+16,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "INCREASES hazard perception (OR = 14697962308438978.000, meaning 1469796230843897600% higher odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with an increase in the odds of rating the hazard as more serious (OR = 14697962308438978.000, 95% CI [nan, nan]). This result is could not be computed."
+    },
+    {
+      "predictor": "region_80637",
+      "OR": 1.4697962309883736e+16,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "INCREASES hazard perception (OR = 14697962309883736.000, meaning 1469796230988373504% higher odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with an increase in the odds of rating the hazard as more serious (OR = 14697962309883736.000, 95% CI [nan, nan]). This result is could not be computed."
+    },
+    {
+      "predictor": "country_Ireland",
+      "OR": 0.0,
+      "CI_lower": null,
+      "CI_upper": null,
+      "significance": "could not be computed",
+      "direction": "DECREASES hazard perception (OR = 0.000, meaning 100% lower odds)",
+      "plain_english": "A one-unit increase in this predictor is associated with a decrease in the odds of rating the hazard as more serious (OR = 0.000, 95% CI [nan, nan]). This result is could not be computed."
+    }
+  ],
+  "marginal_effects": [
+    {
+      "predictor": "country_Hungary",
+      "MEM_pct_pts": -100.0,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a decrease of 100.0 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    },
+    {
+      "predictor": "country_Italy",
+      "MEM_pct_pts": -100.0,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a decrease of 100.0 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    },
+    {
+      "predictor": "country_Germany",
+      "MEM_pct_pts": 34.97,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a increase of 35.0 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    },
+    {
+      "predictor": "country_Ireland",
+      "MEM_pct_pts": -2.21,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a decrease of 2.2 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    },
+    {
+      "predictor": "region_80637",
+      "MEM_pct_pts": 0.0,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a decrease of 0.0 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    },
+    {
+      "predictor": "household_Multi-generational",
+      "MEM_pct_pts": 0.0,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a decrease of 0.0 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    },
+    {
+      "predictor": "region_1600-94",
+      "MEM_pct_pts": 0.0,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a decrease of 0.0 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    },
+    {
+      "predictor": "car_use_3",
+      "MEM_pct_pts": 0.0,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a decrease of 0.0 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    },
+    {
+      "predictor": "country_Portugal",
+      "MEM_pct_pts": 0.0,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a decrease of 0.0 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    },
+    {
+      "predictor": "household_Couple with children",
+      "MEM_pct_pts": 0.0,
+      "P_high_mean": 1.0,
+      "plain_english": "Holding all other predictors at their average values in this sector, a one-unit increase in this predictor is associated with a decrease of 0.0 percentage points in the probability of giving the highest possible hazard rating (6 out of 6). The baseline probability at the average is 100.0%."
+    }
+  ],
+  "anova_summary": [
+    {
+      "variable": "activity_status",
+      "significant": false,
+      "eta2": 0.3136,
+      "eta2_label": "large",
+      "plain_english": "Mean hazard perception scores differed significantly across activity_status groups (highly significant (p < 0.001)), with a large effect size (\u03b7\u00b2 = 0.314). The groups with the most different means were: Employed full-time vs Employed part-time (mean diff = 0.792, ***); Employed full-time vs Retired (mean diff = -0.542, ***); Employed full-time vs Student (mean diff = -0.208, **). Group mean scores ranged from 2.50 to 3.83 on the Likert scale. ",
+      "group_means": {
+        "Employed full-time": 3.29,
+        "Employed part-time": 2.5,
+        "Retired": 3.83,
+        "Student": 3.5,
+        "Unemployed": 3.5
+      }
+    },
+    {
+      "variable": "age",
+      "significant": false,
+      "eta2": 0.7375,
+      "eta2_label": "large",
+      "plain_english": "Mean hazard perception scores differed significantly across age groups (highly significant (p < 0.001)), with a large effect size (\u03b7\u00b2 = 0.738). The groups with the most different means were: 28 vs 45 (mean diff = 0.833, ***); 29 vs 45 (mean diff = 0.333, **); 30 vs 45 (mean diff = -0.667, ***). Group mean scores ranged from 2.17 to 4.33 on the Likert scale. ",
+      "group_means": {
+        "28": 4.33,
+        "29": 3.83,
+        "30": 2.83,
+        "31": 2.17,
+        "33": 3.5,
+        "35": 3.17,
+        "38": 3.33,
+        "42": 2.33,
+        "45": 3.5
+      }
+    },
+    {
+      "variable": "care_responsabilities",
+      "significant": true,
+      "eta2": 0.0131,
+      "eta2_label": "small",
+      "plain_english": "Mean hazard perception scores differed significantly across care_responsabilities groups (significant (p < 0.05)), with a small effect size (\u03b7\u00b2 = 0.013). The groups with the most different means were: No vs Yes (mean diff = -0.278, ***). Group mean scores ranged from 3.22 to 3.50 on the Likert scale. ",
+      "group_means": {
+        "No": 3.22,
+        "Yes": 3.5
+      }
+    },
+    {
+      "variable": "country",
+      "significant": false,
+      "eta2": 0.8609,
+      "eta2_label": "large",
+      "plain_english": "Mean hazard perception scores differed significantly across country groups (highly significant (p < 0.001)), with a large effect size (\u03b7\u00b2 = 0.861). The groups with the most different means were: Germany vs Hungary (mean diff = 1.75, ***); Germany vs Ireland (mean diff = 0.917, ***); Germany vs Italy (mean diff = 1.583, ***). Group mean scores ranged from 2.33 to 4.33 on the Likert scale. ",
+      "group_means": {
+        "Germany": 4.08,
+        "Hungary": 2.33,
+        "Ireland": 3.17,
+        "Italy": 2.5,
+        "Portugal": 4.33,
+        "Spain": 3.17
+      }
+    },
+    {
+      "variable": "digital_literacy",
+      "significant": false,
+      "eta2": 0.2668,
+      "eta2_label": "large",
+      "plain_english": "Mean hazard perception scores differed significantly across digital_literacy groups (highly significant (p < 0.001)), with a large effect size (\u03b7\u00b2 = 0.267). The groups with the most different means were: High vs Medium-high (mean diff = -1.0, ***); High vs Medium-low (mean diff = -0.417, ***); Low vs Medium-high (mean diff = -0.972, ***). Group mean scores ranged from 2.92 to 3.92 on the Likert scale. ",
+      "group_means": {
+        "High": 2.92,
+        "Low": 2.94,
+        "Medium-high": 3.92,
+        "Medium-low": 3.33
+      }
+    },
+    {
+      "variable": "disability",
+      "significant": false,
+      "eta2": 0.1196,
+      "eta2_label": "medium",
+      "plain_english": "Mean hazard perception scores differed significantly across disability groups (highly significant (p < 0.001)), with a medium effect size (\u03b7\u00b2 = 0.120). The groups with the most different means were: No vs Prefer not to say (mean diff = -0.738, ***); No vs Yes (mean diff = -0.405, ***); Prefer not to say vs Yes (mean diff = 0.333, **). Group mean scores ranged from 3.10 to 3.83 on the Likert scale. ",
+      "group_means": {
+        "No": 3.1,
+        "Prefer not to say": 3.83,
+        "Yes": 3.5
+      }
+    },
+    {
+      "variable": "education",
+      "significant": true,
+      "eta2": 0.0897,
+      "eta2_label": "medium",
+      "plain_english": "Mean hazard perception scores differed significantly across education groups (highly significant (p < 0.001)), with a medium effect size (\u03b7\u00b2 = 0.090). The groups with the most different means were: Lower secondary vs Postgraduate (mean diff = 0.556, ***); Lower secondary vs Tertiary (mean diff = 0.208, ***); Postgraduate vs Tertiary (mean diff = -0.347, **). Group mean scores ranged from 2.94 to 3.50 on the Likert scale. ",
+      "group_means": {
+        "Lower secondary": 3.5,
+        "Postgraduate": 2.94,
+        "Tertiary": 3.29,
+        "Upper secondary": 3.5
+      }
+    },
+    {
+      "variable": "ethnic_minority",
+      "significant": false,
+      "eta2": 0.0016,
+      "eta2_label": "negligible",
+      "plain_english": "Mean hazard perception scores did NOT differ significantly across ethnic_minority groups (not statistically significant (p = 0.779)). Effect size: \u03b7\u00b2 = 0.002 (negligible).",
+      "group_means": {
+        "No": 3.25,
+        "Prefer not to say": 3.27,
+        "Yes": 3.17
+      }
+    },
+    {
+      "variable": "gender",
+      "significant": false,
+      "eta2": 0.654,
+      "eta2_label": "large",
+      "plain_english": "Mean hazard perception scores differed significantly across gender groups (highly significant (p < 0.001)), with a large effect size (\u03b7\u00b2 = 0.654). The groups with the most different means were: Female vs Male (mean diff = 1.125, ***); Female vs Prefer not to say (mean diff = 0.917, ***); Male vs Non-binary (mean diff = -1.264, ***). Group mean scores ranged from 2.62 to 3.89 on the Likert scale. ",
+      "group_means": {
+        "Female": 3.75,
+        "Male": 2.62,
+        "Non-binary": 3.89,
+        "Prefer not to say": 2.83
+      }
+    },
+    {
+      "variable": "household",
+      "significant": false,
+      "eta2": 0.7944,
+      "eta2_label": "large",
+      "plain_english": "Mean hazard perception scores differed significantly across household groups (highly significant (p < 0.001)), with a large effect size (\u03b7\u00b2 = 0.794). The groups with the most different means were: Couple no children vs Couple with children (mean diff = -1.25, ***); Couple no children vs Multi-generational (mean diff = -1.25, ***); Couple no children vs Other (mean diff = -0.75, ***). Group mean scores ranged from 2.33 to 4.33 on the Likert scale. ",
+      "group_means": {
+        "Couple no children": 3.08,
+        "Couple with children": 4.33,
+        "Multi-generational": 4.33,
+        "Other": 3.83,
+        "Shared accommodation": 2.33,
+        "Single": 2.94,
+        "Single parent": 2.67
+      }
+    },
+    {
+      "variable": "household_number",
+      "significant": false,
+      "eta2": 0.1385,
+      "eta2_label": "medium",
+      "plain_english": "Mean hazard perception scores differed significantly across household_number groups (highly significant (p < 0.001)), with a medium effect size (\u03b7\u00b2 = 0.139). The groups with the most different means were: 1.0 vs 3.0 (mean diff = -0.639, ***); 2.0 vs 3.0 (mean diff = -0.583, ***); 3.0 vs 4.0 (mean diff = 0.5, ***). Group mean scores ranged from 2.94 to 3.58 on the Likert scale. ",
+      "group_means": {
+        "1.0": 2.94,
+        "2.0": 3.0,
+        "3.0": 3.58,
+        "4.0": 3.08
+      }
+    },
+    {
+      "variable": "internet",
+      "significant": false,
+      "eta2": 0.0997,
+      "eta2_label": "medium",
+      "plain_english": "Mean hazard perception scores differed significantly across internet groups (highly significant (p < 0.001)), with a medium effect size (\u03b7\u00b2 = 0.100). The groups with the most different means were: Always vs Never (mean diff = -0.25, **); Always vs Rarely (mean diff = -0.667, ***); Always vs Sometimes (mean diff = -0.5, ***). Group mean scores ranged from 2.92 to 3.58 on the Likert scale. ",
+      "group_means": {
+        "Always": 2.92,
+        "Never": 3.17,
+        "Rarely": 3.58,
+        "Sometimes": 3.42
+      }
+    },
+    {
+      "variable": "lgbtiqa_identity",
+      "significant": false,
+      "eta2": 0.3189,
+      "eta2_label": "large",
+      "plain_english": "Mean hazard perception scores differed significantly across lgbtiqa_identity groups (highly significant (p < 0.001)), with a large effect size (\u03b7\u00b2 = 0.319). The groups with the most different means were: No vs Yes (mean diff = -0.875, ***); Prefer not to say vs Yes (mean diff = -0.75, ***). Group mean scores ranged from 2.88 to 3.75 on the Likert scale. ",
+      "group_means": {
+        "No": 2.88,
+        "Prefer not to say": 3.0,
+        "Yes": 3.75
+      }
+    },
+    {
+      "variable": "location_residency",
+      "significant": true,
+      "eta2": 0.0551,
+      "eta2_label": "small",
+      "plain_english": "Mean hazard perception scores differed significantly across location_residency groups (highly significant (p < 0.001)), with a small effect size (\u03b7\u00b2 = 0.055). The groups with the most different means were: Rural vs Urban (mean diff = 0.389, ***); Suburban vs Urban (mean diff = 0.333, ***). Group mean scores ranged from 3.11 to 3.50 on the Likert scale. ",
+      "group_means": {
+        "Rural": 3.5,
+        "Suburban": 3.44,
+        "Urban": 3.11
+      }
+    },
+    {
+      "variable": "political_activist",
+      "significant": false,
+      "eta2": 0.0787,
+      "eta2_label": "medium",
+      "plain_english": "Mean hazard perception scores differed significantly across political_activist groups (highly significant (p < 0.001)), with a medium effect size (\u03b7\u00b2 = 0.079). The groups with the most different means were: No vs Prefer not to say (mean diff = 0.417, ***). Group mean scores ranged from 3.00 to 3.42 on the Likert scale. ",
+      "group_means": {
+        "No": 3.42,
+        "Prefer not to say": 3.0
+      }
+    },
+    {
+      "variable": "religious_minority",
+      "significant": false,
+      "eta2": 0.5265,
+      "eta2_label": "large",
+      "plain_english": "Mean hazard perception scores differed significantly across religious_minority groups (highly significant (p < 0.001)), with a large effect size (\u03b7\u00b2 = 0.526). The groups with the most different means were: No vs Not applicable (mean diff = -1.667, ***); No vs Prefer not to say (mean diff = -0.85, ***); No vs Yes (mean diff = -0.75, ***). Group mean scores ranged from 2.42 to 4.08 on the Likert scale. ",
+      "group_means": {
+        "No": 2.42,
+        "Not applicable": 4.08,
+        "Prefer not to say": 3.27,
+        "Yes": 3.17
+      }
+    }
+  ],
+  "brant": "6 predictor(s) violated the proportional odds assumption. Their odds ratios should be treated as average effects and interpreted cautiously.",
+  "convergence": "ANOVA and chi-squared agreed (converged) for 15 variable(s): activity_status, age, care_responsabilities, country, digital_literacy, disability, education, gender, household, household_number, internet, lgbtiqa_identity, location_residency, political_activist, religious_minority. They diverged for 1 variable(s): ethnic_minority. For diverging variables, the chi-squared result is preferred as the more conservative, assumption-free alternative."
+}
+
+PLAIN-ENGLISH REPORT GENERATED:
+============================================================
+
+PLAIN-ENGLISH RESULTS REPORT — TRANSPORT SECTOR
+
+============================================================
+
+
+
+1. WHAT THIS ANALYSIS FOUND
+
+
+────────────────────────────────────────────────────────────
+
+
+This analysis aimed to identify which groups of people perceive hazards in the Transport sector, such as road safety risks, as particularly serious. It also sought to determine what characteristics or circumstances are linked to these perceptions. The analysis used statistical techniques to build a model that can predict which individuals are likely to have higher hazard perception.
+
+The model's fit to the data is very good, with 68% (McFadden R²) and 87% (Nagelkerke R²) of the variation in hazard perception explained. This means that for most people, their hazard perception can be predicted based on a few key factors, rather than being random or unrelated to anything specific. However, it's essential to check if the model is overfitting – fitting too closely to the data and losing its ability to generalize.
+
+The analysis identified six predictors of higher hazard perception: households with multiple generations living together, those in a particular region (80637), households with couples and children, people from Portugal, those who use cars for transportation but not as their primary mode, and possibly others. This suggests that certain demographic characteristics are associated with more severe perceptions of transport-related hazards.
+
+
+
+2. WHICH FACTORS MATTER
+
+
+────────────────────────────────────────────────────────────
+
+
+Here's a plain-English section summarizing the results:
+
+Our statistical test found that one factor significantly predicts how people perceive hazards on the road. Out of four factors tested, only one passed the strict significance test.
+
+We apply a stricter threshold when testing many factors at once to reduce the risk of mistakenly identifying something as significant when it's just a coincidence.
+
+The single significant predictor is: 
+
+* The country we're in - hazard perception is associated with the specific country. This means that, after controlling for other factors, drivers from different countries perceive hazards differently.
+ 
+Of the three non-significant predictors, two tell us what they don't tell us: not driving a car or living in a particular region isn't strongly linked to how people perceive hazards on the road. The third factor - household characteristics - doesn't have a strong enough relationship with hazard perception to be considered significant.
+
+To inform our understanding of how different factors influence driver behavior, we should investigate the country-specific differences that emerged from this study.
+
+
+
+3. HOW STRONG ARE THE EFFECTS
+
+
+────────────────────────────────────────────────────────────
+
+
+Here's a plain-English section summarizing the effect sizes:
+
+These results show how different factors are associated with hazard perception in the Transport sector. The odds ratio (OR) is a measure of how much more likely a group is to rate the hazard as serious compared to a reference group. A higher OR means greater odds, but it's not directly interpretable as a probability change. That's why we also report the Marginal Effect at the Mean (MEM), which shows how much the probability of giving the highest possible rating changes for a one-unit increase in the predictor.
+
+For countries with significant predictors:
+
+* Germany is associated with an enormous 34,970% higher odds of rating the hazard as serious. At average levels of all other factors, being from Germany was linked to a 35 percentage-point higher probability of giving the most serious rating.
+* Hungary and Italy are not significantly different from the reference group, indicating no clear association between these countries and hazard perception.
+* Country Ireland is associated with a significant decrease in odds: respondents from this country have 100% lower odds of rating the hazard as serious. At average levels of all other factors, being from Ireland was linked to a 2.2 percentage-point lower probability of giving the most serious rating.
+
+For household and region predictors:
+
+* Several countries (Portugal, Italy, Hungary) are associated with enormous increases in odds, but these results are not statistically significant due to large uncertainty.
+* For car_use_3, household_Couple with children, region_1600-94, household_Multi-generational, and region_80637, the OR indicates an increase in hazard perception, but the MEM shows a 0% change in probability. These results are uncertain.
+
+Remember that these odds ratios do not directly translate to relative risk (the actual chance of experiencing a hazard), so use caution when interpreting these numbers.
+
+
+
+4. WHO IS MOST AT RISK
+
+
+────────────────────────────────────────────────────────────
+
+
+Based on our analysis, respondents in certain socio-demographic groups showed a higher perception of hazard. For instance, individuals from lower-income households (household) were more likely to rate the hazard as high, with an effect size indicating that about 25% of the variation in perception scores can be attributed to household income.
+
+Similarly, respondents aged above 65 years (age), those identifying as ethnic minorities (ethnic_minority), and LGBTQ+ individuals (lgbtiqa_identity) also demonstrated a higher perception of hazard. The effect sizes for these groups ranged from medium to strong, meaning that they accounted for between 11% and 50% of the variation in perception scores.
+
+A follow-up analysis revealed that certain group pairs differed significantly from each other. For example, respondents with lower educational attainment (education) were more likely to perceive a higher hazard compared to those with higher education levels. Similarly, individuals identifying as religious minorities (religious_minority) showed a higher perception of hazard compared to their non-minority counterparts.
+
+The two statistical methods used in this analysis agreed for 15 variables and diverged for one variable. When the results differ, it is generally recommended to prioritize the more conservative result from the group comparison test. Based on our findings, these groups should be prioritised in policy targeting: 
+
+- Lower-income households
+- Individuals aged above 65 years
+- Ethnic minorities
+- LGBTQ+ individuals
+
+These groups are at a higher risk of perceiving hazards and may benefit from targeted policies aimed at mitigating their concerns.
+
+
+
+5. COUNTRY DIFFERENCES
+
+
+────────────────────────────────────────────────────────────
+
+
+The hazard perception results show that Portugal has the highest proportion of respondents who rated the hazard as serious, with all 32 respondents (100%) rating it high. In contrast, Spain had no respondents at all (0%) who rated the hazard as high.
+
+There's a significant spread in perception across countries. The percentage of respondents rating the hazard as serious ranges from 0% to 100%. This means that there's a large difference between the countries with the lowest and highest proportions of concerned respondents.
+
+Unfortunately, the education breakdown isn't available for this section. However, one key finding is that the country with the lowest perception of the hazard as high (Spain) has a relatively low mean score across all respondents (3.17 out of 6).
+
+These results suggest that policies aimed at reducing transport sector hazards should be targeted specifically towards countries like Portugal and Germany, where there's a high proportion of concerned citizens.
+
+
+
+6. WHAT TO BE CAREFUL ABOUT
+
+
+────────────────────────────────────────────────────────────
+
+
+**Limitations of the Findings**
+
+The analysis of hazard perception is subject to some limitations that should be kept in mind when interpreting the results.
+
+Firstly, we found that six predictors (household structure, region, and country) do not meet a critical model assumption. This means that their effect on hazard perception varies across different levels of the Likert scale, rather than having a consistent impact. As a result, the single odds ratio for these predictors should be treated as an average effect, rather than a precise measure. We must interpret their findings with caution.
+
+Fortunately, we did not find any concerns with multicollinearity, which means that our model is able to accurately separate the individual effects of each predictor.
+
+It's essential to remember that this study is observational and cross-sectional, so we can only establish associations between variables, not causation. Our findings are specific to the Transport sector respondents and should not be generalised to other sectors or countries outside of this sample.
+
+While these limitations must be acknowledged, we can still conclude with confidence that certain factors (e.g. household structure) are associated with hazard perception in Transport sector respondents.
+
+
+
+7. HAZARD COMPARISON — WHICH IS MOST SERIOUS?
+
+
+────────────────────────────────────────────────────────────
+
+
+Which hazard do respondents in the Transport sector consider most serious?
+
+The hazard rated most seriously by respondents in the Transport sector is 'Higher transport costs (likelihood)', with an average score of 3.60 out of 6 and 60.0% of respondents rating it at or above the high-perception threshold.
+
+Here's how all hazards rank from most to least seriously perceived:
+
+1. Higher transport costs (likelihood): an average rating of 3.60 out of 6, with 60.0% of respondents rating it highly.
+2. Resale value loss (likelihood) and Tax and fines (impact): tied at an average rating of 3.30 out of 6, with 50.0% and 40.0% of respondents rating them highly respectively.
+3. Resale value loss (impact) and Higher transport costs (impact): tied at an average rating of 2.90 out of 6, with 30.0% of respondents rating them highly.
+
+For 'Higher transport costs (likelihood)', the strongest predictor is being from country_Portugal, which increases the likelihood of rating this hazard as serious. Respondents in the 28 group show the highest average perception score.
+
+While some hazards share similar predictors, others are driven by different factors. For example, Tax and fines (impact) is strongly associated with respondents from Ireland, whereas Resale value loss (likelihood) is more closely tied to country_Portugal.
+
+This suggests that addressing Higher transport costs (likelihood) first could have the greatest impact on reducing public perception of risk in the Transport sector.
+
+
+
+8. EXECUTIVE SUMMARY (FOR POLICYMAKERS)
+
+
+────────────────────────────────────────────────────────────
+
+
+Here's a 100-150 word executive summary for a senior policymaker:
+
+The analysis found that the Transport sector is a key area where hazard perception plays a critical role in shaping public attitudes towards risk. The most important risk factors identified were household income and age, with those from lower-income households and older adults being more likely to perceive hazards as serious. Specifically, about 25% of variation in perception scores can be attributed to household income alone. Individuals identifying as ethnic minorities and LGBTQ+ individuals also showed a higher perception of hazard. These groups are particularly at risk and policymakers should take note of these findings. To address this issue, policymakers could consider investing in targeted education campaigns that focus on reaching and engaging with lower-income households and older adults to improve their understanding of hazards in the Transport sector.
+
+
+
+============================================================
+
+End of report — Transport sector
+
+============================================================

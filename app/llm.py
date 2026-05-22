@@ -1,0 +1,97 @@
+import logging
+from typing import Any
+
+import httpx
+
+from app.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+ChatMessage = dict[str, str]
+
+
+async def ask_llm(prompt: str) -> str:
+    return await ask_llm_chat(
+        context="You are Dr Transition, a digital coach for Twin-Transition policy analysis.",
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+
+async def ask_llm_chat(
+    context: str,
+    messages: list[ChatMessage],
+    *,
+    stream: bool = False,
+    temperature: float = 0.2,
+    max_tokens: int = 700,
+) -> str:
+    settings = get_settings()
+    chat_messages = [{"role": "system", "content": context}] + messages
+    payload = {
+        "model": settings.ollama_model,
+        "messages": chat_messages,
+        "stream": stream,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.ollama_base_url,
+            timeout=settings.ollama_timeout_seconds,
+        ) as client:
+            response = await client.post("/api/chat", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            answer = _extract_chat_content(data).strip()
+            if answer:
+                return answer
+            logger.warning("Ollama returned an empty response")
+    except httpx.TimeoutException:
+        logger.warning(
+            "Ollama request timed out after %s seconds for model %s",
+            settings.ollama_timeout_seconds,
+            settings.ollama_model,
+        )
+        return (
+            f"The local model `{settings.ollama_model}` is taking longer than "
+            f"{settings.ollama_timeout_seconds} seconds to respond. Please try again, "
+            "or use a smaller/faster Ollama model for this workflow."
+        )
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Ollama returned HTTP %s: %s", exc.response.status_code, exc.response.text)
+        return (
+            f"Ollama returned HTTP {exc.response.status_code} for model "
+            f"`{settings.ollama_model}`. Check that the model is installed and available."
+        )
+    except httpx.HTTPError as exc:
+        logger.exception("Ollama request failed")
+        return (
+            f"I cannot reach Ollama at `{settings.ollama_base_url}` right now. "
+            "Please make sure the Ollama service is running."
+        )
+    except ValueError:
+        logger.exception("Ollama returned invalid JSON")
+        return "Ollama returned an invalid response. Please try the request again."
+
+    return (
+        f"The local model `{settings.ollama_model}` returned an empty response. "
+        "Please try again."
+    )
+
+
+def _extract_chat_content(data: dict[str, Any]) -> str:
+    message = data.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+
+    # Defensive fallback for alternate local server response shapes.
+    response = data.get("response")
+    if isinstance(response, str):
+        return response
+
+    return ""

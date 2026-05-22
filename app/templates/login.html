@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login - Dr Transition</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}" />
+  </head>
+  <body class="auth-page">
+    <main class="auth-shell">
+      <section class="auth-roadmap" aria-label="Platform overview">
+        <div class="auth-map" data-coverage-map data-coverage='{{ coverage_map_rows | tojson }}'></div>
+        <div class="roadmap-copy">
+          <span class="analysis-pill">AI-Powered Analysis</span>
+          <p class="roadmap-kicker">Your Region, Your Data + FITTER Research</p>
+          <h2>A roadmap to <strong>JUST Transition</strong></h2>
+          <h3>The platform helps you identify:</h3>
+          <ol class="roadmap-list">
+            <li>Hazards and Negative Impacts of various policy objectives</li>
+            <li>The Profiles affected by the Twin-Transition policies in your region</li>
+            <li>Mitigation Plans to counter the Hazards and corresponding Negative Impacts</li>
+          </ol>
+        </div>
+      </section>
+      <section class="auth-panel" aria-labelledby="loginTitle">
+        <div class="auth-brand">
+          <img src="{{ url_for('static', path='/img/logo.png') }}" alt="Dr Transition logo" />
+          <div>
+            <h1 id="loginTitle">Dr Transition</h1>
+            <p>Sign in to continue your Twin-Transition policy work.</p>
+          </div>
+        </div>
+
+        {% if error %}
+          <p class="auth-error">{{ error }}</p>
+        {% endif %}
+
+        <form class="auth-form" method="post" action="/login">
+          <label>
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" value="{{ email }}" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">Login</button>
+        </form>
+
+        <p class="auth-switch">New here? <a href="/signup">Create an account</a></p>
+      </section>
+    </main>
+    <script src="https://code.highcharts.com/maps/highmaps.js"></script>
+    <script src="{{ url_for('static', path='/js/auth-map.js') }}"></script>
+  </body>
+</html>

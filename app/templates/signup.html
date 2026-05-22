@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signup - Dr Transition</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}" />
+  </head>
+  <body class="auth-page">
+    <main class="auth-shell">
+      <section class="auth-roadmap" aria-label="Platform overview">
+        <div class="auth-map" data-coverage-map data-coverage='{{ coverage_map_rows | tojson }}'></div>
+        <div class="roadmap-copy">
+          <span class="analysis-pill">AI-Powered Analysis</span>
+          <p class="roadmap-kicker">Your Region, Your Data + FITTER Research</p>
+          <h2>A roadmap to <strong>JUST Transition</strong></h2>
+          <h3>The platform helps you identify:</h3>
+          <ol class="roadmap-list">
+            <li>Hazards and Negative Impacts of various policy objectives</li>
+            <li>The Profiles affected by the Twin-Transition policies in your region</li>
+            <li>Mitigation Plans to counter the Hazards and corresponding Negative Impacts</li>
+          </ol>
+        </div>
+      </section>
+      <section class="auth-panel signup-panel" aria-labelledby="signupTitle">
+        <div class="auth-brand">
+          <img src="{{ url_for('static', path='/img/logo.png') }}" alt="Dr Transition logo" />
+          <div>
+            <h1 id="signupTitle">Create Account</h1>
+            <p>Set up your profile in two short steps.</p>
+          </div>
+        </div>
+
+        <ol class="signup-stepper" aria-label="Signup progress">
+          <li class="active" data-step-indicator="1">Account</li>
+          <li data-step-indicator="2">Organisation</li>
+        </ol>
+
+        {% if error %}
+          <p class="auth-error">{{ error }}</p>
+        {% endif %}
+
+        <form
+          id="signupForm"
+          class="auth-form"
+          method="post"
+          action="/signup"
+          data-initial-step="{{ initial_step or 1 }}"
+          novalidate
+        >
+          <fieldset class="signup-step" data-step="1">
+            <label>
+              <span>Email</span>
+              <input
+                name="email"
+                type="email"
+                autocomplete="email"
+                value="{{ values.get('email', '') }}"
+                required
+              />
+            </label>
+            <label>
+              <span>Name</span>
+              <input
+                name="name"
+                type="text"
+                autocomplete="name"
+                value="{{ values.get('name', '') }}"
+                required
+              />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                id="signupPassword"
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                minlength="8"
+                pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}"
+                required
+              />
+            </label>
+            <label>
+              <span>Confirm password</span>
+              <input
+                id="confirmPassword"
+                name="confirm_password"
+                type="password"
+                autocomplete="new-password"
+                required
+              />
+            </label>
+            <ul class="password-rules" aria-label="Password rules">
+              <li data-rule="length">At least 8 characters</li>
+              <li data-rule="upper">One uppercase letter</li>
+              <li data-rule="lower">One lowercase letter</li>
+              <li data-rule="number">One number</li>
+              <li data-rule="symbol">One symbol</li>
+              <li data-rule="match">Passwords match</li>
+            </ul>
+            <button class="step-button" type="button" data-next-step>Next</button>
+          </fieldset>
+
+          <fieldset class="signup-step" data-step="2" hidden>
+            <label>
+              <span>Designation</span>
+              <input
+                name="designation"
+                type="text"
+                autocomplete="organization-title"
+                value="{{ values.get('designation', '') }}"
+                required
+              />
+            </label>
+            <label>
+              <span>Organisation type</span>
+              <select name="organisation_type" required>
+                {% set selected_type = values.get('organisation_type', '') %}
+                <option value="" disabled {% if not selected_type %}selected{% endif %}>Select type</option>
+                {% for item in ["Public sector", "Private sector", "Research", "Civil society", "Other"] %}
+                  <option value="{{ item }}" {% if selected_type == item %}selected{% endif %}>{{ item }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Organisation name</span>
+              <input
+                name="organisation_name"
+                type="text"
+                autocomplete="organization"
+                value="{{ values.get('organisation_name', '') }}"
+                required
+              />
+            </label>
+            <div class="step-actions">
+              <button class="secondary-button" type="button" data-prev-step>Back</button>
+              <button type="submit">Create account</button>
+            </div>
+          </fieldset>
+        </form>
+
+        <p class="auth-switch">Already have an account? <a href="/login">Login</a></p>
+      </section>
+    </main>
+    <script src="https://code.highcharts.com/maps/highmaps.js"></script>
+    <script src="{{ url_for('static', path='/js/auth-map.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/auth.js') }}"></script>
+  </body>
+</html>
