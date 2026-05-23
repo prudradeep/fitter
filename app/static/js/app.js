@@ -51,6 +51,10 @@ const renameSessionForm = document.querySelector("#renameSessionForm");
 const renameSessionInput = document.querySelector("#renameSessionInput");
 const cancelRenameButton = document.querySelector("#cancelRenameButton");
 const sessionEmpty = document.querySelector("#sessionEmpty");
+const stageVisualTitle = document.querySelector("#stageVisualTitle");
+const stageVisualText = document.querySelector("#stageVisualText");
+const stageProgressFill = document.querySelector("#stageProgressFill");
+const stageSteps = Array.from(document.querySelectorAll("[data-stage-key]"));
 
 const sessionFields = {
   country: document.querySelector("#sessionCountry"),
@@ -78,6 +82,77 @@ let voiceAnalyzerLastBoundaryAt = 0;
 let voiceAnalyzerProgress = 0;
 
 const defaultPlaceholder = "Type a country, region, or sector...";
+const stageVisuals = {
+  country: {
+    index: 0,
+    title: "Choose the national context",
+    text: "The first signal anchors the analysis in one of the supported European countries.",
+  },
+  region: {
+    index: 1,
+    title: "Narrow into your region",
+    text: "Regional selection lets the evidence and policy impacts become more specific.",
+  },
+  sector: {
+    index: 2,
+    title: "Select the transition sector",
+    text: "Transport, housing, and energy pathways change which hazards and profiles matter most.",
+  },
+  hazards: {
+    index: 3,
+    title: "Identify social hazards",
+    text: "This stage captures risks, negative impacts, and evidence for the selected policy context.",
+  },
+  mitigation: {
+    index: 4,
+    title: "Build mitigation options",
+    text: "Mitigation planning turns identified hazards into practical countermeasures.",
+  },
+  evaluation: {
+    index: 5,
+    title: "Evaluate the plan",
+    text: "The final stage reviews strength, confidence, and evidence before the analysis closes.",
+  },
+};
+
+function stageKeyForStep(step = "") {
+  if (["country", "national_scope"].includes(step)) return "country";
+  if (["region"].includes(step)) return "region";
+  if (["sector"].includes(step)) return "sector";
+  if (
+    [
+      "hazards",
+      "add_hazard",
+      "reason_confirmation",
+      "hazard_profile_selection",
+      "socio_demographic_review",
+      "add_dgs",
+      "stats_deep_dive",
+      "target_population_question",
+    ].includes(step)
+  ) {
+    return "hazards";
+  }
+  if (step.startsWith("mitigation") || step === "mitigation") return "mitigation";
+  if (step.startsWith("evaluation") || step === "complete") return "evaluation";
+  return "country";
+}
+
+function updateStageVisual(step = "", session = {}) {
+  const key = stageKeyForStep(step);
+  const visual = stageVisuals[key] || stageVisuals.country;
+  if (stageVisualTitle) stageVisualTitle.textContent = visual.title;
+  if (stageVisualText) stageVisualText.textContent = visual.text;
+  if (stageProgressFill) {
+    const percent = (visual.index / Math.max(1, stageSteps.length - 1)) * 100;
+    stageProgressFill.style.width = `${percent}%`;
+  }
+  stageSteps.forEach((item, index) => {
+    item.classList.toggle("active", index <= visual.index);
+    item.classList.toggle("current", item.dataset.stageKey === key);
+  });
+  document.body.dataset.analysisStage = key;
+}
 
 function plainTextFromHtml(html) {
   const element = document.createElement("div");
@@ -612,6 +687,7 @@ function setLoading(value) {
 
 function setInputMode(mode = "text", step = "", options = []) {
   inputMode = mode;
+  updateStageVisual(step);
   const reasonEvidenceMode = mode === "reason_evidence" || mode === "mitigation_reason";
   const evaluationMode = mode === "evaluation_question";
   micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode;
@@ -643,12 +719,12 @@ function setInputMode(mode = "text", step = "", options = []) {
 }
 
 function updateSessionCard(session) {
-  sessionFields.country.textContent = session.country || "Not selected";
-  sessionFields.region.textContent = session.region || "Not selected";
-  sessionFields.sector.textContent = session.sector || "Not selected";
-  const hasSession = Boolean(session.country || session.region || session.sector);
-  sessionEmpty.hidden = hasSession;
-  document.querySelector(".session-list").hidden = !hasSession;
+  sessionFields.country.textContent = session?.country || "Not selected";
+  sessionFields.region.textContent = session?.region || "Not selected";
+  sessionFields.sector.textContent = session?.sector || "Not selected";
+  const hasSession = Boolean(session?.country || session?.region || session?.sector);
+  if (sessionEmpty) sessionEmpty.hidden = hasSession;
+  document.querySelector(".stage-selection")?.classList.toggle("has-session", hasSession);
 }
 
 function disableOldOptions() {

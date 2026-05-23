@@ -31,7 +31,16 @@ async def login_page(
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"error": None, "email": "", "coverage_map_rows": get_coverage_map_rows()},
+        {
+            "page_title": "Dr Transition",
+            "error": None,
+            "email": "",
+            "values": {},
+            "initial_step": 1,
+            "auth_mode": "login",
+            "auth_open": False,
+            "coverage_map_rows": get_coverage_map_rows(),
+        },
     )
 
 
@@ -49,8 +58,13 @@ async def login(
             request,
             "login.html",
             {
+                "page_title": "Dr Transition",
                 "error": "Invalid email or password.",
                 "email": email,
+                "values": {},
+                "initial_step": 1,
+                "auth_mode": "login",
+                "auth_open": True,
                 "coverage_map_rows": get_coverage_map_rows(),
             },
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -73,8 +87,11 @@ async def signup_page(
         "signup.html",
         {
             "error": None,
+            "email": "",
             "values": {},
             "initial_step": 1,
+            "auth_mode": "signup",
+            "auth_open": True,
             "coverage_map_rows": get_coverage_map_rows(),
         },
     )
@@ -145,9 +162,13 @@ def _signup_error(
         request,
         "signup.html",
         {
+            "page_title": "Dr Transition",
             "error": error,
+            "email": values.get("email", ""),
             "values": values,
             "initial_step": step,
+            "auth_mode": "signup",
+            "auth_open": True,
             "coverage_map_rows": get_coverage_map_rows(),
         },
         status_code=status.HTTP_400_BAD_REQUEST,

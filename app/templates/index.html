@@ -86,6 +86,52 @@
     </header>
 
     <main class="app-shell">
+      <section class="stage-visual-panel" aria-label="Analysis progress">
+        <div class="stage-orbit" aria-hidden="true">
+          <span class="stage-orbit-node node-country"></span>
+          <span class="stage-orbit-node node-region"></span>
+          <span class="stage-orbit-node node-sector"></span>
+          <span class="stage-orbit-node node-hazard"></span>
+          <span class="stage-orbit-node node-mitigation"></span>
+          <span class="stage-orbit-node node-evaluation"></span>
+        </div>
+        <div class="stage-copy">
+          <p class="stage-eyebrow">Analysis Stage</p>
+          <h2 id="stageVisualTitle">Starting your roadmap</h2>
+          <p id="stageVisualText">
+            Your selections and evidence will shape this workspace as the guided analysis moves forward.
+          </p>
+        </div>
+        <div class="stage-progress" aria-label="Analysis step progress">
+          <div class="stage-progress-bar">
+            <span id="stageProgressFill"></span>
+          </div>
+          <ol class="stage-steps">
+            <li data-stage-key="country">Country</li>
+            <li data-stage-key="region">Region</li>
+            <li data-stage-key="sector">Sector</li>
+            <li data-stage-key="hazards">Hazards</li>
+            <li data-stage-key="mitigation">Mitigation</li>
+            <li data-stage-key="evaluation">Evaluation</li>
+          </ol>
+        </div>
+        <dl class="stage-selection">
+          <div>
+            <dt>Country</dt>
+            <dd id="sessionCountry">Not selected</dd>
+          </div>
+          <div>
+            <dt>Region</dt>
+            <dd id="sessionRegion">Not selected</dd>
+          </div>
+          <div>
+            <dt>Sector</dt>
+            <dd id="sessionSector">Not selected</dd>
+          </div>
+        </dl>
+        <p id="sessionEmpty" class="session-empty stage-empty">Session not started yet.</p>
+      </section>
+
       <section class="workspace">
         <section class="chat-card" aria-label="Guided policy chat">
           <div id="chatLog" class="chat-log" aria-live="polite"></div>
@@ -196,56 +242,6 @@
           </form>
         </section>
       </section>
-
-      <aside class="sidebar">
-        <section class="side-card">
-          <h2>Your Session</h2>
-          <p id="sessionEmpty" class="session-empty">Session not started yet.</p>
-          <dl class="session-list" hidden>
-            <div>
-              <dt>Country</dt>
-              <dd id="sessionCountry">Not selected</dd>
-            </div>
-            <div>
-              <dt>Region</dt>
-              <dd id="sessionRegion">Not selected</dd>
-            </div>
-            <div>
-              <dt>Sector</dt>
-              <dd id="sessionSector">Not selected</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section class="side-card">
-          <h2>About This Tool</h2>
-          <p>
-            Dr Transition guides you through a 7-step learning journey to understand the social hazards of Twin-Transition policies in Europe and how to mitigate them.
-          </p>
-          <div class="coverage-table-wrap">
-            <table class="coverage-table">
-              <thead>
-                <tr>
-                  <th scope="col">Coverage</th>
-                  <th scope="col">Sector</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for row in coverage_rows %}
-                  <tr>
-                    <td>{{ row.coverage }}</td>
-                    <td>{{ row.sectors }}</td>
-                  </tr>
-                {% else %}
-                  <tr>
-                    <td colspan="2">No coverage data configured.</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </aside>
     </main>
 
     <dialog id="renameSessionDialog" class="rename-dialog">
