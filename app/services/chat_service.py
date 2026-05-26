@@ -75,6 +75,8 @@ class ChatService:
         clean_message = message.strip()
 
         if clean_message == "/reset":
+            if not self._session_belongs_to_current_user(session_id):
+                session_id = None
             current_session_id, session = session_store.reset(session_id)
             response = self._country_step(current_session_id, session, self.welcome_message)
             self._finalize_chat_response(current_session_id, session, response)

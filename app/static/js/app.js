@@ -55,6 +55,10 @@ const stageVisualTitle = document.querySelector("#stageVisualTitle");
 const stageVisualText = document.querySelector("#stageVisualText");
 const stageProgressFill = document.querySelector("#stageProgressFill");
 const stageSteps = Array.from(document.querySelectorAll("[data-stage-key]"));
+const stageMap = document.querySelector("#stageMap");
+const stageIconGrid = document.querySelector("#stageIconGrid");
+const stageCoverageRows = JSON.parse(stageMap?.dataset.coverage || "[]");
+const europeMapPath = stageMap?.dataset.europeMapPath || "";
 
 const sessionFields = {
   country: document.querySelector("#sessionCountry"),
@@ -80,8 +84,99 @@ let voiceAnalyzerLevel = 0;
 let voiceAnalyzerTarget = 0;
 let voiceAnalyzerLastBoundaryAt = 0;
 let voiceAnalyzerProgress = 0;
+let currentStep = "";
+let currentSession = {};
+let renderedVisualKey = "";
+let stageVisualRenderId = 0;
+const mapTopologyCache = new Map();
 
 const defaultPlaceholder = "Type a country, region, or sector...";
+const coverageCountries = stageCoverageRows
+  .filter((row) => row.code)
+  .map((row) => ({
+    code: row.code,
+    name: row.coverage,
+    mapPath: row.map_path,
+    sectors: row.sectors || "Not configured",
+    hazards: Number(row.hazards) || 0,
+    analyses: Number(row.analyses) || 0,
+  }));
+const countryMapData = new Map(
+  coverageCountries.filter((country) => country.mapPath).map((country) => [country.name, country.mapPath]),
+);
+const coverageByCountryName = new Map(
+  coverageCountries.map((country) => [country.name, country]),
+);
+const stageIconSets = {
+  sector: [
+    {
+      title: "Transport",
+      text: "Mobility, access, public transport, and charging infrastructure.",
+      icon: "M4 16h16M6 16l2-7h8l2 7M8 16v3M16 16v3M8 11h8M7 7h10",
+    },
+    {
+      title: "Housing",
+      text: "Retrofits, affordability, energy performance, and household impacts.",
+      icon: "M4 11l8-7 8 7M6 10v9h12v-9M10 19v-5h4v5",
+    },
+    {
+      title: "Energy",
+      text: "Clean energy systems, costs, security, and vulnerable customers.",
+      icon: "M13 3L5 14h6l-1 7 8-11h-6l1-7z",
+    },
+  ],
+  hazards: [
+    {
+      title: "Hazards",
+      text: "Capture social risks and negative impacts.",
+      icon: "M12 3l10 18H2L12 3zM12 9v5M12 17h.01",
+    },
+    {
+      title: "Affected Profiles",
+      text: "Connect hazards to vulnerable demographic groups.",
+      icon: "M16 11a4 4 0 10-8 0 4 4 0 008 0zM4 21a8 8 0 0116 0",
+    },
+    {
+      title: "Evidence",
+      text: "Attach reasons, sources, and supporting files.",
+      icon: "M7 3h7l4 4v14H7V3zM14 3v5h5M9 13h6M9 17h6",
+    },
+  ],
+  mitigation: [
+    {
+      title: "Mitigation",
+      text: "Turn each hazard into a concrete response.",
+      icon: "M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7l7-4z",
+    },
+    {
+      title: "Policy Fit",
+      text: "Check how the action addresses the identified impact.",
+      icon: "M5 13l4 4L19 7",
+    },
+    {
+      title: "Plan",
+      text: "Build a practical mitigation pathway.",
+      icon: "M4 6h16M4 12h10M4 18h7",
+    },
+  ],
+  evaluation: [
+    {
+      title: "Score",
+      text: "Rate the strength of the mitigation plan.",
+      icon: "M4 19V5M9 19V9M14 19V3M19 19v-7",
+    },
+    {
+      title: "Review",
+      text: "Compare rationale, confidence, and evidence.",
+      icon: "M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",
+    },
+    {
+      title: "Complete",
+      text: "Close the analysis with a validated record.",
+      icon: "M12 22a10 10 0 110-20 10 10 0 010 20zM8 12l3 3 5-6",
+    },
+  ],
+};
 const stageVisuals = {
   country: {
     index: 0,
@@ -138,7 +233,12 @@ function stageKeyForStep(step = "") {
   return "country";
 }
 
+function sessionHasCountry(session = currentSession) {
+  return Boolean(session?.country);
+}
+
 function updateStageVisual(step = "", session = {}) {
+  currentStep = step;
   const key = stageKeyForStep(step);
   const visual = stageVisuals[key] || stageVisuals.country;
   if (stageVisualTitle) stageVisualTitle.textContent = visual.title;
@@ -152,12 +252,297 @@ function updateStageVisual(step = "", session = {}) {
     item.classList.toggle("current", item.dataset.stageKey === key);
   });
   document.body.dataset.analysisStage = key;
+  renderDynamicStageVisual(key, currentSession);
+}
+
+function showStageMap() {
+  if (stageMap) stageMap.hidden = false;
+  if (stageIconGrid) stageIconGrid.hidden = true;
+}
+
+function showStageIcons() {
+  if (stageMap) stageMap.hidden = true;
+  if (stageIconGrid) stageIconGrid.hidden = false;
+}
+
+function mapNavigationOptions() {
+  return {
+    enabled: true,
+    enableButtons: true,
+    enableMouseWheelZoom: true,
+    buttonOptions: {
+      align: "right",
+      verticalAlign: "top",
+      theme: {
+        fill: "#ffffff",
+        stroke: "#d9dee7",
+        r: 6,
+        style: {
+          color: "#111827",
+          fontWeight: "800",
+        },
+      },
+    },
+  };
+}
+
+function mapChartOptions(topology) {
+  return {
+    map: topology,
+    panning: { enabled: true, type: "xy" },
+    panKey: "shift",
+    spacing: [0, 0, 0, 0],
+  };
+}
+
+function stageCountryTooltipWidth() {
+  const panelWidth = stageMap?.getBoundingClientRect().width || window.innerWidth;
+  return Math.max(240, Math.min(330, panelWidth - 36, window.innerWidth - 48));
+}
+
+async function fetchMapTopology(path) {
+  if (mapTopologyCache.has(path)) return mapTopologyCache.get(path);
+  const response = await fetch(`https://code.highcharts.com/mapdata/${path}`);
+  if (!response.ok) throw new Error(`Map data failed with status ${response.status}`);
+  const topology = await response.json();
+  mapTopologyCache.set(path, topology);
+  return topology;
+}
+
+async function renderDynamicStageVisual(key, session = {}) {
+  if (key === "country") {
+    await renderCountrySelectionMap();
+    return;
+  }
+  if (key === "region") {
+    await renderRegionMap(session.country, session.region);
+    return;
+  }
+  renderStageIcons(key);
+}
+
+async function renderCountrySelectionMap() {
+  if (!stageMap || !window.Highcharts || !europeMapPath) {
+    renderStageIcons("country");
+    return;
+  }
+  const visualKey = "country-map";
+  if (renderedVisualKey === visualKey) return;
+  renderedVisualKey = visualKey;
+  const renderId = ++stageVisualRenderId;
+  showStageMap();
+
+  try {
+    const topology = await fetchMapTopology(europeMapPath);
+    if (renderId !== stageVisualRenderId) return;
+    const coverageByCode = new Map(coverageCountries.map((country) => [country.code, country]));
+    const activeCodes = new Set(coverageCountries.map((country) => country.code));
+    const data = topology.features.map((feature) => {
+      const code = feature.properties["iso-a2"];
+      const active = activeCodes.has(code);
+      const countryName = coverageByCode.get(code)?.name || feature.properties.name;
+      const countryMeta = coverageByCountryName.get(countryName);
+      return {
+        "hc-key": feature.properties["hc-key"],
+        value: active ? 1 : 0,
+        color: active ? "#4d4d4d" : "#c7ccd3",
+        name: countryName,
+        sectors: countryMeta?.sectors || "Not configured",
+        hazards: countryMeta?.hazards ?? 0,
+        analyses: countryMeta?.analyses ?? 0,
+        enabledCountry: active,
+      };
+    });
+    const activeData = data.filter((point) => point.enabledCountry);
+
+    Highcharts.mapChart(stageMap, {
+      chart: mapChartOptions(topology),
+      title: { text: null },
+      credits: { enabled: false },
+      legend: { enabled: false },
+      mapNavigation: mapNavigationOptions(),
+      tooltip: {
+        useHTML: true,
+        borderWidth: 0,
+        padding: 0,
+        shadow: false,
+        backgroundColor: "transparent",
+        outside: false,
+        positioner(labelWidth, labelHeight) {
+          const chartWidth = this.chart.chartWidth || labelWidth;
+          const chartHeight = this.chart.chartHeight || labelHeight;
+          return {
+            x: Math.max(8, Math.min(18, chartWidth - labelWidth - 8)),
+            y: Math.max(8, Math.min(18, chartHeight - labelHeight - 8)),
+          };
+        },
+        formatter() {
+          if (!this.point.enabledCountry) return false;
+          const country = escapeHtml(this.point.name);
+          const sectors = escapeHtml(this.point.sectors);
+          const tooltipWidth = stageCountryTooltipWidth();
+          return `
+            <div class="stage-country-tooltip" style="width: ${tooltipWidth}px; max-width: ${tooltipWidth}px;">
+              <div class="stage-country-tooltip-main">
+                <span aria-hidden="true"></span>
+                <div>
+                  <strong>${country}</strong>
+                  <p>${sectors.replace(/, /g, " / ")}</p>
+                </div>
+              </div>
+              <div class="stage-country-tooltip-count">
+                <small>Analyses</small>
+                <strong>${this.point.analyses}</strong>
+              </div>
+            </div>
+          `;
+        },
+      },
+      plotOptions: {
+        map: {
+          borderColor: "#7a8493",
+          borderWidth: 0.45,
+          states: { hover: { color: "#6d22c7" } },
+        },
+      },
+      series: [
+        {
+          name: "Europe",
+          data,
+          joinBy: "hc-key",
+          color: "#c7ccd3",
+          nullColor: "#c7ccd3",
+          enableMouseTracking: false,
+          states: {
+            inactive: { enabled: false },
+            hover: { enabled: false },
+          },
+        },
+        {
+          name: "Country",
+          data: activeData,
+          joinBy: "hc-key",
+          color: "#4d4d4d",
+          nullColor: "transparent",
+          states: {
+            hover: { color: "#6d22c7" },
+          },
+        },
+      ],
+    });
+  } catch (error) {
+    console.error("Country stage map failed", error);
+    renderStageIcons("country");
+  }
+}
+
+async function renderRegionMap(country, region) {
+  const countryMapPath = countryMapData.get(country);
+  if (!stageMap || !window.Highcharts || !countryMapPath) {
+    renderStageIcons("region");
+    return;
+  }
+  const visualKey = `region-map-${country}-${region || ""}`;
+  if (renderedVisualKey === visualKey) return;
+  renderedVisualKey = visualKey;
+  const renderId = ++stageVisualRenderId;
+  showStageMap();
+
+  try {
+    const topology = await fetchMapTopology(countryMapPath);
+    if (renderId !== stageVisualRenderId) return;
+    const selectedRegion = normalizeForMatch(region || "");
+    const data = topology.features.map((feature) => {
+      const name = feature.properties.name || feature.properties.NAME_1 || "";
+      const selected = selectedRegion && normalizeForMatch(name) === selectedRegion;
+      return {
+        "hc-key": feature.properties["hc-key"],
+        value: selected ? 1 : 0,
+        color: selected ? "#6d22c7" : "#c7ccd3",
+        name,
+      };
+    });
+
+    Highcharts.mapChart(stageMap, {
+      chart: mapChartOptions(topology),
+      title: { text: null },
+      credits: { enabled: false },
+      legend: { enabled: false },
+      mapNavigation: mapNavigationOptions(),
+      tooltip: { pointFormat: "{point.name}" },
+      plotOptions: {
+        map: {
+          borderColor: "#7a8493",
+          borderWidth: 0.55,
+          states: { hover: { color: "#6d22c7" } },
+        },
+      },
+      series: [{ name: "Region", data, joinBy: "hc-key", nullColor: "#c7ccd3" }],
+    });
+  } catch (error) {
+    console.error("Region stage map failed", error);
+    renderStageIcons("region");
+  }
+}
+
+function renderStageIcons(key) {
+  if (!stageIconGrid) return;
+  const visualKey = `icons-${key}`;
+  if (renderedVisualKey === visualKey) return;
+  renderedVisualKey = visualKey;
+  stageVisualRenderId += 1;
+  showStageIcons();
+
+  const items =
+    stageIconSets[key] ||
+    [
+      {
+        title: "Country",
+        text: "Start with one of the six supported European countries.",
+        icon: "M3 6h18M3 12h18M3 18h18M7 3a17 17 0 000 18M17 3a17 17 0 010 18",
+      },
+      {
+        title: "Region",
+        text: "Move from national context into a more specific regional analysis.",
+        icon: "M12 21s7-5.2 7-11a7 7 0 10-14 0c0 5.8 7 11 7 11zM12 10h.01",
+      },
+      {
+        title: "Sector",
+        text: "Select the policy sector that shapes the transition pathway.",
+        icon: "M4 7h16M4 12h16M4 17h16",
+      },
+    ];
+
+  stageIconGrid.innerHTML = items
+    .map(
+      (item) => `
+        <article class="stage-icon-card">
+          <span class="stage-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="${item.icon}"></path>
+            </svg>
+          </span>
+          <h3>${item.title}</h3>
+          <p>${item.text}</p>
+        </article>
+      `,
+    )
+    .join("");
 }
 
 function plainTextFromHtml(html) {
   const element = document.createElement("div");
   element.innerHTML = html;
   return element.textContent.replace(/\s+/g, " ").trim();
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function loadVoices() {
@@ -719,12 +1104,14 @@ function setInputMode(mode = "text", step = "", options = []) {
 }
 
 function updateSessionCard(session) {
+  currentSession = session || {};
   sessionFields.country.textContent = session?.country || "Not selected";
   sessionFields.region.textContent = session?.region || "Not selected";
   sessionFields.sector.textContent = session?.sector || "Not selected";
   const hasSession = Boolean(session?.country || session?.region || session?.sector);
   if (sessionEmpty) sessionEmpty.hidden = hasSession;
   document.querySelector(".stage-selection")?.classList.toggle("has-session", hasSession);
+  updateStageVisual(currentStep, currentSession);
 }
 
 function disableOldOptions() {
@@ -923,6 +1310,7 @@ async function restoreSession(nextSessionId) {
   pauseSpeech();
   saveCurrentInputState();
   setLoading(true);
+  let shouldStartFresh = false;
   try {
     const response = await fetch(`/api/sessions/${encodeURIComponent(nextSessionId)}`);
     if (response.status === 401) {
@@ -947,8 +1335,18 @@ async function restoreSession(nextSessionId) {
     sessionsPanel.hidden = true;
   } catch (error) {
     console.error("Session restore failed", error);
+    if (nextSessionId === sessionId) {
+      localStorage.removeItem(sessionKey);
+      sessionId = null;
+      chatLog.innerHTML = "";
+      optionTray.innerHTML = "";
+      shouldStartFresh = true;
+    }
   } finally {
     setLoading(false);
+  }
+  if (shouldStartFresh) {
+    sendMessage("", false);
   }
 }
 
@@ -1127,6 +1525,17 @@ micButton?.addEventListener("click", () => {
 resetButton.addEventListener("click", async () => {
   pauseSpeech();
   clearCurrentInputState();
+  if (!sessionHasCountry()) {
+    messageInput.value = "";
+    updateOptionHighlight();
+    if (sessionId) {
+      await restoreSession(sessionId);
+    } else {
+      await sendMessage("", false);
+    }
+    return;
+  }
+
   localStorage.removeItem(sessionKey);
   sessionId = null;
   chatLog.innerHTML = "";
@@ -1243,8 +1652,10 @@ document.addEventListener("DOMContentLoaded", () => {
   configureVoiceControls();
   configureMic();
   clearCurrentInputState();
-  localStorage.removeItem(sessionKey);
-  sessionId = null;
   loadSessions();
-  sendMessage("", false);
+  if (sessionId) {
+    restoreSession(sessionId);
+  } else {
+    sendMessage("", false);
+  }
 });

@@ -138,6 +138,51 @@ def ensure_runtime_schema() -> None:
 
         inspector = inspect(engine)
         table_names = inspector.get_table_names()
+        if "countries" in table_names:
+            country_columns = {column["name"] for column in inspector.get_columns("countries")}
+            country_indexes = {index["name"] for index in inspector.get_indexes("countries")}
+
+            with engine.begin() as connection:
+                if "map_code" not in country_columns:
+                    connection.execute(
+                        text("ALTER TABLE countries ADD COLUMN map_code VARCHAR(8) NULL AFTER name")
+                    )
+                if "map_path" not in country_columns:
+                    connection.execute(
+                        text("ALTER TABLE countries ADD COLUMN map_path VARCHAR(255) NULL AFTER map_code")
+                    )
+                if "ix_countries_map_code" not in country_indexes:
+                    connection.execute(
+                        text("ALTER TABLE countries ADD INDEX ix_countries_map_code (map_code)")
+                    )
+                connection.execute(
+                    text(
+                        """
+                        UPDATE countries
+                        SET
+                          map_code = CASE name
+                            WHEN 'Germany' THEN 'DE'
+                            WHEN 'Hungary' THEN 'HU'
+                            WHEN 'Ireland' THEN 'IE'
+                            WHEN 'Italy' THEN 'IT'
+                            WHEN 'Portugal' THEN 'PT'
+                            WHEN 'Spain' THEN 'ES'
+                            ELSE map_code
+                          END,
+                          map_path = CASE name
+                            WHEN 'Germany' THEN 'countries/de/de-all.geo.json'
+                            WHEN 'Hungary' THEN 'countries/hu/hu-all.geo.json'
+                            WHEN 'Ireland' THEN 'countries/ie/ie-all.geo.json'
+                            WHEN 'Italy' THEN 'countries/it/it-all.geo.json'
+                            WHEN 'Portugal' THEN 'countries/pt/pt-all.geo.json'
+                            WHEN 'Spain' THEN 'countries/es/es-all.geo.json'
+                            ELSE map_path
+                          END
+                        WHERE name IN ('Germany', 'Hungary', 'Ireland', 'Italy', 'Portugal', 'Spain')
+                        """
+                    )
+                )
+
         if "user_sessions" in table_names:
             session_columns = {column["name"] for column in inspector.get_columns("user_sessions")}
             session_indexes = {index["name"] for index in inspector.get_indexes("user_sessions")}

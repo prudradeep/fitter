@@ -87,6 +87,7 @@
 
     <main class="app-shell">
       <section class="stage-visual-panel" aria-label="Analysis progress">
+        <!--
         <div class="stage-orbit" aria-hidden="true">
           <span class="stage-orbit-node node-country"></span>
           <span class="stage-orbit-node node-region"></span>
@@ -94,6 +95,17 @@
           <span class="stage-orbit-node node-hazard"></span>
           <span class="stage-orbit-node node-mitigation"></span>
           <span class="stage-orbit-node node-evaluation"></span>
+        </div>
+        -->
+        <div class="stage-dynamic-visual">
+          <div
+            id="stageMap"
+            class="stage-map"
+            aria-label="Stage map"
+            data-coverage='{{ coverage_rows | tojson }}'
+            data-europe-map-path="custom/europe.geo.json"
+          ></div>
+          <div id="stageIconGrid" class="stage-icon-grid" aria-label="Stage icons"></div>
         </div>
         <div class="stage-copy">
           <p class="stage-eyebrow">Analysis Stage</p>
@@ -287,6 +299,7 @@
       </form>
     </dialog>
 
+    <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/highmaps.js"></script>
     <script src="{{ url_for('static', path='/js/app.js') }}"></script>
   </body>
 </html>

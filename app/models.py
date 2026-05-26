@@ -20,6 +20,8 @@ class Country(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
+    map_code: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    map_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     regions: Mapped[list["Region"]] = relationship(
         back_populates="country",

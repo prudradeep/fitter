@@ -7,6 +7,9 @@ USE drtransition;
 CREATE TABLE IF NOT EXISTS countries (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(120) NOT NULL UNIQUE,
+  map_code VARCHAR(8) NULL,
+  map_path VARCHAR(255) NULL,
+  INDEX ix_countries_map_code (map_code),
   INDEX ix_countries_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -207,13 +210,13 @@ CREATE TABLE IF NOT EXISTS user_activities (
   INDEX ix_user_activities_activity_type (activity_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO countries (name) VALUES
-  ('Germany'),
-  ('Hungary'),
-  ('Ireland'),
-  ('Italy'),
-  ('Portugal'),
-  ('Spain')
+INSERT INTO countries (name, map_code, map_path) VALUES
+  ('Germany', 'DE', 'countries/de/de-all.geo.json'),
+  ('Hungary', 'HU', 'countries/hu/hu-all.geo.json'),
+  ('Ireland', 'IE', 'countries/ie/ie-all.geo.json'),
+  ('Italy', 'IT', 'countries/it/it-all.geo.json'),
+  ('Portugal', 'PT', 'countries/pt/pt-all.geo.json'),
+  ('Spain', 'ES', 'countries/es/es-all.geo.json')
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 INSERT INTO sectors (name) VALUES

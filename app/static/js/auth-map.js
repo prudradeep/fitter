@@ -55,8 +55,8 @@ document.querySelectorAll("[data-coverage-map]").forEach(async (container) => {
         },
         country: item?.country || feature.properties.name,
         sectors: item?.sectors || "Not configured",
-        hazards: item?.hazards || 6,
-        analyses: item?.analyses || 45,
+        hazards: item?.hazards ?? 0,
+        analyses: item?.analyses ?? 0,
         enabledCountry,
       };
     });
@@ -133,7 +133,7 @@ document.querySelectorAll("[data-coverage-map]").forEach(async (container) => {
           joinBy: "hc-key",
           color: "#4d4d4d",
           nullColor: "transparent",
-          borderColor: "#3e4858",
+          borderColor: "#6d22c7",
           states: {
             hover: {
               color: "#6d22c7",
