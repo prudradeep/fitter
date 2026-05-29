@@ -549,13 +549,79 @@ textarea {
 }
 
 .app-shell {
+  --visual-panel-width: 43%;
+  --splitter-width: 14px;
   display: grid;
-  grid-template-columns: minmax(420px, 0.86fr) minmax(620px, 1.14fr);
-  gap: 24px;
+  grid-template-columns:
+    minmax(360px, var(--visual-panel-width))
+    var(--splitter-width)
+    minmax(470px, 1fr);
+  gap: 12px;
   width: min(1408px, calc(100% - 64px));
   height: calc(100vh - 146px);
   margin: 26px auto 28px;
   overflow: hidden;
+}
+
+.workspace-resizer {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  transition: background 160ms ease;
+}
+
+.workspace-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: #d9dee7;
+}
+
+.workspace-resizer span {
+  position: relative;
+  z-index: 1;
+  width: 8px;
+  height: 54px;
+  border: 1px solid #d9dee7;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 5px 12px rgba(15, 23, 42, 0.08);
+}
+
+.workspace-resizer span::before {
+  content: "";
+  position: absolute;
+  inset: 12px 2px;
+  border-left: 1px solid #94a3b8;
+  border-right: 1px solid #94a3b8;
+}
+
+.workspace-resizer:hover,
+.workspace-resizer:focus-visible,
+body.is-resizing-panels .workspace-resizer {
+  background: rgba(109, 40, 217, 0.06);
+  outline: none;
+}
+
+.workspace-resizer:hover span,
+.workspace-resizer:focus-visible span,
+body.is-resizing-panels .workspace-resizer span {
+  border-color: #a78bfa;
+}
+
+body.is-resizing-panels {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .workspace {
@@ -2212,6 +2278,10 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
     height: calc(100vh - 162px);
     margin: 18px auto;
     overflow-y: auto;
+  }
+
+  .workspace-resizer {
+    display: none;
   }
 
   .sidebar {

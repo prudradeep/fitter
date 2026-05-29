@@ -59,6 +59,8 @@ const stageMap = document.querySelector("#stageMap");
 const stageIconGrid = document.querySelector("#stageIconGrid");
 const stageCoverageRows = JSON.parse(stageMap?.dataset.coverage || "[]");
 const europeMapPath = stageMap?.dataset.europeMapPath || "";
+const appShell = document.querySelector(".app-shell");
+const workspaceResizer = document.querySelector("#workspaceResizer");
 
 const sessionFields = {
   country: document.querySelector("#sessionCountry"),
@@ -91,6 +93,10 @@ let stageVisualRenderId = 0;
 const mapTopologyCache = new Map();
 
 const defaultPlaceholder = "Type a country, region, or sector...";
+const panelWidthKey = "dr_transition_visual_panel_width";
+const defaultVisualPanelPercent = 43;
+const visualPanelMinPercent = 30;
+const visualPanelMaxPercent = 62;
 const coverageCountries = stageCoverageRows
   .filter((row) => row.code)
   .map((row) => ({
@@ -298,6 +304,80 @@ function mapChartOptions(topology) {
 function stageCountryTooltipWidth() {
   const panelWidth = stageMap?.getBoundingClientRect().width || window.innerWidth;
   return Math.max(240, Math.min(330, panelWidth - 36, window.innerWidth - 48));
+}
+
+function clampVisualPanelPercent(percent) {
+  return Math.max(visualPanelMinPercent, Math.min(visualPanelMaxPercent, percent));
+}
+
+function resizeStageChart() {
+  window.Highcharts?.charts?.forEach((chart) => {
+    if (chart?.renderTo === stageMap) chart.reflow();
+  });
+}
+
+function applyVisualPanelPercent(percent, persist = true) {
+  if (!appShell || window.matchMedia("(max-width: 900px)").matches) return;
+  const adjustedPercent = clampVisualPanelPercent(percent);
+  appShell.style.setProperty("--visual-panel-width", `${adjustedPercent}%`);
+  workspaceResizer?.setAttribute("aria-valuenow", String(Math.round(adjustedPercent)));
+  if (persist) localStorage.setItem(panelWidthKey, String(adjustedPercent));
+  window.requestAnimationFrame(resizeStageChart);
+}
+
+function configureWorkspaceResizer() {
+  if (!appShell || !workspaceResizer) return;
+  const savedPercent = Number.parseFloat(localStorage.getItem(panelWidthKey) || "");
+  applyVisualPanelPercent(
+    Number.isFinite(savedPercent) ? savedPercent : defaultVisualPanelPercent,
+    false,
+  );
+
+  let pointerId = null;
+
+  workspaceResizer.addEventListener("pointerdown", (event) => {
+    if (window.matchMedia("(max-width: 900px)").matches) return;
+    pointerId = event.pointerId;
+    workspaceResizer.setPointerCapture(pointerId);
+    document.body.classList.add("is-resizing-panels");
+    event.preventDefault();
+  });
+
+  workspaceResizer.addEventListener("pointermove", (event) => {
+    if (pointerId !== event.pointerId) return;
+    const bounds = appShell.getBoundingClientRect();
+    if (!bounds.width) return;
+    const percent = ((event.clientX - bounds.left) / bounds.width) * 100;
+    applyVisualPanelPercent(percent);
+  });
+
+  const stopResize = (event) => {
+    if (pointerId !== event.pointerId) return;
+    workspaceResizer.releasePointerCapture(pointerId);
+    pointerId = null;
+    document.body.classList.remove("is-resizing-panels");
+  };
+
+  workspaceResizer.addEventListener("pointerup", stopResize);
+  workspaceResizer.addEventListener("pointercancel", stopResize);
+  workspaceResizer.addEventListener("keydown", (event) => {
+    const currentPercent =
+      Number.parseFloat(appShell.style.getPropertyValue("--visual-panel-width")) ||
+      defaultVisualPanelPercent;
+    const increment = event.shiftKey ? 5 : 2;
+    if (event.key === "ArrowLeft") {
+      applyVisualPanelPercent(currentPercent - increment);
+    } else if (event.key === "ArrowRight") {
+      applyVisualPanelPercent(currentPercent + increment);
+    } else if (event.key === "Home") {
+      applyVisualPanelPercent(visualPanelMinPercent);
+    } else if (event.key === "End") {
+      applyVisualPanelPercent(visualPanelMaxPercent);
+    } else {
+      return;
+    }
+    event.preventDefault();
+  });
 }
 
 async function fetchMapTopology(path) {
@@ -1651,6 +1731,7 @@ logoutForm?.addEventListener("submit", () => {
 document.addEventListener("DOMContentLoaded", () => {
   configureVoiceControls();
   configureMic();
+  configureWorkspaceResizer();
   clearCurrentInputState();
   loadSessions();
   if (sessionId) {
