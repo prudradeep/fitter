@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, fields
 from uuid import uuid4
 
@@ -14,11 +15,13 @@ class ChatSession:
     sector: str | None = None
     phase: str = "wizard"
     hazards: list[str] | None = None
+    hazard_profiles: dict[str, list[str] | str] | None = None
     custom_hazards: list[str] | None = None
     pending_hazard: str | None = None
     selected_hazard: str | None = None
     selected_hazard_record_id: int | None = None
     socio_demographic_findings: str | None = None
+    socio_demographic_profiles: list[str] | None = None
     additional_dgs: list[str] | None = None
     stats_conversation: list[dict[str, str]] | None = None
     dg_reason: str | None = None
@@ -38,9 +41,43 @@ class ChatSession:
     accepted_custom_hazard_evidence: str | None = None
     accepted_custom_hazard_record_id: int | None = None
     pending_fuzzy_option: str | None = None
+    stats_dialog_conversation: list[dict[str, str]] | None = None
 
     def summary(self) -> SessionSummary:
-        return SessionSummary(country=self.country, region=self.region, sector=self.sector)
+        system_hazard_count = len([hazard for hazard in (self.hazards or []) if hazard])
+        regional_hazard_count = len([hazard for hazard in (self.custom_hazards or []) if hazard])
+        affected_profiles = []
+        if self.socio_demographic_profiles:
+            affected_profiles.extend(self.socio_demographic_profiles)
+        elif self.socio_demographic_findings:
+            affected_profiles.extend(self._profile_lines(self.socio_demographic_findings))
+        affected_profiles.extend(self.additional_dgs or [])
+        seen_profiles: set[str] = set()
+        affected_profile_count = 0
+        for profile in affected_profiles:
+            key = profile.strip().casefold()
+            if key and key not in seen_profiles:
+                seen_profiles.add(key)
+                affected_profile_count += 1
+        return SessionSummary(
+            country=self.country,
+            region=self.region,
+            sector=self.sector,
+            selected_hazard=self.selected_hazard or self.accepted_custom_hazard,
+            target_population_questions=self.target_population_questions or [],
+            hazard_count=system_hazard_count + regional_hazard_count,
+            affected_profile_count=affected_profile_count,
+            mitigation_measure_count=1 if self.mitigation_measure else 0,
+        )
+
+    @staticmethod
+    def _profile_lines(markdown_text: str) -> list[str]:
+        profiles: list[str] = []
+        for line in markdown_text.splitlines():
+            match = re.match(r"^\s*(?:[-*+]|\d+[.)])\s+(.+)$", line)
+            if match:
+                profiles.append(match.group(1).strip())
+        return profiles or ([markdown_text.strip()] if markdown_text.strip() else [])
 
 
 class ChatSessionStore:

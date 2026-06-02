@@ -17,6 +17,11 @@ class SessionSummary(BaseModel):
     country: str | None = None
     region: str | None = None
     sector: str | None = None
+    selected_hazard: str | None = None
+    target_population_questions: list[dict[str, object]] = Field(default_factory=list)
+    hazard_count: int = 0
+    affected_profile_count: int = 0
+    mitigation_measure_count: int = 0
 
 
 class ChatResponse(BaseModel):
@@ -24,6 +29,7 @@ class ChatResponse(BaseModel):
     step: str
     bot_message: str
     options: list[Option] = Field(default_factory=list)
+    other_options: list[str] = Field(default_factory=list)
     session: SessionSummary
     input_mode: str = "text"
     error: bool = False

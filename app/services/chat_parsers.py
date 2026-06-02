@@ -193,6 +193,67 @@ def parse_duplicate_check_response(response: str) -> dict[str, object]:
     }
 
 
+def parse_hazard_input_review_response(response: str) -> dict[str, object]:
+    response = extract_json_object(response)
+    try:
+        parsed = json.loads(response.strip())
+    except json.JSONDecodeError:
+        return {
+            "valid": False,
+            "status": "Invalid",
+            "reason": "The hazard review response was not valid JSON.",
+            "suggestions": [],
+            "error": True,
+        }
+
+    if not isinstance(parsed, dict):
+        return {
+            "valid": False,
+            "status": "Invalid",
+            "reason": "The hazard review response was not an object.",
+            "suggestions": [],
+            "error": True,
+        }
+
+    valid = parsed.get("valid")
+    status = parsed.get("status")
+    reason = parsed.get("reason")
+    suggestions = parsed.get("suggestions")
+    cleaned_suggestions: list[str] = []
+    if isinstance(suggestions, list):
+        for item in suggestions:
+            if isinstance(item, str) and item.strip():
+                cleaned_suggestions.append(item.strip())
+
+    if isinstance(status, str):
+        normalized_status = status.strip().strip("<>").casefold()
+        if normalized_status == "valid":
+            status = "Valid"
+        elif normalized_status == "ambiguous":
+            status = "Ambiguous"
+        elif normalized_status == "invalid":
+            status = "Invalid"
+        else:
+            status = None
+    else:
+        status = None
+
+    if not isinstance(valid, bool):
+        valid = status == "Valid"
+    if status is None:
+        status = "Valid" if valid else "Ambiguous"
+    if not isinstance(reason, str):
+        reason = "Please rewrite the hazard with a narrower, clearer context."
+
+    return {
+        "valid": valid,
+        "status": status,
+        "reason": reason.strip() or "Please rewrite the hazard with a narrower, clearer context.",
+        "suggestions": cleaned_suggestions,
+        "error": False,
+    }
+
+
 def extract_json_object(response: str) -> str:
     cleaned = response.strip()
     if cleaned.startswith("```"):
@@ -240,6 +301,56 @@ def parse_llm_hazard_list(response: str) -> list[str]:
             hazards.append(cleaned)
 
     return hazards
+
+
+def parse_llm_hazard_profiles(response: str) -> list[dict[str, object]]:
+    if is_llm_unavailable_response(response):
+        return []
+
+    try:
+        parsed = json.loads(response.strip())
+    except json.JSONDecodeError:
+        parsed = None
+
+    items: list[dict[str, object]] = []
+    seen: set[str] = set()
+    if isinstance(parsed, list):
+        for item in parsed:
+            hazard = ""
+            profiles: list[str] = []
+            if isinstance(item, dict):
+                hazard_value = item.get("hazard") or item.get("name")
+                profile_value = (
+                    item.get("profiles")
+                    or item.get("affected_profiles")
+                    or item.get("socio_demographic_profiles")
+                    or item.get("profile")
+                    or item.get("hazard_profile")
+                    or item.get("description")
+                )
+                if isinstance(hazard_value, str):
+                    hazard = hazard_value.strip().strip("`*_ ")
+                if isinstance(profile_value, list):
+                    for profile_item in profile_value:
+                        if isinstance(profile_item, str) and profile_item.strip():
+                            profiles.append(profile_item.strip().strip("`*_ ")[:180])
+                elif isinstance(profile_value, str) and profile_value.strip():
+                    profiles.append(profile_value.strip().strip("`*_ ")[:180])
+            elif isinstance(item, str):
+                hazard = item.strip().strip("`*_ ")
+
+            if not hazard or len(hazard) > 180:
+                continue
+            key = hazard.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append({"hazard": hazard, "profiles": profiles[:12]})
+
+    if items:
+        return items
+
+    return [{"hazard": hazard, "profiles": []} for hazard in parse_llm_hazard_list(response)]
 
 
 def is_llm_unavailable_response(response: str) -> bool:

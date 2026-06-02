@@ -7,10 +7,15 @@ def format_hazards(session: ChatSession) -> str:
     sections = [
         "### Sector Hazards from FITTER Survey",
         format_system_hazards(session),
-        "",
-        "### Additional hazards specific to your region",
-        format_custom_hazards(session),
     ]
+    if session.custom_hazards:
+        sections.extend(
+            [
+                "",
+                "### Additional hazards specific to your region",
+                format_custom_hazards(session),
+            ]
+        )
     return "\n".join(sections)
 
 
@@ -18,13 +23,25 @@ def format_system_hazards(session: ChatSession) -> str:
     hazards = list(session.hazards or [])
     if not hazards:
         return "- No hazards were returned by the LLM for the loaded sector prompt."
-    return "\n".join(f"- {hazard}." for hazard in hazards)
+    lines: list[str] = []
+    profiles = session.hazard_profiles or {}
+    for hazard in hazards:
+        lines.append(f"- **{hazard}**")
+        profile_values = profiles.get(hazard)
+        if isinstance(profile_values, str):
+            profile_list = [profile_values]
+        else:
+            profile_list = list(profile_values or [])
+        if profile_list:
+            for profile in profile_list:
+                lines.append(f"    - {profile}")
+    return "\n".join(lines)
 
 
 def format_custom_hazards(session: ChatSession) -> str:
     hazards = list(session.custom_hazards or [])
     if not hazards:
-        return "- No additional regional hazards have been added yet."
+        return ""
     return "\n".join(f"- {hazard}." for hazard in hazards)
 
 
@@ -36,7 +53,12 @@ def format_additional_dgs(session: ChatSession) -> str:
 
 def format_all_dgs(session: ChatSession) -> str:
     sections: list[str] = []
-    if session.socio_demographic_findings:
+    if session.socio_demographic_profiles:
+        sections.append(
+            "Socio-demographic profiles identified by the assistant:\n"
+            + "\n".join(f"- {profile}." for profile in session.socio_demographic_profiles)
+        )
+    elif session.socio_demographic_findings:
         sections.append(session.socio_demographic_findings.strip())
     if session.additional_dgs:
         sections.append(

@@ -184,6 +184,9 @@ class UserHazardSocioDemographic(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_hazard_id: Mapped[int] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
+    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     profile: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="llm")
     reason: Mapped[str | None] = mapped_column(Text)

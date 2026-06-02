@@ -12,4 +12,4 @@ Question {{ current }} of {{ total }}
 
 {{ question }}
 
-Choose one of the options below.
+Choose one of the options below, skip this question, or skip all remaining questions.

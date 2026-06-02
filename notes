@@ -15,3 +15,33 @@ Mitigation report download PDF
 
 Size adjustable UX for chat window
 Check system configuration to run/download LLM Model.
+
+
+Selected steps show on top.
+Show Sectors specific to the country only.
+Animation swap
+on hazard display stats in numbers. Evidance => Mitigation Measures
+Additional hazards specific to your region => dont show if no hazard
+Add skip option in socio demo-graphic questions
+
+Validate new hazard entered by the user: Is this a hazard in policy related to the selected country.
+
+Hazard check for langauge, if the language make sense,
+    1. check for generic and ambigous context, if the hazard is too generic or ambigous
+        1. do a reflective questioning...
+        2.  ask the user to rewrite the hazard with a narrow or understandable context.
+    2. compare the user hazard with the existing hazards, if any existing hazard is similar or fall in the scope of user hazard, suggest those hazards back to the user.
+
+Dive deeper into statistical findings => Conversation start in new window/dialogue.
+
+
+
+Make chat interactive
+Remove statistical basis from profiles
+Don't save duplicate profiles in DB for country, region, sector & hazard
+Target population in "quick select target population" show the dialogue with the questions and options checkbox, multi select
+
+
+For the hazard reason LLM should give the Reflective conclusion, why its accepted.
+In quick selection, if user already gave the answers of some question, those should be auto selected in the dialogue.
+add affected profiles in the

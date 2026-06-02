@@ -50,6 +50,17 @@ const renameSessionDialog = document.querySelector("#renameSessionDialog");
 const renameSessionForm = document.querySelector("#renameSessionForm");
 const renameSessionInput = document.querySelector("#renameSessionInput");
 const cancelRenameButton = document.querySelector("#cancelRenameButton");
+const statsDeepDiveDialog = document.querySelector("#statsDeepDiveDialog");
+const closeStatsDialogButton = document.querySelector("#closeStatsDialogButton");
+const statsDialogLog = document.querySelector("#statsDialogLog");
+const statsDialogForm = document.querySelector("#statsDialogForm");
+const statsDialogInput = document.querySelector("#statsDialogInput");
+const statsDialogSendButton = document.querySelector("#statsDialogSendButton");
+const targetPopulationDialog = document.querySelector("#targetPopulationDialog");
+const targetPopulationForm = document.querySelector("#targetPopulationForm");
+const targetPopulationDialogBody = document.querySelector("#targetPopulationDialogBody");
+const closeTargetPopulationButton = document.querySelector("#closeTargetPopulationButton");
+const cancelTargetPopulationButton = document.querySelector("#cancelTargetPopulationButton");
 const sessionEmpty = document.querySelector("#sessionEmpty");
 const stageVisualTitle = document.querySelector("#stageVisualTitle");
 const stageVisualText = document.querySelector("#stageVisualText");
@@ -70,6 +81,8 @@ const sessionFields = {
 
 let sessionId = localStorage.getItem(sessionKey);
 let loading = false;
+let statsDialogLoading = false;
+let statsDialogStarted = false;
 let inputMode = "text";
 let highlightedOptionLabel = "";
 let pendingRenameSessionId = "";
@@ -88,6 +101,10 @@ let voiceAnalyzerLastBoundaryAt = 0;
 let voiceAnalyzerProgress = 0;
 let currentStep = "";
 let currentSession = {};
+let currentOptions = [];
+let currentOtherOptions = [];
+let currentTargetPopulationQuestion = null;
+let targetPopulationQuestions = [];
 let renderedVisualKey = "";
 let stageVisualRenderId = 0;
 const mapTopologyCache = new Map();
@@ -143,8 +160,8 @@ const stageIconSets = {
       icon: "M16 11a4 4 0 10-8 0 4 4 0 008 0zM4 21a8 8 0 0116 0",
     },
     {
-      title: "Evidence",
-      text: "Attach reasons, sources, and supporting files.",
+      title: "Mitigation measures",
+      text: "Track the responses developed for the selected hazards.",
       icon: "M7 3h7l4 4v14H7V3zM14 3v5h5M9 13h6M9 17h6",
     },
   ],
@@ -243,8 +260,9 @@ function sessionHasCountry(session = currentSession) {
   return Boolean(session?.country);
 }
 
-function updateStageVisual(step = "", session = {}) {
+function updateStageVisual(step = "", session = {}, options = currentOptions) {
   currentStep = step;
+  currentOptions = options || [];
   const key = stageKeyForStep(step);
   const visual = stageVisuals[key] || stageVisuals.country;
   if (stageVisualTitle) stageVisualTitle.textContent = visual.title;
@@ -258,17 +276,29 @@ function updateStageVisual(step = "", session = {}) {
     item.classList.toggle("current", item.dataset.stageKey === key);
   });
   document.body.dataset.analysisStage = key;
-  renderDynamicStageVisual(key, currentSession);
+  renderDynamicStageVisual(key, currentSession, currentOptions);
 }
 
 function showStageMap() {
-  if (stageMap) stageMap.hidden = false;
+  if (stageMap) {
+    stageMap.hidden = false;
+    restartStageAnimation(stageMap);
+  }
   if (stageIconGrid) stageIconGrid.hidden = true;
 }
 
 function showStageIcons() {
   if (stageMap) stageMap.hidden = true;
-  if (stageIconGrid) stageIconGrid.hidden = false;
+  if (stageIconGrid) {
+    stageIconGrid.hidden = false;
+    restartStageAnimation(stageIconGrid);
+  }
+}
+
+function restartStageAnimation(element) {
+  element.classList.remove("stage-visual-enter");
+  void element.offsetWidth;
+  element.classList.add("stage-visual-enter");
 }
 
 function mapNavigationOptions() {
@@ -389,7 +419,7 @@ async function fetchMapTopology(path) {
   return topology;
 }
 
-async function renderDynamicStageVisual(key, session = {}) {
+async function renderDynamicStageVisual(key, session = {}, options = currentOptions) {
   if (key === "country") {
     await renderCountrySelectionMap();
     return;
@@ -398,7 +428,7 @@ async function renderDynamicStageVisual(key, session = {}) {
     await renderRegionMap(session.country, session.region);
     return;
   }
-  renderStageIcons(key);
+  renderStageIcons(key, session, options);
 }
 
 async function renderCountrySelectionMap() {
@@ -565,15 +595,57 @@ async function renderRegionMap(country, region) {
   }
 }
 
-function renderStageIcons(key) {
+function sectorItemsForSession(session = {}, options = []) {
+  const labels = options.length
+    ? options.map((option) => option.label)
+    : (coverageByCountryName.get(session.country)?.sectors || "")
+        .split(",")
+        .map((sector) => sector.trim())
+        .filter(Boolean);
+  const sectorIcons = new Map(stageIconSets.sector.map((item) => [normalizeForMatch(item.title), item.icon]));
+  return labels.map((label) => ({
+    title: label,
+    text: `${label} is available for ${session.country || "the selected country"}.`,
+    icon: sectorIcons.get(normalizeForMatch(label)) || "M4 7h16M4 12h16M4 17h16",
+  }));
+}
+
+function hazardSummaryItems(session = {}) {
+  return [
+    {
+      title: "Hazards",
+      text: String(Number(session.hazard_count) || 0),
+      icon: "M12 3l10 18H2L12 3zM12 9v5M12 17h.01",
+      stat: true,
+    },
+    {
+      title: "Affected profiles",
+      text: String(Number(session.affected_profile_count) || 0),
+      icon: "M16 11a4 4 0 10-8 0 4 4 0 008 0zM4 21a8 8 0 0116 0",
+      stat: true,
+    },
+    {
+      title: "Mitigation measures",
+      text: String(Number(session.mitigation_measure_count) || 0),
+      icon: "M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7l7-4z",
+      stat: true,
+    },
+  ];
+}
+
+function renderStageIcons(key, session = {}, options = currentOptions) {
   if (!stageIconGrid) return;
-  const visualKey = `icons-${key}`;
+  const visualKey = `icons-${key}-${session.country || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${options.map((option) => option.label).join("|")}`;
   if (renderedVisualKey === visualKey) return;
   renderedVisualKey = visualKey;
   stageVisualRenderId += 1;
   showStageIcons();
 
   const items =
+    (key === "sector" && sectorItemsForSession(session, options).length
+      ? sectorItemsForSession(session, options)
+      : null) ||
+    (key === "hazards" ? hazardSummaryItems(session) : null) ||
     stageIconSets[key] ||
     [
       {
@@ -595,15 +667,15 @@ function renderStageIcons(key) {
 
   stageIconGrid.innerHTML = items
     .map(
-      (item) => `
-        <article class="stage-icon-card">
+      (item, index) => `
+        <article class="stage-icon-card" style="--stage-card-index: ${index}">
           <span class="stage-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24">
               <path d="${item.icon}"></path>
             </svg>
           </span>
           <h3>${item.title}</h3>
-          <p>${item.text}</p>
+          <p${item.stat ? ' class="stage-stat-value"' : ""}>${item.text}</p>
         </article>
       `,
     )
@@ -1035,11 +1107,12 @@ function nowLabel() {
   }).format(new Date());
 }
 
-function scrollToBottom() {
-  chatLog.scrollTop = chatLog.scrollHeight;
+function scrollToBottom(targetLog = chatLog) {
+  if (!targetLog) return;
+  targetLog.scrollTop = targetLog.scrollHeight;
 }
 
-function addMessage(role, text, isError = false) {
+function addMessage(role, text, isError = false, targetLog = chatLog) {
   const row = document.createElement("div");
   row.className = `message-row ${role}${isError ? " error" : ""}`;
 
@@ -1072,12 +1145,12 @@ function addMessage(role, text, isError = false) {
     row.appendChild(avatar);
     row.appendChild(bubble);
   }
-  chatLog.appendChild(row);
-  scrollToBottom();
+  targetLog.appendChild(row);
+  scrollToBottom(targetLog);
   return row;
 }
 
-async function typeServerMessage(row, html) {
+async function typeServerMessage(row, html, targetLog = chatLog) {
   const bubble = row.querySelector(".bubble");
   const timestamp = bubble.querySelector(".timestamp");
   timestamp.remove();
@@ -1093,7 +1166,7 @@ async function typeServerMessage(row, html) {
       const text = node.textContent || "";
       for (const char of text) {
         textNode.textContent += char;
-        scrollToBottom();
+        scrollToBottom(targetLog);
         await new Promise((resolve) => setTimeout(resolve, 8));
       }
       return;
@@ -1112,10 +1185,10 @@ async function typeServerMessage(row, html) {
     await typeNode(child, bubble);
   }
   bubble.appendChild(timestamp);
-  scrollToBottom();
+  scrollToBottom(targetLog);
 }
 
-function addTyping() {
+function addTyping(targetLog = chatLog) {
   const row = document.createElement("div");
   row.className = "message-row bot";
   row.dataset.typing = "true";
@@ -1127,8 +1200,8 @@ function addTyping() {
       </span>
     </div>
   `;
-  chatLog.appendChild(row);
-  scrollToBottom();
+  targetLog.appendChild(row);
+  scrollToBottom(targetLog);
   return row;
 }
 
@@ -1152,7 +1225,9 @@ function setLoading(value) {
 
 function setInputMode(mode = "text", step = "", options = []) {
   inputMode = mode;
-  updateStageVisual(step);
+  currentOptions = options || [];
+  syncTargetPopulationQuestion(step, currentOptions);
+  updateStageVisual(step, currentSession, currentOptions);
   const reasonEvidenceMode = mode === "reason_evidence" || mode === "mitigation_reason";
   const evaluationMode = mode === "evaluation_question";
   micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode;
@@ -1185,13 +1260,38 @@ function setInputMode(mode = "text", step = "", options = []) {
 
 function updateSessionCard(session) {
   currentSession = session || {};
-  sessionFields.country.textContent = session?.country || "Not selected";
-  sessionFields.region.textContent = session?.region || "Not selected";
-  sessionFields.sector.textContent = session?.sector || "Not selected";
+  targetPopulationQuestions = Array.isArray(session?.target_population_questions)
+    ? session.target_population_questions
+    : [];
+  [
+    [sessionFields.country, session?.country],
+    [sessionFields.region, session?.region],
+    [sessionFields.sector, session?.sector],
+  ].forEach(([field, value]) => {
+    if (!field) return;
+    field.textContent = value || "";
+    if (field.parentElement) field.parentElement.hidden = !value;
+  });
   const hasSession = Boolean(session?.country || session?.region || session?.sector);
   if (sessionEmpty) sessionEmpty.hidden = hasSession;
   document.querySelector(".stage-selection")?.classList.toggle("has-session", hasSession);
-  updateStageVisual(currentStep, currentSession);
+  updateStageVisual(currentStep, currentSession, currentOptions);
+}
+
+function syncTargetPopulationQuestion(step, options = []) {
+  if (step !== "target_population_question") {
+    currentTargetPopulationQuestion = null;
+    return;
+  }
+  const optionLabels = new Set(
+    (options || [])
+      .map((option) => option.label)
+      .filter((label) => !["Skip", "Skip all", "Quick Select Target Population"].includes(label)),
+  );
+  currentTargetPopulationQuestion =
+    targetPopulationQuestions.find((question) =>
+      (question.options || []).some((label) => optionLabels.has(label)),
+    ) || null;
 }
 
 function disableOldOptions() {
@@ -1201,22 +1301,264 @@ function disableOldOptions() {
   });
 }
 
-function renderOptions(options) {
+function renderOptions(options, otherOptions = []) {
+  currentOptions = options || [];
+  currentOtherOptions = otherOptions || [];
   optionTray.innerHTML = "";
   highlightedOptionLabel = "";
-  options.forEach((option) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "option-pill";
-    button.textContent = option.label;
-    button.addEventListener("click", () => {
-      pauseSpeech();
-      disableOldOptions();
-      sendMessage(option.label, true);
+  if (inputMode === "target_population_multi") {
+    renderTargetPopulationOptions(currentOptions);
+    renderOtherOptionsMenu();
+    return;
+  }
+  options.forEach((option) => optionTray.appendChild(createOptionButton(option.label)));
+  renderOtherOptionsMenu();
+  updateOptionHighlight();
+}
+
+function renderTargetPopulationOptions(options = []) {
+  const normalOptions = options.filter(
+    (option) =>
+      !["Skip", "Skip all", "Quick Select Target Population"].includes(option.label),
+  );
+  const actions = options.filter((option) =>
+    ["Skip", "Skip all", "Quick Select Target Population"].includes(option.label),
+  );
+
+  if (normalOptions.length) {
+    const group = document.createElement("div");
+    group.className = "target-option-group";
+    normalOptions.forEach((option) => {
+      const label = document.createElement("label");
+      label.className = "target-option-check";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = option.label;
+      checkbox.dataset.targetOption = "true";
+      const span = document.createElement("span");
+      span.textContent = option.label;
+      label.appendChild(checkbox);
+      label.appendChild(span);
+      group.appendChild(label);
     });
+    optionTray.appendChild(group);
+
+    const submit = document.createElement("button");
+    submit.type = "button";
+    submit.className = "option-pill";
+    submit.textContent = "Submit selected";
+    submit.addEventListener("click", () => {
+      const selected = Array.from(optionTray.querySelectorAll("[data-target-option='true']:checked"))
+        .map((input) => input.value)
+        .filter(Boolean);
+      if (!selected.length) return;
+      disableOldOptions();
+      addMessage("user", selected.join(", "));
+      sendMessage(selected.join("\n"), false);
+    });
+    optionTray.appendChild(submit);
+  }
+
+  actions.forEach((option) => {
+    const button = createOptionButton(option.label);
     optionTray.appendChild(button);
   });
-  updateOptionHighlight();
+}
+
+function createOptionButton(label, extraClass = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = ["option-pill", extraClass].filter(Boolean).join(" ");
+  button.textContent = label;
+  button.addEventListener("click", () => {
+    pauseSpeech();
+    if (label === "Dive deeper into statistical findings") {
+      openStatsDeepDiveDialog();
+      return;
+    }
+    if (label === "Quick Select Target Population") {
+      openTargetPopulationDialog();
+      return;
+    }
+    disableOldOptions();
+    sendMessage(label, true);
+  });
+  return button;
+}
+
+function renderOtherOptionsMenu() {
+  const navOptions = currentOtherOptions || [];
+  if (!navOptions.length) return;
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "option-pill other-options-toggle";
+  toggle.textContent = "Other Options";
+  toggle.dataset.otherToggle = "true";
+
+  toggle.addEventListener("click", () => {
+    pauseSpeech();
+    const existingButtons = Array.from(optionTray.querySelectorAll("[data-other-nav='true']"));
+    if (existingButtons.length) {
+      existingButtons.forEach((button) => button.remove());
+      toggle.classList.remove("is-open");
+      return;
+    }
+    let insertAfter = toggle;
+    navOptions.forEach((label) => {
+      const button = createOptionButton(label, "other-option-pill");
+      button.dataset.otherNav = "true";
+      optionTray.insertBefore(button, insertAfter.nextSibling);
+      insertAfter = button;
+    });
+    toggle.classList.add("is-open");
+  });
+
+  optionTray.appendChild(toggle);
+}
+
+function setStatsDialogLoading(value) {
+  statsDialogLoading = value;
+  if (statsDialogInput) statsDialogInput.disabled = value;
+  if (statsDialogSendButton) statsDialogSendButton.disabled = value;
+}
+
+function showStatsDeepDiveDialog() {
+  if (!statsDeepDiveDialog) return;
+  if (typeof statsDeepDiveDialog.showModal === "function") {
+    if (!statsDeepDiveDialog.open) statsDeepDiveDialog.showModal();
+  } else {
+    statsDeepDiveDialog.removeAttribute("hidden");
+  }
+  statsDialogInput?.focus();
+}
+
+async function openStatsDeepDiveDialog() {
+  showStatsDeepDiveDialog();
+  if (statsDialogStarted) return;
+  statsDialogStarted = true;
+  if (statsDialogLog) statsDialogLog.innerHTML = "";
+  await sendStatsDialogMessage(
+    "Dive deeper into the statistical findings for the listed hazards. Summarise the most important results and affected groups.",
+    false,
+  );
+}
+
+function closeStatsDeepDiveDialog() {
+  pauseSpeech();
+  if (!statsDeepDiveDialog) return;
+  if (typeof statsDeepDiveDialog.close === "function") {
+    statsDeepDiveDialog.close();
+  } else {
+    statsDeepDiveDialog.setAttribute("hidden", "");
+  }
+  messageInput.focus();
+}
+
+function showTargetPopulationDialog() {
+  if (!targetPopulationDialog) return;
+  if (typeof targetPopulationDialog.showModal === "function") {
+    if (!targetPopulationDialog.open) targetPopulationDialog.showModal();
+  } else {
+    targetPopulationDialog.removeAttribute("hidden");
+  }
+}
+
+function closeTargetPopulationDialog() {
+  if (!targetPopulationDialog) return;
+  if (typeof targetPopulationDialog.close === "function") {
+    targetPopulationDialog.close();
+  } else {
+    targetPopulationDialog.setAttribute("hidden", "");
+  }
+}
+
+function openTargetPopulationDialog() {
+  if (!targetPopulationDialogBody) return;
+  const questions = targetPopulationQuestions.length
+    ? targetPopulationQuestions
+    : currentTargetPopulationQuestion
+      ? [currentTargetPopulationQuestion]
+      : [];
+  targetPopulationDialogBody.innerHTML = "";
+  questions.forEach((question) => {
+    const section = document.createElement("fieldset");
+    section.className = "target-dialog-question";
+    section.dataset.questionId = question.id;
+    const legend = document.createElement("legend");
+    legend.textContent = question.question || "Target population question";
+    section.appendChild(legend);
+    (question.options || []).forEach((option) => {
+      const label = document.createElement("label");
+      label.className = "target-option-check";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = option;
+      checkbox.dataset.quickTargetOption = "true";
+      const span = document.createElement("span");
+      span.textContent = option;
+      label.appendChild(checkbox);
+      label.appendChild(span);
+      section.appendChild(label);
+    });
+    targetPopulationDialogBody.appendChild(section);
+  });
+  showTargetPopulationDialog();
+}
+
+function targetPopulationBatchPayload() {
+  return Array.from(targetPopulationDialogBody?.querySelectorAll(".target-dialog-question") || [])
+    .map((section) => ({
+      question_id: Number(section.dataset.questionId),
+      answers: Array.from(section.querySelectorAll("[data-quick-target-option='true']:checked"))
+        .map((input) => input.value)
+        .filter(Boolean),
+    }))
+    .filter((item) => item.question_id && item.answers.length);
+}
+
+async function sendStatsDialogMessage(message, echoUser = true) {
+  if (statsDialogLoading || !statsDialogLog) return;
+  const cleanMessage = message.trim();
+  if (!cleanMessage) return;
+  if (echoUser) addMessage("user", cleanMessage, false, statsDialogLog);
+
+  const typing = addTyping(statsDialogLog);
+  setStatsDialogLoading(true);
+
+  try {
+    const response = await fetch("/api/stats-deep-dive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: cleanMessage,
+        session_id: sessionId,
+      }),
+    });
+
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+
+    const data = await response.json();
+    sessionId = data.session_id;
+    localStorage.setItem(sessionKey, sessionId);
+
+    typing.remove();
+    const botRow = addMessage("bot", "", data.error, statsDialogLog);
+    speakServerMessage(data.bot_message);
+    await typeServerMessage(botRow, data.bot_message, statsDialogLog);
+    updateSessionCard(data.session);
+    loadSessions();
+  } catch (error) {
+    typing.remove();
+    console.error("Stats deep dive request failed", error);
+  } finally {
+    setStatsDialogLoading(false);
+    statsDialogInput?.focus();
+  }
 }
 
 function inputStateKey(id = sessionId) {
@@ -1405,12 +1747,14 @@ async function restoreSession(nextSessionId) {
     localStorage.setItem(sessionKey, sessionId);
     chatLog.innerHTML = "";
     optionTray.innerHTML = "";
+    statsDialogStarted = false;
+    if (statsDialogLog) statsDialogLog.innerHTML = "";
     (data.messages || []).forEach((message) => {
       addMessage(message.role, message.content, Boolean(message.is_error));
     });
     updateSessionCard(data.session || {});
     setInputMode(data.input_mode || "text", data.step, data.options || []);
-    renderOptions(data.options || []);
+    renderOptions(data.options || [], data.other_options || []);
     applySavedInputState();
     sessionsPanel.hidden = true;
   } catch (error) {
@@ -1472,12 +1816,20 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     localStorage.setItem(sessionKey, sessionId);
 
     typing.remove();
+    if (data.step === "stats_deep_dive_dialog") {
+      updateSessionCard(data.session);
+      setInputMode(data.input_mode || "text", currentStep, data.options || []);
+      renderOptions(data.options || [], data.other_options || []);
+      await openStatsDeepDiveDialog();
+      loadSessions();
+      return;
+    }
     const botRow = addMessage("bot", "", data.error);
     speakServerMessage(data.bot_message);
     await typeServerMessage(botRow, data.bot_message);
     updateSessionCard(data.session);
     setInputMode(data.input_mode || "text", data.step, data.options || []);
-    renderOptions(data.options || []);
+    renderOptions(data.options || [], data.other_options || []);
     loadSessions();
   } catch (error) {
     typing.remove();
@@ -1604,6 +1956,7 @@ micButton?.addEventListener("click", () => {
 
 resetButton.addEventListener("click", async () => {
   pauseSpeech();
+  closeStatsDeepDiveDialog();
   clearCurrentInputState();
   if (!sessionHasCountry()) {
     messageInput.value = "";
@@ -1618,6 +1971,8 @@ resetButton.addEventListener("click", async () => {
 
   localStorage.removeItem(sessionKey);
   sessionId = null;
+  statsDialogStarted = false;
+  if (statsDialogLog) statsDialogLog.innerHTML = "";
   chatLog.innerHTML = "";
   optionTray.innerHTML = "";
   updateSessionCard({ country: null, region: null, sector: null });
@@ -1656,6 +2011,34 @@ renameSessionForm?.addEventListener("submit", async (event) => {
 });
 
 cancelRenameButton?.addEventListener("click", closeRenameDialog);
+
+closeStatsDialogButton?.addEventListener("click", closeStatsDeepDiveDialog);
+
+statsDeepDiveDialog?.addEventListener("close", () => {
+  pauseSpeech();
+  messageInput.focus();
+});
+
+statsDialogForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const value = statsDialogInput.value.trim();
+  if (!value) return;
+  statsDialogInput.value = "";
+  sendStatsDialogMessage(value, true);
+});
+
+closeTargetPopulationButton?.addEventListener("click", closeTargetPopulationDialog);
+cancelTargetPopulationButton?.addEventListener("click", closeTargetPopulationDialog);
+
+targetPopulationForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const payload = targetPopulationBatchPayload();
+  if (!payload.length) return;
+  closeTargetPopulationDialog();
+  disableOldOptions();
+  addMessage("user", "Quick Select Target Population");
+  sendMessage(`TARGET_POPULATION_BATCH: ${JSON.stringify(payload)}`, false);
+});
 
 function openChangePasswordDialog() {
   changePasswordForm.reset();

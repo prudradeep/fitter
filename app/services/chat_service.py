@@ -1,9 +1,10 @@
 import json
 import logging
+import re
 from dataclasses import asdict
 
 from app.llm import ask_llm_chat
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
@@ -35,14 +36,18 @@ from app.services.chat_formatters import (
 from app.services.chat_options import (
     EVALUATION_CATEGORIES,
     MITIGATION_REVIEW_OPTIONS,
+    OTHER_NAV_OPTIONS,
     POST_SECTOR_OPTIONS,
     REASON_CONFIRMATION_OPTIONS,
     SOCIO_DEMOGRAPHIC_OPTIONS,
     STATS_DEEP_DIVE_OPTIONS,
     best_fuzzy_label,
+    compact_for_match,
     exact_option_label,
+    fuzzy_score,
     match_option_label,
     normalize,
+    normalize_for_match,
     option_list,
 )
 from app.services.chat_parsers import (
@@ -50,7 +55,8 @@ from app.services.chat_parsers import (
     parse_additional_dgs,
     parse_duplicate_check_response,
     parse_evaluation_answer,
-    parse_llm_hazard_list,
+    parse_hazard_input_review_response,
+    parse_llm_hazard_profiles,
     parse_mitigation_reason,
     parse_reason_evidence,
     parse_validation_response,
@@ -79,6 +85,7 @@ class ChatService:
                 session_id = None
             current_session_id, session = session_store.reset(session_id)
             response = self._country_step(current_session_id, session, self.welcome_message)
+            self._attach_other_options(response, session)
             self._finalize_chat_response(current_session_id, session, response)
             return response
 
@@ -87,12 +94,47 @@ class ChatService:
         self._hydrate_session_from_db(session_id)
         current_session_id, session = session_store.get_or_create(session_id)
         self._ensure_user_session(current_session_id, session)
-        if clean_message:
-            self._record_activity(current_session_id, session, "message_received", clean_message)
-            self._record_chat_message(current_session_id, session, "user", clean_message)
 
         response = await self._chat_response(current_session_id, session, clean_message)
+        self._attach_other_options(response, session)
+        if clean_message and not response.error:
+            self._record_activity(current_session_id, session, "message_received", clean_message)
+            self._record_chat_message(current_session_id, session, "user", clean_message)
         self._finalize_chat_response(current_session_id, session, response)
+        return response
+
+    async def handle_stats_deep_dive_dialog(
+        self, message: str, session_id: str | None
+    ) -> ChatResponse:
+        clean_message = message.strip()
+        if not self._session_belongs_to_current_user(session_id):
+            session_id = None
+        self._hydrate_session_from_db(session_id)
+        current_session_id, session = session_store.get_or_create(session_id)
+        self._ensure_user_session(current_session_id, session)
+
+        if session.sector is None:
+            return ChatResponse(
+                session_id=current_session_id,
+                step=session.phase,
+                bot_message=self.invalid_message,
+                options=[],
+                session=session.summary(),
+                error=True,
+            )
+
+        prompt = clean_message or (
+            "Dive deeper into the statistical findings for the listed hazards. "
+            "Summarise the most important results and affected groups."
+        )
+        response = await self._stats_deep_dive(
+            current_session_id,
+            session,
+            prompt,
+            history=session.stats_dialog_conversation or [],
+            persist_history=False,
+        )
+        response.other_options = []
         return response
 
     async def _chat_response(
@@ -104,6 +146,12 @@ class ChatService:
             )
             if fuzzy_response is not None:
                 return fuzzy_response
+
+        other_nav_response = self._handle_other_nav_action(
+            current_session_id, session, clean_message
+        )
+        if other_nav_response is not None:
+            return other_nav_response
 
         if not clean_message and not any([session.country, session.region, session.sector]):
             return self._country_step(current_session_id, session, self.welcome_message)
@@ -209,7 +257,10 @@ class ChatService:
         if action == normalize("Yes"):
             selected_option = session.pending_fuzzy_option
             session.pending_fuzzy_option = None
-            return await self.handle_message(selected_option or "", session_id)
+            if selected_option:
+                if normalize(selected_option) == normalize("Dive deeper into statistical findings"):
+                    return self._stats_deep_dive_dialog_step(session_id, session)
+                return await self._chat_response(session_id, session, selected_option)
 
         if action == normalize("No"):
             session.pending_fuzzy_option = None
@@ -241,6 +292,213 @@ class ChatService:
             session=session.summary(),
             error=False,
         )
+
+    def _handle_other_nav_action(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse | None:
+        if normalize(message) not in {normalize(option) for option in OTHER_NAV_OPTIONS}:
+            return None
+
+        action = normalize(message)
+        if action == normalize("Analyse another hazard in the same sector"):
+            if session.sector is None:
+                return self._repeat_current_options(session_id, session, self.invalid_message, True)
+            return self._hazard_profile_step(session_id, session)
+
+        if action == normalize("Write hazard again"):
+            if session.sector is None:
+                return self._repeat_current_options(session_id, session, self.invalid_message, True)
+            hazard_to_rewrite = session.accepted_custom_hazard or session.selected_hazard
+            if hazard_to_rewrite and session.custom_hazards:
+                session.custom_hazards = [
+                    hazard
+                    for hazard in session.custom_hazards
+                    if normalize(hazard) != normalize(hazard_to_rewrite)
+                ]
+            self._clear_selected_hazard_context(session)
+            session.phase = "add_hazard"
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message("add_hazard.md", sector=session.sector),
+                options=[],
+                session=session.summary(),
+                error=False,
+            )
+
+        if action == normalize("Write mitigation measure again"):
+            if session.selected_hazard is None:
+                return self._repeat_current_options(session_id, session, self.invalid_message, True)
+            session.phase = "mitigation_reason"
+            session.mitigation_measure = None
+            session.mitigation_reason = None
+            session.mitigation_record_id = None
+            session.evaluation_questions = None
+            session.evaluation_index = 0
+            session.evaluation_answers = None
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_measure_reason.md",
+                    hazard=session.selected_hazard or "the selected hazard",
+                    dgs=format_all_dgs(session),
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_reason",
+                error=False,
+            )
+
+        if action == normalize("Select another region"):
+            if session.country_id is None:
+                return self._country_step(session_id, session, self.invalid_message, True)
+            self._clear_region_context(session)
+            regions = self.db.scalars(
+                select(Region).where(Region.country_id == session.country_id).order_by(Region.name)
+            ).all()
+            return ChatResponse(
+                session_id=session_id,
+                step="region",
+                bot_message=render_message(
+                    "country_selected.md",
+                    country=session.country or "your selected country",
+                ),
+                options=option_list(list(regions)),
+                session=session.summary(),
+                error=False,
+            )
+
+        if action == normalize("Choose a different sector"):
+            if session.country_id is None:
+                return self._country_step(session_id, session, self.invalid_message, True)
+            self._clear_sector_context(session)
+            return ChatResponse(
+                session_id=session_id,
+                step="sector",
+                bot_message=render_message(
+                    "region_selected.md",
+                    region=session.region or session.country or "your selected country",
+                ),
+                options=option_list(self._sectors_for_country(session.country_id)),
+                session=session.summary(),
+                error=False,
+            )
+
+        if action == normalize("Start over with a different country"):
+            self._reset_session(session)
+            return self._country_step(session_id, session, self.welcome_message)
+
+        return None
+
+    @staticmethod
+    def _clear_sector_context(session: ChatSession) -> None:
+        session.sector_id = None
+        session.sector = None
+        session.phase = "wizard"
+        session.hazards = None
+        session.hazard_profiles = None
+        session.custom_hazards = None
+        ChatService._clear_selected_hazard_context(session)
+
+    @staticmethod
+    def _clear_region_context(session: ChatSession) -> None:
+        session.region_id = None
+        session.region = None
+        ChatService._clear_sector_context(session)
+
+    @staticmethod
+    def _clear_selected_hazard_context(session: ChatSession) -> None:
+        session.pending_hazard = None
+        session.selected_hazard = None
+        session.selected_hazard_record_id = None
+        session.socio_demographic_findings = None
+        session.socio_demographic_profiles = None
+        session.additional_dgs = None
+        session.stats_conversation = None
+        session.dg_reason = None
+        session.dg_evidence = None
+        session.mitigation_measure = None
+        session.mitigation_reason = None
+        session.mitigation_record_id = None
+        session.evaluation_questions = None
+        session.evaluation_index = 0
+        session.evaluation_answers = None
+        session.target_population_questions = None
+        session.target_population_index = 0
+        session.target_population_answers = None
+        session.saved_target_population_answers = None
+        session.accepted_custom_hazard = None
+        session.accepted_custom_hazard_reason = None
+        session.accepted_custom_hazard_evidence = None
+        session.accepted_custom_hazard_record_id = None
+        session.pending_fuzzy_option = None
+        session.stats_dialog_conversation = None
+
+    @staticmethod
+    def _reset_session(session: ChatSession) -> None:
+        fresh_session = ChatSession()
+        for key, value in asdict(fresh_session).items():
+            setattr(session, key, value)
+
+    def _attach_other_options(self, response: ChatResponse, session: ChatSession) -> None:
+        self._apply_country_profile_count(response, session)
+        response.other_options = self._other_nav_options(session, response.step)
+
+    def _apply_country_profile_count(self, response: ChatResponse, session: ChatSession) -> None:
+        if session.country_id is None or session.sector_id is None:
+            return
+        count = self._country_sector_affected_profile_count(session.country_id, session.sector_id)
+        if count > 0:
+            response.session.affected_profile_count = count
+
+    def _country_sector_affected_profile_count(self, country_id: int, sector_id: int) -> int:
+        try:
+            query = (
+                select(UserHazardSocioDemographic.profile)
+                .join(
+                    UserHazard,
+                    UserHazard.id == UserHazardSocioDemographic.user_hazard_id,
+                )
+                .join(UserSession, UserSession.id == UserHazard.user_session_id)
+                .where(
+                    UserHazardSocioDemographic.country_id == country_id,
+                    UserHazardSocioDemographic.sector_id == sector_id,
+                )
+            )
+            if self.user_id is not None:
+                query = query.where(UserSession.user_id == self.user_id)
+            profile_subquery = query.distinct().subquery()
+            return int(self.db.scalar(select(func.count()).select_from(profile_subquery)) or 0)
+        except Exception:
+            logger.exception("Failed to count country-sector affected profiles")
+            return 0
+
+    @staticmethod
+    def _other_nav_options(session: ChatSession, step: str) -> list[str]:
+        options: list[str] = []
+        if session.sector and session.selected_hazard:
+            options.append("Analyse another hazard in the same sector")
+        if session.sector and (
+            session.accepted_custom_hazard
+            or session.pending_hazard
+            or (
+                session.selected_hazard
+                and session.custom_hazards
+                and normalize(session.selected_hazard)
+                in {normalize(hazard) for hazard in session.custom_hazards}
+            )
+        ):
+            options.append("Write hazard again")
+        if session.mitigation_measure:
+            options.append("Write mitigation measure again")
+        if session.country and session.region_id is not None and step != "region":
+            options.append("Select another region")
+        if session.sector and step != "sector":
+            options.append("Choose a different sector")
+        if session.country:
+            options.append("Start over with a different country")
+        return options
 
     def _repeat_current_options(
         self,
@@ -359,10 +617,7 @@ class ChatService:
 
         if session.phase == "target_population_question":
             question = self._current_target_population_question(session)
-            options = [
-                Option(id=index, label=label)
-                for index, label in enumerate(question.get("options", []), start=1)
-            ] if question else []
+            options = self._target_population_options(question) if question else []
             return ChatResponse(
                 session_id=session_id,
                 step="target_population_question",
@@ -521,7 +776,17 @@ class ChatService:
         session.sector_id = sector.id
         session.sector = sector.name
         session.phase = "hazards"
-        session.hazards = await self._get_hazards_from_llm(session.sector)
+        hazard_items = await self._get_hazards_from_llm(session.sector)
+        session.hazards = [str(item["hazard"]) for item in hazard_items]
+        session.hazard_profiles = {
+            str(item["hazard"]): [
+                str(profile)
+                for profile in item.get("profiles", [])
+                if str(profile).strip()
+            ]
+            for item in hazard_items
+            if item.get("profiles")
+        }
         session.custom_hazards = self._saved_custom_hazards_for_context(session)
         self._ensure_user_session(session_id, session)
         self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
@@ -570,14 +835,7 @@ class ChatService:
             )
 
         if action == normalize("Dive deeper into statistical findings"):
-            session.phase = "stats_deep_dive"
-            session.stats_conversation = []
-            return await self._stats_deep_dive(
-                session_id,
-                session,
-                "Dive deeper into the statistical findings for the listed hazards. "
-                "Summarise the most important results and affected groups.",
-            )
+            return self._stats_deep_dive_dialog_step(session_id, session)
 
         return ChatResponse(
             session_id=session_id,
@@ -586,6 +844,18 @@ class ChatService:
             options=POST_SECTOR_OPTIONS,
             session=session.summary(),
             error=True,
+        )
+
+    def _stats_deep_dive_dialog_step(
+        self, session_id: str, session: ChatSession
+    ) -> ChatResponse:
+        return ChatResponse(
+            session_id=session_id,
+            step="stats_deep_dive_dialog",
+            bot_message="",
+            options=POST_SECTOR_OPTIONS,
+            session=session.summary(),
+            error=False,
         )
 
     async def _handle_stats_deep_dive(
@@ -652,8 +922,8 @@ class ChatService:
                 error=True,
             )
 
+        self._clear_selected_hazard_context(session)
         session.selected_hazard = hazard
-        session.saved_target_population_answers = None
         is_saved_custom_hazard = self._is_saved_custom_hazard(session, hazard)
         hazard_record = self._ensure_user_hazard(
             session_id,
@@ -677,9 +947,10 @@ class ChatService:
                     f"For the selected custom hazard '{hazard}', identify the "
                     "socio-demographic profiles most affected using the saved target "
                     "population answers below. Connect the answer to the country, region, "
-                    "and sector context. Only describe affected groups and the basis for "
-                    "selecting them. Do not include Practical Considerations, Practical "
-                    "Policy Recommendations, mitigation measures, or policy recommendations yet.\n\n"
+                    "and sector context. Return only the affected profile names as "
+                    "Markdown bullets. Do not include statistical basis, explanations, "
+                    "Practical Considerations, Practical Policy Recommendations, "
+                    "mitigation measures, or policy recommendations yet.\n\n"
                     "Saved target population answers:\n"
                     f"{session.saved_target_population_answers or '- No saved target population answers were found.'}"
                 ),
@@ -691,10 +962,10 @@ class ChatService:
             (
                 f"For the selected hazard '{hazard}', identify the socio-demographic "
                 "profiles that are most affected. Focus on statistically supported "
-                "groups from the loaded sector prompt. Only describe affected groups "
-                "and the statistical basis. Do not include Practical Considerations, "
-                "Practical Policy Recommendations, mitigation measures, or policy "
-                "recommendations yet."
+                "groups from the loaded sector prompt. Return only the affected profile "
+                "names as Markdown bullets. Do not include statistical basis, "
+                "explanations, Practical Considerations, Practical Policy Recommendations, "
+                "mitigation measures, or policy recommendations yet."
             ),
         )
 
@@ -805,9 +1076,44 @@ class ChatService:
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_reason",
-                bot_message=self._mitigation_reason_prompt(
-                    session,
-                    error_reason="Both `Mitigation measure` and `Reason` are required.",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason="Both `Mitigation measure` and `Reason` are required.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_reason",
+                error=True,
+            )
+
+        input_review = await self._validate_input_quality(
+            session=session,
+            purpose=(
+                "a mitigation measure and reason for reducing the selected hazard's "
+                "negative impact on affected socio-demographic profiles"
+            ),
+            fields={
+                "Mitigation measure": mitigation_measure,
+                "Reason": reason,
+            },
+        )
+        if input_review is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message("mitigation_validation_unavailable.md"),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_reason",
+                error=True,
+            )
+        if not input_review["valid"]:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason=str(input_review["reason"]),
                 ),
                 options=[],
                 session=session.summary(),
@@ -836,7 +1142,10 @@ class ChatService:
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_reason",
-                bot_message=self._mitigation_reason_prompt(session, validation["reason"]),
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason=validation["reason"],
+                ),
                 options=[],
                 session=session.summary(),
                 input_mode="mitigation_reason",
@@ -964,6 +1273,30 @@ class ChatService:
             return self._evaluation_complete_step(session_id, session)
 
         if reason or evidence:
+            input_review = await self._validate_input_quality(
+                session=session,
+                purpose=(
+                    "an optional evaluation reason and optional evidence supporting "
+                    "the selected mitigation score"
+                ),
+                fields=self._reason_evidence_quality_fields(reason or "", evidence),
+            )
+            if input_review is None:
+                return self._evaluation_question_step(
+                    session_id,
+                    session,
+                    error_reason=(
+                        "I could not validate the reason and evidence because the "
+                        "local LLM is unavailable. Please try this question again."
+                    ),
+                )
+            if not input_review["valid"]:
+                return self._evaluation_question_step(
+                    session_id,
+                    session,
+                    error_reason=str(input_review["reason"]),
+                )
+
             validation = await self._validate_evaluation_answer_against_stats(
                 session=session,
                 question=question,
@@ -1042,6 +1375,33 @@ class ChatService:
                 error=True,
             )
 
+        profile_review = await self._validate_profile_names_input(session, dgs)
+        if profile_review is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="add_dgs",
+                bot_message=(
+                    "I could not validate these socio-demographic profiles because "
+                    "the local LLM is unavailable. Please try again."
+                ),
+                options=[],
+                session=session.summary(),
+                error=True,
+            )
+
+        if not profile_review["valid"]:
+            return ChatResponse(
+                session_id=session_id,
+                step="add_dgs",
+                bot_message=(
+                    "Please rewrite the socio-demographic profile names.\n\n"
+                    f"**Reason:** {profile_review['reason']}"
+                ),
+                options=[],
+                session=session.summary(),
+                error=True,
+            )
+
         existing_dg = self._match_existing_dg(session, dgs)
         if existing_dg is not None:
             return ChatResponse(
@@ -1086,12 +1446,6 @@ class ChatService:
         if session.additional_dgs is None:
             session.additional_dgs = []
         self._extend_unique_profiles(session.additional_dgs, dgs)
-        for dg in dgs:
-            self._store_socio_demographic(
-                session.selected_hazard_record_id,
-                dg,
-                source="user",
-            )
         self._record_activity(session_id, session, "socio_demographics_added", ", ".join(dgs))
         session.phase = "socio_demographic_review"
 
@@ -1116,6 +1470,39 @@ class ChatService:
                     "dg_validation_failed.md",
                     sector=session.sector,
                     reason="`Reason:` is required. Evidence URL and evidence file are optional.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
+        input_review = await self._validate_input_quality(
+            session=session,
+            purpose=(
+                "a reason and optional evidence explaining why the listed "
+                "socio-demographic profiles are severely affected by the selected hazard"
+            ),
+            fields=self._reason_evidence_quality_fields(reason, evidence),
+        )
+        if input_review is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=render_message("dg_validation_unavailable.md"),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+        if not input_review["valid"]:
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=render_message(
+                    "dg_validation_failed.md",
+                    sector=session.sector,
+                    reason=str(input_review["reason"]),
                 ),
                 options=[],
                 session=session.summary(),
@@ -1158,13 +1545,15 @@ class ChatService:
         session.dg_reason = reason
         session.dg_evidence = evidence
         if session.additional_dgs:
-            self._store_socio_demographic(
-                session.selected_hazard_record_id,
-                "\n".join(session.additional_dgs),
-                source="user_validated",
-                reason=reason,
-                evidence=evidence or None,
-            )
+            for dg in session.additional_dgs:
+                self._store_socio_demographic(
+                    session,
+                    session.selected_hazard_record_id,
+                    dg,
+                    source="user_validated",
+                    reason=reason,
+                    evidence=evidence or None,
+                )
         self._record_activity(session_id, session, "socio_demographics_validated", reason)
         session.phase = "mitigation_reason"
         return ChatResponse(
@@ -1197,24 +1586,29 @@ class ChatService:
 
         existing_hazard = self._match_hazard(hazard, session)
         if existing_hazard is not None:
-            session.phase = "hazards"
             session.pending_hazard = None
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
-                bot_message=render_message("hazard_duplicate.md", hazard=existing_hazard),
-                options=POST_SECTOR_OPTIONS,
+                bot_message=render_message(
+                    "hazard_rewrite_required.md",
+                    hazard=hazard,
+                    reason="This appears to already be covered by an existing hazard.",
+                    suggestions=f"- **{existing_hazard}**",
+                    has_suggestions=True,
+                ),
+                options=[],
                 session=session.summary(),
                 error=True,
             )
 
-        duplicate_check = await self._semantic_hazard_duplicate_check(session, hazard)
-        if duplicate_check is None:
+        hazard_review = await self._review_custom_hazard_input(session, hazard)
+        if hazard_review is None:
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
                 bot_message=(
-                    "I could not check whether this hazard is already covered because "
+                    "I could not review this hazard for clarity and overlap because "
                     "the local LLM is unavailable. Please try again."
                 ),
                 options=[],
@@ -1222,17 +1616,19 @@ class ChatService:
                 error=True,
             )
 
-        if duplicate_check["duplicate"]:
-            session.phase = "hazards"
+        if not hazard_review["valid"]:
             session.pending_hazard = None
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
                 bot_message=render_message(
-                    "hazard_duplicate.md",
-                    hazard=duplicate_check["match"] or hazard,
+                    "hazard_rewrite_required.md",
+                    hazard=hazard,
+                    reason=hazard_review["reason"],
+                    suggestions=self._format_hazard_suggestions(hazard_review),
+                    has_suggestions=self._has_hazard_suggestions(hazard_review),
                 ),
-                options=POST_SECTOR_OPTIONS,
+                options=[],
                 session=session.summary(),
                 error=True,
             )
@@ -1242,7 +1638,12 @@ class ChatService:
         return ChatResponse(
             session_id=session_id,
             step="hazards",
-            bot_message=render_message("hazard_reason_evidence.md", hazard=hazard),
+            bot_message=render_message(
+                "hazard_reason_evidence.md",
+                hazard=hazard,
+                matching_hazards=self._format_hazard_suggestions(hazard_review),
+                has_matching_hazards=self._has_hazard_suggestions(hazard_review),
+            ),
             options=[],
             session=session.summary(),
             input_mode="reason_evidence",
@@ -1261,6 +1662,39 @@ class ChatService:
                     "hazard_validation_failed.md",
                     sector=session.sector,
                     reason="`Reason:` is required. Evidence URL and evidence file are optional.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
+        input_review = await self._validate_input_quality(
+            session=session,
+            purpose=(
+                "a reason and optional evidence explaining why the proposed hazard "
+                "is meaningful for the selected country, region, and sector"
+            ),
+            fields=self._reason_evidence_quality_fields(reason, evidence),
+        )
+        if input_review is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message("hazard_validation_unavailable.md"),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+        if not input_review["valid"]:
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message(
+                    "hazard_validation_failed.md",
+                    sector=session.sector,
+                    reason=str(input_review["reason"]),
                 ),
                 options=[],
                 session=session.summary(),
@@ -1329,9 +1763,14 @@ class ChatService:
         return self._custom_hazard_added_step(session_id, session)
 
     async def _stats_deep_dive(
-        self, session_id: str, session: ChatSession, user_message: str
+        self,
+        session_id: str,
+        session: ChatSession,
+        user_message: str,
+        history: list[dict[str, str]] | None = None,
+        persist_history: bool = True,
     ) -> ChatResponse:
-        context, messages = self._build_stats_deep_dive_messages(session, user_message)
+        context, messages = self._build_stats_deep_dive_messages(session, user_message, history)
         answer = await ask_llm_chat(
             context=context,
             messages=messages,
@@ -1339,14 +1778,18 @@ class ChatService:
             max_tokens=900,
         )
 
-        if session.stats_conversation is None:
-            session.stats_conversation = []
-        session.stats_conversation.extend(
-            [
-                {"role": "user", "content": user_message},
-                {"role": "assistant", "content": answer},
-            ]
-        )
+        next_messages = [
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": answer},
+        ]
+        if persist_history:
+            if session.stats_conversation is None:
+                session.stats_conversation = []
+            session.stats_conversation.extend(next_messages)
+        else:
+            if session.stats_dialog_conversation is None:
+                session.stats_dialog_conversation = []
+            session.stats_dialog_conversation.extend(next_messages)
 
         return ChatResponse(
             session_id=session_id,
@@ -1388,16 +1831,25 @@ class ChatService:
         )
         answer = self._strip_practical_sections(answer)
         session.socio_demographic_findings = answer
-        self._store_socio_demographic(
-            session.selected_hazard_record_id,
-            answer,
-            source="llm",
+        session.socio_demographic_profiles = self._extract_socio_demographic_profiles(answer)
+        profiles_to_store = session.socio_demographic_profiles or [answer]
+        for profile in profiles_to_store:
+            self._store_socio_demographic(
+                session,
+                session.selected_hazard_record_id,
+                profile,
+                source="llm",
+            )
+        display_answer = (
+            "\n".join(f"- {profile}" for profile in session.socio_demographic_profiles)
+            if session.socio_demographic_profiles
+            else answer
         )
         return ChatResponse(
             session_id=session_id,
             step="socio_demographic_review",
             bot_message=(
-                markdown_to_html(answer)
+                markdown_to_html(display_answer)
                 + "\n"
                 + render_message("socio_demographic_next.md")
             ),
@@ -1603,10 +2055,7 @@ Sector system prompt:
         if question is None:
             return self._custom_hazard_added_step(session_id, session)
 
-        options = [
-            Option(id=index, label=label)
-            for index, label in enumerate(question["options"], start=1)
-        ]
+        options = self._target_population_options(question)
         return ChatResponse(
             session_id=session_id,
             step="target_population_question",
@@ -1620,69 +2069,155 @@ Sector system prompt:
             ),
             options=options,
             session=session.summary(),
+            input_mode="target_population_multi",
             error=bool(error_reason),
         )
 
     def _handle_target_population_answer(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
+        if message.strip() == "Quick Select Target Population":
+            return self._target_population_question_step(session_id, session)
+        if message.strip().startswith("TARGET_POPULATION_BATCH:"):
+            return self._handle_target_population_batch(session_id, session, message)
+
         question = self._current_target_population_question(session)
         if question is None:
             return self._custom_hazard_added_step(session_id, session)
 
-        options = [
-            Option(id=index, label=label)
-            for index, label in enumerate(question["options"], start=1)
-        ]
-        selected = exact_option_label(message, options)
-        if selected is None:
-            fuzzy_label = match_option_label(message, options)
-            if fuzzy_label is not None:
-                selected = fuzzy_label
+        options = self._target_population_options(question)
+        selected_labels = self._target_population_selected_labels(message, options)
 
-        if selected is None:
+        if not selected_labels:
             return self._target_population_question_step(
                 session_id,
                 session,
-                error_reason="Please choose one of the listed target population options.",
+                error_reason="Please choose one or more listed target population options.",
             )
 
-        if session.target_population_answers is None:
-            session.target_population_answers = []
-        session.target_population_answers.append(
-            {
-                "question_id": int(question["id"]),
-                "question": str(question["question"]),
-                "answer": selected,
-            }
-        )
-        question_option_id = self.db.scalar(
-            select(QuestionOption.id).where(
-                QuestionOption.question_id == int(question["id"]),
-                QuestionOption.option == selected,
-            )
-        )
-        self._store_question_response(
-            session_id,
-            session,
-            question_id=int(question["id"]),
-            category="target_population",
-            response_text=selected,
-            question_option_id=question_option_id,
-            hazard_id=session.accepted_custom_hazard_record_id or session.selected_hazard_record_id,
-        )
-        self._record_activity(
-            session_id,
-            session,
-            "target_population_question_answered",
-            f"{question['question']} -> {selected}",
-        )
+        if any(normalize(label) == normalize("Skip all") for label in selected_labels):
+            session.target_population_index += 1
+            session.target_population_index = len(session.target_population_questions or [])
+            return self._custom_hazard_added_step(session_id, session)
+
+        if any(normalize(label) == normalize("Skip") for label in selected_labels):
+            session.target_population_index += 1
+            if session.target_population_index >= len(session.target_population_questions or []):
+                return self._custom_hazard_added_step(session_id, session)
+            return self._target_population_question_step(session_id, session)
+
+        self._record_target_population_answer(session_id, session, question, selected_labels)
         session.target_population_index += 1
 
         if session.target_population_index >= len(session.target_population_questions or []):
             return self._custom_hazard_added_step(session_id, session)
 
         return self._target_population_question_step(session_id, session)
+
+    def _handle_target_population_batch(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        raw_json = message.split(":", 1)[1].strip()
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return self._target_population_question_step(
+                session_id,
+                session,
+                error_reason="Please submit valid target population selections.",
+            )
+
+        if not isinstance(payload, list):
+            return self._target_population_question_step(
+                session_id,
+                session,
+                error_reason="Please submit valid target population selections.",
+            )
+
+        questions_by_id = {
+            int(question["id"]): question
+            for question in (session.target_population_questions or [])
+            if "id" in question
+        }
+        recorded_any = False
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            try:
+                question_id = int(item.get("question_id"))
+            except (TypeError, ValueError):
+                continue
+            question = questions_by_id.get(question_id)
+            if question is None:
+                continue
+            raw_answers = item.get("answers")
+            if not isinstance(raw_answers, list):
+                continue
+            options = self._target_population_options(question)
+            selected = self._target_population_selected_labels(
+                "\n".join(str(answer) for answer in raw_answers),
+                options,
+            )
+            selected = [
+                label
+                for label in selected
+                if normalize(label) not in {normalize("Skip"), normalize("Skip all")}
+            ]
+            if not selected:
+                continue
+            self._record_target_population_answer(session_id, session, question, selected)
+            recorded_any = True
+
+        if not recorded_any:
+            return self._target_population_question_step(
+                session_id,
+                session,
+                error_reason="Please select at least one target population option.",
+            )
+
+        session.target_population_index = len(session.target_population_questions or [])
+        return self._custom_hazard_added_step(session_id, session)
+
+    def _record_target_population_answer(
+        self,
+        session_id: str,
+        session: ChatSession,
+        question: dict[str, object],
+        selected_labels: list[str],
+    ) -> None:
+        if session.target_population_answers is None:
+            session.target_population_answers = []
+        answer_text = ", ".join(selected_labels)
+        session.target_population_answers.append(
+            {
+                "question_id": int(question["id"]),
+                "question": str(question["question"]),
+                "answer": answer_text,
+            }
+        )
+        for selected in selected_labels:
+            question_option_id = self.db.scalar(
+                select(QuestionOption.id).where(
+                    QuestionOption.question_id == int(question["id"]),
+                    QuestionOption.option == selected,
+                )
+            )
+            self._store_question_response(
+                session_id,
+                session,
+                question_id=int(question["id"]),
+                category="target_population",
+                response_text=selected,
+                question_option_id=question_option_id,
+                hazard_id=session.accepted_custom_hazard_record_id
+                or session.selected_hazard_record_id,
+            )
+        self._record_activity(
+            session_id,
+            session,
+            "target_population_question_answered",
+            f"{question['question']} -> {answer_text}",
+        )
 
     def _custom_hazard_added_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         session.phase = "hazards"
@@ -1707,6 +2242,40 @@ Sector system prompt:
         if session.target_population_index < 0 or session.target_population_index >= len(questions):
             return None
         return questions[session.target_population_index]
+
+    @staticmethod
+    def _target_population_options(question: dict[str, object]) -> list[Option]:
+        labels = [str(label) for label in question.get("options", [])]
+        options = [Option(id=index, label=label) for index, label in enumerate(labels, start=1)]
+        return [
+            *options,
+            Option(id=len(options) + 1, label="Skip"),
+            Option(id=len(options) + 2, label="Skip all"),
+            Option(id=len(options) + 3, label="Quick Select Target Population"),
+        ]
+
+    @staticmethod
+    def _target_population_selected_labels(message: str, options: list[Option]) -> list[str]:
+        raw_parts = [
+            part.strip()
+            for part in re.split(r"[;\n]+", message)
+            if part.strip()
+        ]
+        if not raw_parts:
+            raw_parts = [message.strip()] if message.strip() else []
+
+        selected: list[str] = []
+        seen: set[str] = set()
+        for part in raw_parts:
+            label = exact_option_label(part, options) or match_option_label(part, options)
+            if label is None:
+                continue
+            key = normalize(label)
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append(label)
+        return selected
 
     def _target_population_questions(self) -> list[dict[str, object]]:
         rows = self.db.scalars(
@@ -1819,6 +2388,129 @@ Sector system prompt:
         if reason:
             line += f": {reason}"
         return line
+
+    @staticmethod
+    def _format_hazard_suggestions(review: dict[str, object]) -> str:
+        suggestions = review.get("suggestions")
+        if isinstance(suggestions, list):
+            lines = [f"- **{item}**" for item in suggestions if str(item).strip()]
+            if lines:
+                return "\n".join(lines)
+        return ""
+
+    @staticmethod
+    def _reason_evidence_quality_fields(
+        reason: str, evidence: str | None
+    ) -> dict[str, str]:
+        fields = {"Reason": reason}
+        if evidence and evidence.strip():
+            fields["Evidence URL or file content"] = evidence
+        return fields
+
+    @staticmethod
+    def _has_hazard_suggestions(review: dict[str, object]) -> bool:
+        suggestions = review.get("suggestions")
+        return isinstance(suggestions, list) and any(str(item).strip() for item in suggestions)
+
+    @staticmethod
+    def _local_similar_hazards(hazard: str, existing_hazards: list[str]) -> list[str]:
+        query = normalize_for_match(hazard)
+        compact_query = compact_for_match(hazard)
+        if not query or not compact_query:
+            return []
+
+        query_words = ChatService._hazard_similarity_words(query)
+        matches: list[str] = []
+        for existing in existing_hazards:
+            existing_normalized = normalize_for_match(existing)
+            compact_existing = compact_for_match(existing)
+            if not existing_normalized or not compact_existing:
+                continue
+
+            existing_words = ChatService._hazard_similarity_words(existing_normalized)
+            overlap = len(query_words & existing_words) / max(1, len(query_words))
+            reverse_overlap = len(query_words & existing_words) / max(1, len(existing_words))
+            is_contained = compact_query in compact_existing or compact_existing in compact_query
+            if (
+                is_contained
+                or overlap >= 0.75
+                or reverse_overlap >= 0.75
+                or fuzzy_score(hazard, existing) >= 0.82
+            ):
+                matches.append(existing)
+
+        return list(dict.fromkeys(matches))
+
+    @staticmethod
+    def _hazard_similarity_words(value: str) -> set[str]:
+        words: set[str] = set()
+        for word in value.split():
+            if len(word) <= 2:
+                continue
+            if len(word) > 3 and word.endswith("ies"):
+                word = word[:-3] + "y"
+            elif len(word) > 3 and word.endswith("s"):
+                word = word[:-1]
+            words.add(word)
+        return words
+
+    @staticmethod
+    def _extract_socio_demographic_profiles(markdown_text: str) -> list[str]:
+        profiles: list[str] = []
+        seen: set[str] = set()
+        for raw_line in markdown_text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            bullet_match = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+)$", line)
+            if bullet_match is None:
+                continue
+
+            profile = bullet_match.group(1).strip()
+            if ChatService._is_statistical_basis_line(profile):
+                continue
+            profile = re.sub(r"\*\*(.*?)\*\*", r"\1", profile)
+            profile = re.sub(r"__(.*?)__", r"\1", profile)
+            profile = profile.strip("`*_ ")
+            if ChatService._is_statistical_basis_line(profile):
+                continue
+            for separator in (":", " - ", " – ", " — "):
+                if separator in profile:
+                    profile = profile.split(separator, 1)[0].strip()
+                    break
+            profile = profile.strip(" .;,-")
+            if not profile or len(profile) > 180:
+                continue
+            if profile.casefold().startswith(
+                (
+                    "socio-demographic",
+                    "statistical basis",
+                    "basis",
+                    "reason",
+                    "evidence",
+                )
+            ):
+                continue
+            key = normalize(profile)
+            if key not in seen:
+                seen.add(key)
+                profiles.append(profile)
+        return profiles
+
+    @staticmethod
+    def _is_statistical_basis_line(value: str) -> bool:
+        normalized = normalize_markdown_text(value).strip().strip("*_` ").casefold()
+        return normalized.startswith(
+            (
+                "statistical basis",
+                "basis",
+                "evidence",
+                "reason",
+                "why",
+                "rationale",
+                "note",
+            )
+        )
 
     @staticmethod
     def _strip_practical_sections(markdown_text: str) -> str:
@@ -1947,7 +2639,9 @@ Sector system prompt:
             user_session.region_id = session.region_id
             user_session.sector_id = session.sector_id
             user_session.title = self._session_title(session)
-            user_session.session_data = json.dumps(asdict(session), default=str)
+            session_data = asdict(session)
+            session_data["stats_dialog_conversation"] = None
+            user_session.session_data = json.dumps(session_data, default=str)
             self.db.commit()
             self.db.refresh(user_session)
             return user_session
@@ -1983,6 +2677,8 @@ Sector system prompt:
         self, session_id: str, session: ChatSession, response: ChatResponse
     ) -> None:
         self._ensure_user_session(session_id, session)
+        if response.error:
+            return
         self._record_chat_message(
             session_id,
             session,
@@ -2135,6 +2831,7 @@ Sector system prompt:
 
     def _store_socio_demographic(
         self,
+        session: ChatSession,
         hazard_id: int | None,
         profile: str,
         *,
@@ -2145,15 +2842,54 @@ Sector system prompt:
         if hazard_id is None or not profile.strip():
             return
         try:
-            self.db.add(
-                UserHazardSocioDemographic(
-                    user_hazard_id=hazard_id,
-                    profile=profile.strip(),
-                    source=source,
-                    reason=reason,
-                    evidence=evidence,
+            clean_profile = profile.strip()
+            hazard_name = session.selected_hazard or session.accepted_custom_hazard
+            context_query = (
+                select(UserHazardSocioDemographic)
+                .join(
+                    UserHazard,
+                    UserHazard.id == UserHazardSocioDemographic.user_hazard_id,
+                )
+                .join(UserSession, UserSession.id == UserHazard.user_session_id)
+                .where(
+                    func.lower(UserHazardSocioDemographic.profile) == clean_profile.casefold(),
+                    UserHazardSocioDemographic.country_id == session.country_id,
+                    UserHazardSocioDemographic.region_id == session.region_id,
+                    UserHazardSocioDemographic.sector_id == session.sector_id,
                 )
             )
+            if hazard_name:
+                context_query = context_query.where(func.lower(UserHazard.name) == hazard_name.casefold())
+            if self.user_id is not None:
+                context_query = context_query.where(UserSession.user_id == self.user_id)
+
+            row = self.db.scalar(context_query.limit(1))
+            if row is not None and row.user_hazard_id != hazard_id:
+                return
+            if row is None:
+                row = self.db.scalar(
+                    select(UserHazardSocioDemographic).where(
+                    UserHazardSocioDemographic.user_hazard_id == hazard_id,
+                    func.lower(UserHazardSocioDemographic.profile) == clean_profile.casefold(),
+                    UserHazardSocioDemographic.country_id == session.country_id,
+                    UserHazardSocioDemographic.region_id == session.region_id,
+                    UserHazardSocioDemographic.sector_id == session.sector_id,
+                    )
+                )
+            if row is None:
+                row = UserHazardSocioDemographic(
+                    user_hazard_id=hazard_id,
+                    profile=clean_profile,
+                    source=source,
+                )
+                self.db.add(row)
+            row.country_id = session.country_id
+            row.region_id = session.region_id
+            row.sector_id = session.sector_id
+            if reason is not None:
+                row.reason = reason
+            if evidence is not None:
+                row.evidence = evidence
             self.db.commit()
         except Exception:
             self.db.rollback()
@@ -2258,10 +2994,13 @@ Sector system prompt:
         return context, messages
 
     def _build_stats_deep_dive_messages(
-        self, session: ChatSession, user_message: str
+        self,
+        session: ChatSession,
+        user_message: str,
+        history: list[dict[str, str]] | None = None,
     ) -> tuple[str, list[dict[str, str]]]:
         context, messages = self._build_deep_dive_messages(session, user_message)
-        history = list(session.stats_conversation or [])
+        history = list((session.stats_conversation or []) if history is None else history)
         if not history:
             return context, messages
 
@@ -2283,7 +3022,7 @@ Sector system prompt:
         ]
         return context, messages
 
-    async def _get_hazards_from_llm(self, sector: str | None) -> list[str]:
+    async def _get_hazards_from_llm(self, sector: str | None) -> list[dict[str, object]]:
         sector_prompt = load_sector_prompt(sector)
         context = f"""
 You are a strict extraction assistant for Dr Transition.
@@ -2295,12 +3034,21 @@ Use this sector system prompt as the only source:
             {
                 "role": "user",
                 "content": (
-                    "List all the hazards perceived. Return ONLY valid JSON, "
-                    "an array of hazard names like ['hazard 1', 'hazard 2', ..]. "
-                    "Each item must be only the hazard name. Do not include predictors, "
-                    "demographic variables, countries, model metrics, explanations, caveats, "
-                    "Markdown, or code fences. If the sector analysis is unavailable, "
-                    "return ['Analysis not available']."
+                    "List all the hazards perceived and identify the socio-demographic "
+                    "profiles most affected for each hazard. Connect the profiles to the "
+                    "sector context in the prompt.\n\n"
+                    "Return ONLY valid JSON, an array of objects like:\n"
+                    '[{"hazard": "hazard name", "profiles": ["affected profile 1", "affected profile 2"]}]\n\n'
+                    "Rules:\n"
+                    "- The hazard field must be only the hazard name.\n"
+                    "- The profiles field must be an array of affected profile names only.\n"
+                    "- Do not include statistical basis, explanations, predictors, demographic "
+                    "variables used as model terms, countries, model metrics, caveats, Markdown, "
+                    "or code fences.\n"
+                    "- Do not write full sentences in profiles; use concise profile names.\n"
+                    "- If no profiles are clearly available for a hazard, use an empty array.\n"
+                    "- If the sector analysis is unavailable, return "
+                    '[{"hazard": "Analysis not available", "profiles": []}].'
                 ),
             }
         ]
@@ -2309,9 +3057,9 @@ Use this sector system prompt as the only source:
             context=context,
             messages=messages,
             temperature=0,
-            max_tokens=350,
+            max_tokens=850,
         )
-        return parse_llm_hazard_list(response)
+        return parse_llm_hazard_profiles(response)
 
     async def _validate_hazard_against_stats(
         self,
@@ -2324,7 +3072,7 @@ Use this sector system prompt as the only source:
         existing_hazards = "\n".join(f"- {item}" for item in (session.hazards or []))
         compact_context = build_validation_context(sector_prompt, session)
         context = f"""
-You are a strict validation assistant for Dr Transition.
+You are a practical validation assistant for Dr Transition.
 
 Use this compact sector statistical context as the authoritative source:
 {compact_context}
@@ -2333,7 +3081,8 @@ Use this compact sector statistical context as the authoritative source:
             {
                 "role": "user",
                 "content": (
-                    "Validate whether the proposed new hazard is supported by the sector "
+                    "Validate whether the proposed new regional hazard is reasonable "
+                    "for the selected sector and does not contradict the sector "
                     "statistics, survey findings, or prompt context.\n\n"
                     f"Sector: {session.sector}\n"
                     f"Country: {session.country}\n"
@@ -2348,16 +3097,20 @@ Use this compact sector statistical context as the authoritative source:
                     "Example valid response:\n"
                     '{"valid": true, "reason": "The reason aligns with the survey context."}\n\n'
                     "Example invalid response:\n"
-                    '{"valid": false, "reason": "The reason contradicts or is not supported by the statistical context."}\n\n'
+                    '{"valid": false, "reason": "The reason contradicts the sector context or is too vague to evaluate."}\n\n'
                     "Rules:\n"
-                    "- valid must be true only when the reason is consistent with the "
-                    "loaded statistical context.\n"
-                    "- If evidence content is supplied from a URL or file, valid must "
-                    "also require the reason to be supported by that extracted evidence.\n"
-                    "- valid must be false when the reason or supplied evidence contradicts "
-                    "the statistics, confuses predictors with hazards, invents unsupported "
-                    "numbers, is too vague, or the evidence content does not support the "
-                    "reason.\n"
+                    "- valid should be true when the hazard and reason are meaningful, "
+                    "sector-relevant, and compatible with the loaded context, even if "
+                    "the exact regional hazard is not explicitly named in the statistics.\n"
+                    "- User-added regional hazards may extend the system hazard list; "
+                    "do not reject solely because the hazard is new or locally specific.\n"
+                    "- If evidence content is supplied from a URL or file, use it as "
+                    "additional support, but do not require optional evidence when the "
+                    "reason itself is clear and plausible.\n"
+                    "- valid must be false only when the reason or supplied evidence "
+                    "clearly contradicts the statistics, confuses predictors with hazards, "
+                    "invents unsupported numbers as facts, is unrelated to the sector, "
+                    "or is too vague/generic to evaluate.\n"
                     "- The reason field must be useful to the user and under 60 words."
                 ),
             }
@@ -2423,6 +3176,201 @@ hazard, even when the wording, grammar, or language differs.
         if parsed.get("error"):
             return None
         return parsed
+
+    async def _review_custom_hazard_input(
+        self, session: ChatSession, hazard: str
+    ) -> dict[str, object] | None:
+        existing_hazards = hazard_names(session)
+        local_matches = self._local_similar_hazards(hazard, existing_hazards)
+        if local_matches:
+            return {
+                "status": "Invalid",
+                "valid": False,
+                "reason": "This appears to have the same or similar meaning as an existing hazard.",
+                "suggestions": local_matches,
+            }
+        context = """
+You are a practical hazard intake reviewer for Dr Transition.
+
+Your job is to classify user text before it can be used as a new social hazard,
+and then decide whether it is already clearly covered by existing sector or
+user-added hazards.
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Review the proposed hazard before it is accepted.\n\n"
+                    "Classify the text as one of: Valid, Ambiguous, Invalid.\n\n"
+                    "Validation checks:\n"
+                    "- Check for generic or ambiguous context.\n"
+                    "- It should appear to be a recognizable word or phrase.\n"
+                    "- Valid and meaningful text should pass.\n"
+                    "- Random characters, gibberish, keyboard mashing, or unrecognizable text should fail.\n"
+                    "- Text that is too short to determine intent should be Ambiguous.\n\n"
+                    "Classification rules:\n"
+                    "- Invalid: random characters, keyboard mashing, gibberish, or no clear meaning.\n"
+                    "- Ambiguous: too short, incomplete, only a very broad topic label, "
+                    "or not enough context to understand the intended hazard.\n"
+                    "- Valid: a clear question, request, statement, recognizable phrase, "
+                    "or meaningful hazard-like phrase. It does not need perfect wording.\n\n"
+                    "Be permissive for meaningful regional hazards. Accept concise phrases "
+                    "when the risk or negative outcome is understandable, even if the "
+                    "affected group or place is not fully specified yet.\n\n"
+                    "if the topic is too broad or generic, ask for a rewrite with more specific mechanism or outcome. For example, if the user writes 'transport', you might say 'Please rewrite this with the affected outcome or mechanism, such as 'increased road traffic deaths' or 'disrupted public transit access'.\n\n"
+                    "Compare against existing hazards for semantic similarity. Put any "
+                    "existing hazards with the same meaning, a similar meaning, a close "
+                    "paraphrase, a narrower/broader version, or a substantially overlapping "
+                    "risk in suggestions. If any such match exists, set status to Invalid "
+                    "and valid to false. Do not accept a hazard that is similar to an "
+                    "existing one.\n\n"
+                    "Existing system and user regional hazards:\n"
+                    + ("\n".join(f"- {item}" for item in existing_hazards) or "- None")
+                    + "\n\n"
+                    f"Proposed hazard: {hazard}\n\n"
+                    "Return ONLY valid JSON with this exact shape:\n"
+                    '{"status": "Valid", "valid": true, "reason": "This is a meaningful hazard-like phrase.", "suggestions": []}\n\n'
+                    "Alternative examples:\n"
+                    '{"status": "Ambiguous", "valid": false, "reason": "Please rewrite this with the affected outcome or mechanism.", "suggestions": []}\n'
+                    '{"status": "Invalid", "valid": false, "reason": "The text appears to be gibberish or has no clear meaning.", "suggestions": []}\n\n'
+                    "Output rules:\n"
+                    "- status must be exactly one of: Valid, Ambiguous, Invalid.\n"
+                    "- valid must be true only when status is Valid and no existing hazard has the same or similar meaning.\n"
+                    "- suggestions must contain exact existing hazard names with the same meaning, similar meaning, close paraphrase, broader/narrower overlap, or substantially overlapping risk.\n"
+                    "- If suggestions is not empty, status must be Invalid and valid must be false.\n"
+                    "- If no existing hazards are relevant, suggestions must be an empty array.\n"
+                    "- If status is Ambiguous, ask one reflective rewrite question in the reason field.\n"
+                    "- Keep the reason field under 50 words."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=450,
+        )
+        if is_llm_unavailable_response(response):
+            return None
+
+        parsed = parse_hazard_input_review_response(response)
+        if parsed.get("error"):
+            return None
+        existing_by_key = {normalize(item): item for item in existing_hazards}
+        suggestions = [
+            existing_by_key[normalize(item)]
+            for item in parsed.get("suggestions", [])
+            if isinstance(item, str) and normalize(item) in existing_by_key
+        ]
+        parsed["suggestions"] = list(dict.fromkeys(suggestions))
+        if parsed["suggestions"]:
+            parsed["status"] = "Invalid"
+            parsed["valid"] = False
+        return parsed
+
+    async def _validate_input_quality(
+        self,
+        session: ChatSession,
+        purpose: str,
+        fields: dict[str, str],
+    ) -> dict[str, str | bool] | None:
+        cleaned_fields = {
+            label: value.strip()
+            for label, value in fields.items()
+            if isinstance(value, str) and value.strip()
+        }
+        field_text = "\n".join(f"{label}: {value}" for label, value in cleaned_fields.items())
+        context = """
+You are a practical input-quality validator for Dr Transition.
+
+Your job is to validate user-entered policy workflow text before it is saved or
+used for statistical validation.
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Review the fields below.\n\n"
+                    f"Purpose: {purpose}\n"
+                    f"Sector: {session.sector}\n"
+                    f"Country: {session.country}\n"
+                    f"Region: {session.region}\n"
+                    f"Selected hazard: {session.selected_hazard or session.pending_hazard or 'Not provided'}\n\n"
+                    f"Fields:\n{field_text or '- No text provided'}\n\n"
+                    "Return ONLY valid JSON with this exact shape:\n"
+                    '{"valid": true, "reason": "The text is meaningful and specific enough."}\n\n'
+                    "Validation checks:\n"
+                    "- Each required field should appear to be recognizable words or a meaningful phrase.\n"
+                    "- The text must be valid and meaningful for the stated purpose.\n"
+                    "- Check for generic, ambiguous, incomplete, or unsupported context.\n"
+                    "- Check evidence URL/file content when provided; extracted content that says it could not be read is not valid evidence.\n"
+                    "- Random characters, keyboard mashing, gibberish, or unrecognizable text is invalid.\n"
+                    "- Text that is too short to determine intent is ambiguous and must be invalid for this workflow.\n\n"
+                    "Rules:\n"
+                    "- valid must be false if any field is random, gibberish, keyboard mashing, too short, ambiguous, incomplete, or unrelated to the purpose.\n"
+                    "- valid must be false if the reason is only a broad label, such as 'poverty', 'transport', or 'policy', without a clear mechanism or outcome.\n"
+                    "- valid must be false if provided evidence is only a filename/URL with no readable evidence content, or extracted content says it could not be read.\n"
+                    "- valid may be true for concise text when the mechanism, expected benefit, or affected outcome is understandable.\n"
+                    "- The reason field must tell the user what to rewrite, stay under 60 words, and mention the specific weak field."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=400,
+        )
+        if is_llm_unavailable_response(response):
+            return None
+        return parse_validation_response(response)
+
+    async def _validate_profile_names_input(
+        self, session: ChatSession, profiles: list[str]
+    ) -> dict[str, str | bool] | None:
+        context = """
+You are a practical socio-demographic profile intake reviewer for Dr Transition.
+
+Your job is to validate user-entered profile names before they can be added to
+the affected socio-demographic profile list.
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Review the proposed socio-demographic profile names.\n\n"
+                    f"Sector: {session.sector}\n"
+                    f"Country: {session.country}\n"
+                    f"Region: {session.region}\n"
+                    f"Selected hazard: {session.selected_hazard or 'Not provided'}\n\n"
+                    "Proposed profiles:\n"
+                    + "\n".join(f"- {profile}" for profile in profiles)
+                    + "\n\n"
+                    "Return ONLY valid JSON with this exact shape:\n"
+                    '{"valid": true, "reason": "The profile names are recognizable and meaningful."}\n\n'
+                    "Validation checks:\n"
+                    "- Each item should be a recognizable socio-demographic group, population segment, household type, worker group, age group, income group, location-based group, or other affected profile.\n"
+                    "- The text must be valid and meaningful as a profile name.\n"
+                    "- Random characters, keyboard mashing, gibberish, or unrecognizable text is invalid.\n"
+                    "- Text that is too short to determine intent is invalid.\n"
+                    "- A profile should not be a mitigation measure, policy action, hazard, evidence URL, file name, or full sentence unrelated to affected people.\n\n"
+                    "Rules:\n"
+                    "- valid must be false if any proposed profile is invalid, ambiguous, too generic to identify a group, or unrelated to people/groups.\n"
+                    "- valid may be true for concise phrases such as 'low-income households', 'rural residents', 'older adults', or 'small business owners'.\n"
+                    "- If invalid, the reason must name the weak profile and ask the user to rewrite it as a clear affected group.\n"
+                    "- Keep reason under 60 words."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=400,
+        )
+        if is_llm_unavailable_response(response):
+            return None
+        return parse_validation_response(response)
 
     async def _semantic_dg_duplicate_check(
         self, session: ChatSession, dgs: list[str]

@@ -1,4 +1,4 @@
-These are the following hazards for the **{{ sector }}** sector. The FITTER survey hazards and your regional additions are shown separately.
+These are the following hazards for the **{{ sector }}** sector. Regional additions are shown separately when available.
 
 {{ hazards }}
 

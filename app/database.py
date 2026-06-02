@@ -289,6 +289,88 @@ def ensure_runtime_schema() -> None:
                         "FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL"
                     )
                 )
+
+        inspector = inspect(engine)
+        if "user_hazard_socio_demographics" in inspector.get_table_names():
+            dg_columns = {
+                column["name"]
+                for column in inspector.get_columns("user_hazard_socio_demographics")
+            }
+            dg_indexes = {
+                index["name"]
+                for index in inspector.get_indexes("user_hazard_socio_demographics")
+            }
+            dg_foreign_keys = {
+                fk["name"]
+                for fk in inspector.get_foreign_keys("user_hazard_socio_demographics")
+            }
+            with engine.begin() as connection:
+                if "country_id" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN country_id INT NULL AFTER user_hazard_id"
+                        )
+                    )
+                if "region_id" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN region_id INT NULL AFTER country_id"
+                        )
+                    )
+                if "sector_id" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN sector_id INT NULL AFTER region_id"
+                        )
+                    )
+                if "ix_user_hazard_socio_demographics_country_id" not in dg_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD INDEX ix_user_hazard_socio_demographics_country_id (country_id)"
+                        )
+                    )
+                if "ix_user_hazard_socio_demographics_region_id" not in dg_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD INDEX ix_user_hazard_socio_demographics_region_id (region_id)"
+                        )
+                    )
+                if "ix_user_hazard_socio_demographics_sector_id" not in dg_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD INDEX ix_user_hazard_socio_demographics_sector_id (sector_id)"
+                        )
+                    )
+                if "fk_user_hazard_dgs_country" not in dg_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD CONSTRAINT fk_user_hazard_dgs_country "
+                            "FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL"
+                        )
+                    )
+                if "fk_user_hazard_dgs_region" not in dg_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD CONSTRAINT fk_user_hazard_dgs_region "
+                            "FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL"
+                        )
+                    )
+                if "fk_user_hazard_dgs_sector" not in dg_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD CONSTRAINT fk_user_hazard_dgs_sector "
+                            "FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL"
+                        )
+                    )
     except Exception:
         logger.exception("Runtime schema migration failed")
         raise

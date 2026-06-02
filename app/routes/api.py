@@ -34,6 +34,16 @@ async def chat(
     return await service.handle_message(payload.message, payload.session_id)
 
 
+@router.post("/stats-deep-dive", response_model=ChatResponse)
+async def stats_deep_dive(
+    payload: ChatRequest,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> ChatResponse:
+    service = ChatService(db, user_id=current_user.id)
+    return await service.handle_stats_deep_dive_dialog(payload.message, payload.session_id)
+
+
 @router.get("/sessions")
 async def sessions(
     current_user: AppUser = Depends(require_current_user),
@@ -83,6 +93,7 @@ async def restore_session(
     chat_session = session_store.put(session_key, session_data)
     service = ChatService(db, user_id=current_user.id)
     current_prompt = service._repeat_current_options(session_key, chat_session, "", False)
+    service._attach_other_options(current_prompt, chat_session)
     messages = db.scalars(
         select(UserChatMessage)
         .where(UserChatMessage.user_session_id == user_session.id)
@@ -95,6 +106,7 @@ async def restore_session(
         "session": chat_session.summary().model_dump(),
         "step": current_prompt.step,
         "options": [option.model_dump() for option in current_prompt.options],
+        "other_options": current_prompt.other_options,
         "input_mode": current_prompt.input_mode,
         "messages": [
             {

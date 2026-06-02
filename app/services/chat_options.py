@@ -26,6 +26,15 @@ MITIGATION_REVIEW_OPTIONS = [
     Option(id=1, label="Move to next step"),
 ]
 
+OTHER_NAV_OPTIONS = [
+    "Analyse another hazard in the same sector",
+    "Write hazard again",
+    "Write mitigation measure again",
+    "Select another region",
+    "Choose a different sector",
+    "Start over with a different country",
+]
+
 EVALUATION_CATEGORIES = [
     "The transformative impact",
     "Feasibility and Implementation",

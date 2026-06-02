@@ -153,13 +153,22 @@ CREATE TABLE IF NOT EXISTS user_hazards (
 CREATE TABLE IF NOT EXISTS user_hazard_socio_demographics (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_hazard_id INT NOT NULL,
+  country_id INT NULL,
+  region_id INT NULL,
+  sector_id INT NULL,
   profile TEXT NOT NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'llm',
   reason TEXT NULL,
   evidence TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_user_hazard_dgs_hazard FOREIGN KEY (user_hazard_id) REFERENCES user_hazards(id) ON DELETE CASCADE,
-  INDEX ix_user_hazard_socio_demographics_hazard_id (user_hazard_id)
+  CONSTRAINT fk_user_hazard_dgs_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
+  CONSTRAINT fk_user_hazard_dgs_region FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL,
+  CONSTRAINT fk_user_hazard_dgs_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
+  INDEX ix_user_hazard_socio_demographics_hazard_id (user_hazard_id),
+  INDEX ix_user_hazard_socio_demographics_country_id (country_id),
+  INDEX ix_user_hazard_socio_demographics_region_id (region_id),
+  INDEX ix_user_hazard_socio_demographics_sector_id (sector_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_mitigation_measures (
