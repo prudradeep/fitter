@@ -46,6 +46,20 @@ const sessionsButton = document.querySelector("#sessionsButton");
 const sessionsPanel = document.querySelector("#sessionsPanel");
 const closeSessionsButton = document.querySelector("#closeSessionsButton");
 const sessionsList = document.querySelector("#sessionsList");
+const knowledgeButton = document.querySelector("#knowledgeButton");
+const knowledgeDialog = document.querySelector("#knowledgeDialog");
+const closeKnowledgeButton = document.querySelector("#closeKnowledgeButton");
+const knowledgeUploadForm = document.querySelector("#knowledgeUploadForm");
+const knowledgeUrlForm = document.querySelector("#knowledgeUrlForm");
+const knowledgeSearchForm = document.querySelector("#knowledgeSearchForm");
+const knowledgeFileInput = document.querySelector("#knowledgeFileInput");
+const knowledgeUrlInput = document.querySelector("#knowledgeUrlInput");
+const knowledgeSearchInput = document.querySelector("#knowledgeSearchInput");
+const knowledgeMessage = document.querySelector("#knowledgeMessage");
+const knowledgeProgressSection = document.querySelector("#knowledgeProgressSection");
+const knowledgeProgressList = document.querySelector("#knowledgeProgressList");
+const knowledgeDocuments = document.querySelector("#knowledgeDocuments");
+const knowledgeResults = document.querySelector("#knowledgeResults");
 const renameSessionDialog = document.querySelector("#renameSessionDialog");
 const renameSessionForm = document.querySelector("#renameSessionForm");
 const renameSessionInput = document.querySelector("#renameSessionInput");
@@ -1667,6 +1681,168 @@ function renderSessions(sessions) {
   });
 }
 
+function showKnowledgeMessage(message, isError = true) {
+  if (!knowledgeMessage) return;
+  knowledgeMessage.textContent = message;
+  knowledgeMessage.hidden = false;
+  knowledgeMessage.classList.toggle("success", !isError);
+}
+
+function resetKnowledgeProgress() {
+  if (!knowledgeProgressSection || !knowledgeProgressList) return;
+  knowledgeProgressList.innerHTML = "";
+  knowledgeProgressSection.hidden = true;
+}
+
+function addKnowledgeProgressRow(label, status = "Queued") {
+  if (!knowledgeProgressSection || !knowledgeProgressList) return null;
+  knowledgeProgressSection.hidden = false;
+  const row = document.createElement("article");
+  row.className = "knowledge-progress-row";
+  row.innerHTML = `
+    <strong title="${escapeHtml(label)}">${escapeHtml(label)}</strong>
+    <small>${escapeHtml(status)}</small>
+    <div class="knowledge-progress-track" aria-hidden="true"><span></span></div>
+  `;
+  knowledgeProgressList.appendChild(row);
+  return row;
+}
+
+function updateKnowledgeProgressRow(row, status, percent, state = "") {
+  if (!row) return;
+  row.classList.toggle("done", state === "done");
+  row.classList.toggle("failed", state === "failed");
+  const statusElement = row.querySelector("small");
+  const bar = row.querySelector(".knowledge-progress-track span");
+  if (statusElement) statusElement.textContent = status;
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+}
+
+function uploadKnowledgeFile(file, row) {
+  return new Promise((resolve) => {
+    const formData = new FormData();
+    formData.append("files", file);
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/knowledge/upload");
+    request.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) {
+        updateKnowledgeProgressRow(row, "Uploading...", 12);
+        return;
+      }
+      const percent = Math.round((event.loaded / event.total) * 70);
+      updateKnowledgeProgressRow(row, `Uploading ${Math.max(1, percent)}%`, percent);
+    });
+    request.upload.addEventListener("load", () => {
+      updateKnowledgeProgressRow(row, "Embedding and indexing...", 75);
+    });
+    request.addEventListener("load", () => {
+      let data = { error: true, detail: "Could not ingest file." };
+      try {
+        data = JSON.parse(request.responseText || "{}");
+      } catch (error) {
+        console.error("Knowledge file response parse failed", error);
+      }
+      resolve(data);
+    });
+    request.addEventListener("error", () => {
+      resolve({ error: true, detail: "Upload failed before ingestion started." });
+    });
+    updateKnowledgeProgressRow(row, "Uploading...", 5);
+    request.send(formData);
+  });
+}
+
+async function openKnowledgeDialog() {
+  if (!knowledgeDialog) return;
+  if (typeof knowledgeDialog.showModal === "function") {
+    knowledgeDialog.showModal();
+  } else {
+    knowledgeDialog.removeAttribute("hidden");
+  }
+  await loadKnowledgeDocuments();
+}
+
+function closeKnowledgeDialog() {
+  if (!knowledgeDialog) return;
+  if (typeof knowledgeDialog.close === "function") {
+    knowledgeDialog.close();
+  } else {
+    knowledgeDialog.setAttribute("hidden", "");
+  }
+}
+
+async function loadKnowledgeDocuments() {
+  if (!knowledgeDocuments) return;
+  knowledgeDocuments.innerHTML = `<p class="sessions-empty">Loading documents...</p>`;
+  try {
+    const response = await fetch("/api/knowledge");
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    renderKnowledgeDocuments(data.documents || []);
+  } catch (error) {
+    knowledgeDocuments.innerHTML = `<p class="sessions-empty">Could not load documents.</p>`;
+    console.error("Knowledge documents failed", error);
+  }
+}
+
+function renderKnowledgeDocuments(documents) {
+  if (!knowledgeDocuments) return;
+  knowledgeDocuments.innerHTML = "";
+  if (!documents.length) {
+    knowledgeDocuments.innerHTML = `<p class="sessions-empty">No knowledge documents yet.</p>`;
+    return;
+  }
+  documents.forEach((documentItem) => {
+    const row = document.createElement("article");
+    row.className = "knowledge-item knowledge-document-row";
+    row.innerHTML = `
+      <div class="knowledge-document-main">
+        <strong title="${escapeHtml(documentItem.title)}">${escapeHtml(documentItem.title)}</strong>
+        <small>${escapeHtml(documentItem.source_type || "document")}</small>
+      </div>
+    `;
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "knowledge-delete-button";
+    deleteButton.textContent = "×";
+    deleteButton.setAttribute("aria-label", `Delete ${documentItem.title}`);
+    deleteButton.title = "Delete document";
+    deleteButton.addEventListener("click", () => deleteKnowledgeDocument(documentItem.id));
+    row.appendChild(deleteButton);
+    knowledgeDocuments.appendChild(row);
+  });
+}
+
+function renderKnowledgeResults(results) {
+  if (!knowledgeResults) return;
+  knowledgeResults.innerHTML = "";
+  if (!results.length) {
+    knowledgeResults.innerHTML = `<p class="sessions-empty">No matching chunks found.</p>`;
+    return;
+  }
+  results.forEach((result) => {
+    const row = document.createElement("article");
+    row.className = "knowledge-item";
+    const sourceParts = [result.source_type || "document"];
+    if (result.page_number) sourceParts.push(`page ${result.page_number}`);
+    row.innerHTML = `
+      <strong>${escapeHtml(result.title)}</strong>
+      <small>${escapeHtml(sourceParts.join(" · "))} · Score: ${escapeHtml(result.score)}</small>
+      <p>${escapeHtml(result.content)}</p>
+    `;
+    knowledgeResults.appendChild(row);
+  });
+}
+
+async function deleteKnowledgeDocument(documentId) {
+  const response = await fetch(`/api/knowledge/${encodeURIComponent(documentId)}`, {
+    method: "DELETE",
+  });
+  const data = await response.json();
+  showKnowledgeMessage(data.deleted ? "Document deleted." : "Could not delete document.", !data.deleted);
+  await loadKnowledgeDocuments();
+}
+
 function openRenameDialog(targetSessionId, titleElement) {
   pendingRenameSessionId = targetSessionId;
   pendingRenameTitleElement = titleElement;
@@ -1990,6 +2166,95 @@ sessionsButton?.addEventListener("click", async () => {
 
 closeSessionsButton?.addEventListener("click", () => {
   sessionsPanel.hidden = true;
+});
+
+knowledgeButton?.addEventListener("click", openKnowledgeDialog);
+closeKnowledgeButton?.addEventListener("click", closeKnowledgeDialog);
+
+knowledgeUploadForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const files = Array.from(knowledgeFileInput.files || []);
+  if (!files.length) return;
+  resetKnowledgeProgress();
+  const rows = files.map((file) => addKnowledgeProgressRow(file.name));
+  let totalChunks = 0;
+  let completed = 0;
+  const failures = [];
+  for (const [index, file] of files.entries()) {
+    const row = rows[index];
+    updateKnowledgeProgressRow(row, "Uploading...", 5);
+    const data = await uploadKnowledgeFile(file, row);
+    const failed = data.error || Boolean(data.failures?.length);
+    if (failed) {
+      const detail = data.detail || data.failures?.[0]?.detail || "Could not ingest file.";
+      failures.push({ source: file.name, detail });
+      updateKnowledgeProgressRow(row, detail, 100, "failed");
+      continue;
+    }
+    totalChunks += Number(data.chunks || 0);
+    completed += 1;
+    updateKnowledgeProgressRow(row, `Done · ${data.chunks || 0} chunks`, 100, "done");
+  }
+  showKnowledgeMessage(
+    completed
+      ? `Ingested ${completed} file(s) into ${totalChunks} chunks${failures.length ? `; ${failures.length} failed.` : "."}`
+      : "No files were ingested.",
+    failures.length > 0 || completed === 0
+  );
+  knowledgeFileInput.value = "";
+  await loadKnowledgeDocuments();
+});
+
+knowledgeUrlForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const urls = knowledgeUrlInput.value.split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
+  if (!urls.length) return;
+  resetKnowledgeProgress();
+  const rows = urls.map((url) => addKnowledgeProgressRow(url));
+  let totalChunks = 0;
+  let completed = 0;
+  const failures = [];
+  for (const [index, url] of urls.entries()) {
+    const row = rows[index];
+    updateKnowledgeProgressRow(row, "Fetching and ingesting...", 35);
+    const response = await fetch("/api/knowledge/url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls: [url] }),
+    });
+    const data = await response.json();
+    const failed = data.error || Boolean(data.failures?.length);
+    if (failed) {
+      const detail = data.detail || data.failures?.[0]?.detail || "Could not ingest URL.";
+      failures.push({ source: url, detail });
+      updateKnowledgeProgressRow(row, detail, 100, "failed");
+      continue;
+    }
+    totalChunks += Number(data.chunks || 0);
+    completed += 1;
+    updateKnowledgeProgressRow(row, `Done · ${data.chunks || 0} chunks`, 100, "done");
+  }
+  showKnowledgeMessage(
+    completed
+      ? `Ingested ${completed} URL(s) into ${totalChunks} chunks${failures.length ? `; ${failures.length} failed.` : "."}`
+      : "No URLs were ingested.",
+    failures.length > 0 || completed === 0
+  );
+  knowledgeUrlInput.value = "";
+  await loadKnowledgeDocuments();
+});
+
+knowledgeSearchForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const query = knowledgeSearchInput.value.trim();
+  if (!query) return;
+  const response = await fetch("/api/knowledge/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const data = await response.json();
+  renderKnowledgeResults(data.results || []);
 });
 
 profileButton?.addEventListener("click", () => {

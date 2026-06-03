@@ -224,6 +224,37 @@ class UserQuestionResponse(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class KnowledgeDocument(Base):
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_users.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_uri: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_users.id", ondelete="CASCADE"), index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_uri: Mapped[str | None] = mapped_column(Text)
+    page_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class UserActivity(Base):
     __tablename__ = "user_activities"
 

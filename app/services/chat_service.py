@@ -947,10 +947,10 @@ class ChatService:
                     f"For the selected custom hazard '{hazard}', identify the "
                     "socio-demographic profiles most affected using the saved target "
                     "population answers below. Connect the answer to the country, region, "
-                    "and sector context. Return only the affected profile names as "
-                    "Markdown bullets. Do not include statistical basis, explanations, "
-                    "Practical Considerations, Practical Policy Recommendations, "
-                    "mitigation measures, or policy recommendations yet.\n\n"
+                    "and sector context. For each profile, include a short explanation "
+                    "and a concise statistical basis when available. Do not include "
+                    "Practical Considerations, Practical Policy Recommendations, mitigation "
+                    "measures, or policy recommendations yet.\n\n"
                     "Saved target population answers:\n"
                     f"{session.saved_target_population_answers or '- No saved target population answers were found.'}"
                 ),
@@ -962,10 +962,10 @@ class ChatService:
             (
                 f"For the selected hazard '{hazard}', identify the socio-demographic "
                 "profiles that are most affected. Focus on statistically supported "
-                "groups from the loaded sector prompt. Return only the affected profile "
-                "names as Markdown bullets. Do not include statistical basis, "
-                "explanations, Practical Considerations, Practical Policy Recommendations, "
-                "mitigation measures, or policy recommendations yet."
+                "groups from the loaded sector prompt. For each profile, include a short "
+                "explanation and a concise statistical basis when available. Do not include "
+                "Practical Considerations, Practical Policy Recommendations, mitigation "
+                "measures, or policy recommendations yet."
             ),
         )
 
@@ -1840,16 +1840,11 @@ class ChatService:
                 profile,
                 source="llm",
             )
-        display_answer = (
-            "\n".join(f"- {profile}" for profile in session.socio_demographic_profiles)
-            if session.socio_demographic_profiles
-            else answer
-        )
         return ChatResponse(
             session_id=session_id,
             step="socio_demographic_review",
             bot_message=(
-                markdown_to_html(display_answer)
+                markdown_to_html(answer)
                 + "\n"
                 + render_message("socio_demographic_next.md")
             ),

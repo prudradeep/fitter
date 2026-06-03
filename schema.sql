@@ -207,6 +207,33 @@ CREATE TABLE IF NOT EXISTS user_question_responses (
   INDEX ix_user_question_responses_category (category)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NULL,
+  title VARCHAR(255) NOT NULL,
+  source_type VARCHAR(40) NOT NULL,
+  source_uri TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_knowledge_documents_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+  INDEX ix_knowledge_documents_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  document_id INT NOT NULL,
+  user_id INT NULL,
+  chunk_index INT NOT NULL,
+  content TEXT NOT NULL,
+  source_type VARCHAR(40) NOT NULL,
+  source_uri TEXT NULL,
+  page_number INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_knowledge_chunks_document FOREIGN KEY (document_id) REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+  CONSTRAINT fk_knowledge_chunks_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+  INDEX ix_knowledge_chunks_document_id (document_id),
+  INDEX ix_knowledge_chunks_user_id (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_activities (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_session_id INT NOT NULL,

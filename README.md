@@ -7,7 +7,8 @@ Dr Transition is a local browser-based FastAPI application for guided Twin-Trans
 - Python 3.12+
 - UV
 - MySQL 8+
-- Ollama, with the `mistral` model available locally
+- FAISS for local knowledge-base vector search
+- Ollama, with the chat and embedding models available locally
 
 ## Install UV
 
@@ -60,10 +61,11 @@ mysql -u drtransition -p drtransition < schema.sql
 
 ## Ollama Setup
 
-Install Ollama from https://ollama.com, start the Ollama service, then pull Mistral:
+Install Ollama from https://ollama.com, start the Ollama service, then pull the chat and embedding models:
 
 ```bash
 ollama pull mistral-nemo
+ollama pull nomic-embed-text
 ```
 
 The app calls Ollama at:
@@ -74,6 +76,15 @@ http://localhost:11434
 
 The guided wizard works even if Ollama is not running; `app/llm.py` returns a graceful fallback message when the local model is unavailable.
 
+## FAISS Knowledge Base
+
+The app stores knowledge-base document metadata and chunk text/source/page records in MySQL. It stores vector embeddings in a local FAISS index file. Configure the index path and embedding model in `.env` when needed:
+
+```env
+FAISS_INDEX_PATH="data/knowledge.faiss"
+OLLAMA_EMBEDDING_MODEL="nomic-embed-text"
+```
+
 ## Install Dependencies
 
 ```bash
@@ -83,7 +94,7 @@ uv sync
 ## Run Locally
 
 ```bash
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload --reload-dir app
 ```
 
 Open:

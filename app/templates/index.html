@@ -44,6 +44,7 @@
               <div id="sessionsList" class="sessions-list"></div>
             </div>
           </div>
+          <button id="knowledgeButton" class="reset-button" type="button">Knowledge Base</button>
           <button id="resetButton" class="reset-button" type="button">New Session</button>
           <div class="profile-menu">
             <button id="profileButton" class="profile-button" type="button" aria-label="User profile">
@@ -323,6 +324,57 @@
           <button type="submit">Submit</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="knowledgeDialog" class="target-dialog">
+      <section class="target-dialog-panel" aria-label="Knowledge base">
+        <header class="stats-dialog-header">
+          <div>
+            <h2>Knowledge base</h2>
+            <p>Ingest documents or URLs into the local vector store, then search them.</p>
+          </div>
+          <button id="closeKnowledgeButton" type="button" aria-label="Close knowledge base">×</button>
+        </header>
+        <div class="knowledge-layout">
+          <aside class="knowledge-sidebar">
+            <h3>Documents</h3>
+            <div id="knowledgeDocuments" class="knowledge-list"></div>
+          </aside>
+          <div class="knowledge-body">
+            <section class="knowledge-panel">
+              <form id="knowledgeUploadForm" class="knowledge-form">
+                <label>
+                  <span>Upload PDF/DOCX/MD/TXT files</span>
+                  <input id="knowledgeFileInput" type="file" multiple accept=".pdf,.docx,.md,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" />
+                </label>
+                <button type="submit">Ingest files</button>
+              </form>
+              <form id="knowledgeUrlForm" class="knowledge-form">
+                <label>
+                  <span>Ingest URLs</span>
+                  <textarea id="knowledgeUrlInput" rows="3" placeholder="https://example.org/report&#10;https://example.org/policy.pdf"></textarea>
+                </label>
+                <button type="submit">Ingest URLs</button>
+              </form>
+              <p id="knowledgeMessage" class="dialog-message" hidden></p>
+            </section>
+            <section id="knowledgeProgressSection" class="knowledge-panel" hidden>
+              <h3>Ingestion progress</h3>
+              <div id="knowledgeProgressList" class="knowledge-progress-list"></div>
+            </section>
+            <section class="knowledge-panel">
+              <form id="knowledgeSearchForm" class="knowledge-form">
+                <label>
+                  <span>Search knowledge base</span>
+                  <input id="knowledgeSearchInput" type="search" placeholder="Search uploaded knowledge..." />
+                </label>
+                <button type="submit">Search</button>
+              </form>
+              <div id="knowledgeResults" class="knowledge-list knowledge-results"></div>
+            </section>
+          </div>
+        </div>
+      </section>
     </dialog>
 
     <dialog id="changePasswordDialog" class="rename-dialog">

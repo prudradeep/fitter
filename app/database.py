@@ -251,6 +251,35 @@ def ensure_runtime_schema() -> None:
                 )
             )
 
+        inspector = inspect(engine)
+        if "knowledge_chunks" in inspector.get_table_names():
+            chunk_columns = {column["name"] for column in inspector.get_columns("knowledge_chunks")}
+            chunk_indexes = {index["name"] for index in inspector.get_indexes("knowledge_chunks")}
+            with engine.begin() as connection:
+                if "user_id" not in chunk_columns:
+                    connection.execute(
+                        text("ALTER TABLE knowledge_chunks ADD COLUMN user_id INT NULL AFTER document_id")
+                    )
+                if "source_type" not in chunk_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE knowledge_chunks ADD COLUMN source_type "
+                            "VARCHAR(40) NOT NULL DEFAULT 'document' AFTER content"
+                        )
+                    )
+                if "source_uri" not in chunk_columns:
+                    connection.execute(
+                        text("ALTER TABLE knowledge_chunks ADD COLUMN source_uri TEXT NULL AFTER source_type")
+                    )
+                if "page_number" not in chunk_columns:
+                    connection.execute(
+                        text("ALTER TABLE knowledge_chunks ADD COLUMN page_number INT NULL AFTER source_uri")
+                    )
+                if "ix_knowledge_chunks_user_id" not in chunk_indexes:
+                    connection.execute(
+                        text("ALTER TABLE knowledge_chunks ADD INDEX ix_knowledge_chunks_user_id (user_id)")
+                    )
+
         if "user_hazards" not in inspector.get_table_names():
             return
 

@@ -17,6 +17,7 @@ from app.models import AppUser, UserChatMessage, UserSession
 from app.schemas import ChatRequest, ChatResponse
 from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
+from app.services.knowledge_base import KnowledgeBaseService
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -179,6 +180,125 @@ async def change_password(
     return {"error": False, "detail": "Password updated."}
 
 
+@router.get("/knowledge")
+async def knowledge_documents(
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    service = KnowledgeBaseService(db, current_user.id)
+    return {"documents": service.list_documents()}
+
+
+@router.post("/knowledge/upload")
+async def knowledge_upload(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    form = await request.form()
+    files = [item for key in ("files", "file") for item in form.getlist(key)]
+    if not files:
+        return {"error": True, "detail": "Please choose one or more PDF, DOCX, MD, or TXT files."}
+
+    service = KnowledgeBaseService(db, current_user.id)
+    results: list[dict[str, object]] = []
+    failures: list[dict[str, str]] = []
+    total_chunks = 0
+    for file in files:
+        filename = getattr(file, "filename", "")
+        if not isinstance(filename, str) or not filename.strip() or not hasattr(file, "read"):
+            failures.append({"source": "file", "detail": "Skipped an empty file field."})
+            continue
+        filename = filename.strip()
+        if not filename.casefold().endswith((".pdf", ".docx", ".md", ".txt")):
+            failures.append({"source": filename, "detail": "Supported file types are PDF, DOCX, MD, and TXT."})
+            continue
+        content = await file.read()
+        try:
+            result = await service.ingest_file(filename, content)
+        except (httpx.HTTPError, ValueError) as exc:
+            failures.append({"source": filename, "detail": str(exc)})
+            continue
+        if result.get("error"):
+            failures.append({"source": filename, "detail": str(result.get("detail") or "Could not ingest file.")})
+            continue
+        total_chunks += int(result.get("chunks") or 0)
+        results.append(result)
+    return {
+        "error": bool(failures) and not results,
+        "detail": _knowledge_ingest_detail("file", len(results), total_chunks, failures),
+        "documents": results,
+        "failures": failures,
+        "chunks": total_chunks,
+    }
+
+
+@router.post("/knowledge/url")
+async def knowledge_url(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    payload = await request.json()
+    urls = _knowledge_urls_from_payload(payload)
+    title = str(payload.get("title") or "").strip() or None
+    if not urls:
+        return {"error": True, "detail": "At least one URL is required."}
+    service = KnowledgeBaseService(db, current_user.id)
+    results: list[dict[str, object]] = []
+    failures: list[dict[str, str]] = []
+    total_chunks = 0
+    for url in urls:
+        try:
+            result = await service.ingest_url(url, title if len(urls) == 1 else None)
+        except (httpx.HTTPError, ValueError) as exc:
+            failures.append({"source": url, "detail": str(exc)})
+            continue
+        if result.get("error"):
+            failures.append({"source": url, "detail": str(result.get("detail") or "Could not ingest URL.")})
+            continue
+        total_chunks += int(result.get("chunks") or 0)
+        results.append(result)
+    return {
+        "error": bool(failures) and not results,
+        "detail": _knowledge_ingest_detail("URL", len(results), total_chunks, failures),
+        "documents": results,
+        "failures": failures,
+        "chunks": total_chunks,
+    }
+
+
+@router.post("/knowledge/search")
+async def knowledge_search(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    payload = await request.json()
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        return {"error": True, "detail": "Search query is required.", "results": []}
+    service = KnowledgeBaseService(db, current_user.id)
+    try:
+        return {"error": False, "results": await service.search(query, 10)}
+    except (httpx.HTTPError, ValueError) as exc:
+        return {"error": True, "detail": f"Could not search knowledge base: {exc}", "results": []}
+
+
+@router.delete("/knowledge/{document_id}")
+async def knowledge_delete(
+    document_id: int,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    service = KnowledgeBaseService(db, current_user.id)
+    try:
+        deleted = await service.delete_document(document_id)
+    except (httpx.HTTPError, ValueError) as exc:
+        return {"error": True, "deleted": False, "detail": f"Could not delete document: {exc}"}
+    return {"error": not deleted, "deleted": deleted}
+
+
 async def _chat_payload(request: Request) -> ChatRequest:
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" not in content_type:
@@ -211,6 +331,35 @@ async def _chat_payload(request: Request) -> ChatRequest:
         message = "\n".join([message.strip(), *evidence_parts]).strip()
 
     return ChatRequest(message=message, session_id=session_id)
+
+
+def _knowledge_urls_from_payload(payload: dict[str, object]) -> list[str]:
+    values: list[str] = []
+    raw_urls = payload.get("urls")
+    if isinstance(raw_urls, list):
+        values.extend(str(item or "") for item in raw_urls)
+    raw_url = payload.get("url")
+    if raw_url is not None:
+        values.extend(re.split(r"[\n,]+", str(raw_url)))
+    seen: set[str] = set()
+    urls: list[str] = []
+    for value in values:
+        url = value.strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    return urls
+
+
+def _knowledge_ingest_detail(
+    source_label: str, ingested_count: int, chunks: int, failures: list[dict[str, str]]
+) -> str:
+    if ingested_count and failures:
+        return f"Ingested {ingested_count} {source_label}(s) into {chunks} chunks; {len(failures)} failed."
+    if ingested_count:
+        return f"Ingested {ingested_count} {source_label}(s) into {chunks} chunks."
+    return f"No {source_label}s were ingested."
 
 
 def _allowed_evidence_file(filename: str) -> bool:
