@@ -34,7 +34,17 @@ def format_system_hazards(session: ChatSession) -> str:
             profile_list = list(profile_values or [])
         if profile_list:
             for profile in profile_list:
-                lines.append(f"    - {profile}")
+                if isinstance(profile, dict):
+                    name = str(profile.get("name") or "").strip()
+                    explanation = str(profile.get("explanation") or "").strip()
+                    if not name:
+                        continue
+                    if explanation:
+                        lines.append(f"     - **{name}** — {explanation}")
+                    else:
+                        lines.append(f"     - **{name}**")
+                else:
+                    lines.append(f"     - **{profile}**")
     return "\n".join(lines)
 
 

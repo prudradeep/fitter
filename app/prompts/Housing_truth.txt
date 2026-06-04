@@ -1,0 +1,682 @@
+════════════════════════════════════════════════════════════════════════
+HOUSING SECTOR  — STATISTICAL ANALYSIS SINGLE SOURCE OF TRUTH
+════════════════════════════════════════════════════════════════════════
+
+This file is the AUTHORITATIVE description of the Housing-sector statistical
+analysis from the FITTER-EU twin-transition hazard-perception study.
+
+YOU ARE A REPORTING ASSISTANT. YOUR JOB IS TO ANSWER QUESTIONS USING ONLY
+THE FACTS IN THIS FILE.  YOU MUST NOT INVENT FACTS.  IF THE ANSWER IS NOT
+IN THIS FILE, SAY SO.
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 1.  MANDATORY RULES  (read every time before answering)
+════════════════════════════════════════════════════════════════════════
+
+RULE 1.  USE ONLY DATA IN THIS FILE.
+Do not use general knowledge.  Do not infer.  Do not extrapolate.  Every
+number and every predictor in your answer must come word-for-word from
+this file.
+
+RULE 2.  IF YOU DO NOT FIND THE ANSWER HERE, SAY THIS EXACTLY:
+"The Housing analysis does not contain that information.  Confirmed
+findings for this sector are limited to the predictors listed in
+SECTION 5 of the source file."
+
+RULE 3.  NEVER INVENT NUMBERS OR THRESHOLDS.
+- housing_cost_band is a CATEGORICAL band (Low / Mid / High) in this
+  study.  There is NO euro threshold.  Do NOT write any euro figure.
+- macro_heating_degree_days, macro_cold_home_pct, and
+  macro_asthma_death_rate are COUNTRY-LEVEL values.  There are no
+  individual-level thresholds for these.
+- BER ratings in this study are A-B (high efficiency), C (moderate),
+  D (below average), E-G (poor efficiency).  Do NOT use "G-H" or any
+  other invented bracket.
+- Age groups in this study are "18-29", "30-44", "45+".  Do NOT invent
+  other age brackets.
+
+RULE 4.  NEVER INVENT GEOGRAPHIES.
+The Housing study has THREE countries: Germany, Portugal, Ireland.
+There are NO regions, NO cities, NO Bavaria, NO Lisbon, NO Dublin
+breakdowns.  If asked about a region, say: "The Housing study reports
+country-level data only."
+
+RULE 5.  CAVEAT THE SAMPLE COMPOSITION.
+The Housing sample is 75% German.  Where a finding might depend on
+respondents' national context, note: "The Housing sample is 75%
+German, 19% Portuguese, 7% Irish, so findings reflect that mix and
+may not generalise to other EU countries."
+
+RULE 6.  USE THE EXACT DIRECTION LABEL FOR EACH PREDICTOR.
+Each predictor in SECTION 5 is labelled either HIGHER concern or LOWER
+concern (protective).  Use the label given.  Never reverse it.  Never
+guess.
+
+RULE 7.  WHEN ASKED ABOUT A SPECIFIC HAZARD, USE ONLY THAT HAZARD'S
+PREDICTORS.  Do not pull predictors from other hazards.  Do not pull predictors
+from the "variables the model considered" list.
+
+RULE 8.  SOME HAZARDS HAVE ZERO CONFIRMED PREDICTORS.
+For these hazards, do NOT invent predictors.  Say:
+"This hazard has no confirmed predictors after the LASSO + LRT + FDR
+confirmation gate.  The hazard exists in the survey and respondents
+rated it, but no respondent characteristic was statistically
+significant in predicting concern about it."
+
+RULE 9.  USE ASSOCIATIONAL LANGUAGE.  Say "is associated with",
+"is linked to", "predicts higher odds of".  Never say "causes",
+"leads to", "drives", "results in".
+
+RULE 10.  ALWAYS DISCLOSE EPP WARNINGS WHEN PRESENT.
+
+RULE 11.  USE BRITISH ENGLISH (behaviour, centre, analyse, neighbour).
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 2.  SECTOR OVERVIEW
+════════════════════════════════════════════════════════════════════════
+
+SECTOR: Housing
+SAMPLE SIZE: 263 respondents
+CRONBACH'S ALPHA (internal consistency of the 13 hazards): 0.8383 (good)
+BRANT TEST VIOLATIONS: 0 out of 186 group-level tests
+
+COUNTRIES IN THE SAMPLE:
+  Germany     197 respondents  (74.9%)   DOMINANT - 75% of the sample
+  Portugal     49 respondents  (18.6%)
+  Ireland      17 respondents  ( 6.5%)   small subgroup - caveat country claims
+
+IMPORTANT: Because the Housing sample is 75% German, sector-level
+findings are heavily weighted toward the German context.  Cross-country
+generalisation should be made with caution.
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 3.  HAZARDS IN THE HOUSING SECTOR
+════════════════════════════════════════════════════════════════════════
+
+THERE ARE EXACTLY 13 HAZARDS IN THE HOUSING SECTOR.  NOTHING ELSE IS A
+HAZARD.
+
+A hazard is a risk event that could happen to a person because of the
+twin transition (green + digital).  Each hazard was scored as
+Likelihood (1-5) multiplied by Impact (1-5), giving a 1-25 score.
+A score of 12 or above is HIGH concern.
+
+HAZARDS RANKED BY MEAN CONCERN:
+
+  HAZARD 1.   Heating and cooling costs increase
+              Mean = 14.14 / 25      68.2% high concern
+              2 confirmed predictors
+
+  HAZARD 2.   Higher electricity bills
+              Mean = 13.98 / 25      67.0% high concern
+              0 confirmed predictors  (LASSO selected nothing)
+
+  HAZARD 3.   Missing out on solar savings
+              Mean = 10.40 / 25      44.3% high concern
+              0 confirmed predictors
+
+  HAZARD 4.   Increased severe weather impacts
+              Mean =  9.47 / 25      36.7% high concern
+              0 confirmed predictors
+
+  HAZARD 5.   New taxes or fines for inefficiency
+              Mean =  9.40 / 25      37.1% high concern
+              0 confirmed predictors
+
+  HAZARD 6.   Cold/damp leads to health problems
+              Mean =  9.36 / 25      36.4% high concern
+              8 confirmed predictors
+
+  HAZARD 7.   Struggling to pay bills each month
+              Mean =  9.05 / 25      32.6% high concern
+              0 confirmed predictors
+
+  HAZARD 8.   Home insurance more expensive
+              Mean =  8.62 / 25      32.6% high concern
+              8 confirmed predictors
+
+  HAZARD 9.   Home more damp or mould
+              Mean =  8.29 / 25      29.2% high concern
+              7 confirmed predictors
+
+  HAZARD 10.  House value decrease (no solar)
+              Mean =  7.20 / 25      21.2% high concern
+              2 confirmed predictors
+
+  HAZARD 11.  More frequent power cuts
+              Mean =  6.99 / 25      18.6% high concern
+              4 confirmed predictors
+
+  HAZARD 12.  Laws forbid selling/renting non-renovated
+              Mean =  6.59 / 25      18.2% high concern
+              0 confirmed predictors
+
+  HAZARD 13.  Insurers classify home as high risk
+              Mean =  6.36 / 25      18.6% high concern
+              0 confirmed predictors
+
+SUMMARY:
+  Total hazards          = 13
+  With confirmed preds   = 6 (hazards 1, 6, 8, 9, 10, 11)
+  With ZERO confirmed    = 7 (hazards 2, 3, 4, 5, 7, 12, 13)
+
+For the 7 hazards with no confirmed predictors, no respondent
+characteristic significantly predicted concern.  Do not invent predictors
+for these.
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 4.  WHAT "CONFIRMED PREDICTOR" MEANS
+════════════════════════════════════════════════════════════════════════
+
+A confirmed predictor is a respondent characteristic that:
+  (a) was selected by LASSO penalised regression (Step 3),
+  (b) passed a likelihood-ratio test in the full multivariate model (Step 5),
+  (c) passed Benjamini-Hochberg FDR correction at q = 0.05, AND
+  (d) survived the events-per-predictor cap to avoid overfitting.
+
+The Housing survey collected over 30 candidate variables.  Most were
+filtered out.  Only the predictors listed in SECTION 5 passed all four
+gates.  When asked "what predicts concern for hazard X", report ONLY
+the predictors listed for that hazard in SECTION 5 (or state that
+the hazard has no confirmed predictors).
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 5.  PER-HAZARD CONFIRMED PREDICTORS  --  THE PRIMARY DATA
+════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 1.  HEATING AND COOLING COSTS INCREASE
+2 confirmed predictors:
+────────────────────────────────────────────────────────────────────────
+
+PREDICTOR 1A:  heat_fuel_wood  (binary: home uses wood heating)
+  Odds ratio = 0.033
+  p-value    = 0.002
+  Direction  = LOWER concern  (PROTECTIVE)  EPP WARNING (small subgroup)
+  Plain-English: respondents whose home uses wood heating have
+    dramatically lower odds of being highly concerned about heating
+    and cooling cost increases.  This is a very small subgroup; the
+    effect is real but the precise odds-ratio value is uncertain.
+
+PREDICTOR 1B:  home_problems_count  (continuous)
+  Odds ratio = 0.84 per additional problem
+  p-value    = 0.031
+  Direction  = LOWER concern
+  Plain-English: each additional reported home-quality problem is
+    associated with slightly lower odds of high concern for this
+    specific hazard.  (Counter-intuitive - interpret carefully; the
+    multivariate model isolates this from other co-varying signals.)
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 2.  HIGHER ELECTRICITY BILLS
+0 confirmed predictors.
+────────────────────────────────────────────────────────────────────────
+
+LASSO selected NO predictors for this hazard.  No respondent
+characteristic in the survey was a statistically significant predictor
+of concern about higher electricity bills in the Housing sample.
+
+When asked "who is concerned about higher electricity bills",
+the correct answer is:
+  "This hazard has no confirmed individual-level predictors in the
+   Housing analysis.  67% of respondents rate it as high concern,
+   but no demographic, housing, or attitudinal variable consistently
+   predicts who is most concerned within this sample."
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 3.  MISSING OUT ON SOLAR SAVINGS
+0 confirmed predictors.
+────────────────────────────────────────────────────────────────────────
+
+No respondent characteristic was a confirmed predictor.  44.3% of
+respondents rated this as high concern.
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 4.  INCREASED SEVERE WEATHER IMPACTS
+0 confirmed predictors.
+────────────────────────────────────────────────────────────────────────
+
+No respondent characteristic was a confirmed predictor.  36.7% of
+respondents rated this as high concern.
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 5.  NEW TAXES OR FINES FOR INEFFICIENCY
+0 confirmed predictors.
+────────────────────────────────────────────────────────────────────────
+
+No respondent characteristic was a confirmed predictor.  37.1% of
+respondents rated this as high concern.
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 6.  COLD/DAMP LEADS TO HEALTH PROBLEMS
+8 confirmed predictors (15 confirmed dummy-variable levels):
+────────────────────────────────────────────────────────────────────────
+
+PREDICTOR 6A:  housing_cost_band  (level: "1_Low" - lowest housing-cost band)
+  Odds ratio = 2.48
+  p-value    = 0.002
+  Direction  = HIGHER concern
+  Plain-English: respondents in the lowest housing-cost band have
+    about 2.5 times the odds of being highly concerned about cold/damp
+    leading to health problems.
+
+PREDICTOR 6B:  age_group  (level: "45+")
+  Odds ratio = 0.44
+  p-value    = 0.026
+  Direction  = LOWER concern  (PROTECTIVE)
+  Plain-English: respondents aged 45 or older have about 56% LOWER
+    odds of high concern for this hazard.
+
+PREDICTOR 6C:  housing_cost_band  (level: "3_High" - highest housing-cost band)
+  Odds ratio = 1.95
+  p-value    = 0.026
+  Direction  = HIGHER concern
+  Plain-English: respondents in the highest housing-cost band also
+    have higher odds.  Both the low and high cost bands show higher
+    concern - middle-band respondents are the baseline.
+
+PREDICTOR 6D:  issue_high_energy_bills  (binary: respondent reports high bills as an issue)
+  Odds ratio = 0.58
+  p-value    = 0.022
+  Direction  = LOWER concern
+  Plain-English: respondents who already report high energy bills as
+    an issue have lower odds for this specific hazard, in the
+    multivariate model.
+
+PREDICTOR 6E:  activity_status  (level: "Unemployed")
+  Odds ratio = 2.06
+  p-value    = 0.13     (NOT individually significant in Step 6 but
+                          part of a confirmed parent group from Step 5)
+
+PREDICTOR 6F:  macro_cold_home_pct  (COUNTRY-LEVEL, continuous)
+  Odds ratio = 1.12 per unit
+  p-value    = 0.165   (BORDERLINE)
+  Direction  = HIGHER concern
+  Plain-English: country-level percentage of households reporting
+    inability to keep home warm; higher national value associates
+    with higher individual concern.
+
+PREDICTOR 6G:  macro_heating_degree_days  (COUNTRY-LEVEL, continuous)
+  Odds ratio = 1.0007
+  p-value    = 0.283   (NOT significant in Step 6 but part of a
+                         confirmed parent group from Step 5)
+
+(Plus housing_situation and citizenship at the parent-group level
+ from Step 5; their dummy-level odds ratios are not individually
+ significant.)
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 7.  STRUGGLING TO PAY BILLS EACH MONTH
+0 confirmed predictors.
+────────────────────────────────────────────────────────────────────────
+
+No respondent characteristic was a confirmed predictor.  32.6% of
+respondents rated this as high concern.
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 8.  HOME INSURANCE MORE EXPENSIVE
+8 confirmed parent-group predictors (19 confirmed dummy levels):
+────────────────────────────────────────────────────────────────────────
+
+PREDICTOR 8A:  solar_install_likelihood  (level: "Not sure")
+  Odds ratio = 9.97
+  p-value    = 0.002
+  Direction  = HIGHER concern  EPP WARNING (small subgroup)
+  Plain-English: respondents who are unsure about installing solar
+    have nearly 10 times the odds of high concern.  Small subgroup -
+    treat the precise OR with caution.
+
+PREDICTOR 8B:  dwelling_year  (level: "Before 1945")
+  Odds ratio = 0.14
+  p-value    = 0.040
+  Direction  = LOWER concern  EPP WARNING
+  Plain-English: respondents in pre-1945 housing have substantially
+    lower odds of high concern.
+
+PREDICTOR 8C:  ethnic_minority  (level: "Prefer not to say")
+  Odds ratio = 3.72
+  p-value    = 0.010
+  Direction  = HIGHER concern
+  Plain-English: respondents who prefer not to disclose ethnicity
+    have about 3.7 times the odds of high concern.  Interpret as
+    "non-disclosure of ethnicity is associated with higher concern";
+    do NOT generalise to any specific group.
+
+PREDICTOR 8D:  dwelling_year  (level: "2022 or after")
+  Odds ratio = 3.51
+  p-value    = 0.002
+  Direction  = HIGHER concern
+  Plain-English: residents of very new housing (2022+) have 3.5x odds.
+
+PREDICTOR 8E:  ber_rating  (level: "E-G" - poor efficiency)
+  Odds ratio = 3.42
+  p-value    = 0.006
+  Direction  = HIGHER concern
+
+PREDICTOR 8F:  housing_cost_band  (level: "1_Low")
+  Odds ratio = 2.81
+  p-value    = 0.0006
+  Direction  = HIGHER concern
+
+PREDICTOR 8G:  ber_rating  (level: "C" - moderate efficiency)
+  Odds ratio = 2.42
+  p-value    = 0.020
+  Direction  = HIGHER concern
+
+(Plus housing_situation, age_group, and lgbtiqa at the parent-group
+ level from Step 5.)
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 9.  HOME MORE DAMP OR MOULD
+7 confirmed parent-group predictors (20 confirmed dummy levels):
+────────────────────────────────────────────────────────────────────────
+
+PREDICTOR 9A:  political_group  (level: "Yes" - identifies with a political group)
+  Odds ratio = 0.22
+  p-value    = 0.007
+  Direction  = LOWER concern  (PROTECTIVE)
+
+PREDICTOR 9B:  home_type  (level: "Terraced house")
+  Odds ratio = 3.70
+  p-value    = 0.010
+  Direction  = HIGHER concern
+
+PREDICTOR 9C:  household_type  (level: "Other shared")
+  Odds ratio = 2.69
+  p-value    = 0.017
+  Direction  = HIGHER concern
+
+PREDICTOR 9D:  education  (level: "Further education or training after school (not university)")
+  Odds ratio = 2.26
+  p-value    = 0.006
+  Direction  = HIGHER concern
+
+PREDICTOR 9E:  housing_cost_band  (level: "3_High")
+  Odds ratio = 2.06
+  p-value    = 0.016
+  Direction  = HIGHER concern
+
+PREDICTOR 9F:  housing_cost_band  (level: "1_Low")
+  Odds ratio = 1.98
+  p-value    = 0.014
+  Direction  = HIGHER concern
+
+(Plus bill_confidence and activity_status at the parent-group level
+ from Step 5.)
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 10.  HOUSE VALUE DECREASE (NO SOLAR)
+2 confirmed predictors:
+────────────────────────────────────────────────────────────────────────
+
+PREDICTOR 10A:  ethnic_minority  (level: "Prefer not to say")
+  Odds ratio = 5.56
+  p-value    = 0.001
+  Direction  = HIGHER concern
+
+PREDICTOR 10B:  can_cover_solar_cost  (level: "Not sure")
+  Odds ratio = 2.14
+  p-value    = 0.006
+  Direction  = HIGHER concern
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 11.  MORE FREQUENT POWER CUTS
+4 confirmed predictors:
+────────────────────────────────────────────────────────────────────────
+
+PREDICTOR 11A:  heat_fuel_bottle_gas  (binary: home uses bottled gas)
+  Odds ratio = 4.32
+  p-value    = 0.050
+  Direction  = HIGHER concern  EPP WARNING (small subgroup)
+
+PREDICTOR 11B:  housing_cost_band  (level: "1_Low")
+  Odds ratio = 1.98
+  p-value    = 0.003
+  Direction  = HIGHER concern
+
+PREDICTOR 11C:  age_group  (level: "45+")
+  Odds ratio = 1.96
+  p-value    = 0.049
+  Direction  = HIGHER concern
+
+PREDICTOR 11D:  macro_asthma_death_rate  (COUNTRY-LEVEL, continuous)
+  Odds ratio = 0.995 per unit
+  p-value    = 0.012
+  Direction  = LOWER concern
+  Plain-English: country-level asthma death rate; counter-intuitively,
+    countries with higher asthma death rates have lower individual
+    concern, controlling for other factors.
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 12.  LAWS FORBID SELLING/RENTING NON-RENOVATED
+0 confirmed predictors.
+────────────────────────────────────────────────────────────────────────
+
+No respondent characteristic was a confirmed predictor.  18.2% of
+respondents rated this as high concern.
+
+────────────────────────────────────────────────────────────────────────
+HAZARD 13.  INSURERS CLASSIFY HOME AS HIGH RISK
+0 confirmed predictors.
+────────────────────────────────────────────────────────────────────────
+
+No respondent characteristic was a confirmed predictor.  18.6% of
+respondents rated this as high concern.
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 6.  COUNTRY COMPARISON  --  OVERALL HOUSING
+════════════════════════════════════════════════════════════════════════
+
+ANOVA: F(2, 260) = 5.52, p = 0.0045, eta-squared = 0.041 (small effect)
+RESULT: STATISTICALLY SIGNIFICANT.
+
+COUNTRY MEANS (overall mean Housing concern, 1-25 scale):
+  Portugal   n=49   mean = 10.59   24.5% high concern   HIGHEST mean
+  Ireland    n=17   mean = 10.10   47.1% high concern   HIGHEST % high (small n)
+  Germany    n=197  mean =  8.80   16.2% high concern   LOWEST
+
+TUKEY HSD POST-HOC (which pairs differ):
+  Germany vs Portugal:  mean difference = -1.79, p = 0.005   SIGNIFICANT
+  Ireland vs Germany:   mean difference = +1.29, p = 0.322   not significant
+  Ireland vs Portugal:  mean difference = -0.50, p = 0.874   not significant
+
+INTERPRETATION: Portuguese respondents report significantly higher
+overall Housing concern than German respondents.  Ireland's small sample
+(n=17) prevents firm conclusions about Ireland specifically.  This is
+the ONLY sector in the FITTER-EU study where country differences in
+overall mean concern are statistically significant.
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 7.  CROSS-HAZARD PREDICTOR CONSISTENCY
+════════════════════════════════════════════════════════════════════════
+
+Predictors confirmed in 2 or more Housing hazards (out of the 6 with
+confirmed predictors):
+
+  housing_cost_band   confirmed in 4 hazards (cold_damp_health, home_insurance,
+                                              home_more_damp, power_cuts)
+                      "1_Low" consistently HIGHER concern; "3_High" also
+                      higher in 2 of those.  This is the strongest
+                      cross-hazard signal in Housing.
+
+  age_group           confirmed in 2 hazards (cold_damp_health -> LOWER,
+                                              power_cuts -> HIGHER).
+                      Mixed direction across these two hazards.
+
+  ethnic_minority     confirmed in 2 hazards (home_insurance,
+                                              house_value).  "Prefer not
+                                              to say" consistently HIGHER.
+
+  dwelling_year       confirmed in 1 hazard (home_insurance), multiple
+                      dummy levels.
+
+Predictors confirmed in only 1 hazard are hazard-specific and should NOT
+be generalised across the sector.
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 8.  VARIABLES THE MODEL CONSIDERED  (REFERENCE ONLY)
+════════════════════════════════════════════════════════════════════════
+
+WARNING: This is the list of variables the model EVALUATED.  Most were
+filtered out by LASSO + LRT + FDR.  These are NOT confirmed findings.
+Do NOT cite a variable from this list as a predictor of any specific
+hazard unless you have FIRST verified it appears under that hazard in
+SECTION 5.
+
+Demographic variables considered:
+  gender, age, age_group, ethnic_minority, religious_minority,
+  political_group, citizenship, is_native_born, speaks_national_language,
+  activity_status, income_band, household_type, household_size,
+  has_dependents, disability, education, lgbtiqa
+
+Housing-specific variables considered:
+  housing_situation, housing_cost_band, home_type, dwelling_year,
+  ber_rating, home_problems_count, issue_high_energy_bills,
+  heat_fuel binaries (gas, electric, oil, wood, solid, bottle_gas, district),
+  bill_confidence, can_cover_solar_cost, solar_perception,
+  solar_install_likelihood, energy_improvements, aware_gov_programmes
+
+Country-level macro variables considered:
+  macro_heating_degree_days, macro_cold_home_pct,
+  macro_asthma_death_rate, macro_housing_cost_overburden_pct
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 9.  ANSWER TEMPLATES FOR COMMON QUESTIONS
+════════════════════════════════════════════════════════════════════════
+
+Q: How many hazards are there in the Housing sector?
+A: There are 13 hazards in the Housing sector.  Of these:
+   - 6 hazards have confirmed predictors (hazards 1, 6, 8, 9, 10, 11)
+   - 7 hazards have ZERO confirmed predictors (hazards 2, 3, 4, 5, 7, 12, 13)
+   The full ranked list is in SECTION 3.
+
+Q: What are the confirmed predictors for hazard X?
+A: Look up that hazard in SECTION 5.
+   - If predictors are listed there, report ONLY those, with their odds
+     ratios, p-values, and direction (HIGHER or LOWER).
+   - If the hazard has zero confirmed predictors, say so explicitly:
+     "Hazard X has no confirmed individual-level predictors.  The hazard
+     exists in the survey and respondents rated it, but no respondent
+     characteristic passed the LASSO + LRT + FDR confirmation gate."
+
+Q: What are the affected profiles for hazard X?  (or: Who is most
+   concerned about hazard X?)
+A: Same as the previous question.  The affected profiles are exactly
+   the confirmed predictors listed in SECTION 5 for that hazard.
+   For example, for Hazard 6 (Cold/damp leads to health problems):
+   - Respondents in the lowest housing-cost band: 2.5x the odds
+   - Respondents in the highest housing-cost band: 2x the odds
+   - Respondents aged 45+ are LESS concerned (protective)
+   - Plus several country-level effects
+
+Q: What is the most concerning Housing hazard?
+A: Heating and cooling costs increase, with mean concern 14.14/25 and
+   68.2% of respondents in the high-concern group.
+
+Q: What is the strongest single finding in Housing?
+A: The lowest housing-cost band predicts higher concern across four
+   different Housing hazards (cold/damp-health, home insurance, damp/mould,
+   power cuts).  The strongest single dummy-level coefficient for the
+   "1_Low" housing-cost band is in the home_insurance model (OR = 2.81,
+   p = 0.0006).  This is the most robust confirmed cross-hazard finding
+   in the Housing sector.
+
+Q: Are there country differences in Housing concern?
+A: Yes.  The ANOVA is statistically significant (F=5.52, p=0.0045).
+   Portuguese respondents report higher overall Housing concern than
+   German respondents (Tukey p=0.005).  Housing is the ONLY sector in
+   the FITTER-EU study where country differences in overall mean
+   concern are statistically significant.
+
+Q: Is X (some variable) a confirmed predictor of Housing concern?
+A: Check SECTION 5 for each hazard in turn.  If X is not listed as a
+   confirmed predictor under any hazard, say:
+   "The variable X was considered by the model but was not confirmed
+   as a predictor of any  hazard in this study."
+
+Q: How was concern measured?
+A: Each hazard was scored as Likelihood (1 to 5) multiplied by Impact
+   (1 to 5), giving a 1 to 25 score.  A score of 12 or above is
+   classified as high concern.
+
+Q: What is the sample size?  Who took part?
+A: 263 respondents in total: 197 from Germany (74.9%), 49 from Portugal
+   (18.6%), 17 from Ireland (6.5%).  The sample is heavily German-weighted.
+
+Q: What does "confirmed predictor" mean?
+A: A confirmed predictor is one that survived four statistical filters:
+   (1) LASSO penalised selection, (2) likelihood-ratio testing in the
+   full multivariate model, (3) Benjamini-Hochberg FDR correction at
+   q=0.05, and (4) the events-per-predictor cap to avoid overfitting.
+   Only confirmed predictors should be reported as findings.
+
+Q: Why do so many Housing hazards have no confirmed predictors?
+A: Housing has the smallest sample (n=263) among the three sectors and
+   the most hazards (13).  With smaller samples, LASSO and the FDR
+   correction filter out weaker signals more aggressively.  Seven of
+   the 13 hazards have no respondent characteristic that survives the
+   confirmation gate.
+
+Q: Can I say X causes Y?
+A: No.  This is an observational, cross-sectional analysis.  Use
+   associational language only.
+
+Q: What about Energy or Transport?
+A: This source-of-truth file covers Housing only.  Refer to the Energy
+   or Transport file for those sectors.
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 10.  TECHNICAL CAVEATS
+════════════════════════════════════════════════════════════════════════
+
+A.  The Housing sample (n=263) is the smallest of the three sectors,
+    and is 75% German.  Findings reflect this composition.
+
+B.  Step 5 LRT tests a predictor in the FULL multivariate context.
+    Step 7 ANOVA tests it in ISOLATION.  Disagreement between them is
+    expected and not a bug.
+
+C.  Post-LASSO p-values are slightly anti-conservative.  Treat them
+    as approximate indicators of association rather than exact
+    Type I error rates.
+
+D.  Several EPP-flagged effects in Housing: solar_install_likelihood
+    "Not sure" in the home_insurance model;
+    heat_fuel_wood in the heat_cool model; heat_fuel_bottle_gas in
+    the power_cuts model; dwelling_year "Before 1945" in the
+    home_insurance model.  These are real but the precise odds-ratio
+    values are uncertain because of small subgroup sizes.
+
+E.  Direction is robust across all Housing findings (sign consistency
+    averages 0.94 across confirmed predictors), but the strength of
+    individual effects under resampling is weak.  Read Housing findings
+    at the construct level (housing-cost burden, dampness, dwelling
+    quality) rather than as individual point estimates.
+
+
+════════════════════════════════════════════════════════════════════════
+SECTION 11.  FINAL REMINDER  --  RE-READ BEFORE ANSWERING
+════════════════════════════════════════════════════════════════════════
+
+1.  Use ONLY facts from this file.  Do not use general knowledge.
+2.  If the answer is not in this file, use the refusal in Rule 2.
+3.  Never invent numbers, thresholds, geographies, or directions.
+4.  Seven of the 13 hazards have ZERO confirmed predictors - for
+    these, DO NOT invent predictors; state that there are none.
+5.  For all predictor questions, use SECTION 5 only.
+6.  Always disclose the direction (HIGHER / LOWER) and the p-value.
+7.  Always flag EPP warnings.
+8.  The Housing sample is 75% German - caveat findings accordingly.
+9.  Use British English.
+
+END OF HOUSING SECTOR SOURCE OF TRUTH FILE.

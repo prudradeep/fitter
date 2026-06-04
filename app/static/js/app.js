@@ -1126,6 +1126,24 @@ function scrollToBottom(targetLog = chatLog) {
   targetLog.scrollTop = targetLog.scrollHeight;
 }
 
+function collapseExpandedMessages(targetLog = chatLog) {
+  if (!targetLog) return;
+  targetLog.querySelectorAll(".bubble.is-collapsible.is-expanded").forEach((bubble) => {
+    bubble.classList.remove("is-expanded");
+    const toggle = bubble.querySelector(".bubble-toggle");
+    if (toggle) toggle.textContent = "Show more";
+  });
+}
+
+function flashRequiredField(field) {
+  if (!field) return;
+  field.focus();
+  field.classList.remove("field-required-flash");
+  void field.offsetWidth;
+  field.classList.add("field-required-flash");
+  window.setTimeout(() => field.classList.remove("field-required-flash"), 2400);
+}
+
 function addMessage(role, text, isError = false, targetLog = chatLog) {
   const row = document.createElement("div");
   row.className = `message-row ${role}${isError ? " error" : ""}`;
@@ -1141,16 +1159,20 @@ function addMessage(role, text, isError = false, targetLog = chatLog) {
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
+  const content = document.createElement("div");
+  content.className = "bubble-content";
   if (role === "bot") {
-    bubble.innerHTML = text;
+    content.innerHTML = text;
   } else {
-    bubble.textContent = text;
+    content.textContent = text;
   }
+  bubble.appendChild(content);
 
   const timestamp = document.createElement("span");
   timestamp.className = "timestamp";
   timestamp.textContent = nowLabel();
   bubble.appendChild(timestamp);
+  applyCollapsibleBubble(bubble);
 
   if (role === "user") {
     row.appendChild(bubble);
@@ -1168,7 +1190,14 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
   const bubble = row.querySelector(".bubble");
   const timestamp = bubble.querySelector(".timestamp");
   timestamp.remove();
-  bubble.textContent = "";
+  let content = bubble.querySelector(".bubble-content");
+  if (!content) {
+    content = document.createElement("div");
+    content.className = "bubble-content";
+    bubble.textContent = "";
+    bubble.appendChild(content);
+  }
+  content.textContent = "";
 
   const template = document.createElement("template");
   template.innerHTML = html;
@@ -1196,10 +1225,35 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
   }
 
   for (const child of Array.from(template.content.childNodes)) {
-    await typeNode(child, bubble);
+    await typeNode(child, content);
   }
   bubble.appendChild(timestamp);
+  applyCollapsibleBubble(bubble);
   scrollToBottom(targetLog);
+}
+
+function applyCollapsibleBubble(bubble) {
+  const content = bubble?.querySelector(".bubble-content");
+  if (!content) return;
+  bubble.querySelector(".bubble-toggle")?.remove();
+  const wordCount = (content.textContent || "").trim().split(/\s+/).filter(Boolean).length;
+  if (wordCount <= 150) {
+    bubble.classList.remove("is-collapsible", "is-expanded");
+    return;
+  }
+  bubble.classList.add("is-collapsible");
+  bubble.classList.add("is-expanded");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "bubble-toggle";
+  button.textContent = "Show less";
+  button.addEventListener("click", () => {
+    const expanded = bubble.classList.toggle("is-expanded");
+    button.textContent = expanded ? "Show less" : "Show more";
+    const row = bubble.closest(".message-row");
+    row?.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+  bubble.appendChild(button);
 }
 
 function addTyping(targetLog = chatLog) {
@@ -1365,7 +1419,11 @@ function renderTargetPopulationOptions(options = []) {
       const selected = Array.from(optionTray.querySelectorAll("[data-target-option='true']:checked"))
         .map((input) => input.value)
         .filter(Boolean);
-      if (!selected.length) return;
+      if (!selected.length) {
+        flashRequiredField(optionTray.querySelector("[data-target-option='true']"));
+        return;
+      }
+      collapseExpandedMessages();
       disableOldOptions();
       addMessage("user", selected.join(", "));
       sendMessage(selected.join("\n"), false);
@@ -1386,6 +1444,7 @@ function createOptionButton(label, extraClass = "") {
   button.textContent = label;
   button.addEventListener("click", () => {
     pauseSpeech();
+    collapseExpandedMessages();
     if (label === "Dive deeper into statistical findings") {
       openStatsDeepDiveDialog();
       return;
@@ -1534,7 +1593,11 @@ function targetPopulationBatchPayload() {
 async function sendStatsDialogMessage(message, echoUser = true) {
   if (statsDialogLoading || !statsDialogLog) return;
   const cleanMessage = message.trim();
-  if (!cleanMessage) return;
+  if (!cleanMessage) {
+    flashRequiredField(statsDialogInput);
+    return;
+  }
+  collapseExpandedMessages(statsDialogLog);
   if (echoUser) addMessage("user", cleanMessage, false, statsDialogLog);
 
   const typing = addTyping(statsDialogLog);
@@ -2050,20 +2113,32 @@ chatForm.addEventListener("submit", (event) => {
 
     if (inputMode === "mitigation_reason") {
       const secondaryValue = secondaryReasonInput.value.trim();
-      if (!primaryValue || !secondaryValue) return;
+      if (!primaryValue) {
+        flashRequiredField(reasonInput);
+        return;
+      }
+      if (!secondaryValue) {
+        flashRequiredField(secondaryReasonInput);
+        return;
+      }
       const value = `Mitigation measure: ${primaryValue}\nReason: ${secondaryValue}`;
       reasonInput.value = "";
       secondaryReasonInput.value = "";
+      collapseExpandedMessages();
       addMessage("user", value);
       sendMessage(value, false);
       return;
     }
 
-    if (!primaryValue) return;
+    if (!primaryValue) {
+      flashRequiredField(reasonInput);
+      return;
+    }
     const value = [`Reason: ${primaryValue}`, ...evidenceSummary(evidenceUrl, evidenceFile)].join("\n");
     reasonInput.value = "";
     evidenceInput.value = "";
     evidenceFileInput.value = "";
+    collapseExpandedMessages();
     addMessage("user", value);
     sendMessage(`Reason: ${primaryValue}`, false, { evidenceUrl, evidenceFile });
     return;
@@ -2081,6 +2156,7 @@ chatForm.addEventListener("submit", (event) => {
     evaluationReasonInput.value = "";
     evaluationEvidenceInput.value = "";
     evaluationEvidenceFileInput.value = "";
+    collapseExpandedMessages();
     addMessage("user", value);
     sendMessage(lines.filter((line) => !line.startsWith("Evidence ")).join("\n"), false, {
       evidenceUrl,
@@ -2090,10 +2166,14 @@ chatForm.addEventListener("submit", (event) => {
   }
 
   const value = messageInput.value.trim();
-  if (!value) return;
+  if (!value) {
+    flashRequiredField(messageInput);
+    return;
+  }
   messageInput.value = "";
   highlightedOptionLabel = "";
   disableOldOptions();
+  collapseExpandedMessages();
   addMessage("user", value);
   sendMessage(value, false);
 });

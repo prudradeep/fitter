@@ -204,6 +204,15 @@ class UserMitigationMeasure(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class MitigationMeasureExample(Base):
+    __tablename__ = "mitigation_measure_examples"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    sector_id: Mapped[int] = mapped_column(ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    measure: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class UserQuestionResponse(Base):
     __tablename__ = "user_question_responses"
 

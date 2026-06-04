@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
+from app.services.mitigation_examples import MITIGATION_MEASURE_EXAMPLES
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -280,6 +281,8 @@ def ensure_runtime_schema() -> None:
                         text("ALTER TABLE knowledge_chunks ADD INDEX ix_knowledge_chunks_user_id (user_id)")
                     )
 
+        ensure_mitigation_measure_examples()
+
         if "user_hazards" not in inspector.get_table_names():
             return
 
@@ -403,3 +406,168 @@ def ensure_runtime_schema() -> None:
     except Exception:
         logger.exception("Runtime schema migration failed")
         raise
+
+
+def ensure_mitigation_measure_examples() -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS mitigation_measure_examples (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  sector_id INT NOT NULL,
+                  measure TEXT NOT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  CONSTRAINT fk_mitigation_examples_sector
+                    FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
+                  UNIQUE KEY uq_mitigation_example_sector_measure (sector_id, measure(500)),
+                  INDEX ix_mitigation_measure_examples_sector_id (sector_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+
+    inspector = inspect(engine)
+    columns = {
+        column["name"]
+        for column in inspector.get_columns("mitigation_measure_examples")
+    }
+    indexes = {
+        index["name"]
+        for index in inspector.get_indexes("mitigation_measure_examples")
+    }
+    foreign_keys = {
+        fk["name"]
+        for fk in inspector.get_foreign_keys("mitigation_measure_examples")
+    }
+
+    with engine.begin() as connection:
+        if "sector_id" not in columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_examples "
+                    "ADD COLUMN sector_id INT NULL AFTER id"
+                )
+            )
+            columns.add("sector_id")
+        if "sector_name" in columns:
+            connection.execute(
+                text(
+                    """
+                    UPDATE mitigation_measure_examples examples
+                    JOIN sectors ON LOWER(sectors.name) = LOWER(examples.sector_name)
+                    SET examples.sector_id = sectors.id
+                    WHERE examples.sector_id IS NULL
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    DELETE newer
+                    FROM mitigation_measure_examples newer
+                    JOIN mitigation_measure_examples older
+                      ON newer.id > older.id
+                     AND newer.sector_id = older.sector_id
+                     AND newer.measure = older.measure
+                    WHERE newer.sector_id IS NOT NULL
+                    """
+                )
+            )
+            if "uq_mitigation_example_sector_measure" in indexes:
+                connection.execute(
+                    text(
+                        "ALTER TABLE mitigation_measure_examples "
+                        "DROP INDEX uq_mitigation_example_sector_measure"
+                    )
+                )
+                indexes.remove("uq_mitigation_example_sector_measure")
+            if "ix_mitigation_measure_examples_sector_name" in indexes:
+                connection.execute(
+                    text(
+                        "ALTER TABLE mitigation_measure_examples "
+                        "DROP INDEX ix_mitigation_measure_examples_sector_name"
+                    )
+                )
+                indexes.remove("ix_mitigation_measure_examples_sector_name")
+            connection.execute(
+                text(
+                    "DELETE FROM mitigation_measure_examples "
+                    "WHERE sector_id IS NULL"
+                )
+            )
+            if "fk_mitigation_examples_sector" in foreign_keys:
+                connection.execute(
+                    text(
+                        "ALTER TABLE mitigation_measure_examples "
+                        "DROP FOREIGN KEY fk_mitigation_examples_sector"
+                    )
+                )
+                foreign_keys.remove("fk_mitigation_examples_sector")
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_examples "
+                    "MODIFY COLUMN sector_id INT NOT NULL"
+                )
+            )
+            connection.execute(
+                text("ALTER TABLE mitigation_measure_examples DROP COLUMN sector_name")
+            )
+            columns.remove("sector_name")
+        if "ix_mitigation_measure_examples_sector_id" not in indexes:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_examples "
+                    "ADD INDEX ix_mitigation_measure_examples_sector_id (sector_id)"
+                )
+            )
+        if "uq_mitigation_example_sector_measure" not in indexes:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_examples "
+                    "ADD UNIQUE KEY uq_mitigation_example_sector_measure "
+                    "(sector_id, measure(500))"
+                )
+            )
+        if "fk_mitigation_examples_sector" not in foreign_keys:
+            try:
+                connection.execute(
+                    text(
+                        "ALTER TABLE mitigation_measure_examples "
+                        "ADD CONSTRAINT fk_mitigation_examples_sector "
+                        "FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE"
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Could not add mitigation example sector foreign key; continuing",
+                    exc_info=True,
+                )
+
+        for sector_name, measure in MITIGATION_MEASURE_EXAMPLES:
+            if "sector_name" in columns:
+                connection.execute(
+                    text(
+                        """
+                        INSERT IGNORE INTO mitigation_measure_examples
+                            (sector_id, sector_name, measure)
+                        SELECT sectors.id, :sector_name, :measure
+                        FROM sectors
+                        WHERE sectors.name = :sector_name
+                        """
+                    ),
+                    {"sector_name": sector_name, "measure": measure},
+                )
+            else:
+                connection.execute(
+                    text(
+                        """
+                        INSERT IGNORE INTO mitigation_measure_examples
+                            (sector_id, measure)
+                        SELECT sectors.id, :measure
+                        FROM sectors
+                        WHERE sectors.name = :sector_name
+                        """
+                    ),
+                    {"sector_name": sector_name, "measure": measure},
+                )

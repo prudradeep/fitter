@@ -15,7 +15,7 @@ class ChatSession:
     sector: str | None = None
     phase: str = "wizard"
     hazards: list[str] | None = None
-    hazard_profiles: dict[str, list[str] | str] | None = None
+    hazard_profiles: dict[str, list[dict[str, str] | str] | str] | None = None
     custom_hazards: list[str] | None = None
     pending_hazard: str | None = None
     selected_hazard: str | None = None

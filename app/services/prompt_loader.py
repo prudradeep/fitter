@@ -4,9 +4,9 @@ from pathlib import Path
 PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
 
 PROMPT_FILES = {
-    "energy": "Energy_system_prompt.txt",
-    "housing": "Housing_system_prompt.txt",
-    "transport": "Transport_system_prompt.txt",
+    "energy": "Energy_truth.txt",
+    "housing": "Housing_truth.txt",
+    "transport": "Transport_truth.txt",
 }
 
 

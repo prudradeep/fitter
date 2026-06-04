@@ -18,7 +18,11 @@ def parse_reason_evidence(message: str) -> tuple[str | None, str | None]:
             current = "reason"
             buffers[current].append(stripped.split(":", 1)[1].strip())
             continue
-        if lowered.startswith(("evidence:", "evidence url:", "evidence file:")):
+        if lowered.startswith(("evidence url:", "evidence file:", "evidence content:")):
+            current = "evidence"
+            buffers[current].append(stripped)
+            continue
+        if lowered.startswith("evidence:"):
             current = "evidence"
             buffers[current].append(stripped.split(":", 1)[1].strip())
             continue
@@ -89,7 +93,11 @@ def parse_evaluation_answer(message: str) -> tuple[int | None, str | None, str |
             current = "reason"
             buffers[current].append(stripped.split(":", 1)[1].strip())
             continue
-        if lowered.startswith(("evidence:", "evidence url:", "evidence file:")):
+        if lowered.startswith(("evidence url:", "evidence file:", "evidence content:")):
+            current = "evidence"
+            buffers[current].append(stripped)
+            continue
+        if lowered.startswith("evidence:"):
             current = "evidence"
             buffers[current].append(stripped.split(":", 1)[1].strip())
             continue
@@ -261,6 +269,17 @@ def extract_json_object(response: str) -> str:
         if cleaned.casefold().startswith("json"):
             cleaned = cleaned[4:].strip()
 
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(cleaned):
+        if char != "{":
+            continue
+        try:
+            parsed, end = decoder.raw_decode(cleaned[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return cleaned[index : index + end]
+
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -317,7 +336,7 @@ def parse_llm_hazard_profiles(response: str) -> list[dict[str, object]]:
     if isinstance(parsed, list):
         for item in parsed:
             hazard = ""
-            profiles: list[str] = []
+            profiles: list[object] = []
             if isinstance(item, dict):
                 hazard_value = item.get("hazard") or item.get("name")
                 profile_value = (
@@ -334,6 +353,24 @@ def parse_llm_hazard_profiles(response: str) -> list[dict[str, object]]:
                     for profile_item in profile_value:
                         if isinstance(profile_item, str) and profile_item.strip():
                             profiles.append(profile_item.strip().strip("`*_ ")[:180])
+                        elif isinstance(profile_item, dict):
+                            name = profile_item.get("name") or profile_item.get("profile")
+                            explanation = (
+                                profile_item.get("explanation")
+                                or profile_item.get("reason")
+                                or profile_item.get("description")
+                            )
+                            if isinstance(name, str) and name.strip():
+                                profiles.append(
+                                    {
+                                        "name": name.strip().strip("`*_ ")[:100],
+                                        "explanation": (
+                                            explanation.strip().strip("`*_ ")[:220]
+                                            if isinstance(explanation, str)
+                                            else ""
+                                        ),
+                                    }
+                                )
                 elif isinstance(profile_value, str) and profile_value.strip():
                     profiles.append(profile_value.strip().strip("`*_ ")[:180])
             elif isinstance(item, str):

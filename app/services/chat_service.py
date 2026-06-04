@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import (
     Country,
     EvaluationQuestion,
+    MitigationMeasureExample,
     QuestionOption,
     Region,
     Sector,
@@ -62,6 +63,7 @@ from app.services.chat_parsers import (
     parse_validation_response,
 )
 from app.services.chat_session import ChatSession, session_store
+from app.services.knowledge_base import KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.prompt_loader import load_sector_prompt
 
@@ -155,6 +157,18 @@ class ChatService:
 
         if not clean_message and not any([session.country, session.region, session.sector]):
             return self._country_step(current_session_id, session, self.welcome_message)
+
+        if (
+            clean_message
+            and self._is_invalid_user_text(clean_message)
+            and not self._could_be_fuzzy_selection(session, clean_message)
+        ):
+            return self._repeat_current_options(
+                current_session_id,
+                session,
+                self._invalid_text_message(),
+                True,
+            )
 
         if session.country is None:
             return self._select_country(current_session_id, session, clean_message)
@@ -269,6 +283,16 @@ class ChatService:
                 session,
                 self.fuzzy_rejected_message,
                 error=False,
+            )
+
+        if self._is_invalid_user_text(message):
+            return ChatResponse(
+                session_id=session_id,
+                step="fuzzy_confirmation",
+                bot_message=self._invalid_text_message(),
+                options=REASON_CONFIRMATION_OPTIONS,
+                session=session.summary(),
+                error=True,
             )
 
         return ChatResponse(
@@ -679,6 +703,30 @@ class ChatService:
             error=error,
         )
 
+    @staticmethod
+    def _invalid_text_message() -> str:
+        return render_message(
+            "input_validation_failed.md",
+            reason=(
+                "The input appears to contain gibberish, keyboard mashing, "
+                "random characters, or unrecognizable text."
+            ),
+        )
+
+    @staticmethod
+    def _current_step(session: ChatSession) -> str:
+        if session.country is None:
+            return "country"
+        if session.region is None:
+            return "region"
+        if session.sector is None:
+            return "sector"
+        if session.phase in {"add_hazard", "add_hazard_evidence"}:
+            return "hazards"
+        if session.phase == "dg_reason_evidence":
+            return "socio_demographic_review"
+        return session.phase or "complete"
+
     def _select_country(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
@@ -776,13 +824,17 @@ class ChatService:
         session.sector_id = sector.id
         session.sector = sector.name
         session.phase = "hazards"
-        hazard_items = await self._get_hazards_from_llm(session.sector)
+        hazard_items = await self._get_hazards_from_llm(session)
         session.hazards = [str(item["hazard"]) for item in hazard_items]
         session.hazard_profiles = {
             str(item["hazard"]): [
-                str(profile)
+                profile
                 for profile in item.get("profiles", [])
-                if str(profile).strip()
+                if (
+                    isinstance(profile, dict)
+                    and str(profile.get("name") or "").strip()
+                )
+                or (isinstance(profile, str) and profile.strip())
             ]
             for item in hazard_items
             if item.get("profiles")
@@ -820,7 +872,7 @@ class ChatService:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
         action = normalize(exact_label or message)
 
-        if action == normalize("Move to next step"):
+        if action == normalize("Start Mitigation Planning"):
             return self._hazard_profile_step(session_id, session)
 
         if action == normalize("Add a new Hazard"):
@@ -868,7 +920,7 @@ class ChatService:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
         action = normalize(exact_label or message)
 
-        if action == normalize("Move to next step"):
+        if action == normalize("Start Mitigation Planning"):
             return self._hazard_profile_step(session_id, session)
 
         if action == normalize("Add a new Hazard"):
@@ -992,7 +1044,7 @@ class ChatService:
                 error=False,
             )
 
-        if action == normalize("Move to next step"):
+        if action == normalize("Create Mitigation Measure"):
             session.phase = "reason_confirmation"
             recommendations = await self._practical_policy_recommendations(session)
             return ChatResponse(
@@ -1079,6 +1131,21 @@ class ChatService:
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
                     reason="Both `Mitigation measure` and `Reason` are required.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_reason",
+                error=True,
+            )
+
+        local_quality_reason = self._local_mitigation_field_error(mitigation_measure, reason)
+        if local_quality_reason:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason=local_quality_reason,
                 ),
                 options=[],
                 session=session.summary(),
@@ -1212,6 +1279,50 @@ class ChatService:
         if normalize(exact_label or "") == normalize("Move to next step"):
             return self._start_evaluation_questions(session_id, session)
 
+        local_reason = None
+        if self._is_invalid_user_text(message):
+            local_reason = (
+                "The question appears to contain gibberish, keyboard mashing, "
+                "or unrecognizable text."
+            )
+        elif len(compact_for_match(message)) < 4:
+            local_reason = "The question is too short to understand."
+        if local_reason:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_review",
+                bot_message=render_message(
+                    "input_validation_failed.md",
+                    reason=local_reason,
+                ),
+                options=MITIGATION_REVIEW_OPTIONS,
+                session=session.summary(),
+                input_mode="mitigation_review",
+                error=True,
+            )
+
+        input_review = await self._validate_input_quality(
+            session=session,
+            purpose=(
+                "A follow-up question or request about the already validated "
+                "mitigation measure and its reasoning."
+            ),
+            fields={"Follow-up question": message},
+        )
+        if input_review is not None and not input_review.get("valid"):
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_review",
+                bot_message=render_message(
+                    "input_validation_failed.md",
+                    reason=str(input_review.get("reason") or "Please rewrite the question."),
+                ),
+                options=MITIGATION_REVIEW_OPTIONS,
+                session=session.summary(),
+                input_mode="mitigation_review",
+                error=True,
+            )
+
         answer = await self._mitigation_review_response(session, message)
         if session.stats_conversation is None:
             session.stats_conversation = []
@@ -1273,13 +1384,14 @@ class ChatService:
             return self._evaluation_complete_step(session_id, session)
 
         if reason or evidence:
+            evidence_text = self._evaluation_evidence_text(evidence)
             input_review = await self._validate_input_quality(
                 session=session,
                 purpose=(
                     "an optional evaluation reason and optional evidence supporting "
                     "the selected mitigation score"
                 ),
-                fields=self._reason_evidence_quality_fields(reason or "", evidence),
+                fields=self._reason_evidence_quality_fields(reason or "", evidence_text),
             )
             if input_review is None:
                 return self._evaluation_question_step(
@@ -1302,7 +1414,7 @@ class ChatService:
                 question=question,
                 score=score,
                 reason=reason or "",
-                evidence=evidence or "",
+                evidence=evidence_text or "",
             )
 
             if validation is None:
@@ -1331,7 +1443,7 @@ class ChatService:
                 "question": question["question"],
                 "score": score,
                 "reason": reason,
-                "evidence": evidence,
+                "evidence": self._evaluation_evidence_text(evidence),
             }
         )
         self._store_question_response(
@@ -1342,7 +1454,7 @@ class ChatService:
             response_text=str(score),
             score=score,
             reason=reason,
-            evidence=evidence,
+            evidence=self._evaluation_evidence_text(evidence),
             hazard_id=session.selected_hazard_record_id,
             mitigation_measure_id=session.mitigation_record_id,
         )
@@ -1896,12 +2008,12 @@ class ChatService:
         )
 
     async def _mitigation_review_response(self, session: ChatSession, user_message: str) -> str:
-        context, messages = self._build_mitigation_review_messages(session, user_message)
+        context, messages = await self._build_mitigation_review_messages(session, user_message)
         return await ask_llm_chat(
             context=context,
             messages=messages,
-            temperature=0.25,
-            max_tokens=850,
+            temperature=0.35,
+            max_tokens=1050,
         )
 
     def _sector_briefing(self, session: ChatSession) -> str:
@@ -1933,17 +2045,38 @@ class ChatService:
             )
         return prompt
 
-    def _build_mitigation_review_messages(
+    async def _build_mitigation_review_messages(
         self, session: ChatSession, user_message: str
     ) -> tuple[str, list[dict[str, str]]]:
         sector_prompt = load_sector_prompt(session.sector)
+        knowledge_context = await self._mitigation_knowledge_context(
+            session,
+            session.mitigation_measure or "",
+            session.mitigation_reason or "",
+        )
+        examples = self._mitigation_measure_examples(session.sector_id)
         context = f"""
-Use the sector system prompt below as your authoritative statistical context.
-Do not invent precise live statistics. If a number would be needed but is not present,
-explain what data source the user should check.
+You are Dr Transition — an expert research assistant specialising in
+the social and distributional impacts of Twin-Transition policies (the simultaneous digital and
+green transitions) in Europe.
+
+Your role is EDUCATIONAL: you help users LEARN how to think about policy design, hazards, and
+mitigation measures. You do NOT draft policies for them. You guide them to discover important
+concepts themselves.
+
+Tone: warm, encouraging, intellectually rigorous. Use plain language. Avoid jargon unless you
+explain it. Always ground your responses in the research knowledge provided to you.
+
+Never skip steps or volunteer
+information for a future step before the user reaches it.
+
+{self._scope_instruction(session)}
 
 Sector system prompt:
 {sector_prompt}
+
+Retrieved knowledge-base excerpts:
+{knowledge_context or "- No relevant knowledge-base excerpts were found."}
 """.strip()
 
         history = list(session.stats_conversation or [])[-8:]
@@ -1962,9 +2095,29 @@ Sector system prompt:
                     f"{session.mitigation_measure or 'Not provided'}\n\n"
                     "Validated mitigation reason:\n"
                     f"{session.mitigation_reason or 'Not provided'}\n\n"
-                    "Discuss the mitigation measure using the sector statistics, affected "
-                    "groups, and the validated mitigation reason. Do not ask evaluation "
-                    "questions. Do not include a heading or bullet named 'Policy Implications'."
+                    "Relevant mitigation measure examples:\n"
+                    f"{examples or '- No sector-specific examples are available.'}\n\n"
+                    "YOUR TASK — write an encouraging, educational evaluation (around "
+                    "200-300 words) that:\n\n"
+                    "1. ACKNOWLEDGE what is valuable or insightful about their proposal — "
+                    "be specific and genuine.\n"
+                    "2. CONNECT their idea to relevant concepts from the research knowledge "
+                    "provided. Name specific concepts, mechanisms, or groups where applicable.\n"
+                    "3. GENTLY EXPAND their thinking by pointing out one dimension or group "
+                    "they may not have considered, suggesting how their measure could be "
+                    "strengthened or made more targeted, or noting a potential unintended "
+                    "consequence to watch for.\n"
+                    "4. If appropriate, REFERENCE how a similar approach appears in the "
+                    "research examples.\n"
+                    "5. Discard proposals that are conceptually wrong.\n"
+                    "6. Discard all concepts different from twin transition policies.\n"
+                    "7. If user reasoning lacks deep thinking, END with an encouraging "
+                    "reflection question that deepens their thinking.\n"
+                    "8. Only ask reflective question if necessary.\n\n"
+                    "Tone: to the point, collegial, intellectually stimulating. Use plain "
+                    "language. Do NOT simply list the example measures. Do NOT be dismissive. "
+                    "This is an educational conversation. Do NOT include headers or bullet "
+                    "points — write in flowing paragraphs."
                 ),
             },
             *history,
@@ -1972,9 +2125,9 @@ Sector system prompt:
                 "role": "user",
                 "content": (
                     f"User message:\n{user_message}\n\n"
-                    "Answer in Markdown with a short conclusion and concise related "
-                    "information. Stay grounded in the statistical context and the "
-                    "validated mitigation measure/reason."
+                    "Answer in flowing paragraphs. Stay grounded in the statistical context, "
+                    "the retrieved knowledge, the examples, and the validated mitigation "
+                    "measure/reason."
                 ),
             },
         ]
@@ -2401,6 +2554,31 @@ Sector system prompt:
         if evidence and evidence.strip():
             fields["Evidence URL or file content"] = evidence
         return fields
+
+    @staticmethod
+    def _evaluation_evidence_text(evidence: str | None) -> str | None:
+        if not evidence or not evidence.strip():
+            return None
+
+        lines = [line.strip() for line in evidence.splitlines() if line.strip()]
+        if not lines:
+            return None
+
+        content_lines = [
+            line.split(":", 1)[1].strip()
+            for line in lines
+            if line.casefold().startswith("evidence content:")
+            and line.split(":", 1)[1].strip()
+        ]
+        if content_lines:
+            source_lines = [
+                line
+                for line in lines
+                if line.casefold().startswith(("evidence url:", "evidence file:"))
+            ]
+            return "\n".join([*source_lines, *content_lines]).strip()
+
+        return "\n".join(lines)
 
     @staticmethod
     def _has_hazard_suggestions(review: dict[str, object]) -> bool:
@@ -2960,6 +3138,24 @@ Sector system prompt:
     def _fuzzy_hazard(message: str, session: ChatSession) -> str | None:
         return best_fuzzy_label(message, hazard_names(session))
 
+    @staticmethod
+    def _scope_instruction(session: ChatSession) -> str:
+        return (
+            "Scope guard:\n"
+            f"- Selected country: {session.country or 'Not selected'}\n"
+            f"- Selected region: {session.region or 'Not selected'}\n"
+            f"- Selected sector: {session.sector or 'Not selected'}\n"
+            "- Keep every answer, validation, hazard, profile, mitigation, and example "
+            "anchored to the selected country and selected sector.\n"
+            "- Do not switch to another country, region, or sector. If the user asks "
+            "about another context, say it is outside the current selection and relate "
+            "the answer back to the selected country and sector.\n"
+            "- If retrieved knowledge or examples mention other countries or sectors, "
+            "use them only as clearly labelled general background. Do not present them "
+            "as evidence for the selected country or sector unless the text explicitly "
+            "matches the current selection."
+        )
+
     def _build_deep_dive_messages(
         self, session: ChatSession, user_message: str
     ) -> tuple[str, list[dict[str, str]]]:
@@ -2968,6 +3164,8 @@ Sector system prompt:
 Use the sector system prompt below as your authoritative statistical context.
 Do not invent precise live statistics. If a number would be needed but is not present,
 explain what data source the user should check.
+
+{self._scope_instruction(session)}
 
 Sector system prompt:
 {sector_prompt}
@@ -3009,7 +3207,8 @@ Sector system prompt:
                     f"- Region: {session.region}\n"
                     f"- Sector: {session.sector}\n\n"
                     "Continue the statistical findings conversation below. "
-                    "Use only the loaded sector statistical context."
+                    "Use only the loaded sector statistical context. Stay within "
+                    "the selected country and sector."
                 ),
             },
             *history[-10:],
@@ -3017,10 +3216,12 @@ Sector system prompt:
         ]
         return context, messages
 
-    async def _get_hazards_from_llm(self, sector: str | None) -> list[dict[str, object]]:
-        sector_prompt = load_sector_prompt(sector)
+    async def _get_hazards_from_llm(self, session: ChatSession) -> list[dict[str, object]]:
+        sector_prompt = load_sector_prompt(session.sector)
         context = f"""
 You are a strict extraction assistant for Dr Transition.
+
+{self._scope_instruction(session)}
 
 Use this sector system prompt as the only source:
 {sector_prompt}
@@ -3029,18 +3230,24 @@ Use this sector system prompt as the only source:
             {
                 "role": "user",
                 "content": (
+                    "Selected context:\n"
+                    f"- Country: {session.country}\n"
+                    f"- Region: {session.region}\n"
+                    f"- Sector: {session.sector}\n\n"
                     "List all the hazards perceived and identify the socio-demographic "
-                    "profiles most affected for each hazard. Connect the profiles to the "
-                    "sector context in the prompt.\n\n"
+                    "profiles most affected for each hazard in the selected country and "
+                    "sector only. Connect the profiles to the selected country/sector "
+                    "context in the prompt. Include a short explanation for why each "
+                    "profile is relevant in this selected context.\n\n"
                     "Return ONLY valid JSON, an array of objects like:\n"
-                    '[{"hazard": "hazard name", "profiles": ["affected profile 1", "affected profile 2"]}]\n\n'
+                    '[{"hazard": "hazard name", "profiles": [{"name": "affected profile", "explanation": "short explanation"}]}]\n\n'
                     "Rules:\n"
                     "- The hazard field must be only the hazard name.\n"
-                    "- The profiles field must be an array of affected profile names only.\n"
-                    "- Do not include statistical basis, explanations, predictors, demographic "
-                    "variables used as model terms, countries, model metrics, caveats, Markdown, "
-                    "or code fences.\n"
-                    "- Do not write full sentences in profiles; use concise profile names.\n"
+                    "- The profiles field must be an array of objects with name and explanation.\n"
+                    "- Keep profile names concise and explanations under 22 words.\n"
+                    "- Explanations should be plain-language and grounded in the prompt context.\n"
+                    "- Do not include statistical basis, predictors, demographic variables used "
+                    "as model terms, countries, model metrics, caveats, Markdown, or code fences.\n"
                     "- If no profiles are clearly available for a hazard, use an empty array.\n"
                     "- If the sector analysis is unavailable, return "
                     '[{"hazard": "Analysis not available", "profiles": []}].'
@@ -3052,7 +3259,7 @@ Use this sector system prompt as the only source:
             context=context,
             messages=messages,
             temperature=0,
-            max_tokens=850,
+            max_tokens=1400,
         )
         return parse_llm_hazard_profiles(response)
 
@@ -3069,6 +3276,8 @@ Use this sector system prompt as the only source:
         context = f"""
 You are a practical validation assistant for Dr Transition.
 
+{self._scope_instruction(session)}
+
 Use this compact sector statistical context as the authoritative source:
 {compact_context}
 """.strip()
@@ -3077,7 +3286,7 @@ Use this compact sector statistical context as the authoritative source:
                 "role": "user",
                 "content": (
                     "Validate whether the proposed new regional hazard is reasonable "
-                    "for the selected sector and does not contradict the sector "
+                    "for the selected country and sector and does not contradict the sector "
                     "statistics, survey findings, or prompt context.\n\n"
                     f"Sector: {session.sector}\n"
                     f"Country: {session.country}\n"
@@ -3095,7 +3304,7 @@ Use this compact sector statistical context as the authoritative source:
                     '{"valid": false, "reason": "The reason contradicts the sector context or is too vague to evaluate."}\n\n'
                     "Rules:\n"
                     "- valid should be true when the hazard and reason are meaningful, "
-                    "sector-relevant, and compatible with the loaded context, even if "
+                    "country/sector-relevant, and compatible with the loaded context, even if "
                     "the exact regional hazard is not explicitly named in the statistics.\n"
                     "- User-added regional hazards may extend the system hazard list; "
                     "do not reject solely because the hazard is new or locally specific.\n"
@@ -3105,6 +3314,7 @@ Use this compact sector statistical context as the authoritative source:
                     "- valid must be false only when the reason or supplied evidence "
                     "clearly contradicts the statistics, confuses predictors with hazards, "
                     "invents unsupported numbers as facts, is unrelated to the sector, "
+                    "is unrelated to the selected country, "
                     "or is too vague/generic to evaluate.\n"
                     "- The reason field must be useful to the user and under 60 words."
                 ),
@@ -3129,11 +3339,13 @@ Use this compact sector statistical context as the authoritative source:
         if not existing_hazards:
             return {"duplicate": False, "match": "", "reason": "", "duplicates": []}
 
-        context = """
+        context = f"""
 You are a strict semantic duplicate checker for Dr Transition.
 
 Your job is to decide whether a proposed hazard is already covered by an existing
 hazard, even when the wording, grammar, or language differs.
+
+{self._scope_instruction(session)}
 """.strip()
         messages = [
             {
@@ -3184,12 +3396,14 @@ hazard, even when the wording, grammar, or language differs.
                 "reason": "This appears to have the same or similar meaning as an existing hazard.",
                 "suggestions": local_matches,
             }
-        context = """
+        context = f"""
 You are a practical hazard intake reviewer for Dr Transition.
 
 Your job is to classify user text before it can be used as a new social hazard,
 and then decide whether it is already clearly covered by existing sector or
 user-added hazards.
+
+{self._scope_instruction(session)}
 """.strip()
         messages = [
             {
@@ -3275,11 +3489,13 @@ user-added hazards.
             if isinstance(value, str) and value.strip()
         }
         field_text = "\n".join(f"{label}: {value}" for label, value in cleaned_fields.items())
-        context = """
+        context = f"""
 You are a practical input-quality validator for Dr Transition.
 
 Your job is to validate user-entered policy workflow text before it is saved or
 used for statistical validation.
+
+{self._scope_instruction(session)}
 """.strip()
         messages = [
             {
@@ -3297,11 +3513,14 @@ used for statistical validation.
                     "Validation checks:\n"
                     "- Each required field should appear to be recognizable words or a meaningful phrase.\n"
                     "- The text must be valid and meaningful for the stated purpose.\n"
+                    "- This is not a grammar, spelling, punctuation, or style check.\n"
                     "- Check for generic, ambiguous, incomplete, or unsupported context.\n"
                     "- Check evidence URL/file content when provided; extracted content that says it could not be read is not valid evidence.\n"
                     "- Random characters, keyboard mashing, gibberish, or unrecognizable text is invalid.\n"
                     "- Text that is too short to determine intent is ambiguous and must be invalid for this workflow.\n\n"
                     "Rules:\n"
+                    "- Do not mark text invalid only because it has grammar, spelling, punctuation, capitalization, or style errors.\n"
+                    "- If a question, request, or statement is understandable, mark it valid even when the wording is imperfect.\n"
                     "- valid must be false if any field is random, gibberish, keyboard mashing, too short, ambiguous, incomplete, or unrelated to the purpose.\n"
                     "- valid must be false if the reason is only a broad label, such as 'poverty', 'transport', or 'policy', without a clear mechanism or outcome.\n"
                     "- valid must be false if provided evidence is only a filename/URL with no readable evidence content, or extracted content says it could not be read.\n"
@@ -3318,16 +3537,28 @@ used for statistical validation.
         )
         if is_llm_unavailable_response(response):
             return None
-        return parse_validation_response(response)
+        parsed = parse_validation_response(response)
+        if (
+            not parsed.get("valid")
+            and self._is_style_only_validation_rejection(str(parsed.get("reason") or ""))
+            and self._fields_are_locally_meaningful(cleaned_fields)
+        ):
+            return {
+                "valid": True,
+                "reason": "The text is understandable despite minor wording issues.",
+            }
+        return parsed
 
     async def _validate_profile_names_input(
         self, session: ChatSession, profiles: list[str]
     ) -> dict[str, str | bool] | None:
-        context = """
+        context = f"""
 You are a practical socio-demographic profile intake reviewer for Dr Transition.
 
 Your job is to validate user-entered profile names before they can be added to
 the affected socio-demographic profile list.
+
+{self._scope_instruction(session)}
 """.strip()
         messages = [
             {
@@ -3371,12 +3602,14 @@ the affected socio-demographic profile list.
         self, session: ChatSession, dgs: list[str]
     ) -> dict[str, object] | None:
         existing_context = format_all_dgs(session)
-        context = """
+        context = f"""
 You are a strict semantic duplicate checker for Dr Transition.
 
 Your job is to decide whether newly proposed socio-demographic profiles are
 already covered by the existing profile text or user-added profile list, even
 when the wording, grammar, or language differs.
+
+{self._scope_instruction(session)}
 """.strip()
         messages = [
             {
@@ -3425,7 +3658,13 @@ when the wording, grammar, or language differs.
     ) -> dict[str, str | bool] | None:
         sector_prompt = load_sector_prompt(session.sector)
         context = f"""
-You are a strict validation assistant for Dr Transition.
+You are an evaluator for Dr Transition.
+
+Your task is to evaluate whether the user's mitigation measure addresses the
+current evaluation question AND whether the provided reason/evidence supports
+the claims and selected score.
+
+{self._scope_instruction(session)}
 
 Use this sector system prompt as the authoritative statistical source:
 {sector_prompt}
@@ -3479,20 +3718,43 @@ Use this sector system prompt as the authoritative statistical source:
         reason: str,
     ) -> dict[str, str | bool] | None:
         sector_prompt = load_sector_prompt(session.sector)
+        knowledge_context = await self._mitigation_knowledge_context(
+            session,
+            mitigation_measure,
+            reason,
+        )
+        examples = self._mitigation_measure_examples(session.sector_id)
         context = f"""
-You are a strict validation assistant for Dr Transition.
+You are Dr Transition — an expert research assistant specialising in
+the social and distributional impacts of Twin-Transition policies (the simultaneous digital and
+green transitions) in Europe.
 
-Use this sector system prompt as the authoritative statistical source:
+Your role is EDUCATIONAL: you help users LEARN how to think about policy design, hazards, and
+mitigation measures. You do NOT draft policies for them. You guide them to discover important
+concepts themselves.
+
+Tone: warm, encouraging, intellectually rigorous. Use plain language. Avoid jargon unless you
+explain it. Always ground your responses in the research knowledge provided to you.
+
+Never skip steps or volunteer
+information for a future step before the user reaches it.
+
+{self._scope_instruction(session)}
+
+Use the sector system prompt as the authoritative statistical source:
 {sector_prompt}
+
+Use these retrieved knowledge-base excerpts when relevant:
+{knowledge_context or "- No relevant knowledge-base excerpts were found."}
 """.strip()
         messages = [
             {
                 "role": "user",
                 "content": (
-                    "Validate whether the proposed mitigation measure and reason are "
-                    "appropriate for reducing the negative impact of the selected hazard "
-                    "on the relevant socio-demographic groups, using only the loaded "
-                    "statistical context.\n\n"
+                    "Validate and evaluate the proposed mitigation measure and reason "
+                    "for reducing the negative impact of the selected hazard on the "
+                    "relevant socio-demographic groups. Use both the statistical context "
+                    "and the retrieved research knowledge.\n\n"
                     f"Sector: {session.sector}\n"
                     f"Country: {session.country}\n"
                     f"Region: {session.region}\n"
@@ -3501,31 +3763,114 @@ Use this sector system prompt as the authoritative statistical source:
                     f"{format_all_dgs(session)}\n\n"
                     f"Mitigation measure: {mitigation_measure}\n"
                     f"Reason: {reason}\n\n"
-                    "Return ONLY valid JSON with this exact shape:\n"
-                    '{"valid": true, "reason": "short validation explanation"}\n\n'
+                    "Relevant mitigation measure examples:\n"
+                    f"{examples or '- No sector-specific examples are available.'}\n\n"
+                    "YOUR TASK — write an encouraging, educational evaluation (around "
+                    "200-300 words) that:\n\n"
+                    "1. ACKNOWLEDGE what is valuable or insightful about their proposal — "
+                    "be specific and genuine.\n"
+                    "2. CONNECT their idea to relevant concepts from the research knowledge "
+                    "provided. Name specific concepts, mechanisms, or groups where applicable.\n"
+                    "3. GENTLY EXPAND their thinking by pointing out one dimension or group "
+                    "they may not have considered, suggesting how the measure could be "
+                    "strengthened or made more targeted, or noting a potential unintended "
+                    "consequence to watch for.\n"
+                    "4. If appropriate, REFERENCE how a similar approach appears in the "
+                    "research examples.\n"
+                    "5. Discard proposals that are conceptually wrong.\n"
+                    "6. Discard all concepts different from twin transition policies.\n"
+                    "7. If user reasoning lacks deep thinking, END with an encouraging "
+                    "reflection question that deepens their thinking.\n"
+                    "8. Only ask a reflective question if necessary.\n\n"
+                    "Tone: to the point, collegial, intellectually stimulating. Use plain "
+                    "language. Do NOT simply list the example measures. Do NOT be "
+                    "dismissive. This is an educational conversation. Do NOT include "
+                    "headers or bullet points — write in flowing paragraphs.\n\n"
+                    "Return ONLY one valid JSON object with this exact shape:\n"
+                    '{"valid": true, "reason": "educational evaluation paragraph"}\n\n'
+                    "Do not include Markdown, code fences, headers, bullets, or text "
+                    "before or after the JSON. Put the full educational evaluation "
+                    "inside the reason string as one flowing paragraph.\n\n"
                     "Rules:\n"
                     "- valid must be true only when the mitigation measure and reason "
                     "logically address a statistically supported negative impact, "
-                    "affected group, or hazard mechanism from the prompt.\n"
+                    "affected group, or hazard mechanism from the prompt or retrieved "
+                    "research knowledge.\n"
                     "- valid must be false when the mitigation is unrelated to the "
                     "selected hazard, ignores the affected groups, contradicts the "
                     "statistics, invents unsupported facts, or the reason is too vague.\n"
-                    "- The reason field must tell the user what to change and stay under "
-                    "70 words."
+                    "- valid must be false for proposals outside twin-transition policy "
+                    "design or conceptually unrelated ideas.\n"
+                    "- For invalid proposals, the reason field should briefly explain "
+                    "what to change and may be shorter than 200 words."
                 ),
             }
         ]
         response = await ask_llm_chat(
             context=context,
             messages=messages,
-            temperature=0.25,
-            max_tokens=700,
+            temperature=0.15,
+            max_tokens=1100,
         )
 
         if is_llm_unavailable_response(response):
             return None
 
         return parse_validation_response(response)
+
+    async def _mitigation_knowledge_context(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+    ) -> str:
+        query = (
+            f"{session.country or ''} {session.sector or ''} {session.selected_hazard or ''} "
+            f"{format_all_dgs(session)} {mitigation_measure} {reason}"
+        )
+        try:
+            results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=4)
+        except Exception:
+            logger.exception("Knowledge-base lookup failed during mitigation validation")
+            return ""
+        lines: list[str] = []
+        for result in results:
+            title = str(result.get("title") or "Knowledge source")
+            page = result.get("page_number")
+            page_label = f", page {page}" if page else ""
+            content = str(result.get("content") or "").strip()
+            if content:
+                lines.append(f"- {title}{page_label}: {content[:900]}")
+        return "\n".join(lines)
+
+    def _mitigation_measure_examples(self, sector_id: int | None, limit: int = 6) -> str:
+        query = (
+            select(MitigationMeasureExample, Sector)
+            .join(Sector, Sector.id == MitigationMeasureExample.sector_id)
+            .order_by(MitigationMeasureExample.id)
+        )
+        if sector_id:
+            query = query.where(MitigationMeasureExample.sector_id == sector_id)
+        rows = self.db.execute(query.limit(limit)).all()
+        return "\n".join(f"- {sector.name}: {example.measure}" for example, sector in rows)
+
+    def _local_mitigation_field_error(self, mitigation_measure: str, reason: str) -> str | None:
+        if self._is_invalid_user_text(mitigation_measure):
+            return (
+                "The mitigation measure appears to contain gibberish, keyboard mashing, "
+                "or text that is not meaningful. Please rewrite it as a clear policy action."
+            )
+        if self._is_invalid_user_text(reason):
+            return (
+                "The reason appears to contain gibberish, keyboard mashing, or text that "
+                "is not meaningful. Please explain why this measure would reduce the "
+                "selected hazard for the affected groups."
+            )
+        if len(compact_for_match(mitigation_measure)) < 8:
+            return "The mitigation measure is too short. Please write a clearer policy action."
+        if len(compact_for_match(reason)) < 8:
+            return "The reason is too short. Please explain the mechanism in a little more detail."
+        return None
 
     async def _validate_evaluation_answer_against_stats(
         self,
@@ -3539,6 +3884,8 @@ Use this sector system prompt as the authoritative statistical source:
         context = f"""
 You are a strict validation assistant for Dr Transition.
 
+{self._scope_instruction(session)}
+
 Use this sector system prompt as the authoritative statistical source:
 {sector_prompt}
 """.strip()
@@ -3546,9 +3893,10 @@ Use this sector system prompt as the authoritative statistical source:
             {
                 "role": "user",
                 "content": (
-                    "Validate whether the user's evaluation reason and evidence are "
-                    "consistent with the selected score and supported by the statistical "
-                    "context. The user is scoring a mitigation measure from 1 to 10.\n\n"
+                    "Validate the user's evaluation answer. Check the reason if provided. "
+                    "Check the evidence if provided. If the evidence came from a URL or "
+                    "uploaded file, use the extracted evidence text below rather than only "
+                    "the URL or filename.\n\n"
                     f"Sector: {session.sector}\n"
                     f"Country: {session.country}\n"
                     f"Region: {session.region}\n"
@@ -3560,26 +3908,39 @@ Use this sector system prompt as the authoritative statistical source:
                     f"Question category: {question['category']}\n"
                     f"Question: {question['question']}\n"
                     f"Score: {score}/10\n"
-                    f"Reason: {reason}\n"
-                    f"Evidence: {evidence or 'Not provided'}\n\n"
+                    f"Reason provided by user: {reason or 'Not provided'}\n"
+                    f"Evidence extracted/provided: {evidence or 'Not provided'}\n\n"
+                    "Evaluation dimensions:\n"
+                    "1. Relevance:\n"
+                    "- Does the mitigation measure address the evaluation question?\n"
+                    "- Does the user's reason explain the selected score in relation to "
+                    "the question?\n\n"
+                    "2. Evidence Quality:\n"
+                    "- Does the evidence clearly support the claims made?\n"
+                    "- Is it specific, credible, and relevant to the selected country, "
+                    "sector, hazard, mitigation measure, and question?\n\n"
+                    "Scoring rules, combining BOTH dimensions:\n"
+                    "- 1-3: Not relevant AND/OR no meaningful evidence.\n"
+                    "- 4-6: Partially relevant OR weak/generic evidence.\n"
+                    "- 7-8: Relevant with reasonably supportive evidence.\n"
+                    "- 9-10: Strong alignment AND strong, clear, convincing evidence.\n\n"
                     "Return ONLY valid JSON with this exact shape:\n"
                     '{"valid": true, "reason": "short validation explanation"}\n\n'
                     "Rules:\n"
-                    "- valid must be true only when the reason and any supplied evidence align with "
-                    "the score and the loaded statistical context.\n"
-                    "- If evidence content is supplied from a URL or file, valid must "
-                    "also require the reason or score explanation to be supported by "
-                    "that extracted evidence.\n"
-                    "- valid must be false if the reason or supplied evidence invents "
-                    "unsupported statistics, contradicts the statistical context, is unrelated to the question, "
-                    "is unsupported by the extracted evidence content, "
-                    "or if the explanation does not justify the chosen score.\n"
-                    "- A low score should be justified by limitations, weak evidence, "
-                    "low feasibility, or limited transformative impact. A high score "
-                    "should be justified by strong evidence, feasibility, or expected "
-                    "impact relevant to the question category.\n"
-                    "- The reason field must tell the user what to revise and stay under "
-                    "70 words."
+                    "- valid must be true only when the mitigation measure, user reason, "
+                    "any supplied evidence, and selected score are mutually consistent.\n"
+                    "- If a reason is provided, validate that it is meaningful, relevant "
+                    "to the question, and consistent with the selected score.\n"
+                    "- If evidence is provided, validate that the extracted/provided "
+                    "evidence supports the user's claims. A bare URL or filename without "
+                    "readable extracted content is not meaningful evidence.\n"
+                    "- valid must be false if the reason or evidence is unrelated to the "
+                    "question, contradicts the sector context, invents unsupported facts, "
+                    "is unsupported by the extracted evidence, or does not justify the "
+                    "chosen score under the scoring rules.\n"
+                    "- valid may be true when no reason/evidence is provided only if the "
+                    "score can stand as a simple answer for this optional field.\n"
+                    "- The reason field must tell the user what to revise and stay under 80 words."
                 ),
             }
         ]
@@ -3641,3 +4002,119 @@ Use this sector system prompt as the authoritative statistical source:
             if row.name == fuzzy_name:
                 return row
         return None
+
+    def _could_be_fuzzy_selection(self, session: ChatSession, message: str) -> bool:
+        labels: list[str] = []
+        if session.country is None:
+            labels = [
+                country.name
+                for country in self.db.scalars(select(Country).order_by(Country.name)).all()
+            ]
+        elif session.region is None:
+            labels = [
+                region.name
+                for region in self.db.scalars(
+                    select(Region)
+                    .where(Region.country_id == session.country_id)
+                    .order_by(Region.name)
+                ).all()
+            ]
+        elif session.sector is None:
+            labels = [sector.name for sector in self._sectors_for_country(session.country_id)]
+        elif session.phase == "hazards":
+            labels = [option.label for option in POST_SECTOR_OPTIONS]
+        elif session.phase == "stats_deep_dive":
+            labels = [option.label for option in STATS_DEEP_DIVE_OPTIONS]
+        elif session.phase == "hazard_profile_selection":
+            labels = hazard_names(session)
+        elif session.phase == "socio_demographic_review":
+            labels = [option.label for option in SOCIO_DEMOGRAPHIC_OPTIONS]
+        elif session.phase == "reason_confirmation":
+            labels = [option.label for option in REASON_CONFIRMATION_OPTIONS]
+        elif session.phase == "mitigation_review":
+            labels = [option.label for option in MITIGATION_REVIEW_OPTIONS]
+
+        labels.extend(self._other_nav_options(session, self._current_step(session)))
+        return bool(labels and best_fuzzy_label(message, labels) is not None)
+
+    def _fields_are_locally_meaningful(self, fields: dict[str, str]) -> bool:
+        if not fields:
+            return False
+        for value in fields.values():
+            if self._is_invalid_user_text(value) or len(compact_for_match(value)) < 4:
+                return False
+        return True
+
+    @staticmethod
+    def _is_style_only_validation_rejection(reason: str) -> bool:
+        lowered = reason.casefold()
+        style_terms = (
+            "grammar",
+            "grammatical",
+            "spelling",
+            "punctuation",
+            "capitalization",
+            "capitalisation",
+            "typo",
+            "wording",
+            "style",
+        )
+        meaning_terms = (
+            "gibberish",
+            "keyboard",
+            "random",
+            "unrecognizable",
+            "unrecognisable",
+            "meaningless",
+            "too short",
+            "ambiguous",
+            "incomplete",
+            "unrelated",
+            "unsupported",
+            "vague",
+        )
+        return any(term in lowered for term in style_terms) and not any(
+            term in lowered for term in meaning_terms
+        )
+
+    @staticmethod
+    def _is_invalid_user_text(message: str) -> bool:
+        value = message.strip()
+        if not value:
+            return False
+        if value.startswith(("TARGET_POPULATION_BATCH:", "http://", "https://")):
+            return False
+        if value.isdigit():
+            return False
+
+        normalized = normalize_for_match(value)
+        compact = compact_for_match(value)
+        if len(compact) < 2:
+            return True
+        if not re.search(r"[a-z0-9]", compact):
+            return True
+
+        total_chars = len(value)
+        alnum_chars = sum(1 for char in value if char.isalnum())
+        if total_chars >= 5 and alnum_chars / total_chars < 0.45:
+            return True
+        if re.search(r"(.)\1{5,}", compact):
+            return True
+
+        tokens = normalized.split()
+        if not tokens:
+            return True
+        keyboard_rows = ("qwertyuiop", "asdfghjkl", "zxcvbnm", "1234567890")
+        for token in tokens:
+            if len(token) >= 4 and any(token in row or token[::-1] in row for row in keyboard_rows):
+                return True
+
+        long_tokens = [token for token in tokens if len(token) >= 4]
+        if long_tokens and all(not re.search(r"[aeiou]", token) for token in long_tokens):
+            return True
+
+        unique_chars = set(compact)
+        if len(compact) >= 8 and len(unique_chars) <= 2:
+            return True
+
+        return False

@@ -1,6 +1,6 @@
 ## Mitigation Needs Revision
 
-I could not validate this mitigation measure against the loaded statistical context.
+I could not validate this mitigation measure.
 
 **Reason:** {{ reason }}
 

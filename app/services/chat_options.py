@@ -2,18 +2,18 @@ from app.models import Country, Region, Sector
 from app.schemas import Option
 
 POST_SECTOR_OPTIONS = [
-    Option(id=1, label="Move to next step"),
+    Option(id=1, label="Start Mitigation Planning"),
     Option(id=2, label="Add a new Hazard"),
     Option(id=3, label="Dive deeper into statistical findings"),
 ]
 
 STATS_DEEP_DIVE_OPTIONS = [
-    Option(id=1, label="Move to next step"),
+    Option(id=1, label="Start Mitigation Planning"),
     Option(id=2, label="Add a new Hazard"),
 ]
 
 SOCIO_DEMOGRAPHIC_OPTIONS = [
-    Option(id=1, label="Move to next step"),
+    Option(id=1, label="Create Mitigation Measure"),
     Option(id=2, label="Add more DGs"),
 ]
 

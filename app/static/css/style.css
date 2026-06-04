@@ -31,6 +31,18 @@ textarea {
   font: inherit;
 }
 
+.field-required-flash {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.16) !important;
+  animation: required-field-pulse 420ms ease-in-out 0s 3;
+}
+
+@keyframes required-field-pulse {
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
 .topbar {
   min-height: 92px;
   background: #000000;
@@ -1371,6 +1383,64 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   background: #ffffff;
   border: 1px solid var(--line);
   color: #020617;
+}
+
+.bubble-content {
+  overflow: hidden;
+}
+
+.bubble.is-collapsible .bubble-content {
+  position: relative;
+  max-height: 11.5rem;
+}
+
+.bubble.is-collapsible:not(.is-expanded) .bubble-content::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3.2rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), #ffffff 82%);
+  pointer-events: none;
+}
+
+.message-row.user .bubble.is-collapsible:not(.is-expanded) .bubble-content::after {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0), #000000 82%);
+}
+
+.message-row.error .bubble.is-collapsible:not(.is-expanded) .bubble-content::after {
+  background: linear-gradient(180deg, rgba(254, 242, 242, 0), #fef2f2 82%);
+}
+
+.bubble.is-collapsible.is-expanded .bubble-content {
+  max-height: none;
+}
+
+.bubble-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  margin-top: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111827;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.message-row.user .bubble-toggle {
+  border-color: rgba(255, 255, 255, 0.32);
+  background: #111111;
+  color: #ffffff;
+}
+
+.message-row.error .bubble-toggle {
+  border-color: #fecaca;
+  color: #991b1b;
 }
 
 .bubble p {

@@ -181,6 +181,16 @@ CREATE TABLE IF NOT EXISTS user_mitigation_measures (
   INDEX ix_user_mitigation_measures_hazard_id (user_hazard_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS mitigation_measure_examples (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  sector_id INT NOT NULL,
+  measure TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_mitigation_examples_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_mitigation_example_sector_measure (sector_id, measure(500)),
+  INDEX ix_mitigation_measure_examples_sector_id (sector_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_question_responses (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_session_id INT NOT NULL,
@@ -445,3 +455,4 @@ JOIN (
 ) option_rows ON option_rows.question_text = q.question
 WHERE q.category = 'target_population'
 ON DUPLICATE KEY UPDATE `option` = VALUES(`option`);
+
