@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -57,7 +58,7 @@ from app.services.chat_parsers import (
     parse_duplicate_check_response,
     parse_evaluation_answer,
     parse_hazard_input_review_response,
-    parse_llm_hazard_profiles,
+    parse_llm_hazard_list,
     parse_mitigation_reason,
     parse_reason_evidence,
     parse_validation_response,
@@ -1000,7 +1001,7 @@ class ChatService:
                     "socio-demographic profiles most affected using the saved target "
                     "population answers below. Connect the answer to the country, region, "
                     "and sector context. For each profile, include a short explanation "
-                    "and a concise statistical basis when available. Do not include "
+                    "only. Do not include statistical basis, "
                     "Practical Considerations, Practical Policy Recommendations, mitigation "
                     "measures, or policy recommendations yet.\n\n"
                     "Saved target population answers:\n"
@@ -1008,18 +1009,7 @@ class ChatService:
                 ),
             )
 
-        return await self._socio_demographic_response(
-            session_id,
-            session,
-            (
-                f"For the selected hazard '{hazard}', identify the socio-demographic "
-                "profiles that are most affected. Focus on statistically supported "
-                "groups from the loaded sector prompt. For each profile, include a short "
-                "explanation and a concise statistical basis when available. Do not include "
-                "Practical Considerations, Practical Policy Recommendations, mitigation "
-                "measures, or policy recommendations yet."
-            ),
-        )
+        return await self._hazard_profiles_response(session_id, session, hazard)
 
     async def _handle_socio_demographic_review(
         self, session_id: str, session: ChatSession, message: str
@@ -1965,6 +1955,40 @@ class ChatService:
             error=False,
         )
 
+    async def _hazard_profiles_response(
+        self, session_id: str, session: ChatSession, hazard: str
+    ) -> ChatResponse:
+        profiles = self._stored_hazard_profiles(session, hazard)
+        expected_count = self._expected_hazard_profile_count(session, hazard)
+        if not profiles or (expected_count and len(profiles) != expected_count):
+            profiles = await self._get_hazard_profiles_from_llm(session, hazard)
+            if profiles:
+                if session.hazard_profiles is None:
+                    session.hazard_profiles = {}
+                session.hazard_profiles[hazard] = profiles
+        answer = self._format_hazard_profiles_markdown(hazard, profiles)
+        session.socio_demographic_findings = answer
+        session.socio_demographic_profiles = [profile["name"] for profile in profiles]
+        for profile in session.socio_demographic_profiles:
+            self._store_socio_demographic(
+                session,
+                session.selected_hazard_record_id,
+                profile,
+                source="llm",
+            )
+        return ChatResponse(
+            session_id=session_id,
+            step="socio_demographic_review",
+            bot_message=(
+                markdown_to_html(answer)
+                + "\n"
+                + render_message("socio_demographic_next.md")
+            ),
+            options=SOCIO_DEMOGRAPHIC_OPTIONS,
+            session=session.summary(),
+            error=False,
+        )
+
     async def _negative_impact_reasons(self, session: ChatSession) -> str:
         context, messages = self._build_deep_dive_messages(
             session,
@@ -2671,6 +2695,125 @@ Retrieved knowledge-base excerpts:
         return profiles
 
     @staticmethod
+    def _parse_hazard_profile_items(response: str) -> list[dict[str, str]]:
+        if is_llm_unavailable_response(response):
+            return []
+        try:
+            parsed = json.loads(response.strip())
+        except json.JSONDecodeError:
+            parsed = None
+        if not isinstance(parsed, list):
+            try:
+                parsed = json.loads(ChatService._extract_json_array(response))
+            except json.JSONDecodeError:
+                parsed = None
+        if not isinstance(parsed, list):
+            return []
+
+        profiles: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in parsed:
+            if isinstance(item, str):
+                name = item.strip().strip("`*_ ")
+                explanation = ""
+            elif isinstance(item, dict):
+                name = str(item.get("name") or item.get("profile") or "").strip().strip("`*_ ")
+                explanation = str(
+                    item.get("explanation")
+                    or item.get("reason")
+                    or item.get("description")
+                    or ""
+                ).strip().strip("`*_ ")
+            else:
+                continue
+            if not name:
+                continue
+            key = normalize(name)
+            if key in seen:
+                continue
+            seen.add(key)
+            profiles.append({"name": name[:120], "explanation": explanation[:260]})
+        return profiles[:12]
+
+    @staticmethod
+    def _extract_json_array(value: str) -> str:
+        start = value.find("[")
+        end = value.rfind("]")
+        if start != -1 and end != -1 and end > start:
+            return value[start : end + 1]
+        return "[]"
+
+    @staticmethod
+    def _format_hazard_profiles_markdown(
+        hazard: str, profiles: list[dict[str, str]]
+    ) -> str:
+        lines = [f"### Socio-demographic profiles most affected by {hazard}"]
+        if not profiles:
+            lines.append("- No clearly supported socio-demographic profiles were returned for this hazard.")
+            return "\n".join(lines)
+        for profile in profiles:
+            name = profile.get("name", "").strip()
+            if not name:
+                continue
+            explanation = profile.get("explanation", "").strip()
+            if explanation:
+                lines.append(f"- **{name}**: {explanation}")
+            else:
+                lines.append(f"- **{name}**")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _stored_hazard_profiles(session: ChatSession, hazard: str) -> list[dict[str, str]]:
+        stored_profiles = session.hazard_profiles or {}
+        values = stored_profiles.get(hazard)
+        if values is None:
+            hazard_key = normalize(hazard)
+            for stored_hazard, stored_value in stored_profiles.items():
+                if normalize(str(stored_hazard)) == hazard_key:
+                    values = stored_value
+                    break
+        if values is None:
+            return []
+        if isinstance(values, str):
+            raw_items: list[dict[str, str] | str] = [values]
+        else:
+            raw_items = list(values)
+
+        profiles: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            if isinstance(item, dict):
+                name = str(item.get("name") or item.get("profile") or "").strip()
+                explanation = str(item.get("explanation") or "").strip()
+            else:
+                name = str(item).strip()
+                explanation = ""
+            key = normalize(name)
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            profiles.append({"name": name, "explanation": explanation})
+        return profiles
+
+    @staticmethod
+    def _confirmed_predictor_hazard_block(sector_prompt: str, hazard: str) -> str:
+        target = normalize_for_match(hazard)
+        hazard_pattern = re.compile(
+            r"(?ms)^HAZARD\s+\d+\.\s+(.+?)\n(.*?)(?=^HAZARD\s+\d+\.|\Z)"
+        )
+        section_start = sector_prompt.find("SECTION 5")
+        prompt = sector_prompt[section_start:] if section_start != -1 else sector_prompt
+        for match in hazard_pattern.finditer(prompt):
+            heading = match.group(1).strip()
+            if normalize_for_match(heading) == target:
+                return match.group(0)
+        for match in hazard_pattern.finditer(prompt):
+            heading = match.group(1).strip()
+            if target in normalize_for_match(heading) or normalize_for_match(heading) in target:
+                return match.group(0)
+        return ""
+
+    @staticmethod
     def _is_statistical_basis_line(value: str) -> bool:
         normalized = normalize_markdown_text(value).strip().strip("*_` ").casefold()
         return normalized.startswith(
@@ -3217,6 +3360,16 @@ Sector system prompt:
         return context, messages
 
     async def _get_hazards_from_llm(self, session: ChatSession) -> list[dict[str, object]]:
+        hazards = await self._get_hazard_names_from_llm(session)
+        profile_lists = await asyncio.gather(
+            *(self._get_hazard_profiles_from_llm(session, hazard) for hazard in hazards)
+        )
+        return [
+            {"hazard": hazard, "profiles": profiles}
+            for hazard, profiles in zip(hazards, profile_lists, strict=False)
+        ]
+
+    async def _get_hazard_names_from_llm(self, session: ChatSession) -> list[str]:
         sector_prompt = load_sector_prompt(session.sector)
         context = f"""
 You are a strict extraction assistant for Dr Transition.
@@ -3234,23 +3387,14 @@ Use this sector system prompt as the only source:
                     f"- Country: {session.country}\n"
                     f"- Region: {session.region}\n"
                     f"- Sector: {session.sector}\n\n"
-                    "List all the hazards perceived and identify the socio-demographic "
-                    "profiles most affected for each hazard in the selected country and "
-                    "sector only. Connect the profiles to the selected country/sector "
-                    "context in the prompt. Include a short explanation for why each "
-                    "profile is relevant in this selected context.\n\n"
-                    "Return ONLY valid JSON, an array of objects like:\n"
-                    '[{"hazard": "hazard name", "profiles": [{"name": "affected profile", "explanation": "short explanation"}]}]\n\n'
+                    "List all the hazards perceived for the selected sector. Return ONLY "
+                    "valid JSON, an array of hazard names like:\n"
+                    '["hazard name", "another hazard name"]\n\n'
                     "Rules:\n"
-                    "- The hazard field must be only the hazard name.\n"
-                    "- The profiles field must be an array of objects with name and explanation.\n"
-                    "- Keep profile names concise and explanations under 22 words.\n"
-                    "- Explanations should be plain-language and grounded in the prompt context.\n"
-                    "- Do not include statistical basis, predictors, demographic variables used "
-                    "as model terms, countries, model metrics, caveats, Markdown, or code fences.\n"
-                    "- If no profiles are clearly available for a hazard, use an empty array.\n"
-                    "- If the sector analysis is unavailable, return "
-                    '[{"hazard": "Analysis not available", "profiles": []}].'
+                    "- Use only hazards named in the sector prompt.\n"
+                    "- Each item must be only the hazard name.\n"
+                    "- Do not include profiles, explanations, Markdown, or code fences.\n"
+                    '- If the sector analysis is unavailable, return ["Analysis not available"].'
                 ),
             }
         ]
@@ -3259,9 +3403,278 @@ Use this sector system prompt as the only source:
             context=context,
             messages=messages,
             temperature=0,
-            max_tokens=1400,
+            max_tokens=700,
         )
-        return parse_llm_hazard_profiles(response)
+        return parse_llm_hazard_list(response)
+
+    async def _get_hazard_profiles_from_llm(
+        self, session: ChatSession, hazard: str
+    ) -> list[dict[str, str]]:
+        sector_prompt = load_sector_prompt(session.sector)
+        hazard_block = self._confirmed_predictor_hazard_block(sector_prompt, hazard)
+        if hazard_block:
+            if re.search(r"\b0 confirmed predictors\b", hazard_block, re.IGNORECASE):
+                return []
+            expected_count = self._confirmed_predictor_count(hazard_block)
+            predictor_ids = self._confirmed_predictor_ids(hazard_block)
+            return await self._get_hazard_block_profiles_from_llm(
+                session,
+                hazard,
+                hazard_block,
+                expected_count,
+                predictor_ids,
+            )
+
+        context = f"""
+You are a strict socio-demographic profile extraction assistant for Dr Transition.
+
+{self._scope_instruction(session)}
+
+Use this sector system prompt as the only source:
+{sector_prompt}
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Selected context:\n"
+                    f"- Country: {session.country}\n"
+                    f"- Region: {session.region}\n"
+                    f"- Sector: {session.sector}\n"
+                    f"- Hazard: {hazard}\n\n"
+                    "Identify the exact socio-demographic profiles for this hazard. "
+                    "If the prompt says "
+                    "affected profiles are exactly the confirmed predictors for the hazard, "
+                    "include every confirmed predictor, including LOWER concern or protective "
+                    "predictors. For each profile, include only a short explanation. "
+                    "Return ONLY valid JSON, an array of objects like:\n"
+                    '[{"name": "affected profile", "explanation": "short explanation"}]\n\n'
+                    "Rules:\n"
+                    "- Use only profiles supported for this specific hazard in the prompt.\n"
+                    "- Profile names must be human-readable people, household, home, or "
+                    "country-context groups derived from confirmed predictors; do not return "
+                    "raw predictor variable names.\n"
+                    "- Include protective/lower-concern confirmed predictors too, labelled "
+                    "plainly in the explanation as lower concern or protective.\n"
+                    "- Keep profile names concise and explanations under 24 words.\n"
+                    "- Explanations should be plain-language, hazard-specific, and grounded "
+                    "in the prompt context.\n"
+                    "- Do not include statistical basis, model metrics, caveats, Markdown, or code fences.\n"
+                    "- If no profiles are clearly supported for this hazard, return []."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0,
+            max_tokens=700,
+        )
+        return self._parse_hazard_profile_items(response)
+
+    async def _get_hazard_block_profiles_from_llm(
+        self,
+        session: ChatSession,
+        hazard: str,
+        hazard_block: str,
+        expected_count: int | None = None,
+        predictor_ids: list[str] | None = None,
+    ) -> list[dict[str, str]]:
+        predictor_id_list = predictor_ids or []
+        count_rule = (
+            f"- Return exactly {expected_count} profile objects: one for each confirmed PREDICTOR entry in the block.\n"
+            if expected_count
+            else "- Return one profile object for each confirmed PREDICTOR entry in the block.\n"
+        )
+        id_rule = (
+            "- Use this predictor checklist and return one object for each ID in this order: "
+            + ", ".join(predictor_id_list)
+            + ".\n"
+            if predictor_id_list
+            else ""
+        )
+        context = f"""
+You convert confirmed predictor evidence into readable socio-demographic profiles for Dr Transition.
+
+{self._scope_instruction(session)}
+
+Use only the hazard-specific confirmed-predictor block below. Do not use other hazards.
+
+Confirmed-predictor block:
+{hazard_block}
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Selected context:\n"
+                    f"- Country: {session.country}\n"
+                    f"- Region: {session.region}\n"
+                    f"- Sector: {session.sector}\n"
+                    f"- Hazard: {hazard}\n\n"
+                    "Return the socio-demographic profiles for this hazard as ONLY valid JSON:\n"
+                    '[{"name": "human-readable profile", "explanation": "short explanation"}]\n\n'
+                    "Rules:\n"
+                    + count_rule
+                    + id_rule
+                    + "- Do not merge predictors into fewer profiles, even when predictors are related.\n"
+                    "- If the block says 0 confirmed predictors, return [].\n"
+                    "- Convert variable names into human-readable profile names.\n"
+                    "- Include LOWER concern or protective predictors too, and say lower concern/protective in the explanation.\n"
+                    "- Explanation should be plain language only, under 24 words.\n"
+                    "- Do not include odds ratios, p-values, statistical basis, model metrics, Markdown, or code fences."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0,
+            max_tokens=900,
+        )
+        profiles = self._parse_hazard_profile_items(response)
+        if expected_count and len(profiles) != expected_count:
+            retry_response = await ask_llm_chat(
+                context=context,
+                messages=[
+                    *messages,
+                    {
+                        "role": "assistant",
+                        "content": response,
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"The response returned {len(profiles)} profiles, but this hazard has "
+                            f"{expected_count} confirmed predictors. Return ONLY valid JSON with "
+                            f"exactly {expected_count} objects, one object for each PREDICTOR entry. "
+                            + (
+                                "Use this checklist in order: "
+                                + ", ".join(predictor_id_list)
+                                + ". "
+                                if predictor_id_list
+                                else ""
+                            )
+                            + "Do not merge, skip, or add predictors."
+                        ),
+                    },
+                ],
+                temperature=0,
+                max_tokens=900,
+            )
+            retry_profiles = self._parse_hazard_profile_items(retry_response)
+            if len(retry_profiles) == expected_count:
+                return retry_profiles
+            predictor_entries = self._confirmed_predictor_entries(hazard_block)
+            if len(predictor_entries) == expected_count:
+                single_profiles = await asyncio.gather(
+                    *(
+                        self._get_single_predictor_profile_from_llm(session, hazard, entry)
+                        for entry in predictor_entries
+                    )
+                )
+                fallback_profiles = [
+                    profile
+                    for profile in single_profiles
+                    if profile and profile.get("name", "").strip()
+                ]
+                if len(fallback_profiles) == expected_count:
+                    return fallback_profiles
+        return profiles
+
+    async def _get_single_predictor_profile_from_llm(
+        self,
+        session: ChatSession,
+        hazard: str,
+        predictor_entry: str,
+    ) -> dict[str, str]:
+        context = f"""
+You convert one confirmed predictor into one readable socio-demographic profile for Dr Transition.
+
+{self._scope_instruction(session)}
+
+Use only this predictor entry:
+{predictor_entry}
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Selected context:\n"
+                    f"- Country: {session.country}\n"
+                    f"- Region: {session.region}\n"
+                    f"- Sector: {session.sector}\n"
+                    f"- Hazard: {hazard}\n\n"
+                    "Return ONLY valid JSON with one object:\n"
+                    '{"name": "human-readable profile", "explanation": "short explanation"}\n\n'
+                    "Rules:\n"
+                    "- Convert the predictor variable and level into a concise human-readable profile name.\n"
+                    "- The explanation must be plain language only, under 24 words.\n"
+                    "- If the predictor is LOWER concern or protective, say lower concern/protective in the explanation.\n"
+                    "- Do not include odds ratios, p-values, statistical basis, model metrics, Markdown, or code fences."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0,
+            max_tokens=300,
+        )
+        if is_llm_unavailable_response(response):
+            return {}
+        try:
+            parsed = json.loads(response.strip())
+        except json.JSONDecodeError:
+            try:
+                parsed = json.loads(self._extract_json_object(response))
+            except json.JSONDecodeError:
+                parsed = None
+        if not isinstance(parsed, dict):
+            return {}
+        name = str(parsed.get("name") or parsed.get("profile") or "").strip().strip("`*_ ")
+        explanation = str(
+            parsed.get("explanation")
+            or parsed.get("reason")
+            or parsed.get("description")
+            or ""
+        ).strip().strip("`*_ ")
+        if not name:
+            return {}
+        return {"name": name[:120], "explanation": explanation[:260]}
+
+    @staticmethod
+    def _extract_json_object(value: str) -> str:
+        start = value.find("{")
+        end = value.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return value[start : end + 1]
+        return "{}"
+
+    @staticmethod
+    def _confirmed_predictor_count(hazard_block: str) -> int | None:
+        match = re.search(r"\b(\d+)\s+confirmed predictors?\b", hazard_block, re.IGNORECASE)
+        if not match:
+            return None
+        return int(match.group(1))
+
+    @staticmethod
+    def _confirmed_predictor_ids(hazard_block: str) -> list[str]:
+        return re.findall(r"^PREDICTOR\s+([0-9]+[A-Z]):", hazard_block, re.MULTILINE)
+
+    @staticmethod
+    def _confirmed_predictor_entries(hazard_block: str) -> list[str]:
+        entry_pattern = re.compile(
+            r"(?ms)^PREDICTOR\s+[0-9]+[A-Z]:.*?(?=^PREDICTOR\s+[0-9]+[A-Z]:|^COUNTRY PATTERN|^PREDICTORS NOT CONFIRMED|\Z)"
+        )
+        return [match.group(0).strip() for match in entry_pattern.finditer(hazard_block)]
+
+    def _expected_hazard_profile_count(self, session: ChatSession, hazard: str) -> int | None:
+        sector_prompt = load_sector_prompt(session.sector)
+        hazard_block = self._confirmed_predictor_hazard_block(sector_prompt, hazard)
+        if not hazard_block:
+            return None
+        return self._confirmed_predictor_count(hazard_block)
 
     async def _validate_hazard_against_stats(
         self,

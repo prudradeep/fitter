@@ -4,7 +4,6 @@ from app.schemas import Option
 POST_SECTOR_OPTIONS = [
     Option(id=1, label="Start Mitigation Planning"),
     Option(id=2, label="Add a new Hazard"),
-    Option(id=3, label="Dive deeper into statistical findings"),
 ]
 
 STATS_DEEP_DIVE_OPTIONS = [

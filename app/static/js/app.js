@@ -2,6 +2,7 @@ const sessionKey = "dr_transition_session_id";
 const inputStateKeyPrefix = "dr_transition_input_state_";
 const voiceEnabledKey = "dr_transition_voice_enabled";
 const voicePreferenceKey = "dr_transition_voice_preference";
+const typingEffectKey = "dr_transition_typing_effect_enabled";
 const teacherAvatarPath = "/static/img/teacher.png";
 
 const chatLog = document.querySelector("#chatLog");
@@ -39,7 +40,11 @@ const currentPasswordInput = document.querySelector("#currentPasswordInput");
 const newPasswordInput = document.querySelector("#newPasswordInput");
 const confirmNewPasswordInput = document.querySelector("#confirmNewPasswordInput");
 const cancelPasswordButton = document.querySelector("#cancelPasswordButton");
+const settingsButton = document.querySelector("#settingsButton");
+const settingsDrawer = document.querySelector("#settingsDrawer");
+const closeSettingsButton = document.querySelector("#closeSettingsButton");
 const voiceAssistantToggle = document.querySelector("#voiceAssistantToggle");
+const typingEffectToggle = document.querySelector("#typingEffectToggle");
 const voicePreferenceSelect = document.querySelector("#voicePreferenceSelect");
 const voiceAnalyzerElement = document.querySelector("#voiceAnalyzer");
 const sessionsButton = document.querySelector("#sessionsButton");
@@ -86,6 +91,7 @@ const stageCoverageRows = JSON.parse(stageMap?.dataset.coverage || "[]");
 const europeMapPath = stageMap?.dataset.europeMapPath || "";
 const appShell = document.querySelector(".app-shell");
 const workspaceResizer = document.querySelector("#workspaceResizer");
+const floatingStatsButton = document.querySelector("#floatingStatsButton");
 
 const sessionFields = {
   country: document.querySelector("#sessionCountry"),
@@ -291,6 +297,14 @@ function updateStageVisual(step = "", session = {}, options = currentOptions) {
   });
   document.body.dataset.analysisStage = key;
   renderDynamicStageVisual(key, currentSession, currentOptions);
+  updateFloatingStatsButton();
+}
+
+function updateFloatingStatsButton() {
+  if (!floatingStatsButton) return;
+  const hasSector = Boolean(currentSession?.sector);
+  const canOpen = hasSector && !["country", "national_scope", "region", "sector"].includes(currentStep);
+  floatingStatsButton.hidden = !canOpen;
 }
 
 function showStageMap() {
@@ -742,6 +756,16 @@ function voiceAssistantEnabled() {
   return Boolean(voiceAssistantToggle?.checked);
 }
 
+function typingEffectEnabled() {
+  return typingEffectToggle ? typingEffectToggle.checked : true;
+}
+
+function configureTypingEffectControl() {
+  if (!typingEffectToggle) return;
+  const saved = localStorage.getItem(typingEffectKey);
+  typingEffectToggle.checked = saved === null ? true : saved === "true";
+}
+
 function ensureVoiceAnalyzer() {
   if (!voiceAnalyzerElement || !voiceAssistantEnabled()) return;
   voiceAnalyzerElement.hidden = false;
@@ -942,6 +966,18 @@ function syncVoicePreferenceVisibility() {
   const voiceSelectWrap = voicePreferenceSelect?.closest(".voice-select");
   if (!voiceSelectWrap) return;
   voiceSelectWrap.hidden = !voiceAssistantToggle?.checked;
+}
+
+function openSettingsDrawer() {
+  if (!settingsDrawer || !settingsButton) return;
+  settingsDrawer.hidden = false;
+  settingsButton.setAttribute("aria-expanded", "true");
+}
+
+function closeSettingsDrawer() {
+  if (!settingsDrawer || !settingsButton) return;
+  settingsDrawer.hidden = true;
+  settingsButton.setAttribute("aria-expanded", "false");
 }
 
 function configureMic() {
@@ -1198,6 +1234,14 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
     bubble.appendChild(content);
   }
   content.textContent = "";
+
+  if (!typingEffectEnabled()) {
+    content.innerHTML = html;
+    bubble.appendChild(timestamp);
+    applyCollapsibleBubble(bubble);
+    scrollToBottom(targetLog);
+    return;
+  }
 
   const template = document.createElement("template");
   template.innerHTML = html;
@@ -2192,8 +2236,37 @@ voiceAssistantToggle?.addEventListener("change", () => {
   }
 });
 
+typingEffectToggle?.addEventListener("change", () => {
+  localStorage.setItem(typingEffectKey, String(typingEffectToggle.checked));
+});
+
 voicePreferenceSelect?.addEventListener("change", () => {
   localStorage.setItem(voicePreferenceKey, voicePreferenceSelect.value);
+});
+
+settingsButton?.addEventListener("click", () => {
+  if (settingsDrawer?.hidden) {
+    openSettingsDrawer();
+  } else {
+    closeSettingsDrawer();
+  }
+});
+
+closeSettingsButton?.addEventListener("click", closeSettingsDrawer);
+
+document.addEventListener("click", (event) => {
+  if (
+    settingsDrawer?.hidden === false &&
+    !settingsDrawer.contains(event.target) &&
+    !settingsButton?.contains(event.target)
+  ) {
+    closeSettingsDrawer();
+  }
+});
+
+floatingStatsButton?.addEventListener("click", () => {
+  pauseSpeech();
+  openStatsDeepDiveDialog();
 });
 
 micButton?.addEventListener("click", () => {
@@ -2248,7 +2321,10 @@ closeSessionsButton?.addEventListener("click", () => {
   sessionsPanel.hidden = true;
 });
 
-knowledgeButton?.addEventListener("click", openKnowledgeDialog);
+knowledgeButton?.addEventListener("click", () => {
+  closeSettingsDrawer();
+  openKnowledgeDialog();
+});
 closeKnowledgeButton?.addEventListener("click", closeKnowledgeDialog);
 
 knowledgeUploadForm?.addEventListener("submit", async (event) => {
@@ -2458,6 +2534,7 @@ logoutForm?.addEventListener("submit", () => {
 
 document.addEventListener("DOMContentLoaded", () => {
   configureVoiceControls();
+  configureTypingEffectControl();
   configureMic();
   configureWorkspaceResizer();
   clearCurrentInputState();

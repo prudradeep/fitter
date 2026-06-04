@@ -22,18 +22,6 @@
         </div>
         <div id="voiceAnalyzer" class="voice-analyzer" aria-hidden="true" hidden></div>
         <div class="topbar-actions">
-          <label class="voice-switch">
-            <input id="voiceAssistantToggle" type="checkbox" />
-            <span class="switch-track" aria-hidden="true"></span>
-            <span>Voice</span>
-          </label>
-          <label class="voice-select">
-            <select id="voicePreferenceSelect" aria-label="Voice preference">
-              <option value="auto" selected>Auto</option>
-              <option value="female">Female</option>
-              <option value="male">Male</option>
-            </select>
-          </label>
           <div class="session-menu">
             <button id="sessionsButton" class="reset-button" type="button">Manage Sessions</button>
             <div id="sessionsPanel" class="sessions-panel" hidden>
@@ -44,8 +32,51 @@
               <div id="sessionsList" class="sessions-list"></div>
             </div>
           </div>
-          <button id="knowledgeButton" class="reset-button" type="button">Knowledge Base</button>
           <button id="resetButton" class="reset-button" type="button">New Session</button>
+          <div class="settings-menu">
+            <button id="settingsButton" class="icon-button" type="button" aria-label="Open settings" aria-expanded="false">
+              ⚙
+            </button>
+            <aside id="settingsDrawer" class="settings-drawer" aria-label="Settings" hidden>
+              <div class="settings-drawer-header">
+                <strong>Settings</strong>
+                <button id="closeSettingsButton" type="button" aria-label="Close settings">×</button>
+              </div>
+              <div class="settings-list">
+                <label class="settings-row">
+                  <span>
+                    <strong>Voice</strong>
+                    <small>Read assistant responses aloud.</small>
+                  </span>
+                  <span class="voice-switch">
+                    <input id="voiceAssistantToggle" type="checkbox" />
+                    <span class="switch-track" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="settings-row">
+                  <span>
+                    <strong>Typing effect</strong>
+                    <small>Animate assistant responses as they appear.</small>
+                  </span>
+                  <span class="voice-switch">
+                    <input id="typingEffectToggle" type="checkbox" />
+                    <span class="switch-track" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="settings-select voice-select">
+                  <span>Voice preference</span>
+                  <select id="voicePreferenceSelect" aria-label="Voice preference">
+                    <option value="auto" selected>Auto</option>
+                    <option value="female">Female</option>
+                    <option value="male">Male</option>
+                  </select>
+                </label>
+                <button id="knowledgeButton" class="settings-action-button" type="button">
+                  Knowledge Base
+                </button>
+              </div>
+            </aside>
+          </div>
           <div class="profile-menu">
             <button id="profileButton" class="profile-button" type="button" aria-label="User profile">
               <span>{{ current_user.name[:1] | upper }}</span>
@@ -269,6 +300,16 @@
         </section>
       </section>
     </main>
+
+    <button
+      id="floatingStatsButton"
+      class="floating-stats-button"
+      type="button"
+      aria-label="Deep dive into statistical findings"
+      hidden
+    >
+      Stats deep dive
+    </button>
 
     <dialog id="renameSessionDialog" class="rename-dialog">
       <form id="renameSessionForm" class="rename-dialog-form">
