@@ -4,11 +4,13 @@ from app.schemas import Option
 POST_SECTOR_OPTIONS = [
     Option(id=1, label="Start Mitigation Planning"),
     Option(id=2, label="Add a new Hazard"),
+    Option(id=3, label="Refresh hazards and DGs"),
 ]
 
 STATS_DEEP_DIVE_OPTIONS = [
     Option(id=1, label="Start Mitigation Planning"),
     Option(id=2, label="Add a new Hazard"),
+    Option(id=3, label="Refresh hazards and DGs"),
 ]
 
 SOCIO_DEMOGRAPHIC_OPTIONS = [

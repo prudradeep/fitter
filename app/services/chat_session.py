@@ -23,9 +23,12 @@ class ChatSession:
     socio_demographic_findings: str | None = None
     socio_demographic_profiles: list[str] | None = None
     additional_dgs: list[str] | None = None
+    pending_additional_dgs: list[str] | None = None
+    additional_dg_answers: list[dict[str, str | int]] | None = None
     stats_conversation: list[dict[str, str]] | None = None
     dg_reason: str | None = None
     dg_evidence: str | None = None
+    pending_mitigation_measure: str | None = None
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
     mitigation_record_id: int | None = None

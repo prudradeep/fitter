@@ -5,7 +5,7 @@ import re
 from dataclasses import asdict
 
 from app.llm import ask_llm_chat
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
@@ -55,7 +55,6 @@ from app.services.chat_options import (
 )
 from app.services.chat_parsers import (
     is_llm_unavailable_response,
-    parse_additional_dgs,
     parse_duplicate_check_response,
     parse_evaluation_answer,
     parse_hazard_input_review_response,
@@ -173,10 +172,10 @@ class ChatService:
             )
 
         if session.country is None:
-            return self._select_country(current_session_id, session, clean_message)
+            return await self._select_country(current_session_id, session, clean_message)
 
         if session.region is None:
-            return self._select_region(current_session_id, session, clean_message)
+            return await self._select_region(current_session_id, session, clean_message)
 
         if session.sector is None:
             return await self._select_sector(current_session_id, session, clean_message)
@@ -220,6 +219,11 @@ class ChatService:
 
         if session.phase == "dg_reason_evidence":
             return await self._validate_dgs_against_stats(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "mitigation_measure":
+            return await self._capture_mitigation_measure(
                 current_session_id, session, clean_message
             )
 
@@ -355,7 +359,8 @@ class ChatService:
         if action == normalize("Write mitigation measure again"):
             if session.selected_hazard is None:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
-            session.phase = "mitigation_reason"
+            session.phase = "mitigation_measure"
+            session.pending_mitigation_measure = None
             session.mitigation_measure = None
             session.mitigation_reason = None
             session.mitigation_record_id = None
@@ -364,7 +369,7 @@ class ChatService:
             session.evaluation_answers = None
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_reason",
+                step="mitigation_measure",
                 bot_message=render_message(
                     "mitigation_measure_reason.md",
                     hazard=session.selected_hazard or "the selected hazard",
@@ -372,7 +377,7 @@ class ChatService:
                 ),
                 options=[],
                 session=session.summary(),
-                input_mode="mitigation_reason",
+                input_mode="mitigation_measure",
                 error=False,
             )
 
@@ -441,9 +446,12 @@ class ChatService:
         session.socio_demographic_findings = None
         session.socio_demographic_profiles = None
         session.additional_dgs = None
+        session.pending_additional_dgs = None
+        session.additional_dg_answers = None
         session.stats_conversation = None
         session.dg_reason = None
         session.dg_evidence = None
+        session.pending_mitigation_measure = None
         session.mitigation_measure = None
         session.mitigation_reason = None
         session.mitigation_record_id = None
@@ -611,6 +619,17 @@ class ChatService:
             )
 
         if session.phase == "add_dgs":
+            question = self._current_target_population_question(session)
+            if question is not None:
+                return ChatResponse(
+                    session_id=session_id,
+                    step="add_dgs",
+                    bot_message=message,
+                    options=self._target_population_options(question),
+                    session=session.summary(),
+                    input_mode="target_population_multi",
+                    error=error,
+                )
             return ChatResponse(
                 session_id=session_id,
                 step="add_dgs",
@@ -664,6 +683,17 @@ class ChatService:
                 error=error,
             )
 
+        if session.phase == "mitigation_measure":
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_measure",
+                bot_message=message,
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_measure",
+                error=error,
+            )
+
         if session.phase == "mitigation_reason":
             return ChatResponse(
                 session_id=session_id,
@@ -671,7 +701,7 @@ class ChatService:
                 bot_message=message,
                 options=[],
                 session=session.summary(),
-                input_mode="mitigation_reason",
+                input_mode="reason_evidence",
                 error=error,
             )
 
@@ -729,7 +759,7 @@ class ChatService:
             return "socio_demographic_review"
         return session.phase or "complete"
 
-    def _select_country(
+    async def _select_country(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         country = self._match_country(message)
@@ -753,25 +783,35 @@ class ChatService:
             session.region_id = None
             session.region = "National scope"
             sectors = self._sectors_for_country(country.id)
+            bot_message = await self._selection_message_from_llm(
+                session,
+                event="national_scope",
+                fallback=render_message("national_scope.md", country=country.name),
+            )
             return ChatResponse(
                 session_id=session_id,
                 step="sector",
-                bot_message=render_message("national_scope.md", country=country.name),
+                bot_message=bot_message,
                 options=option_list(sectors),
                 session=session.summary(),
                 error=False,
             )
 
+        bot_message = await self._selection_message_from_llm(
+            session,
+            event="country_selected",
+            fallback=render_message("country_selected.md", country=country.name),
+        )
         return ChatResponse(
             session_id=session_id,
             step="region",
-            bot_message=render_message("country_selected.md", country=country.name),
+            bot_message=bot_message,
             options=option_list(list(regions)),
             session=session.summary(),
             error=False,
         )
 
-    def _select_region(self, session_id: str, session: ChatSession, message: str) -> ChatResponse:
+    async def _select_region(self, session_id: str, session: ChatSession, message: str) -> ChatResponse:
         region = self._match_region(message, session.country_id)
         if region is None:
             regions = self.db.scalars(
@@ -794,10 +834,15 @@ class ChatService:
         self._ensure_user_session(session_id, session)
         self._record_activity(session_id, session, "region_selected", region.name, step="region")
         sectors = self._sectors_for_country(session.country_id)
+        bot_message = await self._selection_message_from_llm(
+            session,
+            event="region_selected",
+            fallback=render_message("region_selected.md", region=region.name),
+        )
         return ChatResponse(
             session_id=session_id,
             step="sector",
-            bot_message=render_message("region_selected.md", region=region.name),
+            bot_message=bot_message,
             options=option_list(sectors),
             session=session.summary(),
             error=False,
@@ -826,7 +871,12 @@ class ChatService:
         session.sector_id = sector.id
         session.sector = sector.name
         session.phase = "hazards"
-        hazard_items = await self._get_hazards_from_llm(session)
+        hazard_items = self._stored_hazard_items_for_context(session_id, session)
+        if not hazard_items or not any(item.get("profiles") for item in hazard_items):
+            hazard_items = await self._refresh_hazards_and_profiles_from_llm(
+                session_id,
+                session,
+            )
         session.hazards = [str(item["hazard"]) for item in hazard_items]
         session.hazard_profiles = {
             str(item["hazard"]): [
@@ -845,8 +895,7 @@ class ChatService:
         self._hydrate_custom_hazard_profiles(session)
         self._ensure_user_session(session_id, session)
         self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
-        for hazard in session.hazards:
-            self._ensure_system_hazard(session, hazard)
+        self._persist_hazard_items_for_context(session_id, session, hazard_items)
         return self._hazards_step(session_id, session)
 
     def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
@@ -888,6 +937,33 @@ class ChatService:
                 session=session.summary(),
                 error=False,
             )
+
+        if action == normalize("Refresh hazards and DGs"):
+            hazard_items = await self._refresh_hazards_and_profiles_from_llm(session_id, session)
+            session.hazards = [str(item["hazard"]) for item in hazard_items]
+            session.hazard_profiles = {
+                str(item["hazard"]): [
+                    profile
+                    for profile in item.get("profiles", [])
+                    if (
+                        isinstance(profile, dict)
+                        and str(profile.get("name") or "").strip()
+                    )
+                    or (isinstance(profile, str) and profile.strip())
+                ]
+                for item in hazard_items
+                if item.get("profiles")
+            }
+            self._persist_hazard_items_for_context(
+                session_id,
+                session,
+                hazard_items,
+                replace_generated_profiles=True,
+            )
+            session.custom_hazards = self._saved_custom_hazards_for_context(session)
+            self._hydrate_custom_hazard_profiles(session)
+            self._record_activity(session_id, session, "hazards_refreshed", session.sector or "")
+            return self._hazards_step(session_id, session)
 
         if action == normalize("Dive deeper into statistical findings"):
             return self._stats_deep_dive_dialog_step(session_id, session)
@@ -936,6 +1012,31 @@ class ChatService:
                 session=session.summary(),
                 error=False,
             )
+
+        if action == normalize("Refresh hazards and DGs"):
+            hazard_items = await self._refresh_hazards_and_profiles_from_llm(session_id, session)
+            session.hazards = [str(item["hazard"]) for item in hazard_items]
+            session.hazard_profiles = {
+                str(item["hazard"]): [
+                    profile
+                    for profile in item.get("profiles", [])
+                    if (
+                        isinstance(profile, dict)
+                        and str(profile.get("name") or "").strip()
+                    )
+                    or (isinstance(profile, str) and profile.strip())
+                ]
+                for item in hazard_items
+                if item.get("profiles")
+            }
+            self._persist_hazard_items_for_context(
+                session_id,
+                session,
+                hazard_items,
+                replace_generated_profiles=True,
+            )
+            self._record_activity(session_id, session, "hazards_refreshed", session.sector or "")
+            return self._hazards_step(session_id, session)
 
         if not message:
             return ChatResponse(
@@ -1016,17 +1117,7 @@ class ChatService:
         action = normalize(exact_label or message)
 
         if action == normalize("Add more DGs"):
-            session.phase = "add_dgs"
-            return ChatResponse(
-                session_id=session_id,
-                step="add_dgs",
-                bot_message=render_message(
-                    "add_dgs.md", hazard=session.selected_hazard or "the selected hazard"
-                ),
-                options=ADD_DGS_OPTIONS,
-                session=session.summary(),
-                error=False,
-            )
+            return self._start_additional_dg_questions(session_id, session)
 
         if action == normalize("Create Mitigation Measure"):
             return await self._create_mitigation_measure_step(session_id, session)
@@ -1069,10 +1160,11 @@ class ChatService:
         action = normalize(exact_label or message)
 
         if action == normalize("Yes"):
-            session.phase = "mitigation_reason"
+            session.phase = "mitigation_measure"
+            session.pending_mitigation_measure = None
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_reason",
+                step="mitigation_measure",
                 bot_message=render_message(
                     "mitigation_measure_reason.md",
                     hazard=session.selected_hazard or "the selected hazard",
@@ -1080,7 +1172,7 @@ class ChatService:
                 ),
                 options=[],
                 session=session.summary(),
-                input_mode="mitigation_reason",
+                input_mode="mitigation_measure",
                 error=False,
             )
 
@@ -1109,49 +1201,191 @@ class ChatService:
             error=True,
         )
 
-    async def _validate_mitigation_reason(
+    async def _capture_mitigation_measure(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        mitigation_measure, reason = parse_mitigation_reason(message)
-        if not mitigation_measure or not reason:
+        mitigation_measure, _ = parse_mitigation_reason(message)
+        mitigation_measure = mitigation_measure or message.strip()
+        if not mitigation_measure:
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_reason",
+                step="mitigation_measure",
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
-                    reason="Both `Mitigation measure` and `Reason` are required.",
+                    reason="`Mitigation measure:` is required.",
                 ),
                 options=[],
                 session=session.summary(),
-                input_mode="mitigation_reason",
+                input_mode="mitigation_measure",
                 error=True,
             )
 
-        local_quality_reason = self._local_mitigation_field_error(mitigation_measure, reason)
+        local_quality_reason = self._local_mitigation_measure_error(mitigation_measure)
         if local_quality_reason:
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_reason",
+                step="mitigation_measure",
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
                     reason=local_quality_reason,
                 ),
                 options=[],
                 session=session.summary(),
-                input_mode="mitigation_reason",
+                input_mode="mitigation_measure",
                 error=True,
             )
 
         input_review = await self._validate_input_quality(
             session=session,
             purpose=(
-                "a mitigation measure and reason for reducing the selected hazard's "
+                "a mitigation measure for reducing the selected hazard's "
                 "negative impact on affected socio-demographic profiles"
             ),
             fields={
                 "Mitigation measure": mitigation_measure,
-                "Reason": reason,
             },
+        )
+        if input_review is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_measure",
+                bot_message=render_message("mitigation_validation_unavailable.md"),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_measure",
+                error=True,
+            )
+        if not input_review["valid"]:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_measure",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason=str(input_review["reason"]),
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_measure",
+                error=True,
+            )
+
+        local_duplicate = self._local_mitigation_duplicate_check(session, mitigation_measure)
+        if local_duplicate is not None:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_measure",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason=self._format_mitigation_duplicate_reason(local_duplicate),
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_measure",
+                error=True,
+            )
+
+        duplicate_check = await self._semantic_mitigation_duplicate_check(
+            session,
+            mitigation_measure,
+        )
+        if duplicate_check is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_measure",
+                bot_message=render_message("mitigation_validation_unavailable.md"),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_measure",
+                error=True,
+            )
+        if duplicate_check["duplicate"]:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_measure",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason=self._format_mitigation_duplicate_reason(duplicate_check),
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_measure",
+                error=True,
+            )
+
+        session.pending_mitigation_measure = mitigation_measure
+        session.phase = "mitigation_reason"
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_reason",
+            bot_message=render_message(
+                "mitigation_measure_reason.md",
+                hazard=session.selected_hazard or "the selected hazard",
+                dgs=format_all_dgs(session),
+                mitigation_measure=mitigation_measure,
+            ),
+            options=[],
+            session=session.summary(),
+            input_mode="reason_evidence",
+            error=False,
+        )
+
+    async def _validate_mitigation_reason(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        reason, evidence = parse_reason_evidence(message)
+        mitigation_measure = session.pending_mitigation_measure or session.mitigation_measure
+        if not mitigation_measure:
+            session.phase = "mitigation_measure"
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_measure",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason="Please enter a mitigation measure first.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_measure",
+                error=True,
+            )
+
+        if not reason:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason="`Reason:` is required. Evidence URL and evidence file are optional.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
+        if self._is_invalid_user_text(reason) or len(compact_for_match(reason)) < 8:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason="The reason is too short or unclear. Please explain the mechanism in a little more detail.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
+        evidence_text = evidence or ""
+        input_review = await self._validate_input_quality(
+            session=session,
+            purpose=(
+                "a reason and optional evidence explaining why the proposed mitigation "
+                "measure reduces the selected hazard's negative impact on affected "
+                "socio-demographic profiles"
+            ),
+            fields=self._reason_evidence_quality_fields(reason, evidence_text),
         )
         if input_review is None:
             return ChatResponse(
@@ -1160,7 +1394,7 @@ class ChatService:
                 bot_message=render_message("mitigation_validation_unavailable.md"),
                 options=[],
                 session=session.summary(),
-                input_mode="mitigation_reason",
+                input_mode="reason_evidence",
                 error=True,
             )
         if not input_review["valid"]:
@@ -1173,7 +1407,7 @@ class ChatService:
                 ),
                 options=[],
                 session=session.summary(),
-                input_mode="mitigation_reason",
+                input_mode="reason_evidence",
                 error=True,
             )
 
@@ -1181,6 +1415,7 @@ class ChatService:
             session=session,
             mitigation_measure=mitigation_measure,
             reason=reason,
+            evidence=evidence_text,
         )
 
         if validation is None:
@@ -1190,7 +1425,7 @@ class ChatService:
                 bot_message=render_message("mitigation_validation_unavailable.md"),
                 options=[],
                 session=session.summary(),
-                input_mode="mitigation_reason",
+                input_mode="reason_evidence",
                 error=True,
             )
 
@@ -1204,12 +1439,13 @@ class ChatService:
                 ),
                 options=[],
                 session=session.summary(),
-                input_mode="mitigation_reason",
+                input_mode="reason_evidence",
                 error=True,
             )
 
         session.mitigation_measure = mitigation_measure
         session.mitigation_reason = reason
+        session.pending_mitigation_measure = None
         if session.selected_hazard_record_id is None and session.selected_hazard:
             hazard_record = self._ensure_user_hazard(
                 session_id,
@@ -1463,109 +1699,40 @@ class ChatService:
     async def _capture_additional_dgs(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        exact_label = exact_option_label(message, ADD_DGS_OPTIONS)
-        if exact_label is None:
-            fuzzy_label = match_option_label(message, ADD_DGS_OPTIONS)
-            if fuzzy_label is not None:
-                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
-        if normalize(exact_label or message) == normalize("Create Mitigation Measure"):
-            return await self._create_mitigation_measure_step(session_id, session)
+        if message.strip() == "Quick Select Target Population":
+            return self._additional_dg_question_step(session_id, session)
+        if message.strip().startswith("TARGET_POPULATION_BATCH:"):
+            return await self._handle_additional_dg_batch(session_id, session, message)
 
-        dgs = parse_additional_dgs(message)
-        if not dgs:
-            return ChatResponse(
-                session_id=session_id,
-                step="add_dgs",
-                bot_message=render_message(
-                    "add_dgs.md", hazard=session.selected_hazard or "the selected hazard"
-                ),
-                options=ADD_DGS_OPTIONS,
-                session=session.summary(),
-                error=True,
+        question = self._current_target_population_question(session)
+        if question is None:
+            return await self._finalize_additional_dg_questions(session_id, session)
+
+        options = self._target_population_options(question)
+        selected_labels = self._target_population_selected_labels(message, options)
+        if not selected_labels:
+            return self._additional_dg_question_step(
+                session_id,
+                session,
+                error_reason="Please choose one or more listed socio-demographic options.",
             )
 
-        profile_review = await self._validate_profile_names_input(session, dgs)
-        if profile_review is None:
-            return ChatResponse(
-                session_id=session_id,
-                step="add_dgs",
-                bot_message=(
-                    "I could not validate these socio-demographic profiles because "
-                    "the local LLM is unavailable. Please try again."
-                ),
-                options=ADD_DGS_OPTIONS,
-                session=session.summary(),
-                error=True,
-            )
+        if any(normalize(label) == normalize("Skip all") for label in selected_labels):
+            session.target_population_index = len(session.target_population_questions or [])
+            return await self._finalize_additional_dg_questions(session_id, session)
 
-        if not profile_review["valid"]:
-            return ChatResponse(
-                session_id=session_id,
-                step="add_dgs",
-                bot_message=(
-                    "Please rewrite the socio-demographic profile names.\n\n"
-                    f"**Reason:** {profile_review['reason']}"
-                ),
-                options=ADD_DGS_OPTIONS,
-                session=session.summary(),
-                error=True,
-            )
+        if any(normalize(label) == normalize("Skip") for label in selected_labels):
+            session.target_population_index += 1
+            if session.target_population_index >= len(session.target_population_questions or []):
+                return await self._finalize_additional_dg_questions(session_id, session)
+            return self._additional_dg_question_step(session_id, session)
 
-        local_duplicate_check = self._match_existing_dg(session, dgs)
-        if local_duplicate_check is not None:
-            return ChatResponse(
-                session_id=session_id,
-                step="add_dgs",
-                bot_message=render_message(
-                    "dg_duplicate.md",
-                    duplicates=self._format_duplicate_dgs(local_duplicate_check),
-                ),
-                options=ADD_DGS_OPTIONS,
-                session=session.summary(),
-                error=True,
-            )
+        self._record_additional_dg_answer(session_id, session, question, selected_labels)
+        session.target_population_index += 1
+        if session.target_population_index >= len(session.target_population_questions or []):
+            return await self._finalize_additional_dg_questions(session_id, session)
 
-        duplicate_check = await self._semantic_dg_duplicate_check(session, dgs)
-        if duplicate_check is None:
-            return ChatResponse(
-                session_id=session_id,
-                step="add_dgs",
-                bot_message=(
-                    "I could not check whether these socio-demographic profiles are "
-                    "already covered because the local LLM is unavailable. Please try again."
-                ),
-                options=ADD_DGS_OPTIONS,
-                session=session.summary(),
-                error=True,
-            )
-
-        if duplicate_check["duplicate"]:
-            return ChatResponse(
-                session_id=session_id,
-                step="add_dgs",
-                bot_message=render_message(
-                    "dg_duplicate.md",
-                    duplicates=self._format_duplicate_dgs(duplicate_check),
-                ),
-                options=ADD_DGS_OPTIONS,
-                session=session.summary(),
-                error=True,
-            )
-
-        if session.additional_dgs is None:
-            session.additional_dgs = []
-        self._extend_unique_profiles(session.additional_dgs, dgs)
-        self._record_activity(session_id, session, "socio_demographics_added", ", ".join(dgs))
-        session.phase = "socio_demographic_review"
-
-        return ChatResponse(
-            session_id=session_id,
-            step="socio_demographic_review",
-            bot_message=render_message("dgs_added.md", dgs=format_additional_dgs(session)),
-            options=SOCIO_DEMOGRAPHIC_OPTIONS,
-            session=session.summary(),
-            error=False,
-        )
+        return self._additional_dg_question_step(session_id, session)
 
     async def _validate_dgs_against_stats(
         self, session_id: str, session: ChatSession, message: str
@@ -1653,8 +1820,12 @@ class ChatService:
 
         session.dg_reason = reason
         session.dg_evidence = evidence
-        if session.additional_dgs:
-            for dg in session.additional_dgs:
+        pending_dgs = session.pending_additional_dgs or []
+        if pending_dgs:
+            if session.additional_dgs is None:
+                session.additional_dgs = []
+            self._extend_unique_profiles(session.additional_dgs, pending_dgs)
+            for dg in pending_dgs:
                 self._store_socio_demographic(
                     session,
                     session.selected_hazard_record_id,
@@ -1663,11 +1834,13 @@ class ChatService:
                     reason=reason,
                     evidence=evidence or None,
                 )
+            session.pending_additional_dgs = None
         self._record_activity(session_id, session, "socio_demographics_validated", reason)
-        session.phase = "mitigation_reason"
+        session.phase = "mitigation_measure"
+        session.pending_mitigation_measure = None
         return ChatResponse(
             session_id=session_id,
-            step="mitigation_reason",
+            step="mitigation_measure",
             bot_message=render_message(
                 "mitigation_measure_reason.md",
                 hazard=session.selected_hazard or "the selected hazard",
@@ -1675,7 +1848,7 @@ class ChatService:
             ),
             options=[],
             session=session.summary(),
-            input_mode="mitigation_reason",
+            input_mode="mitigation_measure",
             error=False,
         )
 
@@ -1966,8 +2139,7 @@ class ChatService:
         self, session_id: str, session: ChatSession, hazard: str
     ) -> ChatResponse:
         profiles = self._stored_hazard_profiles(session, hazard)
-        expected_count = self._expected_hazard_profile_count(session, hazard)
-        if not profiles or (expected_count and len(profiles) != expected_count):
+        if not profiles:
             profiles = await self._get_hazard_profiles_from_llm(session, hazard)
             if profiles:
                 if session.hazard_profiles is None:
@@ -2056,6 +2228,72 @@ class ChatService:
             sector=session.sector,
             sector_stats=extract_sector_stats(sector_prompt, session.sector),
         )
+
+    @staticmethod
+    def _format_pending_additional_dgs(session: ChatSession) -> str:
+        pending = session.pending_additional_dgs or []
+        if not pending:
+            return "- No pending custom socio-demographic profiles."
+        return "\n".join(f"- {dg}." for dg in pending)
+
+    async def _selection_message_from_llm(
+        self,
+        session: ChatSession,
+        *,
+        event: str,
+        fallback: str,
+    ) -> str:
+        context = """
+You write short, professional wizard messages for Dr Transition.
+
+Keep the meaning similar to the existing app message, but make it personalized,
+polished, and concise. Do not add analysis, hazard facts, or future-step details.
+Use the word "sector" for the next choice. Do not use "industry", "field",
+"domain", or any other synonym for sector.
+Return Markdown only.
+""".strip()
+        next_step = "region selection" if event == "country_selected" else "sector selection"
+        if event == "national_scope":
+            next_step = "sector selection using national scope"
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"Event: {event}\n"
+                    f"Country: {session.country or 'Not selected'}\n"
+                    f"Region: {session.region or 'Not selected'}\n"
+                    f"Next step: {next_step}\n\n"
+                    f"Baseline message:\n{fallback}\n\n"
+                    "Write one or two sentences. Keep it warm, professional, and direct. "
+                    "If asking for the next selection, say sector exactly."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.35,
+            max_tokens=140,
+        )
+        if is_llm_unavailable_response(response) or not response.strip():
+            return fallback
+        return markdown_to_html(self._normalize_sector_wording(response.strip()))
+
+    @staticmethod
+    def _normalize_sector_wording(message: str) -> str:
+        replacements = {
+            "preferred industry": "preferred sector",
+            "industry for analysis": "sector for analysis",
+            "industry": "sector",
+            "field for analysis": "sector for analysis",
+            "field": "sector",
+            "domain for analysis": "sector for analysis",
+            "domain": "sector",
+        }
+        normalized = message
+        for old, new in replacements.items():
+            normalized = re.sub(rf"\b{re.escape(old)}\b", new, normalized, flags=re.IGNORECASE)
+        return normalized
 
     def _mitigation_reason_prompt(
         self, session: ChatSession, error_reason: str | bool | None = None
@@ -2223,6 +2461,250 @@ Retrieved knowledge-base excerpts:
         session.target_population_index = 0
         session.phase = "target_population_question"
         return self._target_population_question_step(session_id, session)
+
+    def _start_additional_dg_questions(
+        self, session_id: str, session: ChatSession
+    ) -> ChatResponse:
+        questions = self._target_population_questions()
+        session.target_population_questions = questions
+        session.additional_dg_answers = []
+        session.target_population_index = 0
+        session.phase = "add_dgs"
+        if not questions:
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message="No socio-demographic questions are configured. You can continue to mitigation planning.",
+                options=SOCIO_DEMOGRAPHIC_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+        return self._additional_dg_question_step(session_id, session)
+
+    def _additional_dg_question_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        error_reason: str | None = None,
+    ) -> ChatResponse:
+        question = self._current_target_population_question(session)
+        if question is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=self.invalid_message,
+                options=SOCIO_DEMOGRAPHIC_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+
+        return ChatResponse(
+            session_id=session_id,
+            step="add_dgs",
+            bot_message=render_message(
+                "target_population_question.md",
+                hazard=session.selected_hazard or "the selected hazard",
+                question=question["question"],
+                current=session.target_population_index + 1,
+                total=len(session.target_population_questions or []),
+                error_reason=error_reason or "",
+            ),
+            options=self._target_population_options(question),
+            session=session.summary(),
+            input_mode="target_population_multi",
+            error=bool(error_reason),
+        )
+
+    async def _handle_additional_dg_batch(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        raw_json = message.split(":", 1)[1].strip()
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return self._additional_dg_question_step(
+                session_id,
+                session,
+                error_reason="Please submit valid socio-demographic selections.",
+            )
+        if not isinstance(payload, list):
+            return self._additional_dg_question_step(
+                session_id,
+                session,
+                error_reason="Please submit valid socio-demographic selections.",
+            )
+
+        questions_by_id = {
+            int(question["id"]): question
+            for question in (session.target_population_questions or [])
+            if "id" in question
+        }
+        recorded_any = False
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            try:
+                question_id = int(item.get("question_id"))
+            except (TypeError, ValueError):
+                continue
+            question = questions_by_id.get(question_id)
+            if question is None:
+                continue
+            raw_answers = item.get("answers")
+            if not isinstance(raw_answers, list):
+                continue
+            options = self._target_population_options(question)
+            selected = self._target_population_selected_labels(
+                "\n".join(str(answer) for answer in raw_answers),
+                options,
+            )
+            selected = [
+                label
+                for label in selected
+                if normalize(label) not in {normalize("Skip"), normalize("Skip all")}
+            ]
+            if not selected:
+                continue
+            self._record_additional_dg_answer(session_id, session, question, selected)
+            recorded_any = True
+
+        if not recorded_any:
+            return self._additional_dg_question_step(
+                session_id,
+                session,
+                error_reason="Please select at least one socio-demographic option.",
+            )
+
+        session.target_population_index = len(session.target_population_questions or [])
+        return await self._finalize_additional_dg_questions(session_id, session)
+
+    def _record_additional_dg_answer(
+        self,
+        session_id: str,
+        session: ChatSession,
+        question: dict[str, object],
+        selected_labels: list[str],
+    ) -> None:
+        if session.additional_dg_answers is None:
+            session.additional_dg_answers = []
+        answer_text = ", ".join(selected_labels)
+        session.additional_dg_answers.append(
+            {
+                "question_id": int(question["id"]),
+                "question": str(question["question"]),
+                "answer": answer_text,
+            }
+        )
+        for selected in selected_labels:
+            question_option_id = self.db.scalar(
+                select(QuestionOption.id).where(
+                    QuestionOption.question_id == int(question["id"]),
+                    QuestionOption.option == selected,
+                )
+            )
+            self._store_question_response(
+                session_id,
+                session,
+                question_id=int(question["id"]),
+                category="additional_target_population",
+                response_text=selected,
+                question_option_id=question_option_id,
+                hazard_id=session.selected_hazard_record_id,
+            )
+        self._record_activity(
+            session_id,
+            session,
+            "additional_dg_question_answered",
+            f"{question['question']} -> {answer_text}",
+        )
+
+    async def _finalize_additional_dg_questions(
+        self, session_id: str, session: ChatSession
+    ) -> ChatResponse:
+        profiles = [
+            profile["name"]
+            for profile in self._target_population_profiles_from_answers(
+                session.additional_dg_answers or [],
+                session.selected_hazard or "the selected hazard",
+            )
+            if profile.get("name")
+        ]
+        if not profiles:
+            session.phase = "socio_demographic_review"
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message="No additional socio-demographic profiles were selected.",
+                options=SOCIO_DEMOGRAPHIC_OPTIONS,
+                session=session.summary(),
+                error=False,
+            )
+
+        local_duplicate_check = self._match_existing_dg(session, profiles)
+        if local_duplicate_check is not None:
+            session.phase = "socio_demographic_review"
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=render_message(
+                    "dg_duplicate.md",
+                    duplicates=self._format_duplicate_dgs(local_duplicate_check),
+                ),
+                options=SOCIO_DEMOGRAPHIC_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+
+        duplicate_check = await self._semantic_dg_duplicate_check(session, profiles)
+        if duplicate_check is None:
+            session.phase = "socio_demographic_review"
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=(
+                    "I could not check whether these socio-demographic profiles are "
+                    "already covered because the local LLM is unavailable. Please try again."
+                ),
+                options=SOCIO_DEMOGRAPHIC_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+        if duplicate_check["duplicate"]:
+            session.phase = "socio_demographic_review"
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=render_message(
+                    "dg_duplicate.md",
+                    duplicates=self._format_duplicate_dgs(duplicate_check),
+                ),
+                options=SOCIO_DEMOGRAPHIC_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+
+        session.pending_additional_dgs = []
+        self._extend_unique_profiles(session.pending_additional_dgs, profiles)
+        self._record_activity(
+            session_id,
+            session,
+            "socio_demographics_added",
+            ", ".join(profiles),
+        )
+        session.phase = "dg_reason_evidence"
+        return ChatResponse(
+            session_id=session_id,
+            step="socio_demographic_review",
+            bot_message=render_message(
+                "dg_reason_evidence.md",
+                hazard=session.selected_hazard or "the selected hazard",
+                dgs=self._format_pending_additional_dgs(session),
+            ),
+            options=[],
+            session=session.summary(),
+            input_mode="reason_evidence",
+            error=False,
+        )
 
     def _target_population_question_step(
         self,
@@ -3280,6 +3762,134 @@ Retrieved knowledge-base excerpts:
             return "sector"
         return session.phase
 
+    def _stored_hazard_items_for_context(
+        self, session_id: str, session: ChatSession
+    ) -> list[dict[str, object]]:
+        if session.sector_id is None:
+            return []
+        try:
+            user_session = self.db.scalar(
+                select(UserSession).where(UserSession.session_key == session_id)
+            )
+            query = (
+                select(UserHazard, UserHazardSocioDemographic)
+                .join(UserSession, UserSession.id == UserHazard.user_session_id)
+                .outerjoin(
+                    UserHazardSocioDemographic,
+                    UserHazardSocioDemographic.user_hazard_id == UserHazard.id,
+                )
+                .where(
+                    UserHazard.sector_id == session.sector_id,
+                    UserHazard.source == "system",
+                    UserSession.country_id == session.country_id,
+                    UserHazard.region_id.is_(None)
+                    if session.region_id is None
+                    else UserHazard.region_id == session.region_id,
+                )
+                .order_by(UserHazard.id, UserHazardSocioDemographic.id)
+            )
+            if user_session is not None:
+                query = query.where(UserHazard.user_session_id == user_session.id)
+            elif self.user_id is not None:
+                query = query.where(UserSession.user_id == self.user_id)
+            rows = self.db.execute(query).all()
+        except Exception:
+            logger.exception("Failed to load stored hazards and profiles")
+            return []
+
+        items_by_hazard: dict[int, dict[str, object]] = {}
+        seen_profiles: dict[int, set[str]] = {}
+        for hazard, profile_row in rows:
+            item = items_by_hazard.setdefault(
+                hazard.id,
+                {"hazard": hazard.name, "profiles": []},
+            )
+            if profile_row is None or not str(profile_row.profile or "").strip():
+                continue
+            seen = seen_profiles.setdefault(hazard.id, set())
+            profile_name = str(profile_row.profile).strip()
+            key = normalize(profile_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            item_profiles = item.setdefault("profiles", [])
+            if isinstance(item_profiles, list):
+                item_profiles.append(
+                    {
+                        "name": profile_name,
+                        "explanation": "Saved socio-demographic profile for this hazard.",
+                    }
+                )
+        return list(items_by_hazard.values())
+
+    async def _refresh_hazards_and_profiles_from_llm(
+        self, session_id: str, session: ChatSession
+    ) -> list[dict[str, object]]:
+        hazard_items = await self._get_hazards_from_llm(session)
+        self._persist_hazard_items_for_context(
+            session_id,
+            session,
+            hazard_items,
+            replace_generated_profiles=True,
+        )
+        return hazard_items
+
+    def _persist_hazard_items_for_context(
+        self,
+        session_id: str,
+        session: ChatSession,
+        hazard_items: list[dict[str, object]],
+        *,
+        replace_generated_profiles: bool = False,
+    ) -> None:
+        for item in hazard_items:
+            hazard = str(item.get("hazard") or "").strip()
+            if not hazard:
+                continue
+            self._ensure_system_hazard(session, hazard)
+            hazard_record = self._ensure_user_hazard(
+                session_id,
+                session,
+                hazard,
+                source="system",
+            )
+            if hazard_record is None:
+                continue
+            if replace_generated_profiles:
+                self._delete_generated_socio_demographics(hazard_record.id)
+            for profile in item.get("profiles", []):
+                if isinstance(profile, dict):
+                    profile_name = str(profile.get("name") or "").strip()
+                else:
+                    profile_name = str(profile or "").strip()
+                if not profile_name:
+                    continue
+                original_selected_hazard = session.selected_hazard
+                original_accepted_hazard = session.accepted_custom_hazard
+                session.selected_hazard = hazard
+                session.accepted_custom_hazard = None
+                self._store_socio_demographic(
+                    session,
+                    hazard_record.id,
+                    profile_name,
+                    source="llm",
+                )
+                session.selected_hazard = original_selected_hazard
+                session.accepted_custom_hazard = original_accepted_hazard
+
+    def _delete_generated_socio_demographics(self, hazard_id: int) -> None:
+        try:
+            self.db.execute(
+                delete(UserHazardSocioDemographic).where(
+                    UserHazardSocioDemographic.user_hazard_id == hazard_id,
+                    UserHazardSocioDemographic.source == "llm",
+                )
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("Failed to clear generated socio-demographic profiles")
+
     def _ensure_system_hazard(self, session: ChatSession, name: str) -> SystemHazard | None:
         if session.sector_id is None:
             return None
@@ -4298,7 +4908,9 @@ Use this sector system prompt as the authoritative statistical source:
                     f"Country: {session.country}\n"
                     f"Region: {session.region}\n"
                     f"Selected hazard: {session.selected_hazard or 'No selected hazard'}\n"
-                    "Socio-demographic profiles:\n"
+                    "Pending socio-demographic profiles to validate:\n"
+                    f"{self._format_pending_additional_dgs(session)}\n\n"
+                    "Already confirmed socio-demographic profiles for context:\n"
                     f"{format_all_dgs(session)}\n\n"
                     f"Reason: {reason}\n"
                     f"Evidence: {evidence or 'Not provided'}\n\n"
@@ -4312,8 +4924,9 @@ Use this sector system prompt as the authoritative statistical source:
                     "- valid must be false when the reason or supplied evidence contradicts "
                     "the statistics, invents unsupported numbers, is too vague, or the "
                     "evidence content does not support the reason.\n"
-                    "- Validate against all socio-demographic profiles identified so far, "
-                    "including both the assistant-identified DGs and user-added DGs.\n"
+                    "- Validate the pending socio-demographic profiles before they are added.\n"
+                    "- Use already confirmed profiles only as context; do not treat pending "
+                    "profiles as accepted until the reason/evidence supports them.\n"
                     "- The reason field must be useful to the user and under 60 words."
                 ),
             }
@@ -4335,12 +4948,13 @@ Use this sector system prompt as the authoritative statistical source:
         session: ChatSession,
         mitigation_measure: str,
         reason: str,
+        evidence: str = "",
     ) -> dict[str, str | bool] | None:
         sector_prompt = load_sector_prompt(session.sector)
         knowledge_context = await self._mitigation_knowledge_context(
             session,
             mitigation_measure,
-            reason,
+            f"{reason} {evidence}",
         )
         examples = self._mitigation_measure_examples(session.sector_id)
         context = f"""
@@ -4370,7 +4984,7 @@ Use these retrieved knowledge-base excerpts when relevant:
             {
                 "role": "user",
                 "content": (
-                    "Validate and evaluate the proposed mitigation measure and reason "
+                    "Validate and evaluate the proposed mitigation measure and justification reason "
                     "for reducing the negative impact of the selected hazard on the "
                     "relevant socio-demographic groups. Use both the statistical context "
                     "and the retrieved research knowledge.\n\n"
@@ -4381,7 +4995,8 @@ Use these retrieved knowledge-base excerpts when relevant:
                     "Socio-demographic profiles:\n"
                     f"{format_all_dgs(session)}\n\n"
                     f"Mitigation measure: {mitigation_measure}\n"
-                    f"Reason: {reason}\n\n"
+                    f"Justification reason: {reason}\n\n"
+                    f"Evidence: {evidence or 'Not provided'}\n\n"
                     "Relevant mitigation measure examples:\n"
                     f"{examples or '- No sector-specific examples are available.'}\n\n"
                     "YOUR TASK — write an encouraging, educational evaluation (around "
@@ -4400,24 +5015,27 @@ Use these retrieved knowledge-base excerpts when relevant:
                     "6. Discard all concepts different from twin transition policies.\n"
                     "7. If user reasoning lacks deep thinking, END with an encouraging "
                     "reflection question that deepens their thinking.\n"
-                    "8. Only ask a reflective question if necessary.\n\n"
+                    "8. Only ask a reflective question if necessary.\n"
+                    "9. Do not add the Statistical Context\n\n"
                     "Tone: to the point, collegial, intellectually stimulating. Use plain "
                     "language. Do NOT simply list the example measures. Do NOT be "
-                    "dismissive. This is an educational conversation. Do NOT include "
-                    "headers or bullet points — write in flowing paragraphs.\n\n"
+                    "dismissive. This is an educational conversation.\n\n"
                     "Return ONLY one valid JSON object with this exact shape:\n"
                     '{"valid": true, "reason": "educational evaluation paragraph"}\n\n'
                     "Do not include Markdown, code fences, headers, bullets, or text "
                     "before or after the JSON. Put the full educational evaluation "
                     "inside the reason string as one flowing paragraph.\n\n"
                     "Rules:\n"
-                    "- valid must be true only when the mitigation measure and reason "
-                    "logically address a statistically supported negative impact, "
+                    "- valid must be true only when the mitigation measure and justification reason "
+                    "logically address the selected hazard and its negative impact, "
                     "affected group, or hazard mechanism from the prompt or retrieved "
                     "research knowledge.\n"
                     "- valid must be false when the mitigation is unrelated to the "
                     "selected hazard, ignores the affected groups, contradicts the "
-                    "statistics, invents unsupported facts, or the reason is too vague.\n"
+                    "statistics or retrieved knowledge, invents unsupported facts, "
+                    "or the justification reason/evidence is too vague.\n"
+                    "- If evidence content is supplied from a URL or file, valid must "
+                    "also require the evidence to support the justification reason.\n"
                     "- valid must be false for proposals outside twin-transition policy "
                     "design or conceptually unrelated ideas.\n"
                     "- For invalid proposals, the reason field should briefly explain "
@@ -4473,6 +5091,16 @@ Use these retrieved knowledge-base excerpts when relevant:
         rows = self.db.execute(query.limit(limit)).all()
         return "\n".join(f"- {sector.name}: {example.measure}" for example, sector in rows)
 
+    def _local_mitigation_measure_error(self, mitigation_measure: str) -> str | None:
+        if self._is_invalid_user_text(mitigation_measure):
+            return (
+                "The mitigation measure appears to contain gibberish, keyboard mashing, "
+                "or text that is not meaningful. Please rewrite it as a clear policy action."
+            )
+        if len(compact_for_match(mitigation_measure)) < 8:
+            return "The mitigation measure is too short. Please write a clearer policy action."
+        return None
+
     def _local_mitigation_field_error(self, mitigation_measure: str, reason: str) -> str | None:
         if self._is_invalid_user_text(mitigation_measure):
             return (
@@ -4491,6 +5119,126 @@ Use these retrieved knowledge-base excerpts when relevant:
             return "The reason is too short. Please explain the mechanism in a little more detail."
         return None
 
+    def _existing_mitigation_measures_for_selected_hazard(
+        self, session: ChatSession
+    ) -> list[str]:
+        if session.selected_hazard_record_id is None:
+            return []
+        try:
+            rows = self.db.scalars(
+                select(UserMitigationMeasure.measure)
+                .where(UserMitigationMeasure.user_hazard_id == session.selected_hazard_record_id)
+                .order_by(UserMitigationMeasure.id)
+            ).all()
+        except Exception:
+            logger.exception("Failed to load mitigation measures for duplicate check")
+            return []
+        measures: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            measure = str(row or "").strip()
+            key = normalize(measure)
+            if not measure or key in seen:
+                continue
+            seen.add(key)
+            measures.append(measure)
+        if session.mitigation_measure:
+            measures.append(session.mitigation_measure)
+        return measures
+
+    def _local_mitigation_duplicate_check(
+        self, session: ChatSession, mitigation_measure: str
+    ) -> dict[str, object] | None:
+        for existing in self._existing_mitigation_measures_for_selected_hazard(session):
+            if self._mitigations_are_similar(mitigation_measure, existing):
+                return {
+                    "duplicate": True,
+                    "match": existing,
+                    "reason": "The proposed measure is the same as, or very similar to, an existing mitigation measure for this hazard.",
+                    "duplicates": [],
+                }
+        return None
+
+    @staticmethod
+    def _mitigations_are_similar(left: str, right: str) -> bool:
+        left_key = normalize_for_match(left)
+        right_key = normalize_for_match(right)
+        if not left_key or not right_key:
+            return False
+        if left_key == right_key:
+            return True
+        left_compact = compact_for_match(left)
+        right_compact = compact_for_match(right)
+        if left_compact in right_compact or right_compact in left_compact:
+            return True
+        left_words = ChatService._hazard_similarity_words(left_key)
+        right_words = ChatService._hazard_similarity_words(right_key)
+        overlap = len(left_words & right_words)
+        smaller_overlap = overlap / max(1, min(len(left_words), len(right_words)))
+        larger_overlap = overlap / max(1, max(len(left_words), len(right_words)))
+        return smaller_overlap >= 0.8 or (smaller_overlap >= 0.65 and larger_overlap >= 0.45)
+
+    async def _semantic_mitigation_duplicate_check(
+        self, session: ChatSession, mitigation_measure: str
+    ) -> dict[str, object] | None:
+        existing_measures = self._existing_mitigation_measures_for_selected_hazard(session)
+        if not existing_measures:
+            return {"duplicate": False, "match": "", "reason": "", "duplicates": []}
+
+        context = f"""
+You are a strict semantic duplicate checker for Dr Transition.
+
+Your job is to decide whether a proposed mitigation measure is already covered
+by an existing mitigation measure for the SAME selected hazard, even when the
+wording, grammar, or language differs.
+
+{self._scope_instruction(session)}
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Compare the proposed mitigation measure with existing mitigation "
+                    "measures for the selected hazard only.\n\n"
+                    "Treat it as duplicate when it has the same meaning, same policy "
+                    "action, a close paraphrase, or a narrower/restated version that "
+                    "is already clearly covered. Do not mark it duplicate merely "
+                    "because it is in the same broad policy area.\n\n"
+                    f"Selected hazard: {session.selected_hazard or 'No selected hazard'}\n\n"
+                    "Existing mitigation measures:\n"
+                    + "\n".join(f"- {item}" for item in existing_measures)
+                    + "\n\n"
+                    f"Proposed mitigation measure: {mitigation_measure}\n\n"
+                    "Return ONLY valid JSON with this exact shape:\n"
+                    '{"duplicate": false, "match": "", "reason": "short explanation"}\n\n'
+                    "If duplicate is true, match must be the closest existing measure. "
+                    "Keep reason under 40 words."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=350,
+        )
+        if is_llm_unavailable_response(response):
+            return None
+        parsed = parse_duplicate_check_response(response)
+        if parsed.get("error"):
+            return None
+        return parsed
+
+    @staticmethod
+    def _format_mitigation_duplicate_reason(duplicate_check: dict[str, object]) -> str:
+        match = str(duplicate_check.get("match") or "").strip()
+        reason = str(duplicate_check.get("reason") or "").strip()
+        if match and reason:
+            return f"This mitigation measure appears to duplicate **{match}**: {reason}"
+        if match:
+            return f"This mitigation measure appears to duplicate **{match}**."
+        return reason or "This mitigation measure appears to duplicate an existing measure for this hazard."
+
     async def _validate_evaluation_answer_against_stats(
         self,
         session: ChatSession,
@@ -4500,6 +5248,11 @@ Use these retrieved knowledge-base excerpts when relevant:
         evidence: str,
     ) -> dict[str, str | bool] | None:
         sector_prompt = load_sector_prompt(session.sector)
+        knowledge_context = await self._mitigation_knowledge_context(
+            session,
+            session.mitigation_measure or "",
+            f"{question['question']} {reason} {evidence}",
+        )
         context = f"""
 You are a strict validation assistant for Dr Transition.
 
@@ -4507,6 +5260,9 @@ You are a strict validation assistant for Dr Transition.
 
 Use this sector system prompt as the authoritative statistical source:
 {sector_prompt}
+
+Use these retrieved knowledge-base excerpts when relevant:
+{knowledge_context or "- No relevant knowledge-base excerpts were found."}
 """.strip()
         messages = [
             {
@@ -4515,7 +5271,8 @@ Use this sector system prompt as the authoritative statistical source:
                     "Validate the user's evaluation answer. Check the reason if provided. "
                     "Check the evidence if provided. If the evidence came from a URL or "
                     "uploaded file, use the extracted evidence text below rather than only "
-                    "the URL or filename.\n\n"
+                    "the URL or filename. Use both the statistical context and the "
+                    "retrieved knowledge-base excerpts.\n\n"
                     f"Sector: {session.sector}\n"
                     f"Country: {session.country}\n"
                     f"Region: {session.region}\n"
@@ -4554,9 +5311,9 @@ Use this sector system prompt as the authoritative statistical source:
                     "evidence supports the user's claims. A bare URL or filename without "
                     "readable extracted content is not meaningful evidence.\n"
                     "- valid must be false if the reason or evidence is unrelated to the "
-                    "question, contradicts the sector context, invents unsupported facts, "
-                    "is unsupported by the extracted evidence, or does not justify the "
-                    "chosen score under the scoring rules.\n"
+                    "question, contradicts the sector context or retrieved knowledge, "
+                    "invents unsupported facts, is unsupported by the extracted evidence, "
+                    "or does not justify the chosen score under the scoring rules.\n"
                     "- valid may be true when no reason/evidence is provided only if the "
                     "score can stand as a simple answer for this optional field.\n"
                     "- The reason field must tell the user what to revise and stay under 80 words."

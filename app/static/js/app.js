@@ -1034,8 +1034,8 @@ function placeholderForStep(step, options = []) {
     if (step === "mitigation_review") {
       return "Ask about this mitigation, or move to next step...";
     }
-    if (step === "target_population_question") {
-      return "Choose a target population option...";
+    if (step === "target_population_question" || step === "add_dgs") {
+      return "Choose a socio-demographic option...";
     }
     if (optionLabels.includes("Move to next step")) {
       return "Choose one of the options above...";
@@ -1044,7 +1044,7 @@ function placeholderForStep(step, options = []) {
   }
 
   const placeholders = {
-    add_dgs: "Enter one profile, or comma-separated profiles...",
+    add_dgs: "Choose socio-demographic options...",
     hazards: "Type the hazard you want to add...",
     mitigation: "Ask a mitigation question or continue the plan...",
     evaluation_question: "Use the score slider below...",
@@ -1058,12 +1058,10 @@ function placeholderForStep(step, options = []) {
 }
 
 function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
-  if (mode === "mitigation_reason") {
+  if (mode === "mitigation_measure") {
     primaryInputLabel.textContent = "Mitigation measure";
-    secondaryInputLabel.textContent = "Reason";
     reasonInput.placeholder = "What mitigation measure should be used?";
-    secondaryReasonInput.placeholder = "Why is this mitigation measure appropriate?";
-    secondaryReasonInput.closest("label").hidden = false;
+    secondaryReasonInput.closest("label").hidden = true;
     evidenceUrlField.hidden = true;
     evidenceFileField.hidden = true;
     return;
@@ -1078,6 +1076,12 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
   if (step === "socio_demographic_review") {
     reasonInput.placeholder = "Why should these DGs be treated as severely affected?";
     evidenceInput.placeholder = "https://example.org/demographic-evidence";
+    return;
+  }
+
+  if (step === "mitigation_reason") {
+    reasonInput.placeholder = "Why is this mitigation measure appropriate?";
+    evidenceInput.placeholder = "https://example.org/mitigation-evidence";
     return;
   }
 
@@ -1340,12 +1344,12 @@ function setInputMode(mode = "text", step = "", options = []) {
   currentOptions = options || [];
   syncTargetPopulationQuestion(step, currentOptions);
   updateStageVisual(step, currentSession, currentOptions);
-  const reasonEvidenceMode = mode === "reason_evidence" || mode === "mitigation_reason";
+  const reasonEvidenceMode = mode === "reason_evidence" || mode === "mitigation_measure";
   const evaluationMode = mode === "evaluation_question";
   micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode;
   messageInput.placeholder = placeholderForStep(step, options);
   setReasonEvidencePlaceholders(step, mode);
-  reasonEvidenceFields.classList.toggle("mitigation-mode", mode === "mitigation_reason");
+  reasonEvidenceFields.classList.toggle("mitigation-mode", mode === "mitigation_measure");
   messageInputRow.hidden = reasonEvidenceMode || evaluationMode;
   reasonEvidenceFields.hidden = !reasonEvidenceMode;
   evaluationFields.hidden = !evaluationMode;
@@ -1391,7 +1395,7 @@ function updateSessionCard(session) {
 }
 
 function syncTargetPopulationQuestion(step, options = []) {
-  if (step !== "target_population_question") {
+  if (step !== "target_population_question" && step !== "add_dgs") {
     currentTargetPopulationQuestion = null;
     return;
   }
@@ -2122,7 +2126,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     console.error("Chat request failed", error);
   } finally {
     setLoading(false);
-    if (inputMode === "reason_evidence" || inputMode === "mitigation_reason") {
+    if (inputMode === "reason_evidence" || inputMode === "mitigation_measure") {
       reasonInput.focus();
     } else if (inputMode === "evaluation_question") {
       scoreInput.focus();
@@ -2153,24 +2157,18 @@ function evidenceSummary(url, file) {
 chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
 
-  if (inputMode === "reason_evidence" || inputMode === "mitigation_reason") {
+  if (inputMode === "reason_evidence" || inputMode === "mitigation_measure") {
     const primaryValue = reasonInput.value.trim();
     const evidenceUrl = evidenceInput.value.trim();
     const evidenceFile = evidenceFileInput.files[0];
 
-    if (inputMode === "mitigation_reason") {
-      const secondaryValue = secondaryReasonInput.value.trim();
+    if (inputMode === "mitigation_measure") {
       if (!primaryValue) {
         flashRequiredField(reasonInput);
         return;
       }
-      if (!secondaryValue) {
-        flashRequiredField(secondaryReasonInput);
-        return;
-      }
-      const value = `Mitigation measure: ${primaryValue}\nReason: ${secondaryValue}`;
+      const value = `Mitigation measure: ${primaryValue}`;
       reasonInput.value = "";
-      secondaryReasonInput.value = "";
       collapseExpandedMessages();
       addMessage("user", value);
       sendMessage(value, false);
