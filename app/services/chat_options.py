@@ -16,6 +16,10 @@ SOCIO_DEMOGRAPHIC_OPTIONS = [
     Option(id=2, label="Add more DGs"),
 ]
 
+ADD_DGS_OPTIONS = [
+    Option(id=1, label="Create Mitigation Measure"),
+]
+
 REASON_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No"),

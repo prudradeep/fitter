@@ -36,6 +36,7 @@ from app.services.chat_formatters import (
     normalize_markdown_text,
 )
 from app.services.chat_options import (
+    ADD_DGS_OPTIONS,
     EVALUATION_CATEGORIES,
     MITIGATION_REVIEW_OPTIONS,
     OTHER_NAV_OPTIONS,
@@ -614,7 +615,7 @@ class ChatService:
                 session_id=session_id,
                 step="add_dgs",
                 bot_message=message,
-                options=[],
+                options=ADD_DGS_OPTIONS,
                 session=session.summary(),
                 error=error,
             )
@@ -841,6 +842,7 @@ class ChatService:
             if item.get("profiles")
         }
         session.custom_hazards = self._saved_custom_hazards_for_context(session)
+        self._hydrate_custom_hazard_profiles(session)
         self._ensure_user_session(session_id, session)
         self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
         for hazard in session.hazards:
@@ -993,21 +995,13 @@ class ChatService:
                 session,
                 hazard,
             )
-            return await self._socio_demographic_response(
-                session_id,
-                session,
-                (
-                    f"For the selected custom hazard '{hazard}', identify the "
-                    "socio-demographic profiles most affected using the saved target "
-                    "population answers below. Connect the answer to the country, region, "
-                    "and sector context. For each profile, include a short explanation "
-                    "only. Do not include statistical basis, "
-                    "Practical Considerations, Practical Policy Recommendations, mitigation "
-                    "measures, or policy recommendations yet.\n\n"
-                    "Saved target population answers:\n"
-                    f"{session.saved_target_population_answers or '- No saved target population answers were found.'}"
-                ),
-            )
+            if not self._stored_hazard_profiles(session, hazard):
+                profiles = self._target_population_profiles_for_saved_hazard(session, hazard)
+                if profiles:
+                    if session.hazard_profiles is None:
+                        session.hazard_profiles = {}
+                    session.hazard_profiles[hazard] = profiles
+            return await self._hazard_profiles_response(session_id, session, hazard)
 
         return await self._hazard_profiles_response(session_id, session, hazard)
 
@@ -1029,26 +1023,13 @@ class ChatService:
                 bot_message=render_message(
                     "add_dgs.md", hazard=session.selected_hazard or "the selected hazard"
                 ),
-                options=[],
+                options=ADD_DGS_OPTIONS,
                 session=session.summary(),
                 error=False,
             )
 
         if action == normalize("Create Mitigation Measure"):
-            session.phase = "reason_confirmation"
-            recommendations = await self._practical_policy_recommendations(session)
-            return ChatResponse(
-                session_id=session_id,
-                step="reason_confirmation",
-                bot_message=(
-                    markdown_to_html(recommendations)
-                    + "\n"
-                    + render_message("reason_confirmation.md")
-                ),
-                options=REASON_CONFIRMATION_OPTIONS,
-                session=session.summary(),
-                error=False,
-            )
+            return await self._create_mitigation_measure_step(session_id, session)
 
         return ChatResponse(
             session_id=session_id,
@@ -1057,6 +1038,24 @@ class ChatService:
             options=SOCIO_DEMOGRAPHIC_OPTIONS,
             session=session.summary(),
             error=True,
+        )
+
+    async def _create_mitigation_measure_step(
+        self, session_id: str, session: ChatSession
+    ) -> ChatResponse:
+        session.phase = "reason_confirmation"
+        recommendations = await self._practical_policy_recommendations(session)
+        return ChatResponse(
+            session_id=session_id,
+            step="reason_confirmation",
+            bot_message=(
+                markdown_to_html(recommendations)
+                + "\n"
+                + render_message("reason_confirmation.md")
+            ),
+            options=REASON_CONFIRMATION_OPTIONS,
+            session=session.summary(),
+            error=False,
         )
 
     def _handle_reason_confirmation(
@@ -1464,6 +1463,14 @@ class ChatService:
     async def _capture_additional_dgs(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
+        exact_label = exact_option_label(message, ADD_DGS_OPTIONS)
+        if exact_label is None:
+            fuzzy_label = match_option_label(message, ADD_DGS_OPTIONS)
+            if fuzzy_label is not None:
+                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
+        if normalize(exact_label or message) == normalize("Create Mitigation Measure"):
+            return await self._create_mitigation_measure_step(session_id, session)
+
         dgs = parse_additional_dgs(message)
         if not dgs:
             return ChatResponse(
@@ -1472,7 +1479,7 @@ class ChatService:
                 bot_message=render_message(
                     "add_dgs.md", hazard=session.selected_hazard or "the selected hazard"
                 ),
-                options=[],
+                options=ADD_DGS_OPTIONS,
                 session=session.summary(),
                 error=True,
             )
@@ -1486,7 +1493,7 @@ class ChatService:
                     "I could not validate these socio-demographic profiles because "
                     "the local LLM is unavailable. Please try again."
                 ),
-                options=[],
+                options=ADD_DGS_OPTIONS,
                 session=session.summary(),
                 error=True,
             )
@@ -1499,21 +1506,21 @@ class ChatService:
                     "Please rewrite the socio-demographic profile names.\n\n"
                     f"**Reason:** {profile_review['reason']}"
                 ),
-                options=[],
+                options=ADD_DGS_OPTIONS,
                 session=session.summary(),
                 error=True,
             )
 
-        existing_dg = self._match_existing_dg(session, dgs)
-        if existing_dg is not None:
+        local_duplicate_check = self._match_existing_dg(session, dgs)
+        if local_duplicate_check is not None:
             return ChatResponse(
                 session_id=session_id,
                 step="add_dgs",
                 bot_message=render_message(
                     "dg_duplicate.md",
-                    duplicates=f"- **{existing_dg}** is already added.",
+                    duplicates=self._format_duplicate_dgs(local_duplicate_check),
                 ),
-                options=[],
+                options=ADD_DGS_OPTIONS,
                 session=session.summary(),
                 error=True,
             )
@@ -1527,7 +1534,7 @@ class ChatService:
                     "I could not check whether these socio-demographic profiles are "
                     "already covered because the local LLM is unavailable. Please try again."
                 ),
-                options=[],
+                options=ADD_DGS_OPTIONS,
                 session=session.summary(),
                 error=True,
             )
@@ -1540,7 +1547,7 @@ class ChatService:
                     "dg_duplicate.md",
                     duplicates=self._format_duplicate_dgs(duplicate_check),
                 ),
-                options=[],
+                options=ADD_DGS_OPTIONS,
                 session=session.summary(),
                 error=True,
             )
@@ -2393,6 +2400,14 @@ Retrieved knowledge-base excerpts:
 
     def _custom_hazard_added_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         session.phase = "hazards"
+        self._set_custom_hazard_profiles_from_target_population(session)
+        for profile in session.socio_demographic_profiles or []:
+            self._store_socio_demographic(
+                session,
+                session.accepted_custom_hazard_record_id or session.selected_hazard_record_id,
+                profile,
+                source="target_population",
+            )
         return ChatResponse(
             session_id=session_id,
             step="hazards",
@@ -2485,6 +2500,109 @@ Retrieved knowledge-base excerpts:
             lines.append(f"  - {answer['answer']}")
         return "\n".join(lines)
 
+    def _set_custom_hazard_profiles_from_target_population(self, session: ChatSession) -> None:
+        hazard = session.accepted_custom_hazard
+        if not hazard:
+            return
+        profiles = self._target_population_profiles_from_answers(
+            session.target_population_answers or [],
+            hazard,
+        )
+        if not profiles:
+            return
+        if session.hazard_profiles is None:
+            session.hazard_profiles = {}
+        session.hazard_profiles[hazard] = profiles
+        session.socio_demographic_profiles = [profile["name"] for profile in profiles]
+
+    def _hydrate_custom_hazard_profiles(self, session: ChatSession) -> None:
+        for hazard in session.custom_hazards or []:
+            if self._stored_hazard_profiles(session, hazard):
+                continue
+            profiles = self._target_population_profiles_for_saved_hazard(session, hazard)
+            if not profiles:
+                continue
+            if session.hazard_profiles is None:
+                session.hazard_profiles = {}
+            session.hazard_profiles[hazard] = profiles
+
+    def _target_population_profiles_for_saved_hazard(
+        self, session: ChatSession, hazard: str
+    ) -> list[dict[str, str]]:
+        if session.country_id is None or session.sector_id is None:
+            return []
+
+        rows = self.db.execute(
+            select(
+                EvaluationQuestion.question,
+                UserQuestionResponse.response_text,
+            )
+            .join(UserHazard, UserHazard.id == UserQuestionResponse.user_hazard_id)
+            .join(UserSession, UserSession.id == UserHazard.user_session_id)
+            .join(EvaluationQuestion, EvaluationQuestion.id == UserQuestionResponse.question_id)
+            .where(
+                UserSession.country_id == session.country_id,
+                UserHazard.sector_id == session.sector_id,
+                UserHazard.region_id.is_(None)
+                if session.region_id is None
+                else UserHazard.region_id == session.region_id,
+                UserHazard.source == "custom",
+                UserHazard.name == hazard,
+                EvaluationQuestion.category == "target_population",
+            )
+            .order_by(EvaluationQuestion.sort_order, UserQuestionResponse.created_at)
+        ).all()
+        answers = [
+            {
+                "question": normalize_markdown_text(question),
+                "answer": str(response or "").strip(),
+            }
+            for question, response in rows
+            if str(response or "").strip()
+        ]
+        return self._target_population_profiles_from_answers(answers, hazard)
+
+    @staticmethod
+    def _target_population_profiles_from_answers(
+        answers: list[dict[str, object]],
+        hazard: str,
+    ) -> list[dict[str, str]]:
+        profiles: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for answer in answers:
+            question = str(answer.get("question") or "").strip()
+            answer_text = str(answer.get("answer") or "").strip()
+            if not question or not answer_text:
+                continue
+            for label in [item.strip() for item in answer_text.split(",") if item.strip()]:
+                name = ChatService._target_population_profile_name(question, label)
+                key = normalize(name)
+                if not name or key in seen:
+                    continue
+                seen.add(key)
+                profiles.append(
+                    {
+                        "name": name[:120],
+                        "explanation": f"Selected as a target population for {hazard}."[:260],
+                    }
+                )
+        return profiles
+
+    @staticmethod
+    def _target_population_profile_name(question: str, label: str) -> str:
+        normalized_question = question.strip().rstrip(".")
+        normalized_label = label.strip()
+        label_key = normalize(normalized_label)
+        if label_key == normalize("Yes"):
+            return normalized_question
+        if label_key == normalize("No"):
+            return f"Not {normalized_question[:1].lower()}{normalized_question[1:]}"
+        if "age" in normalize_for_match(normalized_question):
+            return f"Age {normalized_label}"
+        if normalize_for_match(normalized_question) in {"gender", "sex"}:
+            return normalized_label
+        return f"{normalized_question}: {normalized_label}"
+
     def _current_evaluation_question(
         self, session: ChatSession
     ) -> dict[str, str | int] | None:
@@ -2518,23 +2636,111 @@ Retrieved knowledge-base excerpts:
 
     @staticmethod
     def _extend_unique_profiles(existing: list[str], new_profiles: list[str]) -> None:
-        seen = {normalize(profile) for profile in existing}
         for profile in new_profiles:
-            key = normalize(profile)
-            if key in seen:
+            if any(ChatService._profiles_are_similar(profile, existing_profile) for existing_profile in existing):
                 continue
             existing.append(profile)
-            seen.add(key)
 
     @staticmethod
-    def _match_existing_dg(session: ChatSession, new_profiles: list[str]) -> str | None:
-        existing = session.additional_dgs or []
-        seen = {normalize(profile): profile for profile in existing}
+    def _match_existing_dg(session: ChatSession, new_profiles: list[str]) -> dict[str, object] | None:
+        existing = ChatService._selected_hazard_profile_names(session)
         for profile in new_profiles:
-            match = seen.get(normalize(profile))
-            if match is not None:
-                return match
+            for existing_profile in existing:
+                if ChatService._profiles_are_similar(profile, existing_profile):
+                    return {
+                        "duplicate": True,
+                        "match": existing_profile,
+                        "reason": "The proposed profile is the same as, or very similar to, an existing profile.",
+                        "duplicates": [
+                            {
+                                "profile": profile,
+                                "match": existing_profile,
+                                "reason": "Similar profile already exists.",
+                            }
+                        ],
+                    }
         return None
+
+    @staticmethod
+    def _profiles_are_similar(left: str, right: str) -> bool:
+        left_key = normalize_for_match(left)
+        right_key = normalize_for_match(right)
+        if not left_key or not right_key:
+            return False
+        if left_key == right_key:
+            return True
+        left_compact = compact_for_match(left)
+        right_compact = compact_for_match(right)
+        if left_compact and right_compact and (
+            left_compact in right_compact or right_compact in left_compact
+        ):
+            return True
+        left_words = ChatService._profile_similarity_words(left_key)
+        right_words = ChatService._profile_similarity_words(right_key)
+        if not left_words or not right_words:
+            return False
+        overlap = len(left_words & right_words)
+        smaller_overlap = overlap / max(1, min(len(left_words), len(right_words)))
+        larger_overlap = overlap / max(1, max(len(left_words), len(right_words)))
+        return smaller_overlap >= 0.85 or (smaller_overlap >= 0.7 and larger_overlap >= 0.5)
+
+    @staticmethod
+    def _profile_similarity_words(value: str) -> set[str]:
+        stop_words = {
+            "a",
+            "an",
+            "and",
+            "are",
+            "for",
+            "in",
+            "is",
+            "of",
+            "the",
+            "to",
+            "with",
+        }
+        words: set[str] = set()
+        for word in value.split():
+            if word in stop_words or len(word) <= 2:
+                continue
+            if len(word) > 4 and word.endswith("ies"):
+                word = word[:-3] + "y"
+            elif len(word) > 4 and word.endswith("s"):
+                word = word[:-1]
+            words.add(word)
+        return words
+
+    @staticmethod
+    def _selected_hazard_profile_names(session: ChatSession) -> list[str]:
+        profiles: list[str] = []
+        if session.socio_demographic_profiles:
+            profiles.extend(session.socio_demographic_profiles)
+        elif session.socio_demographic_findings:
+            profiles.extend(ChatService._extract_socio_demographic_profiles(session.socio_demographic_findings))
+
+        selected_hazard = session.selected_hazard or session.accepted_custom_hazard
+        if selected_hazard:
+            stored_profiles = ChatService._stored_hazard_profiles(session, selected_hazard)
+            profiles.extend(profile["name"] for profile in stored_profiles if profile.get("name"))
+
+        profiles.extend(session.additional_dgs or [])
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for profile in profiles:
+            key = normalize(profile)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(profile)
+        return deduped
+
+    @staticmethod
+    def _format_selected_hazard_profiles_for_duplicate_check(session: ChatSession) -> str:
+        profiles = ChatService._selected_hazard_profile_names(session)
+        if not profiles:
+            return "- No socio-demographic profiles have been identified for the selected hazard yet."
+        return "\n".join(f"- {profile}" for profile in profiles)
 
     @staticmethod
     def _format_duplicate_dgs(duplicate_check: dict[str, object]) -> str:
@@ -4014,13 +4220,13 @@ the affected socio-demographic profile list.
     async def _semantic_dg_duplicate_check(
         self, session: ChatSession, dgs: list[str]
     ) -> dict[str, object] | None:
-        existing_context = format_all_dgs(session)
+        existing_context = self._format_selected_hazard_profiles_for_duplicate_check(session)
         context = f"""
 You are a strict semantic duplicate checker for Dr Transition.
 
 Your job is to decide whether newly proposed socio-demographic profiles are
-already covered by the existing profile text or user-added profile list, even
-when the wording, grammar, or language differs.
+already covered by the selected hazard's existing profile text or user-added
+profile list, even when the wording, grammar, or language differs.
 
 {self._scope_instruction(session)}
 """.strip()
@@ -4034,7 +4240,7 @@ when the wording, grammar, or language differs.
                     "close paraphrase, names the same group in another language, or is "
                     "a narrower/restated version already clearly covered. Do not mark "
                     "it duplicate when it adds a meaningfully distinct group.\n\n"
-                    "Existing socio-demographic profiles and context:\n"
+                    "Existing socio-demographic profiles for the selected hazard only:\n"
                     f"{existing_context}\n\n"
                     "Proposed profiles:\n"
                     + "\n".join(f"- {item}" for item in dgs)

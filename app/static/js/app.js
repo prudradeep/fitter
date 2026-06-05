@@ -633,7 +633,7 @@ function sectorItemsForSession(session = {}, options = []) {
   const sectorIcons = new Map(stageIconSets.sector.map((item) => [normalizeForMatch(item.title), item.icon]));
   return labels.map((label) => ({
     title: label,
-    text: `${label} is available for ${session.country || "the selected country"}.`,
+    text: ``,
     icon: sectorIcons.get(normalizeForMatch(label)) || "M4 7h16M4 12h16M4 17h16",
   }));
 }
@@ -702,8 +702,8 @@ function renderStageIcons(key, session = {}, options = currentOptions) {
               <path d="${item.icon}"></path>
             </svg>
           </span>
-          <h3>${item.title}</h3>
           <p${item.stat ? ' class="stage-stat-value"' : ""}>${item.text}</p>
+          <h3>${item.title}</h3>
         </article>
       `,
     )
@@ -1605,6 +1605,8 @@ function openTargetPopulationDialog() {
     const legend = document.createElement("legend");
     legend.textContent = question.question || "Target population question";
     section.appendChild(legend);
+    const optionGrid = document.createElement("div");
+    optionGrid.className = "target-dialog-options";
     (question.options || []).forEach((option) => {
       const label = document.createElement("label");
       label.className = "target-option-check";
@@ -1616,8 +1618,9 @@ function openTargetPopulationDialog() {
       span.textContent = option;
       label.appendChild(checkbox);
       label.appendChild(span);
-      section.appendChild(label);
+      optionGrid.appendChild(label);
     });
+    section.appendChild(optionGrid);
     targetPopulationDialogBody.appendChild(section);
   });
   showTargetPopulationDialog();

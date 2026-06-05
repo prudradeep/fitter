@@ -24,27 +24,9 @@ def format_system_hazards(session: ChatSession) -> str:
     if not hazards:
         return "- No hazards were returned by the LLM for the loaded sector prompt."
     lines: list[str] = []
-    profiles = session.hazard_profiles or {}
     for hazard in hazards:
         lines.append(f"- **{hazard}**")
-        profile_values = profiles.get(hazard)
-        if isinstance(profile_values, str):
-            profile_list = [profile_values]
-        else:
-            profile_list = list(profile_values or [])
-        if profile_list:
-            for profile in profile_list:
-                if isinstance(profile, dict):
-                    name = str(profile.get("name") or "").strip()
-                    explanation = str(profile.get("explanation") or "").strip()
-                    if not name:
-                        continue
-                    if explanation:
-                        lines.append(f"     - **{name}** — {explanation}")
-                    else:
-                        lines.append(f"     - **{name}**")
-                else:
-                    lines.append(f"     - **{profile}**")
+        _append_hazard_profiles(lines, session, hazard)
     return "\n".join(lines)
 
 
@@ -52,7 +34,32 @@ def format_custom_hazards(session: ChatSession) -> str:
     hazards = list(session.custom_hazards or [])
     if not hazards:
         return ""
-    return "\n".join(f"- {hazard}." for hazard in hazards)
+    lines: list[str] = []
+    for hazard in hazards:
+        lines.append(f"- **{hazard}**")
+        _append_hazard_profiles(lines, session, hazard)
+    return "\n".join(lines)
+
+
+def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str) -> None:
+    profiles = session.hazard_profiles or {}
+    profile_values = profiles.get(hazard)
+    if isinstance(profile_values, str):
+        profile_list = [profile_values]
+    else:
+        profile_list = list(profile_values or [])
+    for profile in profile_list:
+        if isinstance(profile, dict):
+            name = str(profile.get("name") or "").strip()
+            explanation = str(profile.get("explanation") or "").strip()
+            if not name:
+                continue
+            if explanation:
+                lines.append(f"     - **{name}** — {explanation}")
+            else:
+                lines.append(f"     - **{name}**")
+        else:
+            lines.append(f"     - **{profile}**")
 
 
 def format_additional_dgs(session: ChatSession) -> str:
