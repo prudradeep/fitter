@@ -358,6 +358,34 @@ def ensure_runtime_schema() -> None:
                             "ADD COLUMN sector_id INT NULL AFTER region_id"
                         )
                     )
+                if "variable_name" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN variable_name VARCHAR(160) NULL AFTER sector_id"
+                        )
+                    )
+                if "explanation" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN explanation TEXT NULL AFTER profile"
+                        )
+                    )
+                if "statistical_basis" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN statistical_basis TEXT NULL AFTER explanation"
+                        )
+                    )
+                if "metadata_json" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN metadata_json TEXT NULL AFTER source"
+                        )
+                    )
                 if "ix_user_hazard_socio_demographics_country_id" not in dg_indexes:
                     connection.execute(
                         text(
@@ -403,6 +431,40 @@ def ensure_runtime_schema() -> None:
                             "FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL"
                         )
                     )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS system_hazard_socio_demographics (
+                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      system_hazard_id INT NOT NULL,
+                      country_id INT NULL,
+                      region_id INT NULL,
+                      sector_id INT NULL,
+                      variable_name VARCHAR(160) NULL,
+                      profile TEXT NOT NULL,
+                      explanation TEXT NULL,
+                      statistical_basis TEXT NULL,
+                      source VARCHAR(40) NOT NULL DEFAULT 'sector_prompt',
+                      metadata_json TEXT NULL,
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      CONSTRAINT fk_system_hazard_dgs_hazard
+                        FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE,
+                      CONSTRAINT fk_system_hazard_dgs_country
+                        FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
+                      CONSTRAINT fk_system_hazard_dgs_region
+                        FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL,
+                      CONSTRAINT fk_system_hazard_dgs_sector
+                        FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
+                      INDEX ix_system_hazard_socio_demographics_hazard_id (system_hazard_id),
+                      INDEX ix_system_hazard_socio_demographics_country_id (country_id),
+                      INDEX ix_system_hazard_socio_demographics_region_id (region_id),
+                      INDEX ix_system_hazard_socio_demographics_sector_id (sector_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """
+                )
+            )
     except Exception:
         logger.exception("Runtime schema migration failed")
         raise

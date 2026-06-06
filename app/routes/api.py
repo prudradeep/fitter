@@ -104,7 +104,7 @@ async def restore_session(
         "error": False,
         "session_id": session_key,
         "title": user_session.title or "New policy session",
-        "session": chat_session.summary().model_dump(),
+        "session": current_prompt.session.model_dump(),
         "step": current_prompt.step,
         "options": [option.model_dump() for option in current_prompt.options],
         "other_options": current_prompt.other_options,

@@ -126,6 +126,7 @@ let currentOtherOptions = [];
 let currentTargetPopulationQuestion = null;
 let targetPopulationQuestions = [];
 let renderedVisualKey = "";
+let renderedStageCardsKey = "";
 let stageVisualRenderId = 0;
 const mapTopologyCache = new Map();
 
@@ -233,7 +234,7 @@ const stageVisuals = {
   },
   sector: {
     index: 2,
-    title: "Select the transition sector",
+    title: "Sectors analyzed",
     text: "Transport, housing, and energy pathways change which hazards and profiles matter most.",
   },
   hazards: {
@@ -276,17 +277,16 @@ function stageKeyForStep(step = "") {
   return "country";
 }
 
-function sessionHasCountry(session = currentSession) {
-  return Boolean(session?.country);
-}
-
 function updateStageVisual(step = "", session = {}, options = currentOptions) {
   currentStep = step;
   currentOptions = options || [];
   const key = stageKeyForStep(step);
   const visual = stageVisuals[key] || stageVisuals.country;
   if (stageVisualTitle) stageVisualTitle.textContent = visual.title;
-  if (stageVisualText) stageVisualText.textContent = visual.text;
+  if (stageVisualText) {
+    stageVisualText.textContent =
+      key === "sector" ? sectorStageText(session, currentOptions) : visual.text;
+  }
   if (stageProgressFill) {
     const percent = (visual.index / Math.max(1, stageSteps.length - 1)) * 100;
     stageProgressFill.style.width = `${percent}%`;
@@ -300,6 +300,20 @@ function updateStageVisual(step = "", session = {}, options = currentOptions) {
   updateFloatingStatsButton();
 }
 
+function sectorStageText(session = {}, options = currentOptions) {
+  const sectors = sectorItemsForSession(session, options)
+    .map((item) => item.title)
+    .filter(Boolean);
+  if (!sectors.length) return stageVisuals.sector.text;
+  return `${formatReadableList(sectors)} ${sectors.length === 1 ? "pathway changes" : "pathways change"} which hazards and profiles matter most.`;
+}
+
+function formatReadableList(items = []) {
+  if (items.length <= 1) return items[0] || "";
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
 function updateFloatingStatsButton() {
   if (!floatingStatsButton) return;
   const hasSector = Boolean(currentSession?.sector);
@@ -307,20 +321,22 @@ function updateFloatingStatsButton() {
   floatingStatsButton.hidden = !canOpen;
 }
 
-function showStageMap() {
+function showStageMap({ keepIcons = false } = {}) {
   if (stageMap) {
     stageMap.hidden = false;
     restartStageAnimation(stageMap);
   }
-  if (stageIconGrid) stageIconGrid.hidden = true;
+  if (stageIconGrid && !keepIcons) stageIconGrid.hidden = true;
+  stageMap?.parentElement?.classList.toggle("has-map-summary", keepIcons);
 }
 
-function showStageIcons() {
-  if (stageMap) stageMap.hidden = true;
+function showStageIcons({ keepMap = false } = {}) {
+  if (stageMap && !keepMap) stageMap.hidden = true;
   if (stageIconGrid) {
     stageIconGrid.hidden = false;
     restartStageAnimation(stageIconGrid);
   }
+  stageMap?.parentElement?.classList.toggle("has-map-summary", keepMap);
 }
 
 function restartStageAnimation(element) {
@@ -452,8 +468,14 @@ async function renderDynamicStageVisual(key, session = {}, options = currentOpti
     await renderCountrySelectionMap();
     return;
   }
-  if (key === "region") {
+  if (key === "region" || key === "sector") {
     await renderRegionMap(session.country, session.region);
+    return;
+  }
+  if (session?.country && session?.region) {
+    await renderRegionMap(session.country, session.region, { keepCards: true });
+    const mapVisible = Boolean(stageMap && !stageMap.hidden);
+    renderStageIcons(key, session, options, { keepMap: mapVisible });
     return;
   }
   renderStageIcons(key, session, options);
@@ -461,11 +483,14 @@ async function renderDynamicStageVisual(key, session = {}, options = currentOpti
 
 async function renderCountrySelectionMap() {
   if (!stageMap || !window.Highcharts || !europeMapPath) {
-    renderStageIcons("country");
+    showStageMap();
     return;
   }
   const visualKey = "country-map";
-  if (renderedVisualKey === visualKey) return;
+  if (renderedVisualKey === visualKey) {
+    showStageMap();
+    return;
+  }
   renderedVisualKey = visualKey;
   const renderId = ++stageVisualRenderId;
   showStageMap();
@@ -570,29 +595,32 @@ async function renderCountrySelectionMap() {
     });
   } catch (error) {
     console.error("Country stage map failed", error);
-    renderStageIcons("country");
+    showStageMap();
   }
 }
 
-async function renderRegionMap(country, region) {
+async function renderRegionMap(country, region, { keepCards = false } = {}) {
   const countryMapPath = countryMapData.get(country);
   if (!stageMap || !window.Highcharts || !countryMapPath) {
-    renderStageIcons("region");
+    showStageMap();
     return;
   }
   const visualKey = `region-map-${country}-${region || ""}`;
-  if (renderedVisualKey === visualKey) return;
+  if (renderedVisualKey === visualKey) {
+    showStageMap({ keepIcons: keepCards });
+    return;
+  }
   renderedVisualKey = visualKey;
   const renderId = ++stageVisualRenderId;
-  showStageMap();
+  showStageMap({ keepIcons: keepCards });
 
   try {
     const topology = await fetchMapTopology(countryMapPath);
     if (renderId !== stageVisualRenderId) return;
-    const selectedRegion = normalizeForMatch(region || "");
+    const selectedRegion = normalizeRegionForMapMatch(region || "");
     const data = topology.features.map((feature) => {
       const name = feature.properties.name || feature.properties.NAME_1 || "";
-      const selected = selectedRegion && normalizeForMatch(name) === selectedRegion;
+      const selected = selectedRegion && normalizeRegionForMapMatch(name) === selectedRegion;
       return {
         "hc-key": feature.properties["hc-key"],
         value: selected ? 1 : 0,
@@ -612,15 +640,41 @@ async function renderRegionMap(country, region) {
         map: {
           borderColor: "#7a8493",
           borderWidth: 0.55,
-          states: { hover: { color: "#6d22c7" } },
+          states: { hover: { color: "#7428d2" } },
         },
       },
       series: [{ name: "Region", data, joinBy: "hc-key", nullColor: "#c7ccd3" }],
     });
+    window.requestAnimationFrame(resizeStageChart);
   } catch (error) {
     console.error("Region stage map failed", error);
-    renderStageIcons("region");
+    showStageMap();
   }
+}
+
+function normalizeRegionForMapMatch(value = "") {
+  const normalized = normalizeForMatch(
+    value.normalize("NFD").replace(/[\u0300-\u036f]/g, ""),
+  );
+  const aliases = {
+    bayern: "bavaria",
+    bavaria: "bavaria",
+    hessen: "hesse",
+    hesse: "hesse",
+    niedersachsen: "lower saxony",
+    "lower saxony": "lower saxony",
+    "nordrhein westfalen": "north rhine westphalia",
+    "north rhine westphalia": "north rhine westphalia",
+    "rheinland pfalz": "rhineland palatinate",
+    "rhineland palatinate": "rhineland palatinate",
+    sachsen: "saxony",
+    saxony: "saxony",
+    "sachsen anhalt": "saxony anhalt",
+    "saxony anhalt": "saxony anhalt",
+    thuringen: "thuringia",
+    thuringia: "thuringia",
+  };
+  return aliases[normalized] || normalized;
 }
 
 function sectorItemsForSession(session = {}, options = []) {
@@ -661,13 +715,13 @@ function hazardSummaryItems(session = {}) {
   ];
 }
 
-function renderStageIcons(key, session = {}, options = currentOptions) {
+function renderStageIcons(key, session = {}, options = currentOptions, { keepMap = false } = {}) {
   if (!stageIconGrid) return;
   const visualKey = `icons-${key}-${session.country || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${options.map((option) => option.label).join("|")}`;
-  if (renderedVisualKey === visualKey) return;
-  renderedVisualKey = visualKey;
-  stageVisualRenderId += 1;
-  showStageIcons();
+  if (renderedStageCardsKey === visualKey) return;
+  renderedStageCardsKey = visualKey;
+  if (!keepMap) stageVisualRenderId += 1;
+  showStageIcons({ keepMap });
 
   const items =
     (key === "sector" && sectorItemsForSession(session, options).length
@@ -696,12 +750,16 @@ function renderStageIcons(key, session = {}, options = currentOptions) {
   stageIconGrid.innerHTML = items
     .map(
       (item, index) => `
-        <article class="stage-icon-card" style="--stage-card-index: ${index}">
-          <span class="stage-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24">
-              <path d="${item.icon}"></path>
-            </svg>
-          </span>
+        <article class="stage-icon-card${item.stat ? " stage-stat-card" : ""}" style="--stage-card-index: ${index}">
+          ${
+            item.stat
+              ? ""
+              : `<span class="stage-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="${item.icon}"></path>
+                  </svg>
+                </span>`
+          }
           <p${item.stat ? ' class="stage-stat-value"' : ""}>${item.text}</p>
           <h3>${item.title}</h3>
         </article>
@@ -1074,6 +1132,7 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
   evidenceFileField.hidden = false;
 
   if (step === "socio_demographic_review") {
+    primaryInputLabel.textContent = "Reason (optional)";
     reasonInput.placeholder = "Why should these DGs be treated as severely affected?";
     evidenceInput.placeholder = "https://example.org/demographic-evidence";
     return;
@@ -2175,17 +2234,19 @@ chatForm.addEventListener("submit", (event) => {
       return;
     }
 
-    if (!primaryValue) {
+    const reasonOptional = currentStep === "socio_demographic_review";
+    if (!primaryValue && !reasonOptional) {
       flashRequiredField(reasonInput);
       return;
     }
-    const value = [`Reason: ${primaryValue}`, ...evidenceSummary(evidenceUrl, evidenceFile)].join("\n");
+    const reasonLine = primaryValue ? [`Reason: ${primaryValue}`] : [];
+    const value = [...reasonLine, ...evidenceSummary(evidenceUrl, evidenceFile)].join("\n") || "No reason provided";
     reasonInput.value = "";
     evidenceInput.value = "";
     evidenceFileInput.value = "";
     collapseExpandedMessages();
     addMessage("user", value);
-    sendMessage(`Reason: ${primaryValue}`, false, { evidenceUrl, evidenceFile });
+    sendMessage(primaryValue ? `Reason: ${primaryValue}` : "", false, { evidenceUrl, evidenceFile });
     return;
   }
 
@@ -2288,17 +2349,6 @@ resetButton.addEventListener("click", async () => {
   pauseSpeech();
   closeStatsDeepDiveDialog();
   clearCurrentInputState();
-  if (!sessionHasCountry()) {
-    messageInput.value = "";
-    updateOptionHighlight();
-    if (sessionId) {
-      await restoreSession(sessionId);
-    } else {
-      await sendMessage("", false);
-    }
-    return;
-  }
-
   localStorage.removeItem(sessionKey);
   sessionId = null;
   statsDialogStarted = false;

@@ -29,6 +29,8 @@ class ChatSession:
     dg_reason: str | None = None
     dg_evidence: str | None = None
     pending_mitigation_measure: str | None = None
+    suggested_mitigation_measure_id: int | None = None
+    suggested_mitigation_measure_name: str | None = None
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
     mitigation_record_id: int | None = None

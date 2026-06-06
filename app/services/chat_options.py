@@ -22,6 +22,19 @@ ADD_DGS_OPTIONS = [
     Option(id=1, label="Create Mitigation Measure"),
 ]
 
+DG_REASON_EVIDENCE_OPTIONS = [
+    Option(id=1, label="Skip"),
+]
+
+HAZARD_ENTRY_OPTIONS = [
+    Option(id=1, label="Go back to list of hazards"),
+]
+
+MITIGATION_DUPLICATE_OPTIONS = [
+    Option(id=1, label="Yes"),
+    Option(id=2, label="No"),
+]
+
 REASON_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No"),
@@ -32,11 +45,12 @@ MITIGATION_REVIEW_OPTIONS = [
 ]
 
 OTHER_NAV_OPTIONS = [
-    "Analyse another hazard in the same sector",
-    "Write hazard again",
     "Write mitigation measure again",
-    "Select another region",
+    "Analyse another hazard in the same sector",
+    "Add a new hazard",
+    "Write hazard again",
     "Choose a different sector",
+    "Select another region",
     "Start over with a different country",
 ]
 

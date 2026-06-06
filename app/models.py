@@ -187,10 +187,31 @@ class UserHazardSocioDemographic(Base):
     country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
     region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    variable_name: Mapped[str | None] = mapped_column(String(160))
     profile: Mapped[str] = mapped_column(Text, nullable=False)
+    explanation: Mapped[str | None] = mapped_column(Text)
+    statistical_basis: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="llm")
+    metadata_json: Mapped[str | None] = mapped_column(Text)
     reason: Mapped[str | None] = mapped_column(Text)
     evidence: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class SystemHazardSocioDemographic(Base):
+    __tablename__ = "system_hazard_socio_demographics"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    system_hazard_id: Mapped[int] = mapped_column(ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True)
+    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    variable_name: Mapped[str | None] = mapped_column(String(160))
+    profile: Mapped[str] = mapped_column(Text, nullable=False)
+    explanation: Mapped[str | None] = mapped_column(Text)
+    statistical_basis: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="sector_prompt")
+    metadata_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
