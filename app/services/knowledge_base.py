@@ -177,8 +177,14 @@ class KnowledgeBaseService:
         self.db.commit()
         return bool(result.rowcount)
 
-    async def search(self, query: str, limit: int = 5) -> list[dict[str, object]]:
+    async def search(
+        self,
+        query: str,
+        limit: int = 5,
+        source_uris: list[str] | None = None,
+    ) -> list[dict[str, object]]:
         overfetch = max(limit * 25, 100)
+        source_uri_filter = [item for item in (source_uris or []) if item]
         vector_scores: dict[int, float] = {}
         if faiss is not None and np is not None and self._index_path.exists():
             try:
@@ -211,6 +217,11 @@ class KnowledgeBaseService:
                         if self.scope == "temporary"
                         else []
                     ),
+                    *(
+                        [KnowledgeDocument.source_uri.in_(source_uri_filter)]
+                        if source_uri_filter
+                        else []
+                    ),
                 )
             ).all()
             for chunk, document in rows:
@@ -227,6 +238,11 @@ class KnowledgeBaseService:
                 *(
                     [KnowledgeDocument.session_key == self.session_key]
                     if self.scope == "temporary"
+                    else []
+                ),
+                *(
+                    [KnowledgeDocument.source_uri.in_(source_uri_filter)]
+                    if source_uri_filter
                     else []
                 ),
             )
@@ -298,6 +314,31 @@ class KnowledgeBaseService:
         chunk_ids = list(self.db.scalars(query).all())
         self._remove_vectors(chunk_ids)
         result = self.db.execute(document_query)
+        self.db.commit()
+        return int(result.rowcount or 0)
+
+    def delete_documents_by_source_uris(self, source_uris: list[str]) -> int:
+        source_uris = [item for item in source_uris if item]
+        if not source_uris:
+            return 0
+        query = (
+            select(KnowledgeChunk.id)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(
+                KnowledgeDocument.user_id == self.user_id,
+                KnowledgeDocument.scope == self.scope,
+                KnowledgeDocument.source_uri.in_(source_uris),
+            )
+        )
+        chunk_ids = list(self.db.scalars(query).all())
+        self._remove_vectors(chunk_ids)
+        result = self.db.execute(
+            delete(KnowledgeDocument).where(
+                KnowledgeDocument.user_id == self.user_id,
+                KnowledgeDocument.scope == self.scope,
+                KnowledgeDocument.source_uri.in_(source_uris),
+            )
+        )
         self.db.commit()
         return int(result.rowcount or 0)
 
@@ -412,9 +453,11 @@ class KnowledgeBaseService:
     @property
     def _index_path(self) -> Path:
         main_path = Path(self.settings.faiss_index_path)
-        if self.scope != "temporary":
-            return main_path
-        return main_path.with_name(f"{main_path.stem}.temporary{main_path.suffix}")
+        if self.scope == "temporary":
+            return main_path.with_name(f"{main_path.stem}.temporary{main_path.suffix}")
+        if self.scope == "sector_prompt":
+            return main_path.with_name(f"{main_path.stem}.sector_prompts{main_path.suffix}")
+        return main_path
 
 
 def normalize_vectors(embeddings: list[list[float]]):

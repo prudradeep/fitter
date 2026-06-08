@@ -141,6 +141,81 @@ def parse_validation_response(response: str) -> dict[str, str | bool]:
     return {"valid": valid, "reason": reason.strip() or "No validation reason was provided."}
 
 
+def parse_mitigation_clarity_response(response: str) -> dict[str, object]:
+    response = extract_json_object(response)
+    try:
+        parsed = json.loads(response.strip())
+    except json.JSONDecodeError:
+        return {
+            "clear": False,
+            "dimensions": {},
+            "follow_up_question": "Please clarify the mitigation measure or reason.",
+            "frozen_inputs": {},
+            "reason": "The clarity response was not valid JSON.",
+            "error": True,
+        }
+
+    if not isinstance(parsed, dict):
+        return {
+            "clear": False,
+            "dimensions": {},
+            "follow_up_question": "Please clarify the mitigation measure or reason.",
+            "frozen_inputs": {},
+            "reason": "The clarity response was not an object.",
+            "error": True,
+        }
+
+    dimensions = _normalized_clarity_dimensions(parsed.get("dimensions"))
+    clear = parsed.get("clear")
+    if not isinstance(clear, bool):
+        clear = bool(dimensions) and all(value == "CLEAR" for value in dimensions.values())
+    required_dimensions = {
+        "specificity",
+        "justification_clarity",
+        "evidence_identifiability",
+    }
+    if set(dimensions) != required_dimensions or any(
+        value != "CLEAR" for value in dimensions.values()
+    ):
+        clear = False
+
+    follow_up_question = parsed.get("follow_up_question")
+    if not isinstance(follow_up_question, str):
+        follow_up_question = ""
+    reason = parsed.get("reason")
+    if not isinstance(reason, str):
+        reason = ""
+
+    frozen_inputs = parsed.get("frozen_inputs")
+    cleaned_frozen_inputs: dict[str, str] = {}
+    if isinstance(frozen_inputs, dict):
+        for key in ("measure_description", "justification", "evidence"):
+            value = frozen_inputs.get(key)
+            cleaned_frozen_inputs[key] = value.strip() if isinstance(value, str) else ""
+
+    return {
+        "clear": clear,
+        "dimensions": dimensions,
+        "follow_up_question": follow_up_question.strip(),
+        "frozen_inputs": cleaned_frozen_inputs,
+        "reason": reason.strip(),
+        "error": False,
+    }
+
+
+def _normalized_clarity_dimensions(value: object) -> dict[str, str]:
+    dimensions: dict[str, str] = {}
+    if not isinstance(value, dict):
+        return dimensions
+    for key in ("specificity", "justification_clarity", "evidence_identifiability"):
+        raw_status = value.get(key)
+        status = str(raw_status or "").strip().upper()
+        if status not in {"CLEAR", "NEEDS_CLARIFICATION"}:
+            status = "NEEDS_CLARIFICATION"
+        dimensions[key] = status
+    return dimensions
+
+
 def parse_duplicate_check_response(response: str) -> dict[str, object]:
     response = extract_json_object(response)
     try:

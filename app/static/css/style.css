@@ -1980,6 +1980,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .chat-form input,
+.chat-form textarea,
 .reason-evidence-fields textarea,
 .evaluation-fields textarea {
   width: 100%;
@@ -1994,6 +1995,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .chat-form input:focus,
+.chat-form textarea:focus,
 .reason-evidence-fields textarea:focus,
 .evaluation-fields textarea:focus {
   border-color: #111111;
@@ -2004,6 +2006,11 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   min-height: 43px;
   padding: 8px 10px;
   background: #ffffff;
+}
+
+#textareaInput {
+  resize: vertical;
+  min-height: 78px;
 }
 
 .reason-evidence-fields,
@@ -2119,6 +2126,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
 .chat-form button:disabled,
 .chat-form input:disabled,
+.chat-form textarea:disabled,
 .reason-evidence-fields textarea:disabled,
 .evaluation-fields textarea:disabled {
   opacity: 0.62;

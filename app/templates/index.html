@@ -63,6 +63,16 @@
                     <span class="switch-track" aria-hidden="true"></span>
                   </span>
                 </label>
+                <label class="settings-row">
+                  <span>
+                    <strong>Auto conversation</strong>
+                    <small>Let the LLM simulate user replies for flow testing.</small>
+                  </span>
+                  <span class="voice-switch">
+                    <input id="autoConversationToggle" type="checkbox" />
+                    <span class="switch-track" aria-hidden="true"></span>
+                  </span>
+                </label>
                 <label class="settings-select voice-select">
                   <span>Voice preference</span>
                   <select id="voicePreferenceSelect" aria-label="Voice preference">
@@ -211,6 +221,13 @@
                 placeholder="Type a country, region, or sector..."
                 aria-label="Chat message"
               />
+              <textarea
+                id="textareaInput"
+                rows="3"
+                placeholder="Type your answer..."
+                aria-label="Detailed chat message"
+                hidden
+              ></textarea>
               <button
                 id="micButton"
                 class="mic-button"

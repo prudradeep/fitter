@@ -50,4 +50,15 @@ add affected profiles in the
 Add a floating button for deep dive into stats after sector selection
 
 
-Select all option in target population
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+Subsidies the residents
+To keep a check on the household cost of family
+
+When to save the MM in DB after reason validation/evaluation questions completion.
+
+Select all option in target population "Target all general population"
+Store MM conclusion and target/effected groups.
+Confidence scoring for MM clarity
+Use only RAG & LLM for sector prompts and for any searches.

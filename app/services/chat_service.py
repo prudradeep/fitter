@@ -6,7 +6,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from app.llm import ask_llm_chat
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
@@ -65,6 +65,7 @@ from app.services.chat_parsers import (
     parse_hazard_input_review_response,
     parse_llm_hazard_list,
     parse_mitigation_reason,
+    parse_mitigation_clarity_response,
     parse_reason_evidence,
     parse_validation_response,
 )
@@ -72,6 +73,7 @@ from app.services.chat_session import ChatSession, session_store
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.prompt_loader import load_sector_prompt
+from app.services.sector_prompt_rag import SectorPromptRagService
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +82,7 @@ class ChatService:
     welcome_message = render_message("welcome.md")
     invalid_message = render_message("invalid_selection.md")
     fuzzy_rejected_message = render_message("fuzzy_rejected.md")
+    mitigation_clarity_turn_cap = 5
 
     def __init__(self, db: Session, user_id: int | None = None) -> None:
         self.db = db
@@ -161,6 +164,25 @@ class ChatService:
         )
         response.other_options = []
         return response
+
+    async def generate_auto_user_message(self, session_id: str | None) -> dict[str, object]:
+        if not self._session_belongs_to_current_user(session_id):
+            session_id = None
+        self._hydrate_session_from_db(session_id)
+        current_session_id, session = session_store.get_or_create(session_id)
+        session.session_key = current_session_id
+        self._ensure_user_session(current_session_id, session)
+
+        current_response = self._repeat_current_options(current_session_id, session, "", False)
+        self._attach_other_options(current_response, session)
+        messages = self._recent_chat_messages_for_auto_user(current_session_id, limit=10)
+        generated = await self._auto_user_message_from_llm(session, current_response, messages)
+        return {
+            "error": not bool(generated.strip()),
+            "session_id": current_session_id,
+            "message": generated.strip(),
+            "detail": "" if generated.strip() else "Could not generate an auto user message.",
+        }
 
     async def _chat_response(
         self, current_session_id: str, session: ChatSession, clean_message: str
@@ -272,6 +294,11 @@ class ChatService:
 
         if session.phase == "mitigation_reason":
             return await self._validate_mitigation_reason(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "mitigation_clarity":
+            return await self._handle_mitigation_clarity_answer(
                 current_session_id, session, clean_message
             )
 
@@ -418,6 +445,7 @@ class ChatService:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
             session.phase = "mitigation_measure"
             session.pending_mitigation_measure = None
+            self._clear_mitigation_clarity_state(session)
             session.mitigation_measure = None
             session.mitigation_reason = None
             session.mitigation_record_id = None
@@ -514,6 +542,7 @@ class ChatService:
         session.dg_reason = None
         session.dg_evidence = None
         session.pending_mitigation_measure = None
+        ChatService._clear_mitigation_clarity_state(session)
         session.suggested_mitigation_measure_id = None
         session.suggested_mitigation_measure_name = None
         session.mitigation_measure = None
@@ -538,6 +567,13 @@ class ChatService:
         fresh_session = ChatSession()
         for key, value in asdict(fresh_session).items():
             setattr(session, key, value)
+
+    @staticmethod
+    def _clear_mitigation_clarity_state(session: ChatSession) -> None:
+        session.pending_mitigation_reason = None
+        session.pending_mitigation_evidence = None
+        session.mitigation_clarity_turns = 0
+        session.mitigation_frozen_inputs = None
 
     def _attach_other_options(self, response: ChatResponse, session: ChatSession) -> None:
         self._apply_country_profile_count(response, session)
@@ -616,6 +652,16 @@ class ChatService:
         cleaned = normalize_markdown_text(str(variable_name or "")).strip().strip(".:;,- ")
         if not cleaned:
             return ""
+        prefixed_match = re.match(
+            r"^(?:PREDICTOR\s+)?[0-9]+[A-Z]\s*:\s*(.+)$",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        if prefixed_match:
+            cleaned = prefixed_match.group(1).strip().strip(".:;,- ")
+            variable_token = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", cleaned)
+            if variable_token:
+                return variable_token.group(1)
         predictor_id = self._predictor_id_from_variable_name(cleaned)
         if predictor_id:
             return self._predictor_variable_name_from_prompt(session, predictor_id)
@@ -645,7 +691,7 @@ class ChatService:
     @staticmethod
     def _other_nav_options(session: ChatSession, step: str) -> list[str]:
         options: list[str] = []
-        if session.mitigation_measure:
+        if session.mitigation_measure or session.pending_mitigation_measure:
             options.append("Write mitigation measure again")
         if session.sector and session.selected_hazard:
             options.append("Analyse another hazard in the same sector")
@@ -871,6 +917,17 @@ class ChatService:
                 error=error,
             )
 
+        if session.phase == "mitigation_clarity":
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_clarity",
+                bot_message=message,
+                options=self._mitigation_clarity_options(),
+                session=session.summary(),
+                input_mode="textarea",
+                error=error,
+            )
+
         if session.phase == "mitigation_review":
             return ChatResponse(
                 session_id=session_id,
@@ -1037,8 +1094,9 @@ class ChatService:
         session.sector_id = sector.id
         session.sector = sector.name
         session.phase = "hazards"
+        self._normalize_stored_sdp_variable_names(session)
         hazard_items = self._stored_hazard_items_for_context(session_id, session)
-        if not hazard_items or not any(item.get("profiles") for item in hazard_items):
+        if not hazard_items:
             hazard_items = await self._refresh_hazards_and_profiles_from_llm(
                 session_id,
                 session,
@@ -1061,7 +1119,6 @@ class ChatService:
         self._hydrate_custom_hazard_profiles(session)
         self._ensure_user_session(session_id, session)
         self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
-        self._persist_hazard_items_for_context(session_id, session, hazard_items)
         return self._hazards_step(session_id, session)
 
     def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
@@ -1329,6 +1386,7 @@ class ChatService:
         if action == normalize("Yes"):
             session.phase = "mitigation_measure"
             session.pending_mitigation_measure = None
+            self._clear_mitigation_clarity_state(session)
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_measure",
@@ -1369,6 +1427,10 @@ class ChatService:
             Option(id=index, label=label)
             for index, label in enumerate(self._other_nav_options(session, step), start=1)
         ]
+
+    @staticmethod
+    def _mitigation_clarity_options() -> list[Option]:
+        return [Option(id=1, label="Write mitigation measure again")]
 
     async def _other_actions_message_from_llm(self, session: ChatSession) -> str:
         options = self._other_nav_options(session, "complete")
@@ -1439,6 +1501,7 @@ Return Markdown only.
     ) -> ChatResponse:
         mitigation_measure, _ = parse_mitigation_reason(message)
         mitigation_measure = mitigation_measure or message.strip()
+        self._clear_mitigation_clarity_state(session)
         if not mitigation_measure:
             return ChatResponse(
                 session_id=session_id,
@@ -1631,6 +1694,7 @@ Return Markdown only.
         if action == normalize("No"):
             session.phase = "mitigation_measure"
             session.pending_mitigation_measure = None
+            self._clear_mitigation_clarity_state(session)
             session.suggested_mitigation_measure_id = None
             session.suggested_mitigation_measure_name = None
             return ChatResponse(
@@ -1654,6 +1718,7 @@ Return Markdown only.
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         session.phase = "mitigation_reason"
+        self._clear_mitigation_clarity_state(session)
         session.suggested_mitigation_measure_id = None
         session.suggested_mitigation_measure_name = None
         return ChatResponse(
@@ -1676,6 +1741,8 @@ Return Markdown only.
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         reason, evidence = parse_reason_evidence(message)
+        if not reason:
+            reason = self._plain_reason_from_unlabelled_message(message)
         mitigation_measure = session.pending_mitigation_measure or session.mitigation_measure
         if not mitigation_measure:
             session.phase = "mitigation_measure"
@@ -1721,16 +1788,205 @@ Return Markdown only.
             )
 
         evidence_text = evidence or ""
-        input_review = await self._validate_input_quality(
-            session=session,
-            purpose=(
-                "a reason and optional evidence explaining why the proposed mitigation "
-                "measure reduces the selected hazard's negative impact on affected "
-                "socio-demographic profiles"
-            ),
-            fields=self._reason_evidence_quality_fields(reason, evidence_text),
+        evidence_branch = self._has_user_supplied_evidence(evidence_text)
+        if evidence_branch and not self._has_readable_evidence_content(evidence_text):
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason=(
+                        "The evidence could not be read as supporting content. Please provide "
+                        "a readable published source, such as a DOI/URL with extractable text "
+                        "or a supported PDF/DOCX file."
+                    ),
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
+        clarity_response = await self._run_mitigation_clarity_track(
+            session_id,
+            session,
+            mitigation_measure,
+            reason,
+            evidence_text,
         )
+        if clarity_response is not None:
+            return clarity_response
+
+        frozen_inputs = session.mitigation_frozen_inputs or {}
+        return await self._validate_frozen_mitigation_inputs(
+            session_id,
+            session,
+            frozen_inputs.get("measure_description") or mitigation_measure,
+            frozen_inputs.get("justification") or reason,
+            frozen_inputs.get("evidence") or evidence_text,
+        )
+
+    @staticmethod
+    def _plain_reason_from_unlabelled_message(message: str) -> str | None:
+        stripped = message.strip()
+        if not stripped:
+            return None
+        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+        if not lines:
+            return None
+        evidence_markers = (
+            "evidence:",
+            "evidence url:",
+            "evidence file:",
+            "evidence content:",
+            "temporary evidence",
+        )
+        if all(line.casefold().startswith(evidence_markers) for line in lines):
+            return None
+        if lines[0].casefold().startswith(("score:", "mitigation measure:", "mitigation:")):
+            return None
+        return ChatService._strip_wrapping_quotes(stripped)
+
+    async def _handle_mitigation_clarity_answer(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        if not message.strip():
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_clarity",
+                bot_message="Please answer the clarification question so I can freeze the mitigation inputs.",
+                options=self._mitigation_clarity_options(),
+                session=session.summary(),
+                input_mode="textarea",
+                error=True,
+            )
+        if self._is_invalid_user_text(message):
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_clarity",
+                bot_message=self._invalid_text_message(),
+                options=self._mitigation_clarity_options(),
+                session=session.summary(),
+                input_mode="textarea",
+                error=True,
+            )
+
+        input_review = await self._validate_clarification_answer_quality(session, message)
         if input_review is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_clarity",
+                bot_message=render_message("mitigation_validation_unavailable.md"),
+                options=self._mitigation_clarity_options(),
+                session=session.summary(),
+                input_mode="textarea",
+                error=True,
+            )
+        if not input_review.get("valid"):
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_clarity",
+                bot_message=render_message(
+                    "input_validation_failed.md",
+                    reason=str(
+                        input_review.get("reason")
+                        or "Please answer with clear, meaningful text."
+                    ),
+                ),
+                options=self._mitigation_clarity_options(),
+                session=session.summary(),
+                input_mode="textarea",
+                error=True,
+            )
+
+        mitigation_measure = session.pending_mitigation_measure or ""
+        reason = session.pending_mitigation_reason or ""
+        evidence_text = session.pending_mitigation_evidence or ""
+        if not mitigation_measure or not reason:
+            session.phase = "mitigation_reason"
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason="Please enter the mitigation reason again so I can restart the clarity check.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
+        mitigation_measure, reason, evidence_text = self._merge_mitigation_clarification(
+            mitigation_measure,
+            reason,
+            evidence_text,
+            message,
+        )
+        clarity_response = await self._run_mitigation_clarity_track(
+            session_id,
+            session,
+            mitigation_measure,
+            reason,
+            evidence_text,
+            clarification_answer=message,
+        )
+        if clarity_response is not None:
+            return clarity_response
+
+        frozen_inputs = session.mitigation_frozen_inputs or {}
+        return await self._validate_frozen_mitigation_inputs(
+            session_id,
+            session,
+            frozen_inputs.get("measure_description") or mitigation_measure,
+            frozen_inputs.get("justification") or reason,
+            frozen_inputs.get("evidence") or evidence_text,
+        )
+
+    @staticmethod
+    def _merge_mitigation_clarification(
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str,
+        clarification_answer: str,
+    ) -> tuple[str, str, str]:
+        answer = clarification_answer.strip()
+        if not answer:
+            return mitigation_measure, reason, evidence_text
+        lowered = answer.casefold()
+        if lowered.startswith(("mitigation measure:", "measure:")):
+            clarified_measure = answer.split(":", 1)[1].strip()
+            if clarified_measure:
+                mitigation_measure = clarified_measure
+        elif lowered.startswith(("evidence:", "source:", "citation:")):
+            clarified_evidence = answer.split(":", 1)[1].strip()
+            if clarified_evidence:
+                evidence_text = (
+                    f"{evidence_text}\n{clarified_evidence}".strip()
+                    if evidence_text
+                    else clarified_evidence
+                )
+        else:
+            reason = f"{reason}\nClarification: {answer}".strip()
+        return mitigation_measure, reason, evidence_text
+
+    async def _run_mitigation_clarity_track(
+        self,
+        session_id: str,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str,
+        clarification_answer: str | None = None,
+    ) -> ChatResponse | None:
+        clarity = await self._assess_mitigation_clarity(
+            session,
+            mitigation_measure,
+            reason,
+            evidence_text,
+            clarification_answer,
+        )
+        if clarity is None or clarity.get("error"):
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_reason",
@@ -1740,20 +1996,147 @@ Return Markdown only.
                 input_mode="reason_evidence",
                 error=True,
             )
-        if not input_review["valid"]:
+
+        if clarity.get("clear"):
+            session.mitigation_frozen_inputs = self._frozen_mitigation_inputs(
+                clarity,
+                mitigation_measure,
+                reason,
+                evidence_text,
+            )
+            return None
+
+        if self._can_freeze_after_mitigation_clarification(
+            clarity,
+            mitigation_measure,
+            reason,
+            evidence_text,
+            clarification_answer,
+        ):
+            session.mitigation_frozen_inputs = self._frozen_mitigation_inputs(
+                clarity,
+                mitigation_measure,
+                reason,
+                evidence_text,
+            )
+            return None
+
+        if session.mitigation_clarity_turns >= self.mitigation_clarity_turn_cap:
             self._discard_temporary_evidence(session, evidence_text)
+            session.phase = "mitigation_reason"
+            self._clear_mitigation_clarity_state(session)
+            clarity_reason = str(clarity.get("reason") or "").strip()
+            revision_reason = (
+                "I still cannot freeze an unambiguous version of the mitigation "
+                "measure, justification, and evidence after the clarification limit. "
+                "Please resubmit them with more concrete wording."
+            )
+            if clarity_reason:
+                revision_reason = f"{revision_reason} Last clarity issue: {clarity_reason}"
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_reason",
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
-                    reason=str(input_review["reason"]),
+                    reason=revision_reason,
                 ),
                 options=[],
                 session=session.summary(),
                 input_mode="reason_evidence",
                 error=True,
             )
+
+        follow_up_question = str(clarity.get("follow_up_question") or "").strip()
+        if not follow_up_question:
+            follow_up_question = "What specific detail should I use to make your mitigation input unambiguous?"
+        session.phase = "mitigation_clarity"
+        session.pending_mitigation_measure = mitigation_measure
+        session.pending_mitigation_reason = reason
+        session.pending_mitigation_evidence = evidence_text
+        session.mitigation_clarity_turns += 1
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_clarity",
+            bot_message=markdown_to_html(
+                "### Clarification needed\n\n"
+                f"{follow_up_question}\n\n"
+                "I will use your answer only to clarify the inputs, not as evidence that the measure is supported."
+            ),
+            options=self._mitigation_clarity_options(),
+            session=session.summary(),
+            input_mode="textarea",
+            error=False,
+        )
+
+    def _can_freeze_after_mitigation_clarification(
+        self,
+        clarity: dict[str, object],
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str,
+        clarification_answer: str | None,
+    ) -> bool:
+        dimensions = clarity.get("dimensions")
+        if not isinstance(dimensions, dict):
+            return False
+        if dimensions.get("specificity") != "CLEAR":
+            return False
+        if dimensions.get("evidence_identifiability") != "CLEAR":
+            return False
+
+        unresolved = {
+            key
+            for key, value in dimensions.items()
+            if value != "CLEAR"
+        }
+        if unresolved != {"justification_clarity"}:
+            return False
+
+        clarification = (clarification_answer or "").strip()
+        if not clarification and "Clarification:" in reason:
+            clarification = reason.rsplit("Clarification:", 1)[1].strip()
+        if not clarification:
+            return False
+        if self._is_invalid_user_text(clarification):
+            return False
+        if len(compact_for_match(clarification)) < 12:
+            return False
+        if len(compact_for_match(mitigation_measure)) < 8:
+            return False
+        if len(compact_for_match(reason)) < 30:
+            return False
+        if evidence_text and self._is_invalid_user_text(evidence_text):
+            return False
+        return True
+
+    @staticmethod
+    def _frozen_mitigation_inputs(
+        clarity: dict[str, object],
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str,
+    ) -> dict[str, str]:
+        frozen = clarity.get("frozen_inputs")
+        if not isinstance(frozen, dict):
+            frozen = {}
+        return {
+            "measure_description": str(
+                frozen.get("measure_description") or mitigation_measure
+            ).strip(),
+            "justification": str(frozen.get("justification") or reason).strip(),
+            "evidence": str(frozen.get("evidence") or evidence_text).strip(),
+        }
+
+    async def _validate_frozen_mitigation_inputs(
+        self,
+        session_id: str,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str,
+    ) -> ChatResponse:
+        session.phase = "mitigation_reason"
+        evidence_branch = self._has_user_supplied_evidence(evidence_text)
 
         validation = await self._validate_mitigation_against_stats(
             session=session,
@@ -1788,9 +2171,12 @@ Return Markdown only.
                 error=True,
             )
 
+        if evidence_branch:
+            self._promote_temporary_evidence(session)
         session.mitigation_measure = mitigation_measure
         session.mitigation_reason = reason
         session.pending_mitigation_measure = None
+        self._clear_mitigation_clarity_state(session)
         if session.selected_hazard_record_id is None and session.selected_hazard:
             hazard_record = self._ensure_user_hazard(
                 session_id,
@@ -2214,6 +2600,7 @@ Return Markdown only.
             )
         session.phase = "mitigation_measure"
         session.pending_mitigation_measure = None
+        self._clear_mitigation_clarity_state(session)
         return ChatResponse(
             session_id=session_id,
             step="mitigation_measure",
@@ -4595,6 +4982,168 @@ Retrieved knowledge-base excerpts:
             self.db.rollback()
             logger.exception("Failed to persist chat message")
 
+    def _recent_chat_messages_for_auto_user(
+        self, session_id: str, limit: int = 10
+    ) -> list[dict[str, str]]:
+        try:
+            user_session = self.db.scalar(
+                select(UserSession).where(UserSession.session_key == session_id)
+            )
+            if user_session is None:
+                return []
+            rows = self.db.scalars(
+                select(UserChatMessage)
+                .where(UserChatMessage.user_session_id == user_session.id)
+                .order_by(desc(UserChatMessage.created_at), desc(UserChatMessage.id))
+                .limit(limit)
+            ).all()
+        except Exception:
+            logger.exception("Failed to load chat messages for auto conversation")
+            return []
+        return [
+            {"role": row.role, "content": row.content}
+            for row in reversed(rows)
+            if str(row.content or "").strip()
+        ]
+
+    async def _auto_user_message_from_llm(
+        self,
+        session: ChatSession,
+        current_response: ChatResponse,
+        history: list[dict[str, str]],
+    ) -> str:
+        options = [option.label for option in current_response.options]
+        other_options = list(current_response.other_options or [])
+        field_mode = current_response.input_mode in {
+            "mitigation_measure",
+            "reason_evidence",
+            "textarea",
+            "evaluation_question",
+            "mitigation_review",
+        }
+        prompt_options = [] if field_mode else options
+        prompt_other_options = [] if field_mode else other_options
+        mode_instruction = (
+            "The current step expects typed field input. Do NOT choose an option or navigation action; "
+            "write the field content the form expects."
+            if field_mode
+            else "The current step expects an option or short answer. Prefer primary options when available."
+        )
+        context = f"""
+You simulate a cooperative test user for Dr Transition.
+
+Your job is to produce the next USER message that will move the workflow forward.
+The real assistant will process your message after you return it.
+
+Rules:
+- Return only the exact user message, with no commentary, no Markdown wrapper, and no quotes.
+- {mode_instruction}
+- When selecting an option, use option text exactly.
+- Do not choose "Other Options" or navigation actions unless the flow is blocked.
+- Keep answers realistic, concise, and policy-relevant.
+- For clarification questions, answer the specific question directly.
+- For mitigation measure input, include the "Mitigation measure:" label.
+- For reason/evidence input, include "Reason:" and omit evidence unless a simple citation is useful.
+- For evaluation questions, include "Score:" and a short "Reason:".
+- Never upload files or reference local files.
+
+Current session:
+- Country: {session.country or "Not selected"}
+- Region: {session.region or "Not selected"}
+- Sector: {session.sector or "Not selected"}
+- Selected hazard: {session.selected_hazard or session.accepted_custom_hazard or "Not selected"}
+- Step: {current_response.step}
+- Input mode: {current_response.input_mode}
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Recent conversation:\n"
+                    + (
+                        "\n".join(
+                            f"{item['role']}: {normalize_markdown_text(item['content'])[:900]}"
+                            for item in history
+                        )
+                        or "- No prior messages."
+                    )
+                    + "\n\nCurrent assistant message:\n"
+                    f"{normalize_markdown_text(current_response.bot_message)[:1200] or '- Empty.'}\n\n"
+                    "Primary options:\n"
+                    + ("\n".join(f"- {option}" for option in prompt_options) or "- None")
+                    + "\n\nOther navigation options:\n"
+                    + ("\n".join(f"- {option}" for option in prompt_other_options) or "- None")
+                    + "\n\nGenerate the next user message now."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.35,
+            max_tokens=260,
+        )
+        if is_llm_unavailable_response(response):
+            return ""
+        return self._clean_auto_user_message(
+            response,
+            current_response.input_mode,
+            options,
+            other_options,
+            session,
+        )
+
+    @staticmethod
+    def _clean_auto_user_message(
+        response: str,
+        input_mode: str,
+        options: list[str],
+        other_options: list[str],
+        session: ChatSession,
+    ) -> str:
+        cleaned = response.strip().strip("`").strip()
+        if cleaned.casefold().startswith("user:"):
+            cleaned = cleaned.split(":", 1)[1].strip()
+        cleaned = ChatService._strip_wrapping_quotes(cleaned)
+        allowed = [*options, *other_options]
+        for option in allowed:
+            if normalize(cleaned) == normalize(option):
+                fallback = ChatService._auto_user_fallback_for_input_mode(input_mode, session)
+                if fallback:
+                    return fallback
+                return option
+        return cleaned[:2000]
+
+    @staticmethod
+    def _auto_user_fallback_for_input_mode(input_mode: str, session: ChatSession) -> str:
+        hazard = session.selected_hazard or session.accepted_custom_hazard or "the selected hazard"
+        dgs = format_all_dgs(session)
+        if input_mode == "mitigation_measure":
+            return (
+                "Mitigation measure: Provide targeted subsidies and advisory support "
+                f"so affected groups can adapt to {hazard} without bearing disproportionate costs."
+            )
+        if input_mode == "reason_evidence":
+            return (
+                "Reason: This measure reduces the negative impact by lowering upfront "
+                f"costs and giving practical support to the affected groups: {dgs[:400]}."
+            )
+        if input_mode == "textarea":
+            return (
+                "The cost coverage applies to the affected target groups by paying "
+                "or reimbursing upfront adaptation costs directly for them, with "
+                "guidance and implementation support so they can use the measure in practice."
+            )
+        if input_mode == "evaluation_question":
+            return (
+                "Score: 7\n"
+                "Reason: The mitigation is relevant and practical, though it may need stronger "
+                "funding and monitoring to reach every affected group."
+            )
+        if input_mode == "mitigation_review":
+            return "Move to next step"
+        return ""
+
     @staticmethod
     def _session_title(session: ChatSession) -> str:
         parts = [item for item in [session.country, session.region, session.sector] if item]
@@ -5201,10 +5750,15 @@ Sector system prompt:
 
     async def _get_hazard_names_from_llm(self, session: ChatSession) -> list[str]:
         sector_prompt = load_sector_prompt(session.sector)
+        parsed_hazards = self._hazard_names_from_sector_prompt(sector_prompt)
+        if parsed_hazards:
+            return parsed_hazards
+
         context = f"""
 You are a strict extraction assistant for Dr Transition.
 
-{self._scope_instruction(session)}
+Hazard names are sector-level system hazards. Extract them from the selected
+sector only; do not make them country-specific or region-specific.
 
 Use this sector system prompt as the only source:
 {sector_prompt}
@@ -5214,8 +5768,6 @@ Use this sector system prompt as the only source:
                 "role": "user",
                 "content": (
                     "Selected context:\n"
-                    f"- Country: {session.country}\n"
-                    f"- Region: {session.region}\n"
                     f"- Sector: {session.sector}\n\n"
                     "List all the hazards perceived for the selected sector. Return ONLY "
                     "valid JSON, an array of hazard names like:\n"
@@ -5241,12 +5793,24 @@ Use this sector system prompt as the only source:
         self, session: ChatSession, hazard: str
     ) -> list[dict[str, str]]:
         sector_prompt = load_sector_prompt(session.sector)
-        hazard_block = self._confirmed_predictor_hazard_block(sector_prompt, hazard)
+        hazard_block = await self._sector_prompt_hazard_block_from_rag(
+            session,
+            hazard,
+        )
+        if not hazard_block:
+            hazard_block = self._confirmed_predictor_hazard_block(sector_prompt, hazard)
         if hazard_block:
             if re.search(r"\b0 confirmed predictors\b", hazard_block, re.IGNORECASE):
                 return []
             expected_count = self._confirmed_predictor_count(hazard_block)
             predictor_ids = self._confirmed_predictor_ids(hazard_block)
+            parsed_profiles = self._profiles_from_hazard_block(hazard_block)
+            if parsed_profiles and (
+                not expected_count
+                or len(parsed_profiles) == expected_count
+                or len(parsed_profiles) == len(predictor_ids)
+            ):
+                return parsed_profiles
             return await self._get_hazard_block_profiles_from_llm(
                 session,
                 hazard,
@@ -5286,7 +5850,7 @@ Use this sector system prompt as the only source:
                     "- Profile names must be human-readable people, household, home, or "
                     "country-context groups derived from confirmed predictors; do not return "
                     "raw predictor variable names.\n"
-                    "- Preserve the raw predictor variable or ID in variable_name when available.\n"
+                    "- Store only the raw predictor variable name in variable_name; do not include predictor IDs like 1A or 2B.\n"
                     "- Include a concise statistical_basis grounded in the sector prompt.\n"
                     "- Include protective/lower-concern confirmed predictors too, labelled "
                     "plainly in the explanation as lower concern or protective.\n"
@@ -5305,6 +5869,108 @@ Use this sector system prompt as the only source:
             max_tokens=700,
         )
         return self._parse_hazard_profile_items(response)
+
+    async def _sector_prompt_hazard_block_from_rag(
+        self,
+        session: ChatSession,
+        hazard: str,
+    ) -> str:
+        try:
+            results = await SectorPromptRagService(self.db).search(
+                session.sector,
+                f'HAZARD {hazard} confirmed predictors PREDICTOR',
+                limit=3,
+            )
+        except Exception:
+            logger.exception("Sector-prompt RAG hazard-block lookup failed")
+            return ""
+        combined = "\n\n".join(
+            str(result.get("content") or "").strip()
+            for result in results
+            if str(result.get("content") or "").strip()
+        )
+        if not combined:
+            return ""
+        return self._confirmed_predictor_hazard_block(combined, hazard)
+
+    @staticmethod
+    def _hazard_names_from_sector_prompt(sector_prompt: str) -> list[str]:
+        section_start = sector_prompt.find("SECTION 5")
+        prompt = sector_prompt[section_start:] if section_start != -1 else sector_prompt
+        hazards: list[str] = []
+        for match in re.finditer(r"(?m)^HAZARD\s+\d+\.\s+(.+?)\s*$", prompt):
+            hazard = re.sub(r"\s+", " ", match.group(1)).strip()
+            if hazard and normalize_for_match(hazard) not in {
+                normalize_for_match(existing) for existing in hazards
+            }:
+                hazards.append(hazard)
+        return hazards
+
+    @staticmethod
+    def _profiles_from_hazard_block(hazard_block: str) -> list[dict[str, str]]:
+        profiles: list[dict[str, str]] = []
+        for entry in ChatService._confirmed_predictor_entries(hazard_block):
+            profile = ChatService._profile_from_predictor_entry(entry)
+            if profile:
+                profiles.append(profile)
+        return profiles
+
+    @staticmethod
+    def _profile_from_predictor_entry(entry: str) -> dict[str, str]:
+        header = re.search(
+            r"(?m)^PREDICTOR\s+([0-9]+[A-Z]):\s+(.+?)\s*$",
+            entry,
+        )
+        if not header:
+            return {}
+        predictor_id = header.group(1).strip()
+        variable_text = header.group(2).strip()
+        variable_name = variable_text.split("(", 1)[0].strip()
+        level_match = re.search(r'\blevel:\s*"([^"]+)"', variable_text, flags=re.IGNORECASE)
+        variable_label = ChatService._humanize_predictor_label(variable_name)
+        if level_match:
+            profile_name = f"{variable_label}: {level_match.group(1).strip()}"
+        elif "country-level" in variable_text.casefold():
+            profile_name = f"Countries with higher {variable_label}"
+        elif "continuous" in variable_text.casefold():
+            profile_name = f"Higher {variable_label}"
+        else:
+            profile_name = variable_label
+
+        direction_match = re.search(r"(?m)^\s*Direction\s*=\s*(.+?)\s*$", entry)
+        direction = direction_match.group(1).strip() if direction_match else ""
+        plain_match = re.search(
+            r"(?ms)^\s*Plain-English:\s*(.+?)(?=^\s*(?:Odds ratio|p-value|Direction|COUNTRY PATTERN|PREDICTORS NOT CONFIRMED)|\Z)",
+            entry,
+        )
+        plain = re.sub(r"\s+", " ", plain_match.group(1)).strip() if plain_match else ""
+        explanation = plain or f"{profile_name} is listed as a confirmed predictor for this hazard."
+        if direction and "lower" in direction.casefold() and "lower" not in explanation.casefold():
+            explanation = f"Lower concern/protective predictor: {explanation}"
+        elif direction and "protective" in direction.casefold() and "protective" not in explanation.casefold():
+            explanation = f"Protective predictor: {explanation}"
+
+        basis_parts = [f"PREDICTOR {predictor_id}: {variable_text}"]
+        if direction:
+            basis_parts.append(f"Direction: {direction}")
+        if plain:
+            basis_parts.append(f"Plain-English: {plain}")
+        return {
+            "variable_name": variable_name[:160],
+            "profile": profile_name[:120],
+            "name": profile_name[:120],
+            "explanation": explanation[:260],
+            "statistical_basis": "; ".join(basis_parts)[:600],
+            "source": "sector_prompt",
+        }
+
+    @staticmethod
+    def _humanize_predictor_label(value: str) -> str:
+        label = re.sub(r"[_\-]+", " ", value).strip()
+        label = re.sub(r"\s+", " ", label)
+        if label.casefold().startswith("macro "):
+            label = label[6:]
+        return label[:1].upper() + label[1:] if label else "Confirmed predictor"
 
     async def _get_hazard_block_profiles_from_llm(
         self,
@@ -5356,7 +6022,7 @@ Confirmed-predictor block:
                     + "- Do not merge predictors into fewer profiles, even when predictors are related.\n"
                     "- If the block says 0 confirmed predictors, return [].\n"
                     "- Convert variable names into human-readable profile names.\n"
-                    "- Preserve the raw predictor ID or variable in variable_name.\n"
+                    "- Store only the raw predictor variable name in variable_name; do not include predictor IDs like 1A or 2B.\n"
                     "- Include a concise statistical_basis grounded in the predictor entry.\n"
                     "- Include LOWER concern or protective predictors too, and say lower concern/protective in the explanation.\n"
                     "- Explanation should be plain language only, under 24 words.\n"
@@ -5449,7 +6115,7 @@ Use only this predictor entry:
                     '"statistical_basis": "confirmed-predictor evidence summary", "source": "sector_prompt"}\n\n'
                     "Rules:\n"
                     "- Convert the predictor variable and level into a concise human-readable profile name.\n"
-                    "- Preserve the raw predictor ID or variable in variable_name.\n"
+                    "- Store only the raw predictor variable name in variable_name; do not include predictor IDs like 1A or 2B.\n"
                     "- Include a concise statistical_basis grounded in the predictor entry.\n"
                     "- The explanation must be plain language only, under 24 words.\n"
                     "- If the predictor is LOWER concern or protective, say lower concern/protective in the explanation.\n"
@@ -5546,16 +6212,18 @@ Use only this predictor entry:
         reason: str,
         evidence: str,
     ) -> dict[str, str | bool] | None:
-        sector_prompt = load_sector_prompt(session.sector)
         existing_hazards = "\n".join(f"- {item}" for item in (session.hazards or []))
-        compact_context = build_validation_context(sector_prompt, session)
+        sector_context = await self._sector_prompt_rag_context(
+            session,
+            f"{hazard} {reason} {evidence} {existing_hazards}",
+        )
         context = f"""
 You are a practical validation assistant for Dr Transition.
 
 {self._scope_instruction(session)}
 
-Use this compact sector statistical context as the authoritative source:
-{compact_context}
+Use these retrieved sector-prompt excerpts as the authoritative statistical source:
+{sector_context}
 """.strip()
         messages = [
             {
@@ -5848,6 +6516,62 @@ used for statistical validation.
             }
         return parsed
 
+    async def _validate_clarification_answer_quality(
+        self, session: ChatSession, answer: str
+    ) -> dict[str, str | bool] | None:
+        context = f"""
+You are a strict input-quality validator for Dr Transition.
+
+Your job is to validate a user's answer to one mitigation clarification question
+before it is used to freeze the mitigation inputs. This is an understandability
+check only. Do not validate whether the mitigation is correct or supported.
+
+{self._scope_instruction(session)}
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Review this clarification answer.\n\n"
+                    f"Clarification answer: {answer}\n\n"
+                    "Return ONLY valid JSON with this exact shape:\n"
+                    '{"valid": true, "reason": "The clarification answer is understandable."}\n\n'
+                    "Validation checks:\n"
+                    "- The answer must be meaningful, recognizable text that can clarify "
+                    "the mitigation measure, justification, or evidence.\n"
+                    "- Reject random characters, keyboard mashing, gibberish, repeated "
+                    "letters/symbols, or unrecognizable text.\n"
+                    "- Reject jargon-heavy or acronym-only answers when the meaning is not "
+                    "clear from the words provided.\n"
+                    "- Reject vague fragments such as 'policy', 'technology', 'impact', "
+                    "'better', or 'it helps' when no concrete clarification is given.\n"
+                    "- Do not reject understandable policy terms merely because they are "
+                    "technical, as long as the meaning is clear enough.\n"
+                    "- Do not check factual correctness, groundedness, citations, or support.\n"
+                    "- The reason field must tell the user what to rewrite and stay under 50 words."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=350,
+        )
+        if is_llm_unavailable_response(response):
+            return None
+        parsed = parse_validation_response(response)
+        if (
+            not parsed.get("valid")
+            and self._is_style_only_validation_rejection(str(parsed.get("reason") or ""))
+            and self._fields_are_locally_meaningful({"Clarification answer": answer})
+        ):
+            return {
+                "valid": True,
+                "reason": "The clarification answer is understandable despite minor wording issues.",
+            }
+        return parsed
+
     async def _validate_profile_names_input(
         self, session: ChatSession, profiles: list[str]
     ) -> dict[str, str | bool] | None:
@@ -5955,7 +6679,14 @@ profile list, even when the wording, grammar, or language differs.
         reason: str,
         evidence: str,
     ) -> dict[str, str | bool] | None:
-        sector_prompt = load_sector_prompt(session.sector)
+        sector_context = await self._sector_prompt_rag_context(
+            session,
+            (
+                f"{session.selected_hazard or ''} "
+                f"{self._format_pending_additional_dgs(session)} "
+                f"{reason} {evidence}"
+            ),
+        )
         context = f"""
 You are an evaluator for Dr Transition.
 
@@ -5965,8 +6696,8 @@ the claims and selected score.
 
 {self._scope_instruction(session)}
 
-Use this sector system prompt as the authoritative statistical source:
-{sector_prompt}
+Use these retrieved sector-prompt excerpts as the authoritative statistical source:
+{sector_context}
 """.strip()
         messages = [
             {
@@ -6016,6 +6747,96 @@ Use this sector system prompt as the authoritative statistical source:
 
         return parse_validation_response(response)
 
+    async def _assess_mitigation_clarity(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+        evidence: str,
+        clarification_answer: str | None = None,
+    ) -> dict[str, object] | None:
+        context = f"""
+You are the Step 1 clarity-track assessor for Dr Transition.
+
+Your task is input understandability only, not correctness and not groundedness.
+Do not decide whether the mitigation measure is supported by evidence or the
+knowledge base. Do not assign confidence. Do not reward extra user text as
+support. You only decide whether the inputs are unambiguous enough for a later
+grounded validation stage.
+
+{self._scope_instruction(session)}
+""".strip()
+        clarification_block = (
+            f"\nClarification answer from user:\n{clarification_answer}\n"
+            if clarification_answer
+            else ""
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Resolve these three clarity dimensions as CLEAR or "
+                    "NEEDS_CLARIFICATION:\n"
+                    "1. specificity: is the measure concrete enough to evaluate?\n"
+                    "2. justification_clarity: is the user's reasoning unambiguous?\n"
+                    "3. evidence_identifiability: if evidence is present, is it clear "
+                    "what source/content is being offered? If no evidence is present, "
+                    "mark this CLEAR.\n\n"
+                    "Current inputs:\n"
+                    f"Measure description: {mitigation_measure or 'Not provided'}\n"
+                    f"Justification: {reason or 'Not provided'}\n"
+                    f"Evidence: {evidence or 'Not provided'}\n"
+                    f"{clarification_block}\n"
+                    "If all dimensions are CLEAR, produce frozen_inputs as a concise, "
+                    "unambiguous statement of the measure_description, justification, "
+                    "and evidence. Integrate the clarification answer only to clarify "
+                    "what the user meant. If a clarification answer or a "
+                    "'Clarification:' line makes the user's intended reasoning "
+                    "understandable, mark justification_clarity CLEAR even if the "
+                    "later grounded validation stage might reject the claim.\n\n"
+                    "If any critical dimension NEEDS_CLARIFICATION, ask exactly one "
+                    "targeted follow-up question addressing the most important missing "
+                    "detail. Do not ask multiple questions. Do not validate groundedness.\n\n"
+                    "Return ONLY valid JSON with this exact shape:\n"
+                    "{"
+                    '"clear": false, '
+                    '"dimensions": {'
+                    '"specificity": "CLEAR", '
+                    '"justification_clarity": "NEEDS_CLARIFICATION", '
+                    '"evidence_identifiability": "CLEAR"'
+                    "}, "
+                    '"follow_up_question": "one targeted question or empty string", '
+                    '"frozen_inputs": {'
+                    '"measure_description": "", '
+                    '"justification": "", '
+                    '"evidence": ""'
+                    "}, "
+                    '"reason": "short clarity explanation"'
+                    "}\n\n"
+                    "Rules:\n"
+                    "- clear must be true only when all dimensions are CLEAR.\n"
+                    "- This stage cannot touch groundedness, support, citations, retrieval, "
+                    "or policy correctness.\n"
+                    "- A specific but unsupported claim is still CLEAR; support is checked later.\n"
+                    "- Do not require complete implementation details, evidence proof, "
+                    "or policy feasibility. The question is only whether the text states "
+                    "what the user means clearly enough to evaluate later.\n"
+                    "- Evidence identifiability is about whether the source/content is "
+                    "recognizable enough to validate later, not whether it is credible.\n"
+                    "- Keep reason under 50 words."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=650,
+        )
+        if is_llm_unavailable_response(response):
+            return None
+        return parse_mitigation_clarity_response(response)
+
     async def _validate_mitigation_against_stats(
         self,
         session: ChatSession,
@@ -6023,46 +6844,42 @@ Use this sector system prompt as the authoritative statistical source:
         reason: str,
         evidence: str = "",
     ) -> dict[str, str | bool] | None:
-        sector_prompt = load_sector_prompt(session.sector)
-        knowledge_context = await self._mitigation_knowledge_context(
-            session,
-            mitigation_measure,
-            f"{reason} {evidence}",
+        has_evidence = self._has_user_supplied_evidence(evidence)
+        support_context = (
+            await self._mitigation_evidence_context(session, mitigation_measure, reason, evidence)
+            if has_evidence
+            else await self._mitigation_main_knowledge_context(session, mitigation_measure, reason)
         )
-        examples = self._mitigation_measure_examples(session.sector_id)
+        support_label = (
+            "user-supplied evidence only"
+            if has_evidence
+            else "the curated main knowledge base only"
+        )
         context = f"""
-You are Dr Transition — an expert research assistant specialising in
-the social and distributional impacts of Twin-Transition policies (the simultaneous digital and
-green transitions) in Europe.
-
-Your role is EDUCATIONAL: you help users LEARN how to think about policy design, hazards, and
-mitigation measures. You do NOT draft policies for them. You guide them to discover important
-concepts themselves.
-
-Tone: warm, encouraging, intellectually rigorous. Use plain language. Avoid jargon unless you
-explain it. Always ground your responses in the research knowledge provided to you.
-
-Never skip steps or volunteer
-information for a future step before the user reaches it.
+You are a strict groundedness validator for Dr Transition.
 
 {self._scope_instruction(session)}
 
-Use the sector system prompt as the authoritative statistical source:
-{sector_prompt}
+Variant B mitigation validation rule:
+- If user evidence is supplied, validate against the user-supplied evidence ONLY.
+- If no user evidence is supplied, validate against the curated main knowledge base ONLY.
+- Never merge those two corpora for the validation verdict.
+- More user explanation can improve input clarity, but it must not increase groundedness.
 
-Use these retrieved knowledge-base excerpts when relevant:
-{knowledge_context or "- No relevant knowledge-base excerpts were found."}
+Authoritative support corpus for this verdict: {support_label}.
+
+Support excerpts:
+{support_context or "- No relevant support excerpts were found."}
 """.strip()
         messages = [
             {
                 "role": "user",
                 "content": (
-                    "Validate and evaluate the proposed mitigation measure and justification reason "
-                    "for reducing the negative impact of the selected hazard on the "
-                    "relevant socio-demographic groups. Use both the statistical context "
-                    "and the retrieved research knowledge.\n\n"
-                    f"Sector: {session.sector}\n"
+                    "Validate the proposed mitigation measure and justification reason "
+                    "for reducing the negative impact of the selected hazard on the relevant "
+                    "socio-demographic groups.\n\n"
                     f"Country: {session.country}\n"
+                    f"Sector: {session.sector}\n"
                     f"Region: {session.region}\n"
                     f"Selected hazard: {session.selected_hazard or 'No selected hazard'}\n"
                     "Socio-demographic profiles:\n"
@@ -6070,49 +6887,28 @@ Use these retrieved knowledge-base excerpts when relevant:
                     f"Mitigation measure: {mitigation_measure}\n"
                     f"Justification reason: {reason}\n\n"
                     f"Evidence: {evidence or 'Not provided'}\n\n"
-                    "Relevant mitigation measure examples:\n"
-                    f"{examples or '- No sector-specific examples are available.'}\n\n"
-                    "YOUR TASK — write an encouraging, educational evaluation (around "
-                    "200-300 words) that:\n\n"
-                    "1. ACKNOWLEDGE what is valuable or insightful about their proposal — "
-                    "be specific and genuine.\n"
-                    "2. CONNECT their idea to relevant concepts from the research knowledge "
-                    "provided. Name specific concepts, mechanisms, or groups where applicable.\n"
-                    "3. GENTLY EXPAND their thinking by pointing out one dimension or group "
-                    "they may not have considered, suggesting how the measure could be "
-                    "strengthened or made more targeted, or noting a potential unintended "
-                    "consequence to watch for.\n"
-                    "4. If appropriate, REFERENCE how a similar approach appears in the "
-                    "research examples.\n"
-                    "5. Discard proposals that are conceptually wrong.\n"
-                    "6. Discard all concepts different from twin transition policies.\n"
-                    "7. If user reasoning lacks deep thinking, END with an encouraging "
-                    "reflection question that deepens their thinking.\n"
-                    "8. Only ask a reflective question if necessary.\n"
-                    "9. Do not add the Statistical Context\n\n"
-                    "Tone: to the point, collegial, intellectually stimulating. Use plain "
-                    "language. Do NOT simply list the example measures. Do NOT be "
-                    "dismissive. This is an educational conversation.\n\n"
                     "Return ONLY one valid JSON object with this exact shape:\n"
-                    '{"valid": true, "reason": "educational evaluation paragraph"}\n\n'
+                    '{"valid": true, "reason": "short grounded validation explanation"}\n\n'
                     "Do not include Markdown, code fences, headers, bullets, or text "
-                    "before or after the JSON. Put the full educational evaluation "
-                    "inside the reason string as one flowing paragraph.\n\n"
+                    "before or after the JSON.\n\n"
+                    "Validation dimensions:\n"
+                    "- Input clarity: the measure and reason are specific enough to evaluate.\n"
+                    "- Hazard fit: the measure addresses the selected hazard.\n"
+                    "- Groundedness: the authoritative support corpus explicitly supports the "
+                    "measure/reason. User assertions alone are not support. Do not make any assumptions.\n\n"
                     "Rules:\n"
-                    "- valid must be true only when the mitigation measure and justification reason "
-                    "logically address the selected hazard and its negative impact, "
-                    "affected group, or hazard mechanism from the prompt or retrieved "
-                    "research knowledge.\n"
-                    "- valid must be false when the mitigation is unrelated to the "
-                    "selected hazard, ignores the affected groups, contradicts the "
-                    "statistics or retrieved knowledge, invents unsupported facts, "
-                    "or the justification reason/evidence is too vague.\n"
-                    "- If evidence content is supplied from a URL or file, valid must "
-                    "also require the evidence to support the justification reason.\n"
+                    "- valid must be true only when all critical dimensions are supported "
+                    "by the authoritative support corpus.\n"
+                    "- valid must be false if no relevant support excerpts were found.\n"
+                    "- valid must be false when any critical claim is contradicted, unrelated, "
+                    "too vague, outside twin-transition policy design, or based only on "
+                    "the user's assertion.\n"
+                    "- When evidence is provided, do not use the curated knowledge base or "
+                    "sector statistics to rescue the claim.\n"
                     "- valid must be false for proposals outside twin-transition policy "
                     "design or conceptually unrelated ideas.\n"
-                    "- For invalid proposals, the reason field should briefly explain "
-                    "what to change and may be shorter than 200 words."
+                    "- The reason field must explain the verdict in under 90 words and tell "
+                    "the user what to revise when invalid."
                 ),
             }
         ]
@@ -6120,7 +6916,7 @@ Use these retrieved knowledge-base excerpts when relevant:
             context=context,
             messages=messages,
             temperature=0.15,
-            max_tokens=1100,
+            max_tokens=700,
         )
 
         if is_llm_unavailable_response(response):
@@ -6128,16 +6924,84 @@ Use these retrieved knowledge-base excerpts when relevant:
 
         return parse_validation_response(response)
 
+    async def _mitigation_main_knowledge_context(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+    ) -> str:
+        query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
+        try:
+            results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=4)
+        except Exception:
+            logger.exception("Main knowledge-base lookup failed during mitigation validation")
+            results = []
+        return self._format_knowledge_results(results)
+
+    async def _mitigation_evidence_context(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+        evidence: str,
+    ) -> str:
+        query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
+        temporary_results: list[dict[str, object]] = []
+        if session.session_key:
+            try:
+                temporary_results = await KnowledgeBaseService(
+                    self.db,
+                    self.user_id,
+                    scope="temporary",
+                    session_key=session.session_key,
+                ).search(query, limit=4)
+            except Exception:
+                logger.exception("Temporary evidence lookup failed during mitigation validation")
+
+        inline_evidence = self._inline_evidence_content(evidence)
+        inline_results: list[dict[str, object]] = []
+        if inline_evidence:
+            inline_results.append(
+                {
+                    "title": "User-supplied evidence",
+                    "source_type": "evidence",
+                    "score": 1.0,
+                    "content": inline_evidence,
+                }
+            )
+        return self._format_knowledge_results([*temporary_results, *inline_results])
+
+    async def _sector_prompt_rag_context(
+        self,
+        session: ChatSession,
+        query: str,
+        limit: int = 5,
+    ) -> str:
+        try:
+            results = await SectorPromptRagService(self.db).search(
+                session.sector,
+                query,
+                limit=limit,
+            )
+        except Exception:
+            logger.exception("Sector-prompt RAG lookup failed")
+            results = []
+
+        formatted = SectorPromptRagService.format_results(results)
+        if formatted:
+            return formatted
+
+        sector_prompt = load_sector_prompt(session.sector)
+        fallback = build_validation_context(sector_prompt, session)
+        return fallback or sector_prompt[:3000] or "- No sector prompt context is available."
+
     async def _mitigation_knowledge_context(
         self,
         session: ChatSession,
         mitigation_measure: str,
         reason: str,
     ) -> str:
-        query = (
-            f"{session.country or ''} {session.sector or ''} {session.selected_hazard or ''} "
-            f"{format_all_dgs(session)} {mitigation_measure} {reason}"
-        )
+        query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
         try:
             main_results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=4)
         except Exception:
@@ -6154,15 +7018,79 @@ Use these retrieved knowledge-base excerpts when relevant:
                 ).search(query, limit=4)
             except Exception:
                 logger.exception("Temporary evidence lookup failed during mitigation validation")
+        return self._format_knowledge_results([*temporary_results, *main_results])
+
+    @staticmethod
+    def _mitigation_retrieval_query(
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+    ) -> str:
+        return (
+            f"{session.country or ''} {session.sector or ''} {session.selected_hazard or ''} "
+            f"{format_all_dgs(session)} {mitigation_measure} {reason}"
+        )
+
+    @staticmethod
+    def _format_knowledge_results(results: list[dict[str, object]]) -> str:
         lines: list[str] = []
-        for result in [*temporary_results, *main_results]:
+        for index, result in enumerate(results, start=1):
             title = str(result.get("title") or "Knowledge source")
             page = result.get("page_number")
             page_label = f", page {page}" if page else ""
+            score = result.get("score")
+            score_label = f", score {score}" if score is not None else ""
             content = str(result.get("content") or "").strip()
             if content:
-                lines.append(f"- {title}{page_label}: {content[:900]}")
+                lines.append(f"- [S{index}] {title}{page_label}{score_label}: {content[:900]}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _has_user_supplied_evidence(evidence: str | None) -> bool:
+        return bool(evidence and evidence.strip())
+
+    @staticmethod
+    def _has_readable_evidence_content(evidence: str | None) -> bool:
+        if not evidence or not evidence.strip():
+            return False
+        if re.search(r"Temporary evidence document ID:\s*\d+", evidence, flags=re.IGNORECASE):
+            return True
+        content = ChatService._inline_evidence_content(evidence)
+        if content:
+            return not content.casefold().startswith("unable to extract evidence")
+        lowered = evidence.casefold()
+        if "unable to extract evidence" in lowered:
+            return False
+        if "evidence url:" in lowered or "evidence file:" in lowered:
+            return False
+        return True
+
+    @staticmethod
+    def _inline_evidence_content(evidence: str | None) -> str:
+        if not evidence or not evidence.strip():
+            return ""
+        lines = [line.strip() for line in evidence.splitlines() if line.strip()]
+        content_lines = [
+            line.split(":", 1)[1].strip()
+            for line in lines
+            if line.casefold().startswith("evidence content:")
+            and line.split(":", 1)[1].strip()
+        ]
+        if content_lines:
+            return "\n".join(content_lines)
+        lowered = evidence.casefold()
+        if not any(
+            marker in lowered
+            for marker in (
+                "evidence url:",
+                "evidence file:",
+                "temporary evidence document id:",
+                "temporary evidence indexing failed:",
+                "unable to extract evidence",
+            )
+        ):
+            return evidence.strip()
+        return ""
 
     def _mitigation_measure_examples(self, sector_id: int | None, limit: int = 6) -> str:
         if sector_id is None:
@@ -6429,7 +7357,13 @@ wording, grammar, or language differs.
         reason: str,
         evidence: str,
     ) -> dict[str, str | bool] | None:
-        sector_prompt = load_sector_prompt(session.sector)
+        sector_context = await self._sector_prompt_rag_context(
+            session,
+            (
+                f"{session.selected_hazard or ''} {session.mitigation_measure or ''} "
+                f"{question['question']} {reason} {evidence}"
+            ),
+        )
         knowledge_context = await self._mitigation_knowledge_context(
             session,
             session.mitigation_measure or "",
@@ -6440,8 +7374,8 @@ You are a strict validation assistant for Dr Transition.
 
 {self._scope_instruction(session)}
 
-Use this sector system prompt as the authoritative statistical source:
-{sector_prompt}
+Use these retrieved sector-prompt excerpts as the authoritative statistical source:
+{sector_context}
 
 Use these retrieved knowledge-base excerpts when relevant:
 {knowledge_context or "- No relevant knowledge-base excerpts were found."}

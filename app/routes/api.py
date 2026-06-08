@@ -18,6 +18,7 @@ from app.schemas import ChatRequest, ChatResponse
 from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
 from app.services.knowledge_base import KnowledgeBaseService
+from app.services.sector_prompt_rag import SectorPromptRagService
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -43,6 +44,16 @@ async def stats_deep_dive(
 ) -> ChatResponse:
     service = ChatService(db, user_id=current_user.id)
     return await service.handle_stats_deep_dive_dialog(payload.message, payload.session_id)
+
+
+@router.post("/auto-user-message")
+async def auto_user_message(
+    payload: ChatRequest,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    service = ChatService(db, user_id=current_user.id)
+    return await service.generate_auto_user_message(payload.session_id)
 
 
 @router.get("/sessions")
@@ -284,6 +295,38 @@ async def knowledge_search(
         return {"error": False, "results": await service.search(query, 10)}
     except (httpx.HTTPError, ValueError) as exc:
         return {"error": True, "detail": f"Could not search knowledge base: {exc}", "results": []}
+
+
+@router.post("/sector-prompts/reindex")
+async def sector_prompts_reindex(
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    _ = current_user
+    try:
+        result = await SectorPromptRagService(db).ensure_indexed(force=True)
+    except (httpx.HTTPError, ValueError) as exc:
+        return {"error": True, "detail": f"Could not reindex sector prompts: {exc}"}
+    return {"error": bool(result.get("error")), **result}
+
+
+@router.post("/sector-prompts/search")
+async def sector_prompts_search(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    _ = current_user
+    payload = await request.json()
+    sector = str(payload.get("sector") or "").strip()
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        return {"error": True, "detail": "Search query is required.", "results": []}
+    try:
+        results = await SectorPromptRagService(db).search(sector, query, limit=10)
+    except (httpx.HTTPError, ValueError) as exc:
+        return {"error": True, "detail": f"Could not search sector prompts: {exc}", "results": []}
+    return {"error": False, "results": results}
 
 
 @router.delete("/knowledge/{document_id}")

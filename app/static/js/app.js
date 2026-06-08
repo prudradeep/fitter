@@ -3,6 +3,7 @@ const inputStateKeyPrefix = "dr_transition_input_state_";
 const voiceEnabledKey = "dr_transition_voice_enabled";
 const voicePreferenceKey = "dr_transition_voice_preference";
 const typingEffectKey = "dr_transition_typing_effect_enabled";
+const autoConversationKey = "dr_transition_auto_conversation_enabled";
 const teacherAvatarPath = "/static/img/teacher.png";
 
 const chatLog = document.querySelector("#chatLog");
@@ -10,6 +11,7 @@ const optionTray = document.querySelector("#optionTray");
 const chatForm = document.querySelector("#chatForm");
 const messageInputRow = document.querySelector("#messageInputRow");
 const messageInput = document.querySelector("#messageInput");
+const textareaInput = document.querySelector("#textareaInput");
 const micButton = document.querySelector("#micButton");
 const reasonEvidenceFields = document.querySelector("#reasonEvidenceFields");
 const evaluationFields = document.querySelector("#evaluationFields");
@@ -45,6 +47,7 @@ const settingsDrawer = document.querySelector("#settingsDrawer");
 const closeSettingsButton = document.querySelector("#closeSettingsButton");
 const voiceAssistantToggle = document.querySelector("#voiceAssistantToggle");
 const typingEffectToggle = document.querySelector("#typingEffectToggle");
+const autoConversationToggle = document.querySelector("#autoConversationToggle");
 const voicePreferenceSelect = document.querySelector("#voicePreferenceSelect");
 const voiceAnalyzerElement = document.querySelector("#voiceAnalyzer");
 const sessionsButton = document.querySelector("#sessionsButton");
@@ -125,6 +128,9 @@ let currentOptions = [];
 let currentOtherOptions = [];
 let currentTargetPopulationQuestion = null;
 let targetPopulationQuestions = [];
+let autoConversationTimer = null;
+let autoConversationTurns = 0;
+const autoConversationTurnLimit = 80;
 let renderedVisualKey = "";
 let renderedStageCardsKey = "";
 let stageVisualRenderId = 0;
@@ -1009,6 +1015,9 @@ function configureVoiceControls() {
   const speechSupported = "speechSynthesis" in window;
   if (!voiceAssistantToggle || !voicePreferenceSelect) return;
   voiceAssistantToggle.checked = localStorage.getItem(voiceEnabledKey) === "true";
+  if (autoConversationToggle) {
+    autoConversationToggle.checked = localStorage.getItem(autoConversationKey) === "true";
+  }
   voicePreferenceSelect.value = localStorage.getItem(voicePreferenceKey) || "auto";
   voiceAssistantToggle.disabled = !speechSupported;
   voicePreferenceSelect.disabled = !speechSupported;
@@ -1089,6 +1098,9 @@ function placeholderForStep(step, options = []) {
     if (step === "mitigation_reason") {
       return "Enter a mitigation measure and reason below...";
     }
+    if (step === "mitigation_clarity") {
+      return "Answer the clarification question...";
+    }
     if (step === "mitigation_review") {
       return "Ask about this mitigation, or move to next step...";
     }
@@ -1105,6 +1117,7 @@ function placeholderForStep(step, options = []) {
     add_dgs: "Choose socio-demographic options...",
     hazards: "Type the hazard you want to add...",
     mitigation: "Ask a mitigation question or continue the plan...",
+    mitigation_clarity: "Answer the clarification question...",
     evaluation_question: "Use the score slider below...",
     complete: "Ask a follow-up question...",
     country: "Type or select a country...",
@@ -1383,6 +1396,7 @@ function addTyping(targetLog = chatLog) {
 function setLoading(value) {
   loading = value;
   messageInput.disabled = value;
+  textareaInput.disabled = value;
   reasonInput.disabled = value;
   secondaryReasonInput.disabled = value;
   evidenceInput.disabled = value;
@@ -1405,11 +1419,16 @@ function setInputMode(mode = "text", step = "", options = []) {
   updateStageVisual(step, currentSession, currentOptions);
   const reasonEvidenceMode = mode === "reason_evidence" || mode === "mitigation_measure";
   const evaluationMode = mode === "evaluation_question";
-  micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode;
-  messageInput.placeholder = placeholderForStep(step, options);
+  const textareaMode = mode === "textarea";
+  micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode || textareaMode;
+  const placeholder = placeholderForStep(step, options);
+  messageInput.placeholder = placeholder;
+  textareaInput.placeholder = placeholder;
   setReasonEvidencePlaceholders(step, mode);
   reasonEvidenceFields.classList.toggle("mitigation-mode", mode === "mitigation_measure");
   messageInputRow.hidden = reasonEvidenceMode || evaluationMode;
+  messageInput.hidden = textareaMode;
+  textareaInput.hidden = !textareaMode;
   reasonEvidenceFields.hidden = !reasonEvidenceMode;
   evaluationFields.hidden = !evaluationMode;
 
@@ -1429,7 +1448,13 @@ function setInputMode(mode = "text", step = "", options = []) {
     evaluationReasonInput.value = "";
     evaluationEvidenceInput.value = "";
     evaluationEvidenceFileInput.value = "";
-    messageInput.focus();
+    if (textareaMode) {
+      messageInput.value = "";
+      textareaInput.focus();
+    } else {
+      textareaInput.value = "";
+      messageInput.focus();
+    }
   }
 }
 
@@ -1758,6 +1783,7 @@ function saveCurrentInputState() {
   const state = {
     inputMode,
     message: messageInput.value,
+    textareaMessage: textareaInput.value,
     reason: reasonInput.value,
     secondaryReason: secondaryReasonInput.value,
     evidenceUrl: evidenceInput.value,
@@ -1783,6 +1809,7 @@ function applySavedInputState() {
     const state = JSON.parse(saved);
     if (state.inputMode && state.inputMode !== inputMode) return;
     messageInput.value = state.message || "";
+    textareaInput.value = state.textareaMessage || "";
     reasonInput.value = state.reason || "";
     secondaryReasonInput.value = state.secondaryReason || "";
     evidenceInput.value = state.evidenceUrl || "";
@@ -2120,17 +2147,121 @@ async function restoreSession(nextSessionId) {
   }
   if (shouldStartFresh) {
     sendMessage("", false);
+  } else {
+    scheduleAutoConversationTurn();
   }
+}
+
+function autoConversationEnabled() {
+  return Boolean(autoConversationToggle?.checked);
+}
+
+function stopAutoConversation() {
+  if (autoConversationTimer) {
+    clearTimeout(autoConversationTimer);
+    autoConversationTimer = null;
+  }
+}
+
+function scheduleAutoConversationTurn(delay = 900) {
+  stopAutoConversation();
+  if (!autoConversationEnabled() || loading || !sessionId) return;
+  if (autoConversationTurns >= autoConversationTurnLimit) {
+    if (autoConversationToggle) autoConversationToggle.checked = false;
+    localStorage.setItem(autoConversationKey, "false");
+    console.warn("Auto conversation stopped after reaching the turn limit.");
+    return;
+  }
+  autoConversationTimer = window.setTimeout(requestAutoConversationTurn, delay);
+}
+
+async function requestAutoConversationTurn() {
+  autoConversationTimer = null;
+  if (!autoConversationEnabled() || loading || !sessionId) return;
+
+  try {
+    const response = await fetch("/api/auto-user-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "", session_id: sessionId }),
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    let nextMessage = String(data.message || "").trim();
+    if (data.error || !nextMessage) {
+      console.warn(data.detail || "Auto conversation could not generate a message.");
+      scheduleAutoConversationTurn(1800);
+      return;
+    }
+    nextMessage = normalizeAutoConversationMessage(nextMessage);
+    autoConversationTurns += 1;
+    sendMessage(nextMessage, true);
+  } catch (error) {
+    console.error("Auto conversation failed", error);
+    scheduleAutoConversationTurn(1800);
+  }
+}
+
+function normalizeAutoConversationMessage(message) {
+  const fieldModes = new Set([
+    "mitigation_measure",
+    "reason_evidence",
+    "textarea",
+    "evaluation_question",
+  ]);
+  if (!fieldModes.has(inputMode)) return message;
+  const optionLabels = [...currentOptions, ...currentOtherOptions].map((option) =>
+    typeof option === "string" ? option : option.label,
+  );
+  const isOption = optionLabels.some((label) => normalizeForMatch(label) === normalizeForMatch(message));
+  if (!isOption) {
+    if (
+      inputMode === "reason_evidence" &&
+      !/^reason\s*:/i.test(message) &&
+      !/^evidence\s*:/i.test(message)
+    ) {
+      return `Reason: ${message}`;
+    }
+    if (
+      inputMode === "mitigation_measure" &&
+      !/^mitigation(?:\s+measure)?\s*:/i.test(message)
+    ) {
+      return `Mitigation measure: ${message}`;
+    }
+    if (inputMode === "evaluation_question" && !/^score\s*:/i.test(message)) {
+      return `Score: 7\nReason: ${message}`;
+    }
+    return message;
+  }
+  if (inputMode === "mitigation_measure") {
+    return "Mitigation measure: Provide targeted financial support and advisory services for affected groups.";
+  }
+  if (inputMode === "reason_evidence") {
+    return "Reason: This reduces the hazard by lowering costs, improving access, and supporting affected groups through the transition.";
+  }
+  if (inputMode === "textarea") {
+    return "The cost coverage applies to the affected target groups by paying or reimbursing upfront adaptation costs directly for them, with guidance and implementation support so they can use the measure in practice.";
+  }
+  if (inputMode === "evaluation_question") {
+    return "Score: 7\nReason: The mitigation is relevant and feasible, but it needs stronger targeting and monitoring.";
+  }
+  return message;
 }
 
 async function sendMessage(message = "", echoUser = false, extras = {}) {
   if (loading) return;
+  stopAutoConversation();
   const cleanMessage = message.trim();
   if (echoUser && cleanMessage) addMessage("user", cleanMessage);
   clearCurrentInputState();
 
   const typing = addTyping();
   setLoading(true);
+  let shouldScheduleAuto = false;
 
   try {
     const hasEvidenceFile = extras.evidenceFile instanceof File && extras.evidenceFile.size > 0;
@@ -2180,6 +2311,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     setInputMode(data.input_mode || "text", data.step, data.options || []);
     renderOptions(data.options || [], data.other_options || []);
     loadSessions();
+    shouldScheduleAuto = true;
   } catch (error) {
     typing.remove();
     console.error("Chat request failed", error);
@@ -2189,8 +2321,13 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
       reasonInput.focus();
     } else if (inputMode === "evaluation_question") {
       scoreInput.focus();
+    } else if (inputMode === "textarea") {
+      textareaInput.focus();
     } else {
       messageInput.focus();
+    }
+    if (shouldScheduleAuto) {
+      scheduleAutoConversationTurn();
     }
   }
 }
@@ -2271,12 +2408,13 @@ chatForm.addEventListener("submit", (event) => {
     return;
   }
 
-  const value = messageInput.value.trim();
+  const freeTextInput = inputMode === "textarea" ? textareaInput : messageInput;
+  const value = freeTextInput.value.trim();
   if (!value) {
-    flashRequiredField(messageInput);
+    flashRequiredField(freeTextInput);
     return;
   }
-  messageInput.value = "";
+  freeTextInput.value = "";
   highlightedOptionLabel = "";
   disableOldOptions();
   collapseExpandedMessages();
@@ -2285,6 +2423,7 @@ chatForm.addEventListener("submit", (event) => {
 });
 
 messageInput.addEventListener("input", updateOptionHighlight);
+textareaInput.addEventListener("input", updateOptionHighlight);
 scoreInput.addEventListener("input", () => {
   scoreValue.textContent = scoreInput.value;
 });
@@ -2300,6 +2439,16 @@ voiceAssistantToggle?.addEventListener("change", () => {
 
 typingEffectToggle?.addEventListener("change", () => {
   localStorage.setItem(typingEffectKey, String(typingEffectToggle.checked));
+});
+
+autoConversationToggle?.addEventListener("change", () => {
+  localStorage.setItem(autoConversationKey, String(autoConversationToggle.checked));
+  autoConversationTurns = 0;
+  if (autoConversationToggle.checked) {
+    scheduleAutoConversationTurn(300);
+  } else {
+    stopAutoConversation();
+  }
 });
 
 voicePreferenceSelect?.addEventListener("change", () => {
@@ -2347,6 +2496,8 @@ micButton?.addEventListener("click", () => {
 
 resetButton.addEventListener("click", async () => {
   pauseSpeech();
+  stopAutoConversation();
+  autoConversationTurns = 0;
   closeStatsDeepDiveDialog();
   clearCurrentInputState();
   localStorage.removeItem(sessionKey);
