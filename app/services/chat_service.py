@@ -91,7 +91,18 @@ class ChatService:
         if clean_message == "/reset":
             if not self._session_belongs_to_current_user(session_id):
                 session_id = None
+            if session_id:
+                try:
+                    KnowledgeBaseService(
+                        self.db,
+                        self.user_id,
+                        scope="temporary",
+                        session_key=session_id,
+                    ).delete_temporary_documents()
+                except Exception:
+                    logger.exception("Failed to clear temporary evidence during session reset")
             current_session_id, session = session_store.reset(session_id)
+            session.session_key = current_session_id
             response = self._country_step(
                 current_session_id,
                 session,
@@ -105,6 +116,7 @@ class ChatService:
             session_id = None
         self._hydrate_session_from_db(session_id)
         current_session_id, session = session_store.get_or_create(session_id)
+        session.session_key = current_session_id
         self._ensure_user_session(current_session_id, session)
 
         response = await self._chat_response(current_session_id, session, clean_message)
@@ -123,6 +135,7 @@ class ChatService:
             session_id = None
         self._hydrate_session_from_db(session_id)
         current_session_id, session = session_store.get_or_create(session_id)
+        session.session_key = current_session_id
         self._ensure_user_session(current_session_id, session)
 
         if session.sector is None:
@@ -1728,6 +1741,7 @@ Return Markdown only.
                 error=True,
             )
         if not input_review["valid"]:
+            self._discard_temporary_evidence(session, evidence_text)
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_reason",
@@ -1760,6 +1774,7 @@ Return Markdown only.
             )
 
         if not validation["valid"]:
+            self._discard_temporary_evidence(session, evidence_text)
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_reason",
@@ -1906,6 +1921,7 @@ Return Markdown only.
 
         if not session.evaluation_questions:
             session.phase = "mitigation"
+            self._promote_temporary_evidence(session)
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation",
@@ -1958,6 +1974,7 @@ Return Markdown only.
                     ),
                 )
             if not input_review["valid"]:
+                self._discard_temporary_evidence(session, evidence or "")
                 return self._evaluation_question_step(
                     session_id,
                     session,
@@ -1983,6 +2000,7 @@ Return Markdown only.
                 )
 
             if not validation["valid"]:
+                self._discard_temporary_evidence(session, evidence or "")
                 return self._evaluation_question_step(
                     session_id,
                     session,
@@ -2990,6 +3008,7 @@ Retrieved knowledge-base excerpts:
 
     def _evaluation_complete_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         session.phase = "mitigation"
+        self._promote_temporary_evidence(session)
         return ChatResponse(
             session_id=session_id,
             step="mitigation",
@@ -3863,6 +3882,46 @@ Retrieved knowledge-base excerpts:
             return "\n".join([*source_lines, *content_lines]).strip()
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _temporary_evidence_document_ids(evidence: str | None) -> list[int]:
+        if not evidence:
+            return []
+        return [
+            int(match)
+            for match in re.findall(
+                r"Temporary evidence document ID:\s*(\d+)",
+                evidence,
+                flags=re.IGNORECASE,
+            )
+        ]
+
+    def _discard_temporary_evidence(self, session: ChatSession, evidence: str | None) -> None:
+        document_ids = self._temporary_evidence_document_ids(evidence)
+        if not document_ids or not session.session_key:
+            return
+        try:
+            KnowledgeBaseService(
+                self.db,
+                self.user_id,
+                scope="temporary",
+                session_key=session.session_key,
+            ).delete_temporary_documents(document_ids)
+        except Exception:
+            logger.exception("Failed to discard rejected temporary evidence")
+
+    def _promote_temporary_evidence(self, session: ChatSession) -> None:
+        if not session.session_key:
+            return
+        try:
+            KnowledgeBaseService(
+                self.db,
+                self.user_id,
+                scope="temporary",
+                session_key=session.session_key,
+            ).promote_temporary_documents()
+        except Exception:
+            logger.exception("Failed to promote temporary evidence")
 
     @staticmethod
     def _has_hazard_suggestions(review: dict[str, object]) -> bool:
@@ -6080,12 +6139,23 @@ Use these retrieved knowledge-base excerpts when relevant:
             f"{format_all_dgs(session)} {mitigation_measure} {reason}"
         )
         try:
-            results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=4)
+            main_results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=4)
         except Exception:
-            logger.exception("Knowledge-base lookup failed during mitigation validation")
-            return ""
+            logger.exception("Main knowledge-base lookup failed during mitigation validation")
+            main_results = []
+        temporary_results: list[dict[str, object]] = []
+        if session.session_key:
+            try:
+                temporary_results = await KnowledgeBaseService(
+                    self.db,
+                    self.user_id,
+                    scope="temporary",
+                    session_key=session.session_key,
+                ).search(query, limit=4)
+            except Exception:
+                logger.exception("Temporary evidence lookup failed during mitigation validation")
         lines: list[str] = []
-        for result in results:
+        for result in [*temporary_results, *main_results]:
             title = str(result.get("title") or "Knowledge source")
             page = result.get("page_number")
             page_label = f", page {page}" if page else ""

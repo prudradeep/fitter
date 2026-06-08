@@ -253,6 +253,44 @@ def ensure_runtime_schema() -> None:
             )
 
         inspector = inspect(engine)
+        if "knowledge_documents" in inspector.get_table_names():
+            document_columns = {
+                column["name"] for column in inspector.get_columns("knowledge_documents")
+            }
+            document_indexes = {
+                index["name"] for index in inspector.get_indexes("knowledge_documents")
+            }
+            with engine.begin() as connection:
+                if "scope" not in document_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE knowledge_documents ADD COLUMN scope "
+                            "VARCHAR(20) NOT NULL DEFAULT 'main' AFTER source_uri"
+                        )
+                    )
+                if "session_key" not in document_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE knowledge_documents ADD COLUMN session_key "
+                            "VARCHAR(64) NULL AFTER scope"
+                        )
+                    )
+                if "ix_knowledge_documents_scope" not in document_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE knowledge_documents "
+                            "ADD INDEX ix_knowledge_documents_scope (scope)"
+                        )
+                    )
+                if "ix_knowledge_documents_session_key" not in document_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE knowledge_documents "
+                            "ADD INDEX ix_knowledge_documents_session_key (session_key)"
+                        )
+                    )
+
+        inspector = inspect(engine)
         if "knowledge_chunks" in inspector.get_table_names():
             chunk_columns = {column["name"] for column in inspector.get_columns("knowledge_chunks")}
             chunk_indexes = {index["name"] for index in inspector.get_indexes("knowledge_chunks")}

@@ -7,6 +7,7 @@ from app.schemas import SessionSummary
 
 @dataclass
 class ChatSession:
+    session_key: str | None = None
     country_id: int | None = None
     country: str | None = None
     region_id: int | None = None

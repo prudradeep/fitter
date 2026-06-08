@@ -30,7 +30,7 @@ async def chat(
     current_user: AppUser = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> ChatResponse:
-    payload = await _chat_payload(request)
+    payload = await _chat_payload(request, db, current_user.id)
     service = ChatService(db, user_id=current_user.id)
     return await service.handle_message(payload.message, payload.session_id)
 
@@ -92,6 +92,7 @@ async def restore_session(
         except json.JSONDecodeError:
             session_data = {}
     chat_session = session_store.put(session_key, session_data)
+    chat_session.session_key = session_key
     service = ChatService(db, user_id=current_user.id)
     current_prompt = service._repeat_current_options(session_key, chat_session, "", False)
     service._attach_other_options(current_prompt, chat_session)
@@ -299,7 +300,7 @@ async def knowledge_delete(
     return {"error": not deleted, "deleted": deleted}
 
 
-async def _chat_payload(request: Request) -> ChatRequest:
+async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequest:
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" not in content_type:
         return ChatRequest.model_validate(await request.json())
@@ -323,6 +324,28 @@ async def _chat_payload(request: Request) -> ChatRequest:
         if _allowed_evidence_file(filename) and hasattr(evidence_file, "read"):
             evidence_parts.append(f"Evidence file: {filename}")
             file_bytes = await evidence_file.read()
+            if filename.casefold().endswith(".pdf") and session_id:
+                temporary_service = KnowledgeBaseService(
+                    db,
+                    user_id,
+                    scope="temporary",
+                    session_key=session_id,
+                )
+                try:
+                    temporary_result = await temporary_service.ingest_file(filename, file_bytes)
+                except (httpx.HTTPError, ValueError) as exc:
+                    evidence_parts.append(f"Temporary evidence indexing failed: {exc}")
+                else:
+                    if temporary_result.get("error"):
+                        evidence_parts.append(
+                            "Temporary evidence indexing failed: "
+                            + str(temporary_result.get("detail") or "No readable PDF text found.")
+                        )
+                    else:
+                        evidence_parts.append(
+                            "Temporary evidence document ID: "
+                            + str(temporary_result["document_id"])
+                        )
             file_text = _extract_file_text(filename, file_bytes)
             if file_text:
                 evidence_parts.append(f"Evidence content: {file_text}")

@@ -45,9 +45,17 @@ class QueryFeatures:
 
 
 class KnowledgeBaseService:
-    def __init__(self, db: Session, user_id: int | None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        user_id: int | None,
+        scope: str = "main",
+        session_key: str | None = None,
+    ) -> None:
         self.db = db
         self.user_id = user_id
+        self.scope = scope
+        self.session_key = session_key
         self.settings = get_settings()
 
     async def ingest_url(self, url: str, title: str | None = None) -> dict[str, object]:
@@ -80,6 +88,8 @@ class KnowledgeBaseService:
             title=title[:255] or "Knowledge document",
             source_type=source_type,
             source_uri=source_uri,
+            scope=self.scope,
+            session_key=self.session_key if self.scope == "temporary" else None,
         )
         self.db.add(document)
         self.db.flush()
@@ -118,7 +128,10 @@ class KnowledgeBaseService:
     def list_documents(self) -> list[dict[str, object]]:
         rows = self.db.scalars(
             select(KnowledgeDocument)
-            .where(KnowledgeDocument.user_id == self.user_id)
+            .where(
+                KnowledgeDocument.user_id == self.user_id,
+                KnowledgeDocument.scope == self.scope,
+            )
             .order_by(KnowledgeDocument.created_at.desc(), KnowledgeDocument.id.desc())
         ).all()
         return [
@@ -139,6 +152,7 @@ class KnowledgeBaseService:
             .where(
                 KnowledgeDocument.id == document_id,
                 KnowledgeDocument.user_id == self.user_id,
+                KnowledgeDocument.scope == self.scope,
             )
         ).all()
         if not chunk_ids:
@@ -146,6 +160,7 @@ class KnowledgeBaseService:
                 select(KnowledgeDocument).where(
                     KnowledgeDocument.id == document_id,
                     KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == self.scope,
                 )
             )
             if row is None:
@@ -156,6 +171,7 @@ class KnowledgeBaseService:
             delete(KnowledgeDocument).where(
                 KnowledgeDocument.id == document_id,
                 KnowledgeDocument.user_id == self.user_id,
+                KnowledgeDocument.scope == self.scope,
             )
         )
         self.db.commit()
@@ -189,6 +205,12 @@ class KnowledgeBaseService:
                 .where(
                     KnowledgeChunk.id.in_(vector_chunk_ids),
                     KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == self.scope,
+                    *(
+                        [KnowledgeDocument.session_key == self.session_key]
+                        if self.scope == "temporary"
+                        else []
+                    ),
                 )
             ).all()
             for chunk, document in rows:
@@ -199,7 +221,15 @@ class KnowledgeBaseService:
         lexical_rows = self.db.execute(
             select(KnowledgeChunk, KnowledgeDocument)
             .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
-            .where(KnowledgeDocument.user_id == self.user_id)
+            .where(
+                KnowledgeDocument.user_id == self.user_id,
+                KnowledgeDocument.scope == self.scope,
+                *(
+                    [KnowledgeDocument.session_key == self.session_key]
+                    if self.scope == "temporary"
+                    else []
+                ),
+            )
         ).all()
         lexical_rows = [
             (chunk, document)
@@ -247,6 +277,59 @@ class KnowledgeBaseService:
                 break
         return results
 
+    def delete_temporary_documents(self, document_ids: list[int] | None = None) -> int:
+        if self.scope != "temporary" or not self.session_key:
+            return 0
+        query = select(KnowledgeChunk.id).join(
+            KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id
+        ).where(
+            KnowledgeDocument.user_id == self.user_id,
+            KnowledgeDocument.scope == "temporary",
+            KnowledgeDocument.session_key == self.session_key,
+        )
+        document_query = delete(KnowledgeDocument).where(
+            KnowledgeDocument.user_id == self.user_id,
+            KnowledgeDocument.scope == "temporary",
+            KnowledgeDocument.session_key == self.session_key,
+        )
+        if document_ids:
+            query = query.where(KnowledgeDocument.id.in_(document_ids))
+            document_query = document_query.where(KnowledgeDocument.id.in_(document_ids))
+        chunk_ids = list(self.db.scalars(query).all())
+        self._remove_vectors(chunk_ids)
+        result = self.db.execute(document_query)
+        self.db.commit()
+        return int(result.rowcount or 0)
+
+    def promote_temporary_documents(self) -> int:
+        if self.scope != "temporary" or not self.session_key:
+            return 0
+        documents = self.db.scalars(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.user_id == self.user_id,
+                KnowledgeDocument.scope == "temporary",
+                KnowledgeDocument.session_key == self.session_key,
+            )
+        ).all()
+        if not documents:
+            return 0
+        document_ids = [document.id for document in documents]
+        chunk_ids = list(
+            self.db.scalars(
+                select(KnowledgeChunk.id).where(KnowledgeChunk.document_id.in_(document_ids))
+            ).all()
+        )
+        vectors = self._reconstruct_vectors(chunk_ids)
+        self._remove_vectors(chunk_ids)
+        main_service = KnowledgeBaseService(self.db, self.user_id)
+        if vectors:
+            main_service._add_vectors(list(vectors), list(vectors.values()))
+        for document in documents:
+            document.scope = "main"
+            document.session_key = None
+        self.db.commit()
+        return len(documents)
+
     async def _embed_many(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []
         for text in texts:
@@ -286,6 +369,19 @@ class KnowledgeBaseService:
             index.remove_ids(ids)
             self._save_index(index)
 
+    def _reconstruct_vectors(self, chunk_ids: list[int]) -> dict[int, list[float]]:
+        if not chunk_ids or not self._index_path.exists():
+            return {}
+        vectors: dict[int, list[float]] = {}
+        with FAISS_LOCK:
+            index = self._load_existing_index()
+            for chunk_id in chunk_ids:
+                try:
+                    vectors[chunk_id] = index.reconstruct(int(chunk_id)).tolist()
+                except Exception:
+                    continue
+        return vectors
+
     def _load_index(self, dimensions: int):
         if self._index_path.exists():
             index = self._load_existing_index()
@@ -299,6 +395,13 @@ class KnowledgeBaseService:
         return faiss.read_index(str(self._index_path))
 
     def _save_index(self, index) -> None:
+        if self.scope == "temporary" and index.ntotal == 0:
+            try:
+                self._index_path.unlink(missing_ok=True)
+                return
+            except OSError:
+                # Some managed filesystems allow overwriting an index but not unlinking it.
+                pass
         self._index_path.parent.mkdir(parents=True, exist_ok=True)
         faiss.write_index(index, str(self._index_path))
 
@@ -308,7 +411,10 @@ class KnowledgeBaseService:
 
     @property
     def _index_path(self) -> Path:
-        return Path(self.settings.faiss_index_path)
+        main_path = Path(self.settings.faiss_index_path)
+        if self.scope != "temporary":
+            return main_path
+        return main_path.with_name(f"{main_path.stem}.temporary{main_path.suffix}")
 
 
 def normalize_vectors(embeddings: list[list[float]]):

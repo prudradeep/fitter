@@ -250,9 +250,13 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   title VARCHAR(255) NOT NULL,
   source_type VARCHAR(40) NOT NULL,
   source_uri TEXT NULL,
+  scope VARCHAR(20) NOT NULL DEFAULT 'main',
+  session_key VARCHAR(64) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_knowledge_documents_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
-  INDEX ix_knowledge_documents_user_id (user_id)
+  INDEX ix_knowledge_documents_user_id (user_id),
+  INDEX ix_knowledge_documents_scope (scope),
+  INDEX ix_knowledge_documents_session_key (session_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (

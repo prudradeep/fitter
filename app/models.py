@@ -264,6 +264,8 @@ class KnowledgeDocument(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(40), nullable=False)
     source_uri: Mapped[str | None] = mapped_column(Text)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="main", index=True)
+    session_key: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
