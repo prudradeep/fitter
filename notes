@@ -58,7 +58,7 @@ To keep a check on the household cost of family
 
 When to save the MM in DB after reason validation/evaluation questions completion.
 
-Select all option in target population "Target all general population"
+Add Select all option in target population named as "Target all general population"
 Store MM conclusion and target/effected groups.
 Confidence scoring for MM clarity
-Use only RAG & LLM for sector prompts and for any searches.
+Use only RAG & LLM for sector prompts for hazards listing and socio demographic profiles and for any other stat searches.

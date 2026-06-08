@@ -77,12 +77,14 @@ class KnowledgeBaseService:
         title: str,
         source_type: str,
         source_uri: str | None = None,
+        allow_lexical_only: bool = False,
     ) -> dict[str, object]:
         chunks = [chunk for chunk in chunks if chunk.content.strip()]
         if not chunks:
             return {"error": True, "detail": "No readable knowledge-base text was found."}
 
-        self._require_faiss()
+        if not allow_lexical_only:
+            self._require_faiss()
         document = KnowledgeDocument(
             user_id=self.user_id,
             title=title[:255] or "Knowledge document",
@@ -109,12 +111,23 @@ class KnowledgeBaseService:
             chunk_rows.append(row)
         self.db.flush()
 
-        try:
-            embeddings = await self._embed_many([row.content for row in chunk_rows])
-            self._add_vectors([row.id for row in chunk_rows], embeddings)
-        except Exception:
+        vector_indexed = False
+        vector_error = ""
+        if faiss is not None and np is not None:
+            try:
+                embeddings = await self._embed_many([row.content for row in chunk_rows])
+                self._add_vectors([row.id for row in chunk_rows], embeddings)
+                vector_indexed = True
+            except Exception as exc:
+                if not allow_lexical_only:
+                    self.db.rollback()
+                    raise
+                vector_error = str(exc)
+        elif not allow_lexical_only:
             self.db.rollback()
-            raise
+            self._require_faiss()
+        else:
+            vector_error = "FAISS or NumPy is unavailable; using DB lexical retrieval."
 
         self.db.commit()
         self.db.refresh(document)
@@ -123,6 +136,8 @@ class KnowledgeBaseService:
             "document_id": document.id,
             "title": document.title,
             "chunks": len(chunk_rows),
+            "vector_indexed": vector_indexed,
+            "vector_error": vector_error,
         }
 
     def list_documents(self) -> list[dict[str, object]]:
@@ -422,6 +437,15 @@ class KnowledgeBaseService:
                 except Exception:
                     continue
         return vectors
+
+    def reset_index(self) -> bool:
+        if faiss is None or np is None or not self._index_path.exists():
+            return not self._index_path.exists()
+        with FAISS_LOCK:
+            existing = self._load_existing_index()
+            empty = faiss.IndexIDMap2(faiss.IndexFlatIP(existing.d))
+            self._save_index(empty)
+        return True
 
     def _load_index(self, dimensions: int):
         if self._index_path.exists():

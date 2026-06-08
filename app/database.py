@@ -503,6 +503,15 @@ def ensure_runtime_schema() -> None:
                     """
                 )
             )
+            connection.execute(
+                text(
+                    """
+                    UPDATE system_hazard_socio_demographics
+                    SET country_id = NULL, region_id = NULL
+                    WHERE country_id IS NOT NULL OR region_id IS NOT NULL
+                    """
+                )
+            )
     except Exception:
         logger.exception("Runtime schema migration failed")
         raise

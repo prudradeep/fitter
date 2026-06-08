@@ -1,23 +1,47 @@
 import logging
 import re
+import time
 from pathlib import Path
 
 import httpx
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.models import KnowledgeChunk, KnowledgeDocument
 from app.services.knowledge_base import ChunkDraft, KnowledgeBaseService, chunk_text
 from app.services.prompt_loader import PROMPT_DIR, PROMPT_FILES, sector_prompt_name
 
 logger = logging.getLogger(__name__)
 
 SECTOR_PROMPT_SCOPE = "sector_prompt"
-SECTOR_PROMPT_INDEX_VERSION = "v2"
+SECTOR_PROMPT_INDEX_VERSION = "v4"
 
 
 class SectorPromptRagService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self.service = KnowledgeBaseService(db, None, scope=SECTOR_PROMPT_SCOPE)
+
+    async def rebuild(self) -> dict[str, object]:
+        cleanup = self._clear_all_indexes()
+        if not cleanup.get("removed_faiss"):
+            return {
+                "error": True,
+                "indexed": [],
+                "skipped": [],
+                "failures": [
+                    {
+                        "sector": "all",
+                        "detail": str(
+                            cleanup.get("faiss_error")
+                            or "Could not remove the old sector-prompt FAISS index."
+                        ),
+                    }
+                ],
+                "cleanup": cleanup,
+            }
+        result = await self.ensure_indexed()
+        return {**result, "cleanup": cleanup}
 
     async def ensure_indexed(self, force: bool = False) -> dict[str, object]:
         prompt_sources = self._prompt_sources()
@@ -36,16 +60,28 @@ class SectorPromptRagService:
             existing_uris = set()
 
         for sector, source_uri, prompt_path in prompt_sources:
-            if source_uri in existing_uris:
-                skipped.append(sector)
-                continue
             try:
                 text = prompt_path.read_text(encoding="utf-8").strip()
+                chunks = self._sector_prompt_chunks(text)
+                expected_hazard_blocks = sum(
+                    1 for chunk in chunks if chunk.content.startswith("HAZARD")
+                )
+                existing_hazard_blocks = self._stored_hazard_block_count(source_uri)
+                if (
+                    source_uri in existing_uris
+                    and existing_hazard_blocks == expected_hazard_blocks
+                    and not self._stored_hazard_blocks_have_rule_lines(source_uri)
+                ):
+                    skipped.append(sector)
+                    continue
+                if source_uri in existing_uris:
+                    self.service.delete_documents_by_source_uris([source_uri])
                 result = await self.service.ingest_chunks(
-                    self._sector_prompt_chunks(text),
+                    chunks,
                     title=f"Sector prompt: {sector.title()}",
                     source_type="sector_prompt",
                     source_uri=source_uri,
+                    allow_lexical_only=True,
                 )
             except (OSError, httpx.HTTPError, ValueError) as exc:
                 logger.exception("Failed to index sector prompt %s", sector)
@@ -59,6 +95,12 @@ class SectorPromptRagService:
                     }
                 )
                 continue
+            if not result.get("vector_indexed"):
+                logger.warning(
+                    "Stored sector prompt %s in DB without vectors: %s",
+                    sector,
+                    result.get("vector_error") or "embedding service unavailable",
+                )
             indexed.append(result)
 
         return {
@@ -66,6 +108,64 @@ class SectorPromptRagService:
             "indexed": indexed,
             "skipped": skipped,
             "failures": failures,
+        }
+
+    def _clear_all_indexes(self) -> dict[str, object]:
+        document_ids = list(
+            self.db.scalars(
+                select(KnowledgeDocument.id).where(
+                    KnowledgeDocument.scope == SECTOR_PROMPT_SCOPE
+                )
+            ).all()
+        )
+        chunk_count = 0
+        if document_ids:
+            chunk_count = int(
+                self.db.scalar(
+                    select(func.count(KnowledgeChunk.id)).where(
+                        KnowledgeChunk.document_id.in_(document_ids)
+                    )
+                )
+                or 0
+            )
+            self.db.execute(
+                delete(KnowledgeDocument).where(KnowledgeDocument.id.in_(document_ids))
+            )
+        self.db.commit()
+
+        index_path = self.service._index_path
+        removed_faiss = not index_path.exists()
+        reset_faiss = False
+        faiss_error = ""
+        if index_path.exists():
+            try:
+                index_path.unlink()
+                removed_faiss = True
+            except OSError as exc:
+                faiss_error = str(exc)
+                backup_path = index_path.with_name(
+                    f"{index_path.name}.stale-{int(time.time())}"
+                )
+                try:
+                    index_path.replace(backup_path)
+                    removed_faiss = True
+                    faiss_error = ""
+                except OSError as replace_exc:
+                    try:
+                        reset_faiss = self.service.reset_index()
+                        removed_faiss = reset_faiss
+                        if reset_faiss:
+                            faiss_error = ""
+                    except Exception as reset_exc:
+                        faiss_error = str(reset_exc or replace_exc)
+                        logger.exception("Could not clear sector-prompt FAISS index")
+
+        return {
+            "deleted_documents": len(document_ids),
+            "deleted_chunks": chunk_count,
+            "removed_faiss": removed_faiss,
+            "reset_faiss": reset_faiss,
+            "faiss_error": faiss_error,
         }
 
     async def search(self, sector: str | None, query: str, limit: int = 5) -> list[dict[str, object]]:
@@ -80,8 +180,67 @@ class SectorPromptRagService:
             return results
         return await self.service.search(query, limit=limit)
 
+    async def hazard_blocks(self, sector: str | None) -> list[dict[str, object]]:
+        sector_key = sector_prompt_name(sector)
+        await self.ensure_indexed()
+        source_uri = self._source_uri(sector_key)
+        rows = self.db.execute(
+            select(KnowledgeChunk, KnowledgeDocument)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(
+                KnowledgeDocument.user_id.is_(None),
+                KnowledgeDocument.scope == SECTOR_PROMPT_SCOPE,
+                KnowledgeDocument.source_uri == source_uri,
+                KnowledgeChunk.content.like("HAZARD%"),
+            )
+            .order_by(KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+        ).all()
+        return [
+            {
+                "document_id": document.id,
+                "title": document.title,
+                "source_type": chunk.source_type,
+                "source_uri": chunk.source_uri,
+                "page_number": chunk.page_number,
+                "score": None,
+                "vector_score": None,
+                "lexical_score": None,
+                "content": chunk.content,
+            }
+            for chunk, document in rows
+        ]
+
+    def _stored_hazard_block_count(self, source_uri: str) -> int:
+        count = self.db.scalar(
+            select(func.count(KnowledgeChunk.id))
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(
+                KnowledgeDocument.user_id.is_(None),
+                KnowledgeDocument.scope == SECTOR_PROMPT_SCOPE,
+                KnowledgeDocument.source_uri == source_uri,
+                KnowledgeChunk.content.like("HAZARD%"),
+            )
+        )
+        return int(count or 0)
+
+    def _stored_hazard_blocks_have_rule_lines(self, source_uri: str) -> bool:
+        rows = self.db.scalars(
+            select(KnowledgeChunk.content)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(
+                KnowledgeDocument.user_id.is_(None),
+                KnowledgeDocument.scope == SECTOR_PROMPT_SCOPE,
+                KnowledgeDocument.source_uri == source_uri,
+                KnowledgeChunk.content.like("HAZARD%"),
+            )
+        ).all()
+        return any(has_rule_lines(content) for content in rows)
+
     @staticmethod
-    def format_results(results: list[dict[str, object]]) -> str:
+    def format_results(
+        results: list[dict[str, object]],
+        content_limit: int | None = 1000,
+    ) -> str:
         lines: list[str] = []
         for index, result in enumerate(results, start=1):
             title = str(result.get("title") or "Sector prompt")
@@ -89,7 +248,8 @@ class SectorPromptRagService:
             score_label = f", score {score}" if score is not None else ""
             content = str(result.get("content") or "").strip()
             if content:
-                lines.append(f"- [SP{index}] {title}{score_label}: {content[:1000]}")
+                excerpt = content[:content_limit] if content_limit else content
+                lines.append(f"- [SP{index}] {title}{score_label}: {excerpt}")
         return "\n".join(lines)
 
     @classmethod
@@ -110,21 +270,47 @@ class SectorPromptRagService:
 
     @staticmethod
     def _sector_prompt_chunks(text: str) -> list[ChunkDraft]:
-        section_start = text.find("SECTION 5")
-        if section_start == -1:
+        section = section_five_primary_data(text)
+        if not section:
             return chunk_text(text)
 
         chunks: list[ChunkDraft] = []
-        prefix = text[:section_start].strip()
-        if prefix:
-            chunks.extend(chunk_text(prefix))
-
-        section = text[section_start:]
         hazard_pattern = re.compile(
             r"(?ms)^HAZARD\s+\d+\.\s+.+?(?=^HAZARD\s+\d+\.|\Z)"
         )
         for match in hazard_pattern.finditer(section):
-            hazard_block = match.group(0).strip()
+            hazard_block = strip_rule_lines(match.group(0)).strip()
             if hazard_block:
                 chunks.append(ChunkDraft(hazard_block))
         return chunks or chunk_text(text)
+
+
+def section_five_primary_data(text: str) -> str:
+    start_match = re.search(
+        r"(?m)^SECTION\s+5\.\s+PER-HAZARD CONFIRMED PREDICTORS\b.*$",
+        text,
+    )
+    if not start_match:
+        start_match = re.search(r"(?m)^SECTION\s+5\.", text)
+    if not start_match:
+        return ""
+    remainder = text[start_match.start() :]
+    end_match = re.search(r"(?m)^SECTION\s+6\.", remainder)
+    return remainder[: end_match.start()].strip() if end_match else remainder.strip()
+
+
+def strip_rule_lines(text: str) -> str:
+    lines = []
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if stripped and re.fullmatch(r"[─═\-_=]{6,}", stripped):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def has_rule_lines(text: str) -> bool:
+    return any(
+        bool(re.fullmatch(r"[─═\-_=]{6,}", line.strip()))
+        for line in str(text or "").splitlines()
+    )

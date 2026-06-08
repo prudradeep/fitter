@@ -28,8 +28,6 @@ from app.models import (
 )
 from app.schemas import ChatResponse, Option
 from app.services.chat_formatters import (
-    build_validation_context,
-    extract_sector_stats,
     format_additional_dgs,
     format_all_dgs,
     format_evaluation_answers,
@@ -72,8 +70,11 @@ from app.services.chat_parsers import (
 from app.services.chat_session import ChatSession, session_store
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html, render_message
-from app.services.prompt_loader import load_sector_prompt
-from app.services.sector_prompt_rag import SectorPromptRagService
+from app.services.sector_prompt_rag import (
+    SectorPromptRagService,
+    section_five_primary_data,
+    strip_rule_lines,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -596,19 +597,19 @@ class ChatService:
             return 0
         try:
             self._normalize_stored_sdp_variable_names(session)
-            system_rows = self.db.scalars(
-                select(SystemHazardSocioDemographic).where(
-                    SystemHazardSocioDemographic.country_id == session.country_id,
-                    SystemHazardSocioDemographic.region_id.is_(None)
-                    if session.region_id is None
-                    else SystemHazardSocioDemographic.region_id == session.region_id,
+            system_rows = self.db.execute(
+                select(SystemHazardSocioDemographic, SystemHazard)
+                .join(
+                    SystemHazard,
+                    SystemHazard.id == SystemHazardSocioDemographic.system_hazard_id,
+                )
+                .where(
                     SystemHazardSocioDemographic.sector_id == session.sector_id,
-                    SystemHazardSocioDemographic.variable_name.is_not(None),
                 )
             ).all()
 
             user_query = (
-                select(UserHazardSocioDemographic)
+                select(UserHazardSocioDemographic, UserHazard)
                 .join(
                     UserHazard,
                     UserHazard.id == UserHazardSocioDemographic.user_hazard_id,
@@ -620,23 +621,23 @@ class ChatService:
                     if session.region_id is None
                     else UserHazardSocioDemographic.region_id == session.region_id,
                     UserHazardSocioDemographic.sector_id == session.sector_id,
-                    UserHazardSocioDemographic.variable_name.is_not(None),
+                    UserHazardSocioDemographic.source != "llm",
                 )
             )
             if self.user_id is not None:
                 user_query = user_query.where(UserSession.user_id == self.user_id)
-            user_rows = self.db.scalars(user_query).all()
+            user_rows = self.db.execute(user_query).all()
 
             variable_names = {
                 normalized.casefold()
                 for normalized in [
                     *[
-                        self._valid_sdp_variable_name(session, row.variable_name)
-                        for row in system_rows
+                        self._valid_sdp_variable_name(session, profile.variable_name)
+                        for profile, _hazard in system_rows
                     ],
                     *[
-                        self._valid_sdp_variable_name(session, row.variable_name)
-                        for row in user_rows
+                        self._valid_sdp_variable_name(session, profile.variable_name)
+                        for profile, _hazard in user_rows
                     ],
                 ]
                 if normalized
@@ -680,13 +681,8 @@ class ChatService:
     def _predictor_variable_name_from_prompt(
         self, session: ChatSession, predictor_id: str
     ) -> str:
-        sector_prompt = load_sector_prompt(session.sector)
-        pattern = re.compile(
-            rf"^PREDICTOR\s+{re.escape(predictor_id)}:\s*([A-Za-z_][A-Za-z0-9_]*)",
-            re.MULTILINE,
-        )
-        match = pattern.search(sector_prompt)
-        return match.group(1).strip() if match else ""
+        _ = session, predictor_id
+        return ""
 
     @staticmethod
     def _other_nav_options(session: ChatSession, step: str) -> list[str]:
@@ -1096,10 +1092,19 @@ class ChatService:
         session.phase = "hazards"
         self._normalize_stored_sdp_variable_names(session)
         hazard_items = self._stored_hazard_items_for_context(session_id, session)
-        if not hazard_items:
+        expected_hazard_count = await self._sector_prompt_rag_hazard_count(session.sector)
+        invalid_cached_hazards = bool(hazard_items) and bool(
+            expected_hazard_count and len(hazard_items) != expected_hazard_count
+        )
+        invalid_cached_profiles = bool(hazard_items) and not await self._sector_prompt_profiles_match_rag(
+            session,
+            hazard_items,
+        )
+        if not hazard_items or invalid_cached_hazards or invalid_cached_profiles:
             hazard_items = await self._refresh_hazards_and_profiles_from_llm(
                 session_id,
                 session,
+                replace_sector_hazards=invalid_cached_hazards or invalid_cached_profiles,
             )
         session.hazards = [str(item["hazard"]) for item in hazard_items]
         session.hazard_profiles = {
@@ -1163,7 +1168,11 @@ class ChatService:
             )
 
         if action == normalize("Refresh hazards and DGs"):
-            hazard_items = await self._refresh_hazards_and_profiles_from_llm(session_id, session)
+            hazard_items = await self._refresh_hazards_and_profiles_from_llm(
+                session_id,
+                session,
+                replace_sector_hazards=True,
+            )
             session.hazards = [str(item["hazard"]) for item in hazard_items]
             session.hazard_profiles = {
                 str(item["hazard"]): [
@@ -1178,12 +1187,6 @@ class ChatService:
                 for item in hazard_items
                 if item.get("profiles")
             }
-            self._persist_hazard_items_for_context(
-                session_id,
-                session,
-                hazard_items,
-                replace_generated_profiles=True,
-            )
             session.custom_hazards = self._saved_custom_hazards_for_context(session)
             self._hydrate_custom_hazard_profiles(session)
             self._record_activity(session_id, session, "hazards_refreshed", session.sector or "")
@@ -1238,7 +1241,11 @@ class ChatService:
             )
 
         if action == normalize("Refresh hazards and DGs"):
-            hazard_items = await self._refresh_hazards_and_profiles_from_llm(session_id, session)
+            hazard_items = await self._refresh_hazards_and_profiles_from_llm(
+                session_id,
+                session,
+                replace_sector_hazards=True,
+            )
             session.hazards = [str(item["hazard"]) for item in hazard_items]
             session.hazard_profiles = {
                 str(item["hazard"]): [
@@ -1253,12 +1260,6 @@ class ChatService:
                 for item in hazard_items
                 if item.get("profiles")
             }
-            self._persist_hazard_items_for_context(
-                session_id,
-                session,
-                hazard_items,
-                replace_generated_profiles=True,
-            )
             self._record_activity(session_id, session, "hazards_refreshed", session.sector or "")
             return self._hazards_step(session_id, session)
 
@@ -1266,7 +1267,7 @@ class ChatService:
             return ChatResponse(
                 session_id=session_id,
                 step="stats_deep_dive",
-                bot_message=self._sector_briefing(session),
+                bot_message=await self._sector_briefing(session),
                 options=STATS_DEEP_DIVE_OPTIONS,
                 session=session.summary(),
                 error=False,
@@ -2836,7 +2837,7 @@ Return Markdown only.
         history: list[dict[str, str]] | None = None,
         persist_history: bool = True,
     ) -> ChatResponse:
-        context, messages = self._build_stats_deep_dive_messages(session, user_message, history)
+        context, messages = await self._build_stats_deep_dive_messages(session, user_message, history)
         answer = await ask_llm_chat(
             context=context,
             messages=messages,
@@ -2869,7 +2870,7 @@ Return Markdown only.
     async def _deep_dive(
         self, session_id: str, session: ChatSession, user_message: str
     ) -> ChatResponse:
-        context, messages = self._build_deep_dive_messages(session, user_message)
+        context, messages = await self._build_deep_dive_messages(session, user_message)
         answer = await ask_llm_chat(
             context=context,
             messages=messages,
@@ -2888,7 +2889,7 @@ Return Markdown only.
     async def _socio_demographic_response(
         self, session_id: str, session: ChatSession, user_message: str
     ) -> ChatResponse:
-        context, messages = self._build_deep_dive_messages(session, user_message)
+        context, messages = await self._build_deep_dive_messages(session, user_message)
         answer = await ask_llm_chat(
             context=context,
             messages=messages,
@@ -2997,7 +2998,7 @@ Return Markdown only.
         )
 
     async def _negative_impact_reasons(self, session: ChatSession) -> str:
-        context, messages = self._build_deep_dive_messages(
+        context, messages = await self._build_deep_dive_messages(
             session,
             (
                 f"From the sector system prompt, identify the reasons given for the "
@@ -3016,7 +3017,7 @@ Return Markdown only.
         )
 
     async def _practical_policy_recommendations(self, session: ChatSession) -> str:
-        context, messages = self._build_deep_dive_messages(
+        context, messages = await self._build_deep_dive_messages(
             session,
             (
                 f"For the selected hazard '{session.selected_hazard}', provide practical "
@@ -3047,14 +3048,18 @@ Return Markdown only.
             max_tokens=1050,
         )
 
-    def _sector_briefing(self, session: ChatSession) -> str:
-        sector_prompt = load_sector_prompt(session.sector)
+    async def _sector_briefing(self, session: ChatSession) -> str:
+        sector_stats = await self._sector_prompt_rag_context(
+            session,
+            "sector statistical summary hazards confirmed predictors target population",
+            limit=8,
+        )
         return render_message(
             "deep_dive_intro.md",
             country=session.country,
             region=session.region,
             sector=session.sector,
-            sector_stats=extract_sector_stats(sector_prompt, session.sector),
+            sector_stats=sector_stats,
         )
 
     async def _intro_message_from_llm(self, session_id: str) -> str:
@@ -3280,7 +3285,14 @@ Return Markdown only.
     async def _build_mitigation_review_messages(
         self, session: ChatSession, user_message: str
     ) -> tuple[str, list[dict[str, str]]]:
-        sector_prompt = load_sector_prompt(session.sector)
+        sector_context = await self._sector_prompt_rag_context(
+            session,
+            (
+                f"{session.selected_hazard or ''} {format_all_dgs(session)} "
+                f"{session.mitigation_measure or ''} {session.mitigation_reason or ''} {user_message}"
+            ),
+            limit=8,
+        )
         knowledge_context = await self._mitigation_knowledge_context(
             session,
             session.mitigation_measure or "",
@@ -3304,8 +3316,8 @@ information for a future step before the user reaches it.
 
 {self._scope_instruction(session)}
 
-Sector system prompt:
-{sector_prompt}
+Sector-prompt RAG excerpts:
+{sector_context}
 
 Retrieved knowledge-base excerpts:
 {knowledge_context or "- No relevant knowledge-base excerpts were found."}
@@ -4753,16 +4765,15 @@ Retrieved knowledge-base excerpts:
         hazard_pattern = re.compile(
             r"(?ms)^HAZARD\s+\d+\.\s+(.+?)\n(.*?)(?=^HAZARD\s+\d+\.|\Z)"
         )
-        section_start = sector_prompt.find("SECTION 5")
-        prompt = sector_prompt[section_start:] if section_start != -1 else sector_prompt
+        prompt = strip_rule_lines(section_five_primary_data(sector_prompt) or sector_prompt)
         for match in hazard_pattern.finditer(prompt):
-            heading = match.group(1).strip()
+            heading = ChatService._clean_sector_hazard_name(match.group(1))
             if normalize_for_match(heading) == target:
-                return match.group(0)
+                return strip_rule_lines(match.group(0))
         for match in hazard_pattern.finditer(prompt):
-            heading = match.group(1).strip()
+            heading = ChatService._clean_sector_hazard_name(match.group(1))
             if target in normalize_for_match(heading) or normalize_for_match(heading) in target:
-                return match.group(0)
+                return strip_rule_lines(match.group(0))
         return ""
 
     @staticmethod
@@ -5200,10 +5211,6 @@ Current session:
                     SystemHazardSocioDemographic,
                     and_(
                         SystemHazardSocioDemographic.system_hazard_id == SystemHazard.id,
-                        SystemHazardSocioDemographic.country_id == session.country_id,
-                        SystemHazardSocioDemographic.region_id.is_(None)
-                        if session.region_id is None
-                        else SystemHazardSocioDemographic.region_id == session.region_id,
                         SystemHazardSocioDemographic.sector_id == session.sector_id,
                     ),
                 )
@@ -5246,16 +5253,35 @@ Current session:
         return list(items_by_hazard.values())
 
     async def _refresh_hazards_and_profiles_from_llm(
-        self, session_id: str, session: ChatSession
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        replace_sector_hazards: bool = False,
     ) -> list[dict[str, object]]:
         hazard_items = await self._get_hazards_from_llm(session)
+        valid_hazard_items = [
+            item
+            for item in hazard_items
+            if str(item.get("hazard") or "").strip()
+            and normalize(str(item.get("hazard") or "")) != normalize("Analysis not available")
+        ]
+        if replace_sector_hazards and not valid_hazard_items:
+            logger.warning(
+                "Keeping existing hazards because refresh returned no usable sector hazards"
+            )
+            return self._stored_hazard_items_for_context(session_id, session)
+        if replace_sector_hazards:
+            self._delete_sector_hazards_and_generated_dgs(session)
         self._persist_hazard_items_for_context(
             session_id,
             session,
-            hazard_items,
+            valid_hazard_items,
             replace_generated_profiles=True,
         )
-        return hazard_items
+        if replace_sector_hazards:
+            self._relink_user_system_hazards(session)
+        return valid_hazard_items
 
     def _persist_hazard_items_for_context(
         self,
@@ -5292,6 +5318,59 @@ Current session:
                 )
         self._normalize_stored_sdp_variable_names(session)
 
+    def _delete_sector_hazards_and_generated_dgs(self, session: ChatSession) -> None:
+        if session.sector_id is None:
+            return
+        try:
+            generated_user_dgs = self.db.scalars(
+                select(UserHazardSocioDemographic)
+                .join(UserHazard, UserHazard.id == UserHazardSocioDemographic.user_hazard_id)
+                .where(
+                    UserHazard.source == "system",
+                    UserHazard.sector_id == session.sector_id,
+                    UserHazardSocioDemographic.source == "llm",
+                )
+            ).all()
+            for row in generated_user_dgs:
+                self.db.delete(row)
+
+            self.db.execute(
+                delete(SystemHazardSocioDemographic).where(
+                    SystemHazardSocioDemographic.sector_id == session.sector_id
+                )
+            )
+            self.db.execute(
+                delete(SystemHazard).where(SystemHazard.sector_id == session.sector_id)
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("Failed to clear old sector hazards and generated DGs")
+            raise
+
+    def _relink_user_system_hazards(self, session: ChatSession) -> None:
+        if session.sector_id is None:
+            return
+        try:
+            system_hazards = {
+                normalize(hazard.name): hazard.id
+                for hazard in self.db.scalars(
+                    select(SystemHazard).where(SystemHazard.sector_id == session.sector_id)
+                ).all()
+            }
+            user_hazards = self.db.scalars(
+                select(UserHazard).where(
+                    UserHazard.source == "system",
+                    UserHazard.sector_id == session.sector_id,
+                )
+            ).all()
+            for hazard in user_hazards:
+                hazard.system_hazard_id = system_hazards.get(normalize(hazard.name))
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("Failed to relink refreshed system hazards")
+
     def _normalize_stored_sdp_variable_names(self, session: ChatSession) -> None:
         if session.sector_id is None:
             return
@@ -5325,8 +5404,6 @@ Current session:
             self.db.execute(
                 delete(SystemHazardSocioDemographic).where(
                     SystemHazardSocioDemographic.system_hazard_id == system_hazard_id,
-                    SystemHazardSocioDemographic.country_id == session.country_id,
-                    SystemHazardSocioDemographic.region_id == session.region_id,
                     SystemHazardSocioDemographic.sector_id == session.sector_id,
                 )
             )
@@ -5536,31 +5613,18 @@ Current session:
             row = self.db.scalar(
                 select(SystemHazardSocioDemographic).where(
                     SystemHazardSocioDemographic.system_hazard_id == system_hazard_id,
-                    SystemHazardSocioDemographic.country_id == session.country_id,
-                    SystemHazardSocioDemographic.region_id == session.region_id,
                     SystemHazardSocioDemographic.sector_id == session.sector_id,
                     func.lower(SystemHazardSocioDemographic.profile) == profile_name.casefold(),
                 )
             )
-            if row is None and variable_name:
-                row = self.db.scalar(
-                    select(SystemHazardSocioDemographic).where(
-                        SystemHazardSocioDemographic.system_hazard_id == system_hazard_id,
-                        SystemHazardSocioDemographic.country_id == session.country_id,
-                        SystemHazardSocioDemographic.region_id == session.region_id,
-                        SystemHazardSocioDemographic.sector_id == session.sector_id,
-                        func.lower(SystemHazardSocioDemographic.variable_name)
-                        == variable_name.casefold(),
-                    )
-                )
             if row is None:
                 row = SystemHazardSocioDemographic(
                     system_hazard_id=system_hazard_id,
                     profile=profile_name,
                 )
                 self.db.add(row)
-            row.country_id = session.country_id
-            row.region_id = session.region_id
+            row.country_id = None
+            row.region_id = None
             row.sector_id = session.sector_id
             row.variable_name = variable_name or None
             row.profile = profile_name
@@ -5678,19 +5742,23 @@ Current session:
             "matches the current selection."
         )
 
-    def _build_deep_dive_messages(
+    async def _build_deep_dive_messages(
         self, session: ChatSession, user_message: str
     ) -> tuple[str, list[dict[str, str]]]:
-        sector_prompt = load_sector_prompt(session.sector)
+        sector_context = await self._sector_prompt_rag_context(
+            session,
+            f"{session.selected_hazard or ''} {format_all_dgs(session)} {user_message}",
+            limit=8,
+        )
         context = f"""
-Use the sector system prompt below as your authoritative statistical context.
+Use the retrieved sector-prompt RAG excerpts below as your authoritative statistical context.
 Do not invent precise live statistics. If a number would be needed but is not present,
 explain what data source the user should check.
 
 {self._scope_instruction(session)}
 
-Sector system prompt:
-{sector_prompt}
+Sector-prompt RAG excerpts:
+{sector_context}
 """.strip()
         messages = [
             {
@@ -5708,13 +5776,13 @@ Sector system prompt:
         ]
         return context, messages
 
-    def _build_stats_deep_dive_messages(
+    async def _build_stats_deep_dive_messages(
         self,
         session: ChatSession,
         user_message: str,
         history: list[dict[str, str]] | None = None,
     ) -> tuple[str, list[dict[str, str]]]:
-        context, messages = self._build_deep_dive_messages(session, user_message)
+        context, messages = await self._build_deep_dive_messages(session, user_message)
         history = list((session.stats_conversation or []) if history is None else history)
         if not history:
             return context, messages
@@ -5739,6 +5807,10 @@ Sector system prompt:
         return context, messages
 
     async def _get_hazards_from_llm(self, session: ChatSession) -> list[dict[str, object]]:
+        hazard_items = await self._get_hazards_and_profiles_from_sector_rag(session)
+        if hazard_items:
+            return hazard_items
+
         hazards = await self._get_hazard_names_from_llm(session)
         profile_lists = await asyncio.gather(
             *(self._get_hazard_profiles_from_llm(session, hazard) for hazard in hazards)
@@ -5749,19 +5821,19 @@ Sector system prompt:
         ]
 
     async def _get_hazard_names_from_llm(self, session: ChatSession) -> list[str]:
-        sector_prompt = load_sector_prompt(session.sector)
-        parsed_hazards = self._hazard_names_from_sector_prompt(sector_prompt)
-        if parsed_hazards:
-            return parsed_hazards
-
+        sector_context = await self._sector_prompt_rag_context(
+            session,
+            "HAZARD confirmed predictors ranked concern",
+            limit=25,
+        )
         context = f"""
 You are a strict extraction assistant for Dr Transition.
 
 Hazard names are sector-level system hazards. Extract them from the selected
 sector only; do not make them country-specific or region-specific.
 
-Use this sector system prompt as the only source:
-{sector_prompt}
+Use only these retrieved sector-prompt RAG excerpts as the source:
+{sector_context}
 """.strip()
         messages = [
             {
@@ -5792,40 +5864,24 @@ Use this sector system prompt as the only source:
     async def _get_hazard_profiles_from_llm(
         self, session: ChatSession, hazard: str
     ) -> list[dict[str, str]]:
-        sector_prompt = load_sector_prompt(session.sector)
         hazard_block = await self._sector_prompt_hazard_block_from_rag(
             session,
             hazard,
         )
-        if not hazard_block:
-            hazard_block = self._confirmed_predictor_hazard_block(sector_prompt, hazard)
         if hazard_block:
             if re.search(r"\b0 confirmed predictors\b", hazard_block, re.IGNORECASE):
                 return []
-            expected_count = self._confirmed_predictor_count(hazard_block)
-            predictor_ids = self._confirmed_predictor_ids(hazard_block)
-            parsed_profiles = self._profiles_from_hazard_block(hazard_block)
-            if parsed_profiles and (
-                not expected_count
-                or len(parsed_profiles) == expected_count
-                or len(parsed_profiles) == len(predictor_ids)
-            ):
-                return parsed_profiles
-            return await self._get_hazard_block_profiles_from_llm(
-                session,
-                hazard,
-                hazard_block,
-                expected_count,
-                predictor_ids,
-            )
+            profiles = self._profiles_from_hazard_block(hazard_block)
+            if profiles:
+                return profiles
 
         context = f"""
 You are a strict socio-demographic profile extraction assistant for Dr Transition.
 
 {self._scope_instruction(session)}
 
-Use this sector system prompt as the only source:
-{sector_prompt}
+Use only these retrieved sector-prompt RAG excerpts as the source:
+{hazard_block or "- No relevant sector-prompt RAG excerpts were found."}
 """.strip()
         messages = [
             {
@@ -5870,6 +5926,236 @@ Use this sector system prompt as the only source:
         )
         return self._parse_hazard_profile_items(response)
 
+    async def _get_hazards_and_profiles_from_sector_rag(
+        self,
+        session: ChatSession,
+    ) -> list[dict[str, object]]:
+        rag_service = SectorPromptRagService(self.db)
+        try:
+            results = await rag_service.hazard_blocks(session.sector)
+        except Exception:
+            logger.exception("Sector-prompt RAG hazard-block extraction lookup failed")
+            results = []
+        if not results:
+            try:
+                results = await rag_service.search(
+                    session.sector,
+                    "HAZARD confirmed predictors PREDICTOR Plain-English Direction",
+                    limit=40,
+                )
+            except Exception:
+                logger.exception("Sector-prompt RAG hazard/profile extraction lookup failed")
+                results = []
+        sector_context = SectorPromptRagService.format_results(results, content_limit=6000)
+        if not sector_context:
+            return []
+
+        context = f"""
+You extract structured hazard and socio-demographic profile data for Dr Transition.
+
+{self._scope_instruction(session)}
+
+Use ONLY these retrieved sector-prompt RAG excerpts. Do not use general knowledge.
+
+Sector-prompt RAG excerpts:
+{sector_context}
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Return ONLY valid JSON: an array of objects with this shape:\n"
+                    "[{\"hazard\": \"hazard name\", \"profiles\": ["
+                    "{\"variable_name\": \"raw predictor variable only\", "
+                    "\"profile\": \"human-readable profile\", "
+                    "\"name\": \"human-readable profile\", "
+                    "\"explanation\": \"short plain-language explanation\", "
+                    "\"statistical_basis\": \"brief source-grounded basis\", "
+                    "\"source\": \"sector_prompt\"}]}]\n\n"
+                    "Rules:\n"
+                    "- Include every HAZARD found in the RAG excerpts.\n"
+                    "- For hazards with zero confirmed predictors, use an empty profiles array.\n"
+                    "- Create one profile object for each confirmed PREDICTOR entry.\n"
+                    "- Store only the raw predictor variable name in variable_name; never include IDs like 1A or 2B.\n"
+                    "- Keep profile names concise and human-readable.\n"
+                    "- Include lower-concern/protective predictors too and label them in the explanation.\n"
+                    "- Do not include Markdown, comments, or text outside the JSON."
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0,
+            max_tokens=9000,
+        )
+        hazard_items = self._parse_hazard_items_response(response)
+        expected_hazards = self._hazard_names_from_sector_prompt(
+            "\n\n".join(str(result.get("content") or "") for result in results)
+        )
+        if expected_hazards:
+            hazard_items = await self._complete_sector_rag_hazard_items(
+                session,
+                hazard_items,
+                expected_hazards,
+                results,
+            )
+        return hazard_items
+
+    async def _complete_sector_rag_hazard_items(
+        self,
+        session: ChatSession,
+        hazard_items: list[dict[str, object]],
+        expected_hazards: list[str],
+        rag_results: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        items_by_hazard = {
+            normalize(str(item.get("hazard") or "")): item
+            for item in hazard_items
+            if str(item.get("hazard") or "").strip()
+        }
+        rag_text = "\n\n".join(str(result.get("content") or "") for result in rag_results)
+        completed: list[dict[str, object]] = []
+        for hazard in expected_hazards:
+            item = items_by_hazard.get(normalize(hazard))
+            hazard_block = self._confirmed_predictor_hazard_block(rag_text, hazard)
+            predictor_entries = self._confirmed_predictor_entries(hazard_block)
+            deterministic_profiles = self._profiles_from_hazard_block(hazard_block)
+            if re.search(r"\b0 confirmed predictors\b", hazard_block, re.IGNORECASE):
+                profiles = []
+            elif predictor_entries:
+                profiles = deterministic_profiles
+            else:
+                profiles = list(item.get("profiles", [])) if item else []
+            completed.append({"hazard": hazard, "profiles": profiles})
+        return completed
+
+    async def _sector_prompt_rag_hazard_count(self, sector: str | None) -> int:
+        try:
+            return len(await SectorPromptRagService(self.db).hazard_blocks(sector))
+        except Exception:
+            logger.exception("Sector-prompt RAG hazard-count lookup failed")
+            return 0
+
+    async def _sector_prompt_profiles_match_rag(
+        self,
+        session: ChatSession,
+        hazard_items: list[dict[str, object]],
+    ) -> bool:
+        try:
+            results = await SectorPromptRagService(self.db).hazard_blocks(session.sector)
+        except Exception:
+            logger.exception("Sector-prompt RAG profile-integrity lookup failed")
+            return True
+        rag_text = "\n\n".join(str(result.get("content") or "") for result in results)
+        stored_by_hazard = {
+            normalize(str(item.get("hazard") or "")): item
+            for item in hazard_items
+            if str(item.get("hazard") or "").strip()
+        }
+        for hazard in self._hazard_names_from_sector_prompt(rag_text):
+            block = self._confirmed_predictor_hazard_block(rag_text, hazard)
+            expected = sorted(
+                (
+                    str(profile.get("variable_name") or "").strip().casefold(),
+                    str(profile.get("name") or "").strip().casefold(),
+                )
+                for profile in self._profiles_from_hazard_block(block)
+            )
+            item = stored_by_hazard.get(normalize(hazard))
+            actual = sorted(
+                (
+                    str(profile.get("variable_name") or "").strip().casefold(),
+                    str(profile.get("name") or "").strip().casefold(),
+                )
+                for profile in (item.get("profiles", []) if item else [])
+                if isinstance(profile, dict)
+            )
+            if actual != expected:
+                return False
+        expected_hazards = {
+            normalize(hazard) for hazard in self._hazard_names_from_sector_prompt(rag_text)
+        }
+        return set(stored_by_hazard) == expected_hazards
+
+    def _parse_hazard_items_response(self, response: str) -> list[dict[str, object]]:
+        parsed = self._json_array_from_response(response)
+        if not isinstance(parsed, list):
+            return []
+        hazard_items: list[dict[str, object]] = []
+        seen_hazards: set[str] = set()
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            hazard = self._clean_sector_hazard_name(
+                str(item.get("hazard") or item.get("name") or "")
+            )
+            if not hazard:
+                continue
+            hazard_key = normalize(hazard)
+            if hazard_key in seen_hazards:
+                continue
+            seen_hazards.add(hazard_key)
+            raw_profiles = item.get("profiles")
+            profiles: list[dict[str, str]] = []
+            if isinstance(raw_profiles, list):
+                profiles = [
+                    profile
+                    for profile in (
+                        self._clean_hazard_profile_item(profile)
+                        for profile in raw_profiles
+                    )
+                    if profile
+                ]
+            hazard_items.append({"hazard": hazard[:180], "profiles": profiles})
+        return hazard_items
+
+    @staticmethod
+    def _json_array_from_response(response: str) -> object:
+        try:
+            return json.loads(response.strip())
+        except json.JSONDecodeError:
+            pass
+        start = response.find("[")
+        end = response.rfind("]")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            return json.loads(response[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def _clean_hazard_profile_item(value: object) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        name = strip_rule_lines(str(value.get("name") or value.get("profile") or "")).strip()
+        if not name:
+            return {}
+        variable_name = str(
+            value.get("variable_name") or value.get("variable") or ""
+        ).strip()
+        prefixed_match = re.match(
+            r"^(?:PREDICTOR\s+)?[0-9]+[A-Z]\s*:\s*(.+)$",
+            variable_name,
+            flags=re.IGNORECASE,
+        )
+        if prefixed_match:
+            variable_name = prefixed_match.group(1).strip()
+        variable_token = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", variable_name)
+        if variable_token:
+            variable_name = variable_token.group(1)
+        return {
+            "name": name[:120],
+            "profile": name[:120],
+            "variable_name": variable_name[:160],
+            "explanation": strip_rule_lines(str(value.get("explanation") or "")).strip()[:260],
+            "statistical_basis": str(
+                value.get("statistical_basis") or value.get("basis") or ""
+            ).strip()[:600],
+            "source": str(value.get("source") or "sector_prompt").strip()[:40] or "sector_prompt",
+        }
+
     async def _sector_prompt_hazard_block_from_rag(
         self,
         session: ChatSession,
@@ -5895,16 +6181,24 @@ Use this sector system prompt as the only source:
 
     @staticmethod
     def _hazard_names_from_sector_prompt(sector_prompt: str) -> list[str]:
-        section_start = sector_prompt.find("SECTION 5")
-        prompt = sector_prompt[section_start:] if section_start != -1 else sector_prompt
+        prompt = strip_rule_lines(section_five_primary_data(sector_prompt) or sector_prompt)
         hazards: list[str] = []
         for match in re.finditer(r"(?m)^HAZARD\s+\d+\.\s+(.+?)\s*$", prompt):
-            hazard = re.sub(r"\s+", " ", match.group(1)).strip()
+            hazard = ChatService._clean_sector_hazard_name(match.group(1))
             if hazard and normalize_for_match(hazard) not in {
                 normalize_for_match(existing) for existing in hazards
             }:
                 hazards.append(hazard)
         return hazards
+
+    @staticmethod
+    def _clean_sector_hazard_name(value: str) -> str:
+        hazard = re.sub(r"\s+", " ", str(value or "")).strip()
+        hazard = re.sub(r"(?i)^HAZARD\s+\d+\.\s*", "", hazard).strip()
+        hazard = strip_rule_lines(hazard).strip()
+        if re.fullmatch(r"[─═\-_=]{6,}", hazard):
+            return ""
+        return hazard
 
     @staticmethod
     def _profiles_from_hazard_block(hazard_block: str) -> list[dict[str, str]]:
@@ -6199,11 +6493,8 @@ Use only this predictor entry:
         return [match.group(0).strip() for match in entry_pattern.finditer(hazard_block)]
 
     def _expected_hazard_profile_count(self, session: ChatSession, hazard: str) -> int | None:
-        sector_prompt = load_sector_prompt(session.sector)
-        hazard_block = self._confirmed_predictor_hazard_block(sector_prompt, hazard)
-        if not hazard_block:
-            return None
-        return self._confirmed_predictor_count(hazard_block)
+        _ = session, hazard
+        return None
 
     async def _validate_hazard_against_stats(
         self,
@@ -6990,10 +7281,7 @@ Support excerpts:
         formatted = SectorPromptRagService.format_results(results)
         if formatted:
             return formatted
-
-        sector_prompt = load_sector_prompt(session.sector)
-        fallback = build_validation_context(sector_prompt, session)
-        return fallback or sector_prompt[:3000] or "- No sector prompt context is available."
+        return "- No relevant sector-prompt RAG excerpts were found."
 
     async def _mitigation_knowledge_context(
         self,

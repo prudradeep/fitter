@@ -25,7 +25,8 @@ def format_system_hazards(session: ChatSession) -> str:
         return "- No hazards were returned by the LLM for the loaded sector prompt."
     lines: list[str] = []
     for hazard in hazards:
-        lines.append(f"- **{hazard}**")
+        display_hazard = _clean_hazard_display_name(hazard)
+        lines.append(f"- **{display_hazard}**")
         _append_hazard_profiles(lines, session, hazard)
     return "\n".join(lines)
 
@@ -113,6 +114,15 @@ def hazard_names(session: ChatSession) -> list[str]:
     hazards = list(session.hazards or [])
     hazards.extend(session.custom_hazards or [])
     return hazards
+
+
+def _clean_hazard_display_name(value: str) -> str:
+    cleaned = re.sub(r"(?i)^HAZARD\s+\d+\.\s*", "", str(value or "")).strip()
+    return "\n".join(
+        line
+        for line in cleaned.splitlines()
+        if not re.fullmatch(r"[─═\-_=]{6,}", line.strip())
+    ).strip()
 
 
 def normalize_markdown_text(value: str) -> str:

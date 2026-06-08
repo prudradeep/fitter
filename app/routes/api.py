@@ -304,7 +304,7 @@ async def sector_prompts_reindex(
 ) -> dict[str, object]:
     _ = current_user
     try:
-        result = await SectorPromptRagService(db).ensure_indexed(force=True)
+        result = await SectorPromptRagService(db).rebuild()
     except (httpx.HTTPError, ValueError) as exc:
         return {"error": True, "detail": f"Could not reindex sector prompts: {exc}"}
     return {"error": bool(result.get("error")), **result}

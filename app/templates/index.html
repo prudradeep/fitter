@@ -377,6 +377,7 @@
         </header>
         <div id="targetPopulationDialogBody" class="target-dialog-body"></div>
         <div class="dialog-actions">
+          <button id="targetAllGeneralPopulationButton" class="secondary-button" type="button">Target all general population</button>
           <button id="cancelTargetPopulationButton" class="secondary-button" type="button">Cancel</button>
           <button type="submit">Submit</button>
         </div>
@@ -428,6 +429,32 @@
                 <button type="submit">Search</button>
               </form>
               <div id="knowledgeResults" class="knowledge-list knowledge-results"></div>
+            </section>
+            <section class="knowledge-panel sector-prompt-panel">
+              <div class="knowledge-panel-heading">
+                <div>
+                  <h3>Sector prompt RAG</h3>
+                  <p>Search the indexed Energy, Housing, or Transport sector prompt chunks.</p>
+                </div>
+                <button id="sectorPromptReindexButton" class="knowledge-action-button" type="button">Reindex sector prompts</button>
+              </div>
+              <form id="sectorPromptSearchForm" class="knowledge-form sector-prompt-search-form">
+                <label>
+                  <span>Sector</span>
+                  <select id="sectorPromptSectorInput">
+                    <option value="Energy">Energy</option>
+                    <option value="Housing">Housing</option>
+                    <option value="Transport">Transport</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Search sector prompts</span>
+                  <input id="sectorPromptSearchInput" type="search" placeholder="Search hazards, predictors, or statistics..." />
+                </label>
+                <button type="submit">Search</button>
+              </form>
+              <p id="sectorPromptMessage" class="dialog-message" hidden></p>
+              <div id="sectorPromptResults" class="knowledge-list knowledge-results"></div>
             </section>
           </div>
         </div>

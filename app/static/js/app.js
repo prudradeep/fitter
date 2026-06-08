@@ -68,6 +68,12 @@ const knowledgeProgressSection = document.querySelector("#knowledgeProgressSecti
 const knowledgeProgressList = document.querySelector("#knowledgeProgressList");
 const knowledgeDocuments = document.querySelector("#knowledgeDocuments");
 const knowledgeResults = document.querySelector("#knowledgeResults");
+const sectorPromptReindexButton = document.querySelector("#sectorPromptReindexButton");
+const sectorPromptSearchForm = document.querySelector("#sectorPromptSearchForm");
+const sectorPromptSectorInput = document.querySelector("#sectorPromptSectorInput");
+const sectorPromptSearchInput = document.querySelector("#sectorPromptSearchInput");
+const sectorPromptMessage = document.querySelector("#sectorPromptMessage");
+const sectorPromptResults = document.querySelector("#sectorPromptResults");
 const renameSessionDialog = document.querySelector("#renameSessionDialog");
 const renameSessionForm = document.querySelector("#renameSessionForm");
 const renameSessionInput = document.querySelector("#renameSessionInput");
@@ -83,6 +89,7 @@ const targetPopulationForm = document.querySelector("#targetPopulationForm");
 const targetPopulationDialogBody = document.querySelector("#targetPopulationDialogBody");
 const closeTargetPopulationButton = document.querySelector("#closeTargetPopulationButton");
 const cancelTargetPopulationButton = document.querySelector("#cancelTargetPopulationButton");
+const targetAllGeneralPopulationButton = document.querySelector("#targetAllGeneralPopulationButton");
 const sessionEmpty = document.querySelector("#sessionEmpty");
 const stageVisualTitle = document.querySelector("#stageVisualTitle");
 const stageVisualText = document.querySelector("#stageVisualText");
@@ -1888,6 +1895,13 @@ function showKnowledgeMessage(message, isError = true) {
   knowledgeMessage.classList.toggle("success", !isError);
 }
 
+function showSectorPromptMessage(message, isError = true) {
+  if (!sectorPromptMessage) return;
+  sectorPromptMessage.textContent = message;
+  sectorPromptMessage.hidden = false;
+  sectorPromptMessage.classList.toggle("success", !isError);
+}
+
 function resetKnowledgeProgress() {
   if (!knowledgeProgressSection || !knowledgeProgressList) return;
   knowledgeProgressList.innerHTML = "";
@@ -2032,6 +2046,116 @@ function renderKnowledgeResults(results) {
     `;
     knowledgeResults.appendChild(row);
   });
+}
+
+function renderSectorPromptResults(results) {
+  if (!sectorPromptResults) return;
+  sectorPromptResults.innerHTML = "";
+  if (!results.length) {
+    sectorPromptResults.innerHTML = `<p class="sessions-empty">No matching sector prompt chunks found.</p>`;
+    return;
+  }
+  results.forEach((result) => {
+    const row = document.createElement("article");
+    row.className = "knowledge-item";
+    const sourceParts = [result.source_type || "sector_prompt"];
+    if (result.source_uri) sourceParts.push(result.source_uri.replace("sector-prompt://", ""));
+    const scoreLabel =
+      result.score === null || typeof result.score === "undefined"
+        ? "lexical/DB"
+        : escapeHtml(result.score);
+    row.innerHTML = `
+      <strong>${escapeHtml(result.title || "Sector prompt")}</strong>
+      <small>${escapeHtml(sourceParts.join(" · "))} · Score: ${scoreLabel}</small>
+      <p>${escapeHtml(result.content || "")}</p>
+    `;
+    sectorPromptResults.appendChild(row);
+  });
+}
+
+function sectorPromptReindexDetail(data) {
+  const indexed = Array.isArray(data.indexed) ? data.indexed.length : 0;
+  const skipped = Array.isArray(data.skipped) ? data.skipped.length : 0;
+  const failures = Array.isArray(data.failures) ? data.failures.length : 0;
+  const cleanup = data.cleanup || {};
+  const lexicalOnly = Array.isArray(data.indexed)
+    ? data.indexed.filter((item) => item && item.vector_indexed === false).length
+    : 0;
+  const parts = [
+    `${Number(cleanup.deleted_documents || 0)} old documents removed`,
+    `${Number(cleanup.deleted_chunks || 0)} old chunks removed`,
+    cleanup.reset_faiss
+      ? "old FAISS reset"
+      : cleanup.removed_faiss
+        ? "old FAISS removed"
+        : "old FAISS removal failed",
+    `${indexed} indexed`,
+    `${skipped} already current`,
+  ];
+  if (lexicalOnly) parts.push(`${lexicalOnly} lexical-only`);
+  if (failures) parts.push(`${failures} failed`);
+  if (cleanup.faiss_error) parts.push(`FAISS error: ${cleanup.faiss_error}`);
+  return `Sector prompts reindexed: ${parts.join(", ")}.`;
+}
+
+async function reindexSectorPrompts() {
+  if (!sectorPromptReindexButton) return;
+  sectorPromptReindexButton.disabled = true;
+  showSectorPromptMessage("Reindexing sector prompts...", false);
+  try {
+    const response = await fetch("/api/sector-prompts/reindex", { method: "POST" });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    showSectorPromptMessage(
+      data.detail || sectorPromptReindexDetail(data),
+      Boolean(data.error),
+    );
+  } catch (error) {
+    console.error("Sector prompt reindex failed", error);
+    showSectorPromptMessage("Could not reindex sector prompts.");
+  } finally {
+    sectorPromptReindexButton.disabled = false;
+  }
+}
+
+async function searchSectorPrompts() {
+  const query = sectorPromptSearchInput?.value.trim() || "";
+  const sector = sectorPromptSectorInput?.value || "";
+  if (!query) {
+    flashRequiredField(sectorPromptSearchInput);
+    return;
+  }
+  if (sectorPromptResults) {
+    sectorPromptResults.innerHTML = `<p class="sessions-empty">Searching sector prompts...</p>`;
+  }
+  try {
+    const response = await fetch("/api/sector-prompts/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sector, query }),
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    if (data.error) {
+      showSectorPromptMessage(data.detail || "Could not search sector prompts.");
+      renderSectorPromptResults([]);
+      return;
+    }
+    showSectorPromptMessage(`Found ${(data.results || []).length} sector prompt chunks.`, false);
+    renderSectorPromptResults(data.results || []);
+  } catch (error) {
+    console.error("Sector prompt search failed", error);
+    showSectorPromptMessage("Could not search sector prompts.");
+    renderSectorPromptResults([]);
+  }
 }
 
 async function deleteKnowledgeDocument(documentId) {
@@ -2615,6 +2739,13 @@ knowledgeSearchForm?.addEventListener("submit", async (event) => {
   renderKnowledgeResults(data.results || []);
 });
 
+sectorPromptReindexButton?.addEventListener("click", reindexSectorPrompts);
+
+sectorPromptSearchForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await searchSectorPrompts();
+});
+
 profileButton?.addEventListener("click", () => {
   profilePanel.hidden = !profilePanel.hidden;
 });
@@ -2652,6 +2783,13 @@ statsDialogForm?.addEventListener("submit", (event) => {
 
 closeTargetPopulationButton?.addEventListener("click", closeTargetPopulationDialog);
 cancelTargetPopulationButton?.addEventListener("click", closeTargetPopulationDialog);
+targetAllGeneralPopulationButton?.addEventListener("click", () => {
+  targetPopulationDialogBody
+    ?.querySelectorAll("[data-quick-target-option='true']")
+    .forEach((input) => {
+      input.checked = true;
+    });
+});
 
 targetPopulationForm?.addEventListener("submit", (event) => {
   event.preventDefault();
