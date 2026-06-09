@@ -321,6 +321,28 @@ def ensure_runtime_schema() -> None:
 
         ensure_mitigation_measure_examples()
 
+        inspector = inspect(engine)
+        if "user_mitigation_measures" in inspector.get_table_names():
+            mitigation_columns = {
+                column["name"]
+                for column in inspector.get_columns("user_mitigation_measures")
+            }
+            with engine.begin() as connection:
+                if "conclusion" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN conclusion TEXT NULL AFTER reason"
+                        )
+                    )
+                if "target_groups_json" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN target_groups_json TEXT NULL AFTER conclusion"
+                        )
+                    )
+
         if "user_hazards" not in inspector.get_table_names():
             return
 

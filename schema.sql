@@ -203,6 +203,8 @@ CREATE TABLE IF NOT EXISTS user_mitigation_measures (
   user_hazard_id INT NOT NULL,
   measure TEXT NOT NULL,
   reason TEXT NOT NULL,
+  conclusion TEXT NULL,
+  target_groups_json TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_user_mitigations_hazard FOREIGN KEY (user_hazard_id) REFERENCES user_hazards(id) ON DELETE CASCADE,
   INDEX ix_user_mitigation_measures_hazard_id (user_hazard_id)
@@ -483,4 +485,3 @@ JOIN (
 ) option_rows ON option_rows.question_text = q.question
 WHERE q.category = 'target_population'
 ON DUPLICATE KEY UPDATE `option` = VALUES(`option`);
-

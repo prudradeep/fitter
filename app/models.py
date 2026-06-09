@@ -222,6 +222,8 @@ class UserMitigationMeasure(Base):
     user_hazard_id: Mapped[int] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
     measure: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    conclusion: Mapped[str | None] = mapped_column(Text)
+    target_groups_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

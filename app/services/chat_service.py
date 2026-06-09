@@ -2206,6 +2206,11 @@ Return Markdown only.
                 "and limitations. Do not ask evaluation questions yet."
             ),
         )
+        self._update_mitigation_review_details(
+            session,
+            answer,
+            self._mitigation_target_affected_groups_json(session),
+        )
 
         return ChatResponse(
             session_id=session_id,
@@ -5673,6 +5678,107 @@ Current session:
             self.db.rollback()
             logger.exception("Failed to persist mitigation measure")
             return None
+
+    def _update_mitigation_review_details(
+        self,
+        session: ChatSession,
+        conclusion: str,
+        target_groups: dict[str, object],
+    ) -> None:
+        if session.mitigation_record_id is None:
+            return
+        try:
+            row = self.db.scalar(
+                select(UserMitigationMeasure).where(
+                    UserMitigationMeasure.id == session.mitigation_record_id
+                )
+            )
+            if row is None:
+                return
+            row.conclusion = conclusion.strip() or None
+            row.target_groups_json = self._metadata_to_json(target_groups)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("Failed to persist mitigation conclusion and target groups")
+
+    def _mitigation_target_affected_groups_json(
+        self,
+        session: ChatSession,
+    ) -> dict[str, object]:
+        hazard = session.selected_hazard or session.accepted_custom_hazard or ""
+        system_profiles = self._stored_hazard_profiles(session, hazard) if hazard else []
+        user_profiles = self._stored_user_hazard_profiles(session, hazard) if hazard else []
+        target_answers = self._target_population_answer_objects(session)
+        target_profiles = [
+            self._group_json_item(profile, "target_group")
+            for profile in self._target_population_profiles_from_answers(
+                session.target_population_answers or [],
+                hazard or "the selected hazard",
+            )
+        ]
+        affected_profiles = [
+            self._group_json_item(profile, "affected_group")
+            for profile in [*system_profiles, *user_profiles]
+        ]
+        return {
+            "hazard": hazard,
+            "target_population_answers": target_answers,
+            "target_groups": self._dedupe_group_items(target_profiles),
+            "affected_groups": self._dedupe_group_items(affected_profiles),
+            "all_groups": self._dedupe_group_items([*target_profiles, *affected_profiles]),
+        }
+
+    @staticmethod
+    def _group_json_item(profile: dict[str, object], group_type: str) -> dict[str, object]:
+        name = str(profile.get("name") or profile.get("profile") or "").strip()
+        variable_name = str(
+            profile.get("variable_name") or profile.get("variable") or ""
+        ).strip()
+        return {
+            "type": group_type,
+            "name": name,
+            "variable_name": variable_name,
+            "explanation": str(profile.get("explanation") or "").strip(),
+            "statistical_basis": str(profile.get("statistical_basis") or "").strip(),
+            "source": str(profile.get("source") or "").strip(),
+        }
+
+    @staticmethod
+    def _dedupe_group_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
+        deduped: list[dict[str, object]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for item in items:
+            name = str(item.get("name") or "").strip()
+            variable_name = str(item.get("variable_name") or "").strip()
+            source = str(item.get("source") or "").strip()
+            key = (normalize(name), normalize(variable_name), normalize(source))
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
+    @staticmethod
+    def _target_population_answer_objects(session: ChatSession) -> list[dict[str, object]]:
+        answers: list[dict[str, object]] = []
+        for answer in session.target_population_answers or []:
+            question = str(answer.get("question") or "").strip()
+            selected = [
+                item.strip()
+                for item in str(answer.get("answer") or "").split(",")
+                if item.strip()
+            ]
+            if not question and not selected:
+                continue
+            answers.append(
+                {
+                    "question_id": answer.get("question_id"),
+                    "question": question,
+                    "selected": selected,
+                }
+            )
+        return answers
 
     def _store_question_response(
         self,
