@@ -97,7 +97,7 @@ MITIGATION_VERDICT_TEMPERATURE=0.25
 MITIGATION_SUPPORT_SCORE_FLOOR=0.15
 ```
 
-Install their model dependencies and start both services:
+Install the model dependencies and start the main app, reranker, and NLI services:
 
 ```powershell
 uv sync --extra grounding
@@ -114,9 +114,18 @@ NLI_MODEL="cross-encoder/nli-deberta-v3-small"
 Verify the services:
 
 ```powershell
+Invoke-RestMethod http://localhost:8000/health
 Invoke-RestMethod http://localhost:8081/health
 Invoke-RestMethod http://localhost:8082/health
 ```
+
+Stop all processes started by the launcher:
+
+```powershell
+.\scripts\stop_all_services.ps1
+```
+
+Logs and PID files are stored under `data/service-runtime/`.
 
 The reranker receives `{"query": "...", "documents": ["...", "..."]}` and returns
 `{"scores": [0.91, 0.42]}`. The NLI service receives
@@ -133,6 +142,8 @@ uv sync
 ```
 
 ## Run Locally
+
+To start only the main application:
 
 ```bash
 uv run uvicorn app.main:app --reload --reload-dir app

@@ -7,3 +7,4 @@ __pycache__/
 .mypy_cache/
 data/*.faiss
 data/grounding-logs/
+data/service-runtime/
