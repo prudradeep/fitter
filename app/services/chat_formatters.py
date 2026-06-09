@@ -100,12 +100,13 @@ def format_evaluation_answers(session: ChatSession) -> str:
             lines.append(f"\n### {category}")
             current_category = category
 
-        lines.append(f"- **{answer['question']}**")
-        lines.append(f"  - Score: **{answer['score']} / 10**")
+        question = normalize_markdown_text(str(answer["question"]))
+        lines.append(f"\n{question}")
+        lines.append(f"\n**Score: {answer['score']} / 10**")
         if answer.get("reason"):
-            lines.append(f"  - Reason: {answer['reason']}")
+            lines.append(f"\n- **Reason:** {answer['reason']}")
         if answer.get("evidence"):
-            lines.append(f"  - Evidence: {answer['evidence']}")
+            lines.append(f"- **Evidence:** {answer['evidence']}")
 
     return "\n".join(lines).strip()
 
