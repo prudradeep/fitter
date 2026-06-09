@@ -24,6 +24,11 @@ dependencies = [
     "numpy>=1.26.0",
 ]
 
+[project.optional-dependencies]
+grounding = [
+    "sentence-transformers>=3.4.0",
+]
+
 [tool.uv]
 package = false
 

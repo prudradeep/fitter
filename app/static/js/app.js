@@ -1383,6 +1383,111 @@ function applyCollapsibleBubble(bubble) {
   bubble.appendChild(button);
 }
 
+function renderValidationDetails(row, details) {
+  if (!row || !details || typeof details !== "object") return;
+  const content = row.querySelector(".bubble-content");
+  if (!content) return;
+
+  const panel = document.createElement("details");
+  panel.className = `validation-details validation-details-${details.phase || "status"}`;
+  panel.open = true;
+
+  const summary = document.createElement("summary");
+  summary.textContent = details.title || "Validation status";
+  panel.appendChild(summary);
+
+  const dimensions = details.dimensions && typeof details.dimensions === "object"
+    ? details.dimensions
+    : {};
+  if (Object.keys(dimensions).length) {
+    const grid = document.createElement("div");
+    grid.className = "validation-dimension-grid";
+    Object.entries(dimensions).forEach(([name, value]) => {
+      const status = typeof value === "string" ? value : value?.status;
+      const score = typeof value === "object" ? value?.support_score : null;
+      const item = document.createElement("div");
+      item.className = "validation-dimension";
+
+      const label = document.createElement("span");
+      label.textContent = validationLabel(name);
+      const badge = document.createElement("strong");
+      badge.className = `validation-badge validation-badge-${validationStatusClass(status)}`;
+      badge.textContent = validationLabel(status || "unknown");
+      item.append(label, badge);
+
+      if (score !== null && score !== undefined) {
+        const scoreText = document.createElement("small");
+        scoreText.textContent = `Support score: ${formatValidationNumber(score)}`;
+        item.appendChild(scoreText);
+      }
+      grid.appendChild(item);
+    });
+    panel.appendChild(grid);
+  }
+
+  appendValidationGroup(panel, "Signals", details.metrics, true);
+  appendValidationGroup(panel, "Checks", details.checks, false);
+
+  if (details.reason) {
+    const reason = document.createElement("p");
+    reason.className = "validation-reason";
+    reason.textContent = details.reason;
+    panel.appendChild(reason);
+  }
+
+  content.appendChild(panel);
+  applyCollapsibleBubble(row.querySelector(".bubble"));
+}
+
+function appendValidationGroup(panel, title, values, formatMetrics) {
+  if (!values || typeof values !== "object") return;
+  const entries = Object.entries(values).filter(([, value]) => value !== null && value !== undefined);
+  if (!entries.length) return;
+  const group = document.createElement("div");
+  group.className = "validation-signal-group";
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  group.appendChild(heading);
+  entries.forEach(([name, value]) => {
+    const row = document.createElement("div");
+    const label = document.createElement("span");
+    label.textContent = validationLabel(name);
+    const output = document.createElement("strong");
+    output.textContent = formatMetrics ? formatValidationMetric(name, value) : validationLabel(value);
+    row.append(label, output);
+    group.appendChild(row);
+  });
+  panel.appendChild(group);
+}
+
+function validationLabel(value) {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function validationStatusClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (["clear", "supported"].includes(normalized)) return "pass";
+  if (["contradicted"].includes(normalized)) return "fail";
+  return "pending";
+}
+
+function formatValidationNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : String(value);
+}
+
+function formatValidationMetric(name, value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return validationLabel(value);
+  if (name === "confidence_score") return `${Math.round(number)}/100`;
+  if (["rubric_coverage", "retrieval_support", "verdict_stability"].includes(name)) {
+    return `${Math.round(number * 100)}%`;
+  }
+  return String(number);
+}
+
 function addTyping(targetLog = chatLog) {
   const row = document.createElement("div");
   row.className = "message-row bot";
@@ -2431,6 +2536,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     const botRow = addMessage("bot", "", data.error);
     speakServerMessage(data.bot_message);
     await typeServerMessage(botRow, data.bot_message);
+    renderValidationDetails(botRow, data.validation_details);
     updateSessionCard(data.session);
     setInputMode(data.input_mode || "text", data.step, data.options || []);
     renderOptions(data.options || [], data.other_options || []);

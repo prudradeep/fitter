@@ -39,6 +39,8 @@ class ChatSession:
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
     mitigation_record_id: int | None = None
+    mitigation_validation: dict[str, object] | None = None
+    mitigation_grounded_synthesis: str | None = None
     evaluation_questions: list[dict[str, str | int]] | None = None
     evaluation_index: int = 0
     evaluation_answers: list[dict[str, str | int | None]] | None = None

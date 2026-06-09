@@ -1755,6 +1755,106 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   border: 1px solid #fecaca;
 }
 
+.validation-details {
+  margin-top: 16px;
+  border: 1px solid #d8dee9;
+  border-radius: 10px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.validation-details summary {
+  cursor: pointer;
+  padding: 11px 13px;
+  background: #eef2ff;
+  color: #312e81;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.validation-dimension-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.validation-dimension {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 9px;
+  font-size: 0.76rem;
+}
+
+.validation-dimension > span {
+  color: #475569;
+  font-weight: 800;
+}
+
+.validation-dimension small {
+  color: #64748b;
+}
+
+.validation-badge {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+
+.validation-badge-pass {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.validation-badge-fail {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.validation-badge-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.validation-signal-group {
+  display: grid;
+  gap: 5px;
+  padding: 0 12px 12px;
+}
+
+.validation-signal-group h4 {
+  margin: 3px 0;
+  color: #334155;
+  font-size: 0.76rem;
+}
+
+.validation-signal-group > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #64748b;
+  font-size: 0.73rem;
+}
+
+.validation-signal-group strong {
+  color: #1e293b;
+  text-align: right;
+}
+
+.validation-reason {
+  margin: 0;
+  border-top: 1px solid #e2e8f0;
+  padding: 10px 12px 12px;
+  color: #475569;
+  font-size: 0.76rem;
+}
+
 .timestamp {
   display: block;
   margin-top: 9px;
@@ -2025,6 +2125,12 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   min-height: 43px;
   padding: 8px 10px;
   background: #ffffff;
+}
+
+@media (max-width: 720px) {
+  .validation-dimension-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 #textareaInput {

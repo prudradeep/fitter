@@ -33,3 +33,4 @@ class ChatResponse(BaseModel):
     session: SessionSummary
     input_mode: str = "text"
     error: bool = False
+    validation_details: dict[str, object] | None = None

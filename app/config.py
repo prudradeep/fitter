@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: int = 1200
 
     faiss_index_path: str = "data/knowledge.faiss"
+    reranker_url: str = ""
+    reranker_timeout_seconds: int = 60
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    nli_url: str = ""
+    nli_timeout_seconds: int = 60
+    nli_model: str = "cross-encoder/nli-deberta-v3-small"
+    mitigation_verdict_samples: int = 3
+    mitigation_verdict_temperature: float = 0.25
+    mitigation_support_score_floor: float = 0.15
 
     cors_origins: str = "http://localhost:8000,http://127.0.0.1:8000"
     log_level: str = "INFO"

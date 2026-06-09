@@ -85,6 +85,47 @@ FAISS_INDEX_PATH="data/knowledge.faiss"
 OLLAMA_EMBEDDING_MODEL="nomic-embed-text"
 ```
 
+## Grounding Model Services
+
+Mitigation validation includes two dedicated local model services:
+
+```env
+RERANKER_URL="http://localhost:8081/rerank"
+NLI_URL="http://localhost:8082/entail"
+MITIGATION_VERDICT_SAMPLES=3
+MITIGATION_VERDICT_TEMPERATURE=0.25
+MITIGATION_SUPPORT_SCORE_FLOOR=0.15
+```
+
+Install their model dependencies and start both services:
+
+```powershell
+uv sync --extra grounding
+.\scripts\start_grounding_services.ps1
+```
+
+The first inference downloads the configured Hugging Face models. Defaults:
+
+```env
+RERANKER_MODEL="cross-encoder/ms-marco-MiniLM-L-6-v2"
+NLI_MODEL="cross-encoder/nli-deberta-v3-small"
+```
+
+Verify the services:
+
+```powershell
+Invoke-RestMethod http://localhost:8081/health
+Invoke-RestMethod http://localhost:8082/health
+```
+
+The reranker receives `{"query": "...", "documents": ["...", "..."]}` and returns
+`{"scores": [0.91, 0.42]}`. The NLI service receives
+`{"pairs": [{"premise": "...", "hypothesis": "..."}]}` and returns
+`{"results": [{"label": "entailment", "score": 0.94}]}`.
+
+If a service is unavailable, mitigation validation falls back to the existing combined retrieval
+score or strict LLM entailment verification.
+
 ## Install Dependencies
 
 ```bash

@@ -141,6 +141,113 @@ def parse_validation_response(response: str) -> dict[str, str | bool]:
     return {"valid": valid, "reason": reason.strip() or "No validation reason was provided."}
 
 
+def parse_grounded_validation_response(response: str) -> dict[str, object]:
+    parsed = _parse_json_dict(response)
+    if parsed is None:
+        return {
+            "dimensions": {},
+            "reason": "The grounded validation response was not valid JSON.",
+            "error": True,
+        }
+
+    dimensions: dict[str, dict[str, object]] = {}
+    raw_dimensions = parsed.get("dimensions")
+    if isinstance(raw_dimensions, dict):
+        for name, raw_dimension in raw_dimensions.items():
+            if not isinstance(name, str) or not isinstance(raw_dimension, dict):
+                continue
+            status = str(raw_dimension.get("status") or "").strip().upper()
+            if status not in {"SUPPORTED", "CONTRADICTED", "INSUFFICIENT_INFO"}:
+                status = "INSUFFICIENT_INFO"
+            citation_ids = raw_dimension.get("citation_ids")
+            cleaned_citations = [
+                citation.strip().upper()
+                for citation in citation_ids
+                if isinstance(citation, str) and citation.strip()
+            ] if isinstance(citation_ids, list) else []
+            explanation = raw_dimension.get("explanation")
+            dimensions[name.strip()] = {
+                "status": status,
+                "citation_ids": cleaned_citations,
+                "explanation": explanation.strip() if isinstance(explanation, str) else "",
+            }
+
+    reason = parsed.get("reason")
+    return {
+        "dimensions": dimensions,
+        "reason": reason.strip() if isinstance(reason, str) else "",
+        "error": False,
+    }
+
+
+def parse_grounded_claims_response(response: str) -> dict[str, object]:
+    parsed = _parse_json_dict(response)
+    if parsed is None:
+        return {"claims": [], "error": True}
+
+    claims: list[dict[str, object]] = []
+    raw_claims = parsed.get("claims")
+    if isinstance(raw_claims, list):
+        for raw_claim in raw_claims:
+            if not isinstance(raw_claim, dict):
+                continue
+            text = raw_claim.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            citation_ids = raw_claim.get("citation_ids")
+            user_fields = raw_claim.get("user_fields")
+            claims.append(
+                {
+                    "text": text.strip(),
+                    "citation_ids": [
+                        item.strip().upper()
+                        for item in citation_ids
+                        if isinstance(item, str) and item.strip()
+                    ] if isinstance(citation_ids, list) else [],
+                    "user_fields": [
+                        item.strip()
+                        for item in user_fields
+                        if isinstance(item, str) and item.strip()
+                    ] if isinstance(user_fields, list) else [],
+                }
+            )
+    return {"claims": claims, "error": False}
+
+
+def parse_entailment_response(response: str) -> dict[str, object]:
+    parsed = _parse_json_dict(response)
+    if parsed is None:
+        return {"verdicts": [], "error": True}
+
+    verdicts: list[dict[str, object]] = []
+    raw_verdicts = parsed.get("verdicts")
+    if isinstance(raw_verdicts, list):
+        for raw_verdict in raw_verdicts:
+            if not isinstance(raw_verdict, dict):
+                continue
+            claim_index = raw_verdict.get("claim_index")
+            entailed = raw_verdict.get("entailed")
+            if not isinstance(claim_index, int) or not isinstance(entailed, bool):
+                continue
+            reason = raw_verdict.get("reason")
+            verdicts.append(
+                {
+                    "claim_index": claim_index,
+                    "entailed": entailed,
+                    "reason": reason.strip() if isinstance(reason, str) else "",
+                }
+            )
+    return {"verdicts": verdicts, "error": False}
+
+
+def _parse_json_dict(response: str) -> dict[str, object] | None:
+    try:
+        parsed = json.loads(extract_json_object(response).strip())
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def parse_mitigation_clarity_response(response: str) -> dict[str, object]:
     response = extract_json_object(response)
     try:
