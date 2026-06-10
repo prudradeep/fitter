@@ -54,6 +54,45 @@ class GroundingModelService:
             reranked.append({**result, "retrieval_score": result.get("score"), "score": score})
         return sorted(reranked, key=lambda result: float(result.get("score") or 0.0), reverse=True)
 
+    async def ground_results(
+        self,
+        query: str,
+        results: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Apply reranking and NLI prioritization before results reach an LLM."""
+        reranked = await self.rerank(query, results)
+        if not reranked:
+            return reranked
+
+        verdicts = await self.entail(
+            [str(result.get("content") or "") for result in reranked],
+            [query] * len(reranked),
+        )
+        if verdicts is None:
+            return reranked
+
+        grounded = [
+            {
+                **result,
+                "nli_label": verdict.get("label"),
+                "nli_score": verdict.get("score"),
+                "nli_entailed": verdict.get("entailed"),
+            }
+            for result, verdict in zip(reranked, verdicts, strict=True)
+        ]
+        # Query text is often a question or keyword bundle rather than a formal
+        # hypothesis. Preserve all retrieved context, but prioritize direct entailment.
+        return sorted(
+            grounded,
+            key=lambda result: (
+                bool(result.get("nli_entailed")),
+                float(result.get("nli_score") or 0.0)
+                if result.get("nli_entailed")
+                else float(result.get("score") or 0.0),
+            ),
+            reverse=True,
+        )
+
     async def entail(
         self,
         premises: list[str],

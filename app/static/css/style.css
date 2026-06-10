@@ -1822,6 +1822,37 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   color: #92400e;
 }
 
+.validation-active-clarification {
+  margin: 0 12px 8px;
+  border-left: 3px solid #d97706;
+  border-radius: 4px;
+  background: #fffbeb;
+  padding: 8px 10px;
+  color: #78350f;
+  font-size: 0.76rem;
+}
+
+.validation-clarification-questions {
+  margin: 0 12px 12px;
+  color: #475569;
+  font-size: 0.76rem;
+}
+
+.validation-clarification-questions h4 {
+  margin: 0 0 5px;
+  color: #334155;
+  font-size: 0.76rem;
+}
+
+.validation-clarification-questions ol {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.validation-clarification-questions li + li {
+  margin-top: 4px;
+}
+
 .validation-signal-group {
   display: grid;
   gap: 5px;

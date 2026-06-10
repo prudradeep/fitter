@@ -31,7 +31,7 @@ async def rerank(payload: RerankRequest) -> dict[str, list[float]]:
             [(payload.query, document) for document in documents],
             show_progress_bar=False,
         )
-    except RuntimeError as exc:
+    except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     scores = [round(sigmoid(float(score)), 6) for score in raw_scores]
     return {"scores": scores}

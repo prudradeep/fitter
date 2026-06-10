@@ -27,14 +27,14 @@ async def health() -> dict[str, str]:
 
 @app.post("/entail")
 async def entail(payload: EntailmentRequest) -> dict[str, list[dict[str, float | str]]]:
-    model = nli_model()
     try:
+        model = nli_model()
         logits = model.predict(
             [(pair.premise, pair.hypothesis) for pair in payload.pairs],
             apply_softmax=False,
             show_progress_bar=False,
         )
-    except RuntimeError as exc:
+    except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     results: list[dict[str, float | str]] = []

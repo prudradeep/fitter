@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import KnowledgeChunk, KnowledgeDocument
+from app.services.grounding_models import GroundingModelService
 
 try:
     import faiss
@@ -57,6 +58,7 @@ class KnowledgeBaseService:
         self.scope = scope
         self.session_key = session_key
         self.settings = get_settings()
+        self.grounding_models = GroundingModelService()
 
     async def ingest_url(self, url: str, title: str | None = None) -> dict[str, object]:
         drafts = await extract_url_chunks(url)
@@ -306,7 +308,7 @@ class KnowledgeBaseService:
             )
             if len(results) >= limit:
                 break
-        return results
+        return await self.grounding_models.ground_results(query, results)
 
     def delete_temporary_documents(self, document_ids: list[int] | None = None) -> int:
         if self.scope != "temporary" or not self.session_key:

@@ -97,6 +97,11 @@ class ChatService:
         "contraindications",
         "feasibility",
     )
+    mitigation_critical_grounding_dimensions = (
+        "hazard_fit",
+        "mechanism",
+        "justification_soundness",
+    )
 
     def __init__(self, db: Session, user_id: int | None = None) -> None:
         self.db = db
@@ -590,6 +595,7 @@ class ChatService:
     def _clear_mitigation_clarity_state(session: ChatSession) -> None:
         session.pending_mitigation_reason = None
         session.pending_mitigation_evidence = None
+        session.pending_mitigation_clarity_dimension = None
         session.mitigation_clarity_turns = 0
         session.mitigation_frozen_inputs = None
 
@@ -602,12 +608,16 @@ class ChatService:
         self,
         clarity: dict[str, object],
         session: ChatSession,
+        active_dimension: str | None = None,
+        clarification_questions: list[str] | None = None,
     ) -> dict[str, object]:
         dimensions = clarity.get("dimensions")
         return {
             "phase": "clarity",
             "title": "Mitigation clarification status",
             "dimensions": dimensions if isinstance(dimensions, dict) else {},
+            "active_dimension": active_dimension,
+            "clarification_questions": clarification_questions or [],
             "metrics": {
                 "clarification_turn": session.mitigation_clarity_turns,
                 "clarification_turn_cap": self.mitigation_clarity_turn_cap,
@@ -1923,7 +1933,7 @@ Return Markdown only.
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_clarity",
-                bot_message="Please answer the clarification question so I can freeze the mitigation inputs.",
+                bot_message="Please answer the clarification questions so I can freeze the mitigation inputs.",
                 options=self._mitigation_clarity_options(),
                 session=session.summary(),
                 input_mode="textarea",
@@ -1991,6 +2001,7 @@ Return Markdown only.
             reason,
             evidence_text,
             message,
+            session.pending_mitigation_clarity_dimension,
         )
         clarity_response = await self._run_mitigation_clarity_track(
             session_id,
@@ -2018,26 +2029,61 @@ Return Markdown only.
         reason: str,
         evidence_text: str,
         clarification_answer: str,
+        clarity_dimension: str | None = None,
     ) -> tuple[str, str, str]:
         answer = clarification_answer.strip()
         if not answer:
             return mitigation_measure, reason, evidence_text
-        lowered = answer.casefold()
-        if lowered.startswith(("mitigation measure:", "measure:")):
-            clarified_measure = answer.split(":", 1)[1].strip()
-            if clarified_measure:
-                mitigation_measure = clarified_measure
-        elif lowered.startswith(("evidence:", "source:", "citation:")):
-            clarified_evidence = answer.split(":", 1)[1].strip()
-            if clarified_evidence:
-                evidence_text = (
-                    f"{evidence_text}\n{clarified_evidence}".strip()
-                    if evidence_text
-                    else clarified_evidence
-                )
-        else:
-            reason = f"{reason}\nClarification: {answer}".strip()
+        fields = ChatService._clarification_fields(answer)
+        if fields["measure"]:
+            mitigation_measure = fields["measure"]
+        if fields["justification"]:
+            reason = f"{reason}\nClarification: {fields['justification']}".strip()
+        if fields["evidence"]:
+            evidence_text = f"{evidence_text}\n{fields['evidence']}".strip()
+        if not any(fields.values()):
+            if clarity_dimension == "specificity":
+                mitigation_measure = f"{mitigation_measure}\nClarification: {answer}".strip()
+            elif clarity_dimension == "evidence_identifiability":
+                evidence_text = f"{evidence_text}\nClarification: {answer}".strip()
+            else:
+                reason = f"{reason}\nClarification: {answer}".strip()
         return mitigation_measure, reason, evidence_text
+
+    @staticmethod
+    def _clarification_fields(answer: str) -> dict[str, str]:
+        aliases = {
+            "mitigation measure": "measure",
+            "measure": "measure",
+            "specificity": "measure",
+            "justification": "justification",
+            "reason": "justification",
+            "mechanism": "justification",
+            "evidence": "evidence",
+            "source": "evidence",
+            "citation": "evidence",
+        }
+        buffers: dict[str, list[str]] = {
+            "measure": [],
+            "justification": [],
+            "evidence": [],
+        }
+        current: str | None = None
+        for raw_line in answer.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            match = re.match(r"^(?:\d+[.)]\s*)?([^:]+):\s*(.*)$", line)
+            if match:
+                key = aliases.get(match.group(1).strip().casefold())
+                if key:
+                    current = key
+                    if match.group(2).strip():
+                        buffers[key].append(match.group(2).strip())
+                    continue
+            if current:
+                buffers[current].append(line)
+        return {key: " ".join(parts).strip() for key, parts in buffers.items()}
 
     async def _run_mitigation_clarity_track(
         self,
@@ -2081,6 +2127,7 @@ Return Markdown only.
             reason,
             evidence_text,
             clarification_answer,
+            session.pending_mitigation_clarity_dimension,
         ):
             session.mitigation_frozen_inputs = self._frozen_mitigation_inputs(
                 clarity,
@@ -2115,27 +2162,93 @@ Return Markdown only.
                 error=True,
             )
 
-        follow_up_question = str(clarity.get("follow_up_question") or "").strip()
-        if not follow_up_question:
-            follow_up_question = "What specific detail should I use to make your mitigation input unambiguous?"
+        dimensions = clarity.get("dimensions")
+        unresolved_dimension = next(
+            (
+                dimension
+                for dimension in (
+                    "specificity",
+                    "justification_clarity",
+                    "evidence_identifiability",
+                )
+                if isinstance(dimensions, dict)
+                and dimensions.get(dimension) == "NEEDS_CLARIFICATION"
+            ),
+            None,
+        )
+        fallback_questions = {
+            "specificity": [
+                "What specific action or intervention does the mitigation measure provide?",
+                "Who will receive it, and under what circumstances?",
+            ],
+            "justification_clarity": [
+                "How is the proposed measure expected to reduce the selected hazard's impact?",
+                "Why is this measure appropriate for the identified affected group?",
+            ],
+            "evidence_identifiability": [
+                "What is the title or source of the evidence you provided?",
+                "Which finding or section of that source supports your input?",
+            ],
+        }.get(
+            unresolved_dimension,
+            [
+                "Which part of the mitigation input needs to be interpreted more precisely?",
+                "What specific meaning should be used during validation?",
+            ],
+        )
+        follow_up_questions = clarity.get("follow_up_questions")
+        if not isinstance(follow_up_questions, list):
+            follow_up_questions = []
+        follow_up_questions = [
+            str(question).strip()
+            for question in follow_up_questions
+            if str(question).strip()
+        ]
+        if not follow_up_questions:
+            fallback_question = str(clarity.get("follow_up_question") or "").strip()
+            if fallback_question:
+                follow_up_questions.append(fallback_question)
+        for fallback_question in fallback_questions:
+            if len(follow_up_questions) >= 2:
+                break
+            if fallback_question not in follow_up_questions:
+                follow_up_questions.append(fallback_question)
+        follow_up_questions = follow_up_questions[:3]
+        question_list = "\n".join(
+            f"{index}. {question}"
+            for index, question in enumerate(follow_up_questions, start=1)
+        )
+        dimension_label = {
+            "specificity": "Specificity",
+            "justification_clarity": "Justification clarity",
+            "evidence_identifiability": "Evidence identifiability",
+        }.get(unresolved_dimension, "Mitigation input")
         session.phase = "mitigation_clarity"
         session.pending_mitigation_measure = mitigation_measure
         session.pending_mitigation_reason = reason
         session.pending_mitigation_evidence = evidence_text
+        session.pending_mitigation_clarity_dimension = unresolved_dimension
         session.mitigation_clarity_turns += 1
         return ChatResponse(
             session_id=session_id,
             step="mitigation_clarity",
             bot_message=markdown_to_html(
                 "### Clarification needed\n\n"
-                f"{follow_up_question}\n\n"
-                "I will use your answer only to clarify the inputs, not as evidence that the measure is supported."
+                f"**Currently clarifying: {dimension_label}**\n\n"
+                f"Please answer these questions in one response:\n\n{question_list}\n\n"
+                "I will use your answers only to clarify the inputs, not as evidence "
+                "that the measure is supported."
             ),
             options=self._mitigation_clarity_options(),
             session=session.summary(),
             input_mode="textarea",
             error=False,
-            validation_details=self._clarity_validation_details(clarity, session),
+            validation_details=self._clarity_validation_details(
+                clarity,
+                session,
+                unresolved_dimension,
+                follow_up_questions,
+            ),
         )
 
     def _can_freeze_after_mitigation_clarification(
@@ -2145,13 +2258,10 @@ Return Markdown only.
         reason: str,
         evidence_text: str,
         clarification_answer: str | None,
+        answered_dimension: str | None = None,
     ) -> bool:
         dimensions = clarity.get("dimensions")
         if not isinstance(dimensions, dict):
-            return False
-        if dimensions.get("specificity") != "CLEAR":
-            return False
-        if dimensions.get("evidence_identifiability") != "CLEAR":
             return False
 
         unresolved = {
@@ -2159,7 +2269,8 @@ Return Markdown only.
             for key, value in dimensions.items()
             if value != "CLEAR"
         }
-        if unresolved != {"justification_clarity"}:
+        allowed_unresolved = answered_dimension or "justification_clarity"
+        if unresolved != {allowed_unresolved}:
             return False
 
         clarification = (clarification_answer or "").strip()
@@ -2176,6 +2287,8 @@ Return Markdown only.
         if len(compact_for_match(reason)) < 30:
             return False
         if evidence_text and self._is_invalid_user_text(evidence_text):
+            return False
+        if answered_dimension == "evidence_identifiability" and not evidence_text:
             return False
         return True
 
@@ -7246,7 +7359,7 @@ You are the Step 1 clarity-track assessor for Dr Transition.
 
 Your task is input understandability only, not correctness and not groundedness.
 Do not decide whether the mitigation measure is supported by evidence or the
-knowledge base. Do not assign confidence. Do not reward extra user text as
+knowledge base. Do not reward extra user text as
 support. You only decide whether the inputs are unambiguous enough for a later
 grounded validation stage.
 
@@ -7280,9 +7393,12 @@ grounded validation stage.
                     "'Clarification:' line makes the user's intended reasoning "
                     "understandable, mark justification_clarity CLEAR even if the "
                     "later grounded validation stage might reject the claim.\n\n"
-                    "If any critical dimension NEEDS_CLARIFICATION, ask exactly one "
-                    "targeted follow-up question addressing the most important missing "
-                    "detail. Do not ask multiple questions. Do not validate groundedness.\n\n"
+                    "If any dimensions NEEDS_CLARIFICATION, select only the first "
+                    "unresolved dimension in this priority order: specificity, "
+                    "justification_clarity, evidence_identifiability. Return two or "
+                    "three concise targeted questions about that one dimension so the "
+                    "user can answer them in one response. Do not ask about any other "
+                    "dimension in the same response. Do not validate groundedness.\n\n"
                     "Return ONLY valid JSON with this exact shape:\n"
                     "{"
                     '"clear": false, '
@@ -7291,7 +7407,8 @@ grounded validation stage.
                     '"justification_clarity": "NEEDS_CLARIFICATION", '
                     '"evidence_identifiability": "CLEAR"'
                     "}, "
-                    '"follow_up_question": "one targeted question or empty string", '
+                    '"follow_up_questions": ["question 1 about one unresolved dimension", '
+                    '"question 2 about the same unresolved dimension"], '
                     '"frozen_inputs": {'
                     '"measure_description": "", '
                     '"justification": "", '
@@ -7301,6 +7418,10 @@ grounded validation stage.
                     "}\n\n"
                     "Rules:\n"
                     "- clear must be true only when all dimensions are CLEAR.\n"
+                    "- follow_up_questions must contain two or three questions about "
+                    "only the selected unresolved dimension.\n"
+                    "- Do not ask questions about the other unresolved dimensions until "
+                    "a later clarification round.\n"
                     "- This stage cannot touch groundedness, support, citations, retrieval, "
                     "or policy correctness.\n"
                     "- A specific but unsupported claim is still CLEAR; support is checked later.\n"
@@ -7392,13 +7513,21 @@ Support excerpts:
                     "- mechanism checks whether the corpus supports how the measure reduces harm.\n"
                     "- justification_soundness checks the user's stated reasoning.\n"
                     "- evidence_quality checks whether the authoritative corpus is relevant "
-                    "and adequate for this specific measure and hazard.\n"
+                    "and adequate for this specific measure and hazard. User-provided evidence "
+                    "is optional. When no user evidence was provided, do not reject the measure "
+                    "because evidence is absent; evaluate the other dimensions against the "
+                    "curated main knowledge base.\n"
                     "- contraindications is SUPPORTED only when the corpus permits the measure "
                     "without a stated conflict; cite the relevant excerpt. Mark CONTRADICTED "
                     "when the corpus identifies a conflict.\n"
                     "- feasibility checks whether the corpus supports practical applicability.\n"
                     "- Use INSUFFICIENT_INFO whenever the corpus does not address a dimension. "
                     "Do not infer support from general principles.\n"
+                    "- hazard_fit, mechanism, and justification_soundness are the critical "
+                    "dimensions required to validate the measure. Evidence quality, "
+                    "contraindications, and feasibility still must be assessed, but "
+                    "INSUFFICIENT_INFO in those dimensions is a caution rather than proof "
+                    "that the measure needs revision. Any CONTRADICTED verdict is a hard veto.\n"
                     "- When evidence is provided, do not use the curated knowledge base or "
                     "sector statistics to rescue the claim.\n"
                     "- The reason field must explain the rubric outcome in under 90 words."
@@ -7431,6 +7560,7 @@ Support excerpts:
             parsed,
             support_context=support_context,
             support_label=support_label,
+            has_user_evidence=has_evidence,
         )
 
     def _majority_grounding_verdict(
@@ -7500,7 +7630,10 @@ Support excerpts:
         *,
         support_context: str,
         support_label: str,
+        has_user_evidence: bool | None = None,
     ) -> dict[str, object]:
+        if has_user_evidence is None:
+            has_user_evidence = support_label == "user-supplied evidence only"
         citation_scores = self._support_citation_scores(support_context)
         raw_dimensions = parsed.get("dimensions")
         raw_dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
@@ -7510,6 +7643,14 @@ Support excerpts:
         for name in self.mitigation_grounding_dimensions:
             raw_dimension = raw_dimensions.get(name)
             raw_dimension = raw_dimension if isinstance(raw_dimension, dict) else {}
+            if name == "evidence_quality" and not has_user_evidence:
+                dimensions[name] = {
+                    "status": "NOT_APPLICABLE",
+                    "citation_ids": [],
+                    "support_score": None,
+                    "explanation": "User-provided evidence is optional and was not supplied.",
+                }
+                continue
             status = str(raw_dimension.get("status") or "INSUFFICIENT_INFO").upper()
             citation_ids = raw_dimension.get("citation_ids")
             citation_ids = citation_ids if isinstance(citation_ids, list) else []
@@ -7531,10 +7672,25 @@ Support excerpts:
                 "explanation": str(raw_dimension.get("explanation") or "").strip(),
             }
 
-        statuses = [str(dimension["status"]) for dimension in dimensions.values()]
-        supported_count = statuses.count("SUPPORTED")
-        coverage = supported_count / len(self.mitigation_grounding_dimensions)
-        contradicted = "CONTRADICTED" in statuses
+        applicable_dimensions = {
+            name: dimension
+            for name, dimension in dimensions.items()
+            if dimension["status"] != "NOT_APPLICABLE"
+        }
+        critical_dimensions = {
+            name: dimensions[name]
+            for name in self.mitigation_critical_grounding_dimensions
+            if name in dimensions
+        }
+        critical_statuses = [
+            str(dimension["status"]) for dimension in critical_dimensions.values()
+        ]
+        supported_count = critical_statuses.count("SUPPORTED")
+        coverage = supported_count / len(critical_dimensions) if critical_dimensions else 0.0
+        contradicted = any(
+            dimension["status"] == "CONTRADICTED"
+            for dimension in applicable_dimensions.values()
+        )
         valid = coverage == 1.0 and not contradicted
         retrieval_support = (
             sum(min(score, 1.0) for score in supported_scores) / len(supported_scores)
@@ -7547,14 +7703,50 @@ Support excerpts:
         )
         reason = str(parsed.get("reason") or "").strip()
         if not valid:
-            failed = [
+            contradicted_dimensions = [
                 name.replace("_", " ")
-                for name, dimension in dimensions.items()
-                if dimension["status"] != "SUPPORTED"
+                for name, dimension in applicable_dimensions.items()
+                if dimension["status"] == "CONTRADICTED"
             ]
-            reason = (
-                f"{reason} Unsupported validation dimensions: {', '.join(failed)}."
-            ).strip()
+            insufficient_dimensions = [
+                name.replace("_", " ")
+                for name, dimension in critical_dimensions.items()
+                if dimension["status"] == "INSUFFICIENT_INFO"
+            ]
+            reason_parts = [
+                "I could not validate the mitigation measure because its critical "
+                "hazard fit, mechanism, and justification must be supported by the "
+                "authoritative corpus, with no contradicted validation dimensions."
+            ]
+            if contradicted_dimensions:
+                reason_parts.append(
+                    "Contradicted dimensions: " + ", ".join(contradicted_dimensions) + "."
+                )
+            if insufficient_dimensions:
+                reason_parts.append(
+                    "Insufficiently supported dimensions: "
+                    + ", ".join(insufficient_dimensions)
+                    + "."
+                )
+            reason_parts.append(
+                "You may optionally provide supporting evidence, revise the measure or "
+                "justification, or add relevant material to the curated knowledge base."
+            )
+            reason = " ".join(reason_parts)
+        else:
+            unresolved_cautions = [
+                name.replace("_", " ")
+                for name, dimension in applicable_dimensions.items()
+                if name not in self.mitigation_critical_grounding_dimensions
+                and dimension["status"] == "INSUFFICIENT_INFO"
+            ]
+            if unresolved_cautions:
+                caution = (
+                    "Proceed with caution because the authoritative corpus did not resolve: "
+                    + ", ".join(unresolved_cautions)
+                    + "."
+                )
+                reason = f"{reason} {caution}".strip()
 
         return {
             "valid": valid,
@@ -7804,7 +7996,6 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         except Exception:
             logger.exception("Main knowledge-base lookup failed during mitigation validation")
             results = []
-        results = await self.grounding_models.rerank(query, results)
         return self._format_knowledge_results(results)
 
     async def _mitigation_evidence_context(
@@ -7838,10 +8029,9 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
                     "content": inline_evidence,
                 }
             )
-        results = await self.grounding_models.rerank(
-            query,
-            [*temporary_results, *inline_results],
-        )
+        results = [*temporary_results, *inline_results]
+        if inline_results:
+            results = await self.grounding_models.ground_results(query, results)
         return self._format_knowledge_results(results)
 
     async def _sector_prompt_rag_context(
@@ -7888,7 +8078,11 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
                 ).search(query, limit=4)
             except Exception:
                 logger.exception("Temporary evidence lookup failed during mitigation validation")
-        return self._format_knowledge_results([*temporary_results, *main_results])
+        results = await self.grounding_models.ground_results(
+            query,
+            [*temporary_results, *main_results],
+        )
+        return self._format_knowledge_results(results)
 
     @staticmethod
     def _mitigation_retrieval_query(
@@ -7910,9 +8104,19 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             page_label = f", page {page}" if page else ""
             score = result.get("score")
             score_label = f", score {score}" if score is not None else ""
+            nli_label = result.get("nli_label")
+            nli_score = result.get("nli_score")
+            nli_score_label = (
+                f", NLI {nli_label} {nli_score}"
+                if nli_label is not None and nli_score is not None
+                else ""
+            )
             content = str(result.get("content") or "").strip()
             if content:
-                lines.append(f"- [S{index}] {title}{page_label}{score_label}: {content[:900]}")
+                lines.append(
+                    f"- [S{index}] {title}{page_label}{score_label}{nli_score_label}: "
+                    f"{content[:900]}"
+                )
         return "\n".join(lines)
 
     @staticmethod

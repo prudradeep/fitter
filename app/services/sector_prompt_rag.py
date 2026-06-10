@@ -246,10 +246,17 @@ class SectorPromptRagService:
             title = str(result.get("title") or "Sector prompt")
             score = result.get("score")
             score_label = f", score {score}" if score is not None else ""
+            nli_label = result.get("nli_label")
+            nli_score = result.get("nli_score")
+            nli_score_label = (
+                f", NLI {nli_label} {nli_score}"
+                if nli_label is not None and nli_score is not None
+                else ""
+            )
             content = str(result.get("content") or "").strip()
             if content:
                 excerpt = content[:content_limit] if content_limit else content
-                lines.append(f"- [SP{index}] {title}{score_label}: {excerpt}")
+                lines.append(f"- [SP{index}] {title}{score_label}{nli_score_label}: {excerpt}")
         return "\n".join(lines)
 
     @classmethod

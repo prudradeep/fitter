@@ -32,6 +32,7 @@ class ChatSession:
     pending_mitigation_measure: str | None = None
     pending_mitigation_reason: str | None = None
     pending_mitigation_evidence: str | None = None
+    pending_mitigation_clarity_dimension: str | None = None
     mitigation_clarity_turns: int = 0
     mitigation_frozen_inputs: dict[str, str] | None = None
     suggested_mitigation_measure_id: int | None = None

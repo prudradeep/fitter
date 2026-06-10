@@ -257,6 +257,7 @@ def parse_mitigation_clarity_response(response: str) -> dict[str, object]:
             "clear": False,
             "dimensions": {},
             "follow_up_question": "Please clarify the mitigation measure or reason.",
+            "follow_up_questions": ["Please clarify the mitigation measure or reason."],
             "frozen_inputs": {},
             "reason": "The clarity response was not valid JSON.",
             "error": True,
@@ -267,6 +268,7 @@ def parse_mitigation_clarity_response(response: str) -> dict[str, object]:
             "clear": False,
             "dimensions": {},
             "follow_up_question": "Please clarify the mitigation measure or reason.",
+            "follow_up_questions": ["Please clarify the mitigation measure or reason."],
             "frozen_inputs": {},
             "reason": "The clarity response was not an object.",
             "error": True,
@@ -289,6 +291,14 @@ def parse_mitigation_clarity_response(response: str) -> dict[str, object]:
     follow_up_question = parsed.get("follow_up_question")
     if not isinstance(follow_up_question, str):
         follow_up_question = ""
+    follow_up_questions = parsed.get("follow_up_questions")
+    cleaned_follow_up_questions = [
+        question.strip()
+        for question in follow_up_questions
+        if isinstance(question, str) and question.strip()
+    ] if isinstance(follow_up_questions, list) else []
+    if not cleaned_follow_up_questions and follow_up_question.strip():
+        cleaned_follow_up_questions = [follow_up_question.strip()]
     reason = parsed.get("reason")
     if not isinstance(reason, str):
         reason = ""
@@ -304,6 +314,7 @@ def parse_mitigation_clarity_response(response: str) -> dict[str, object]:
         "clear": clear,
         "dimensions": dimensions,
         "follow_up_question": follow_up_question.strip(),
+        "follow_up_questions": cleaned_follow_up_questions,
         "frozen_inputs": cleaned_frozen_inputs,
         "reason": reason.strip(),
         "error": False,

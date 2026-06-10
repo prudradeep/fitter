@@ -1106,7 +1106,7 @@ function placeholderForStep(step, options = []) {
       return "Enter a mitigation measure and reason below...";
     }
     if (step === "mitigation_clarity") {
-      return "Answer the clarification question...";
+      return "Answer all clarification questions...";
     }
     if (step === "mitigation_review") {
       return "Ask about this mitigation, or move to next step...";
@@ -1124,7 +1124,7 @@ function placeholderForStep(step, options = []) {
     add_dgs: "Choose socio-demographic options...",
     hazards: "Type the hazard you want to add...",
     mitigation: "Ask a mitigation question or continue the plan...",
-    mitigation_clarity: "Answer the clarification question...",
+    mitigation_clarity: "Answer all clarification questions...",
     evaluation_question: "Use the score slider below...",
     complete: "Ask a follow-up question...",
     country: "Type or select a country...",
@@ -1364,7 +1364,7 @@ function applyCollapsibleBubble(bubble) {
   if (!content) return;
   bubble.querySelector(".bubble-toggle")?.remove();
   const wordCount = (content.textContent || "").trim().split(/\s+/).filter(Boolean).length;
-  if (wordCount <= 150) {
+  if (wordCount <= 100) {
     bubble.classList.remove("is-collapsible", "is-expanded");
     return;
   }
@@ -1423,6 +1423,28 @@ function renderValidationDetails(row, details) {
       grid.appendChild(item);
     });
     panel.appendChild(grid);
+  }
+
+  if (details.active_dimension) {
+    const active = document.createElement("p");
+    active.className = "validation-active-clarification";
+    active.innerHTML = `<strong>Currently clarifying:</strong> ${escapeHtml(validationLabel(details.active_dimension))}`;
+    panel.appendChild(active);
+  }
+
+  if (Array.isArray(details.clarification_questions) && details.clarification_questions.length) {
+    const group = document.createElement("div");
+    group.className = "validation-clarification-questions";
+    const heading = document.createElement("h4");
+    heading.textContent = "What needs clarification";
+    const list = document.createElement("ol");
+    details.clarification_questions.forEach((question) => {
+      const item = document.createElement("li");
+      item.textContent = question;
+      list.appendChild(item);
+    });
+    group.append(heading, list);
+    panel.appendChild(group);
   }
 
   appendValidationGroup(panel, "Signals", details.metrics, true);

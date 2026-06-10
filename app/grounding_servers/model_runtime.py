@@ -23,6 +23,7 @@ def reranker_model():
 @lru_cache(maxsize=1)
 def nli_model():
     cross_encoder = require_cross_encoder()
+    return cross_encoder(get_settings().nli_model, max_length=512)
 
 
 def sigmoid(value: float) -> float:
