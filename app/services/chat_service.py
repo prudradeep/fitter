@@ -102,6 +102,45 @@ class ChatService:
         "mechanism",
         "justification_soundness",
     )
+    mitigation_clarity_dimensions = (
+        "specificity",
+        "justification_clarity",
+        "evidence_identifiability",
+    )
+    mitigation_clarity_labels = {
+        "specificity": "Specificity",
+        "justification_clarity": "Justification clarity",
+        "evidence_identifiability": "Evidence identifiability",
+    }
+    mitigation_clarity_fallback_questions = {
+        "specificity": (
+            "What specific action or intervention does the mitigation measure provide?",
+            "Who will receive it, and under what circumstances?",
+        ),
+        "justification_clarity": (
+            "How is the proposed measure expected to reduce the selected hazard's impact?",
+            "Why is this measure appropriate for the identified affected group?",
+        ),
+        "evidence_identifiability": (
+            "What is the title or source of the evidence you provided?",
+            "Which finding or section of that source supports your input?",
+        ),
+    }
+    mitigation_clarity_default_questions = (
+        "Which part of the mitigation input needs to be interpreted more precisely?",
+        "What specific meaning should be used during validation?",
+    )
+    mitigation_clarity_field_aliases = {
+        "mitigation measure": "measure",
+        "measure": "measure",
+        "specificity": "measure",
+        "justification": "justification",
+        "reason": "justification",
+        "mechanism": "justification",
+        "evidence": "evidence",
+        "source": "evidence",
+        "citation": "evidence",
+    }
 
     def __init__(self, db: Session, user_id: int | None = None) -> None:
         self.db = db
@@ -2042,27 +2081,36 @@ Return Markdown only.
         if fields["evidence"]:
             evidence_text = f"{evidence_text}\n{fields['evidence']}".strip()
         if not any(fields.values()):
-            if clarity_dimension == "specificity":
-                mitigation_measure = f"{mitigation_measure}\nClarification: {answer}".strip()
-            elif clarity_dimension == "evidence_identifiability":
-                evidence_text = f"{evidence_text}\nClarification: {answer}".strip()
-            else:
-                reason = f"{reason}\nClarification: {answer}".strip()
+            mitigation_measure, reason, evidence_text = (
+                ChatService._merge_unlabelled_mitigation_clarification(
+                    mitigation_measure,
+                    reason,
+                    evidence_text,
+                    answer,
+                    clarity_dimension,
+                )
+            )
         return mitigation_measure, reason, evidence_text
 
     @staticmethod
-    def _clarification_fields(answer: str) -> dict[str, str]:
-        aliases = {
-            "mitigation measure": "measure",
-            "measure": "measure",
-            "specificity": "measure",
-            "justification": "justification",
-            "reason": "justification",
-            "mechanism": "justification",
-            "evidence": "evidence",
-            "source": "evidence",
-            "citation": "evidence",
-        }
+    def _merge_unlabelled_mitigation_clarification(
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str,
+        answer: str,
+        clarity_dimension: str | None,
+    ) -> tuple[str, str, str]:
+        clarification = f"Clarification: {answer}"
+        if clarity_dimension == "specificity":
+            mitigation_measure = f"{mitigation_measure}\n{clarification}".strip()
+        elif clarity_dimension == "evidence_identifiability":
+            evidence_text = f"{evidence_text}\n{clarification}".strip()
+        else:
+            reason = f"{reason}\n{clarification}".strip()
+        return mitigation_measure, reason, evidence_text
+
+    @classmethod
+    def _clarification_fields(cls, answer: str) -> dict[str, str]:
         buffers: dict[str, list[str]] = {
             "measure": [],
             "justification": [],
@@ -2075,7 +2123,9 @@ Return Markdown only.
                 continue
             match = re.match(r"^(?:\d+[.)]\s*)?([^:]+):\s*(.*)$", line)
             if match:
-                key = aliases.get(match.group(1).strip().casefold())
+                key = cls.mitigation_clarity_field_aliases.get(
+                    match.group(1).strip().casefold()
+                )
                 if key:
                     current = key
                     if match.group(2).strip():
@@ -2162,67 +2212,19 @@ Return Markdown only.
                 error=True,
             )
 
-        dimensions = clarity.get("dimensions")
-        unresolved_dimension = next(
-            (
-                dimension
-                for dimension in (
-                    "specificity",
-                    "justification_clarity",
-                    "evidence_identifiability",
-                )
-                if isinstance(dimensions, dict)
-                and dimensions.get(dimension) == "NEEDS_CLARIFICATION"
-            ),
-            None,
-        )
-        fallback_questions = {
-            "specificity": [
-                "What specific action or intervention does the mitigation measure provide?",
-                "Who will receive it, and under what circumstances?",
-            ],
-            "justification_clarity": [
-                "How is the proposed measure expected to reduce the selected hazard's impact?",
-                "Why is this measure appropriate for the identified affected group?",
-            ],
-            "evidence_identifiability": [
-                "What is the title or source of the evidence you provided?",
-                "Which finding or section of that source supports your input?",
-            ],
-        }.get(
+        unresolved_dimension = self._unresolved_mitigation_clarity_dimension(clarity)
+        follow_up_questions = self._mitigation_clarification_questions(
+            clarity,
             unresolved_dimension,
-            [
-                "Which part of the mitigation input needs to be interpreted more precisely?",
-                "What specific meaning should be used during validation?",
-            ],
         )
-        follow_up_questions = clarity.get("follow_up_questions")
-        if not isinstance(follow_up_questions, list):
-            follow_up_questions = []
-        follow_up_questions = [
-            str(question).strip()
-            for question in follow_up_questions
-            if str(question).strip()
-        ]
-        if not follow_up_questions:
-            fallback_question = str(clarity.get("follow_up_question") or "").strip()
-            if fallback_question:
-                follow_up_questions.append(fallback_question)
-        for fallback_question in fallback_questions:
-            if len(follow_up_questions) >= 2:
-                break
-            if fallback_question not in follow_up_questions:
-                follow_up_questions.append(fallback_question)
-        follow_up_questions = follow_up_questions[:3]
         question_list = "\n".join(
             f"{index}. {question}"
             for index, question in enumerate(follow_up_questions, start=1)
         )
-        dimension_label = {
-            "specificity": "Specificity",
-            "justification_clarity": "Justification clarity",
-            "evidence_identifiability": "Evidence identifiability",
-        }.get(unresolved_dimension, "Mitigation input")
+        dimension_label = self.mitigation_clarity_labels.get(
+            unresolved_dimension,
+            "Mitigation input",
+        )
         session.phase = "mitigation_clarity"
         session.pending_mitigation_measure = mitigation_measure
         session.pending_mitigation_reason = reason
@@ -2250,6 +2252,51 @@ Return Markdown only.
                 follow_up_questions,
             ),
         )
+
+    @classmethod
+    def _unresolved_mitigation_clarity_dimension(
+        cls,
+        clarity: dict[str, object],
+    ) -> str | None:
+        dimensions = clarity.get("dimensions")
+        if not isinstance(dimensions, dict):
+            return None
+        return next(
+            (
+                dimension
+                for dimension in cls.mitigation_clarity_dimensions
+                if dimensions.get(dimension) == "NEEDS_CLARIFICATION"
+            ),
+            None,
+        )
+
+    @classmethod
+    def _mitigation_clarification_questions(
+        cls,
+        clarity: dict[str, object],
+        unresolved_dimension: str | None,
+    ) -> list[str]:
+        raw_questions = clarity.get("follow_up_questions")
+        questions = [
+            str(question).strip()
+            for question in raw_questions
+            if str(question).strip()
+        ] if isinstance(raw_questions, list) else []
+        if not questions:
+            legacy_question = str(clarity.get("follow_up_question") or "").strip()
+            if legacy_question:
+                questions.append(legacy_question)
+
+        fallback_questions = cls.mitigation_clarity_fallback_questions.get(
+            unresolved_dimension,
+            cls.mitigation_clarity_default_questions,
+        )
+        for question in fallback_questions:
+            if len(questions) >= 2:
+                break
+            if question not in questions:
+                questions.append(question)
+        return questions[:3]
 
     def _can_freeze_after_mitigation_clarification(
         self,
@@ -7637,40 +7684,11 @@ Support excerpts:
         citation_scores = self._support_citation_scores(support_context)
         raw_dimensions = parsed.get("dimensions")
         raw_dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
-        dimensions: dict[str, dict[str, object]] = {}
-        supported_scores: list[float] = []
-
-        for name in self.mitigation_grounding_dimensions:
-            raw_dimension = raw_dimensions.get(name)
-            raw_dimension = raw_dimension if isinstance(raw_dimension, dict) else {}
-            if name == "evidence_quality" and not has_user_evidence:
-                dimensions[name] = {
-                    "status": "NOT_APPLICABLE",
-                    "citation_ids": [],
-                    "support_score": None,
-                    "explanation": "User-provided evidence is optional and was not supplied.",
-                }
-                continue
-            status = str(raw_dimension.get("status") or "INSUFFICIENT_INFO").upper()
-            citation_ids = raw_dimension.get("citation_ids")
-            citation_ids = citation_ids if isinstance(citation_ids, list) else []
-            valid_scores = [
-                citation_scores[citation_id]
-                for citation_id in citation_ids
-                if isinstance(citation_id, str)
-                and citation_id in citation_scores
-                and citation_scores[citation_id] >= self.settings.mitigation_support_score_floor
-            ]
-            if status == "SUPPORTED" and not valid_scores:
-                status = "INSUFFICIENT_INFO"
-            if status == "SUPPORTED":
-                supported_scores.append(max(valid_scores))
-            dimensions[name] = {
-                "status": status,
-                "citation_ids": citation_ids,
-                "support_score": round(max(valid_scores), 4) if valid_scores else None,
-                "explanation": str(raw_dimension.get("explanation") or "").strip(),
-            }
+        dimensions, supported_scores = self._scored_mitigation_dimensions(
+            raw_dimensions,
+            citation_scores,
+            has_user_evidence,
+        )
 
         applicable_dimensions = {
             name: dimension
@@ -7701,52 +7719,12 @@ Support excerpts:
         confidence_score = round(
             100 * ((0.6 * coverage) + (0.25 * retrieval_support) + (0.15 * verdict_stability))
         )
-        reason = str(parsed.get("reason") or "").strip()
-        if not valid:
-            contradicted_dimensions = [
-                name.replace("_", " ")
-                for name, dimension in applicable_dimensions.items()
-                if dimension["status"] == "CONTRADICTED"
-            ]
-            insufficient_dimensions = [
-                name.replace("_", " ")
-                for name, dimension in critical_dimensions.items()
-                if dimension["status"] == "INSUFFICIENT_INFO"
-            ]
-            reason_parts = [
-                "I could not validate the mitigation measure because its critical "
-                "hazard fit, mechanism, and justification must be supported by the "
-                "authoritative corpus, with no contradicted validation dimensions."
-            ]
-            if contradicted_dimensions:
-                reason_parts.append(
-                    "Contradicted dimensions: " + ", ".join(contradicted_dimensions) + "."
-                )
-            if insufficient_dimensions:
-                reason_parts.append(
-                    "Insufficiently supported dimensions: "
-                    + ", ".join(insufficient_dimensions)
-                    + "."
-                )
-            reason_parts.append(
-                "You may optionally provide supporting evidence, revise the measure or "
-                "justification, or add relevant material to the curated knowledge base."
-            )
-            reason = " ".join(reason_parts)
-        else:
-            unresolved_cautions = [
-                name.replace("_", " ")
-                for name, dimension in applicable_dimensions.items()
-                if name not in self.mitigation_critical_grounding_dimensions
-                and dimension["status"] == "INSUFFICIENT_INFO"
-            ]
-            if unresolved_cautions:
-                caution = (
-                    "Proceed with caution because the authoritative corpus did not resolve: "
-                    + ", ".join(unresolved_cautions)
-                    + "."
-                )
-                reason = f"{reason} {caution}".strip()
+        reason = self._mitigation_grounding_reason(
+            str(parsed.get("reason") or "").strip(),
+            valid,
+            applicable_dimensions,
+            critical_dimensions,
+        )
 
         return {
             "valid": valid,
@@ -7760,6 +7738,108 @@ Support excerpts:
             "support_context": support_context,
             "support_label": support_label,
         }
+
+    def _scored_mitigation_dimensions(
+        self,
+        raw_dimensions: dict[object, object],
+        citation_scores: dict[str, float],
+        has_user_evidence: bool,
+    ) -> tuple[dict[str, dict[str, object]], list[float]]:
+        dimensions: dict[str, dict[str, object]] = {}
+        supported_scores: list[float] = []
+        for name in self.mitigation_grounding_dimensions:
+            raw_dimension = raw_dimensions.get(name)
+            raw_dimension = raw_dimension if isinstance(raw_dimension, dict) else {}
+            if name == "evidence_quality" and not has_user_evidence:
+                dimensions[name] = {
+                    "status": "NOT_APPLICABLE",
+                    "citation_ids": [],
+                    "support_score": None,
+                    "explanation": "User-provided evidence is optional and was not supplied.",
+                }
+                continue
+
+            status = str(raw_dimension.get("status") or "INSUFFICIENT_INFO").upper()
+            citation_ids = raw_dimension.get("citation_ids")
+            citation_ids = citation_ids if isinstance(citation_ids, list) else []
+            valid_scores = [
+                citation_scores[citation_id]
+                for citation_id in citation_ids
+                if isinstance(citation_id, str)
+                and citation_id in citation_scores
+                and citation_scores[citation_id] >= self.settings.mitigation_support_score_floor
+            ]
+            if status == "SUPPORTED" and not valid_scores:
+                status = "INSUFFICIENT_INFO"
+            if status == "SUPPORTED":
+                supported_scores.append(max(valid_scores))
+            dimensions[name] = {
+                "status": status,
+                "citation_ids": citation_ids,
+                "support_score": round(max(valid_scores), 4) if valid_scores else None,
+                "explanation": str(raw_dimension.get("explanation") or "").strip(),
+            }
+        return dimensions, supported_scores
+
+    def _mitigation_grounding_reason(
+        self,
+        reason: str,
+        valid: bool,
+        applicable_dimensions: dict[str, dict[str, object]],
+        critical_dimensions: dict[str, dict[str, object]],
+    ) -> str:
+        if valid:
+            unresolved_cautions = self._dimension_names_with_status(
+                applicable_dimensions,
+                "INSUFFICIENT_INFO",
+                exclude=set(self.mitigation_critical_grounding_dimensions),
+            )
+            if not unresolved_cautions:
+                return reason
+            caution = (
+                "Proceed with caution because the authoritative corpus did not resolve: "
+                + ", ".join(unresolved_cautions)
+                + "."
+            )
+            return f"{reason} {caution}".strip()
+
+        reason_parts = [
+            "I could not validate the mitigation measure because its critical "
+            "hazard fit, mechanism, and justification must be supported by the "
+            "authoritative corpus, with no contradicted validation dimensions."
+        ]
+        contradicted = self._dimension_names_with_status(
+            applicable_dimensions,
+            "CONTRADICTED",
+        )
+        if contradicted:
+            reason_parts.append("Contradicted dimensions: " + ", ".join(contradicted) + ".")
+        insufficient = self._dimension_names_with_status(
+            critical_dimensions,
+            "INSUFFICIENT_INFO",
+        )
+        if insufficient:
+            reason_parts.append(
+                "Insufficiently supported dimensions: " + ", ".join(insufficient) + "."
+            )
+        reason_parts.append(
+            "You may optionally provide supporting evidence, revise the measure or "
+            "justification, or add relevant material to the curated knowledge base."
+        )
+        return " ".join(reason_parts)
+
+    @staticmethod
+    def _dimension_names_with_status(
+        dimensions: dict[str, dict[str, object]],
+        status: str,
+        exclude: set[str] | None = None,
+    ) -> list[str]:
+        excluded = exclude or set()
+        return [
+            name.replace("_", " ")
+            for name, dimension in dimensions.items()
+            if name not in excluded and dimension["status"] == status
+        ]
 
     @staticmethod
     def _support_citation_scores(support_context: str) -> dict[str, float]:

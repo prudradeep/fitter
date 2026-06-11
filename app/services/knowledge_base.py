@@ -1,19 +1,20 @@
-import io
 import re
-import zipfile
 from dataclasses import dataclass
-from html.parser import HTMLParser
 from pathlib import Path
 from threading import Lock
-from xml.etree import ElementTree
 
 import httpx
-from pypdf import PdfReader
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import KnowledgeChunk, KnowledgeDocument
+from app.services.document_text import (
+    compact_text,
+    extract_docx_text,
+    extract_pdf_page_texts,
+    html_to_text,
+)
 from app.services.grounding_models import GroundingModelService
 
 try:
@@ -202,74 +203,16 @@ class KnowledgeBaseService:
     ) -> list[dict[str, object]]:
         overfetch = max(limit * 25, 100)
         source_uri_filter = [item for item in (source_uris or []) if item]
-        vector_scores: dict[int, float] = {}
-        if faiss is not None and np is not None and self._index_path.exists():
-            try:
-                query_vector = await self._embed(query)
-                vector = normalize_vectors([query_vector])
-                with FAISS_LOCK:
-                    index = self._load_index(len(query_vector))
-                    if index.ntotal:
-                        scores, ids = index.search(vector, min(overfetch, index.ntotal))
-                        vector_scores = {
-                            int(chunk_id): float(score)
-                            for score, chunk_id in zip(scores[0], ids[0], strict=False)
-                            if int(chunk_id) >= 0
-                        }
-            except (httpx.HTTPError, ValueError):
-                vector_scores = {}
-        vector_chunk_ids = list(vector_scores)
-
+        vector_scores = await self._vector_search_scores(query, overfetch)
         candidates: dict[int, tuple[KnowledgeChunk, KnowledgeDocument, float]] = {}
-        if vector_chunk_ids:
-            rows = self.db.execute(
-                select(KnowledgeChunk, KnowledgeDocument)
-                .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
-                .where(
-                    KnowledgeChunk.id.in_(vector_chunk_ids),
-                    KnowledgeDocument.user_id == self.user_id,
-                    KnowledgeDocument.scope == self.scope,
-                    *(
-                        [KnowledgeDocument.session_key == self.session_key]
-                        if self.scope == "temporary"
-                        else []
-                    ),
-                    *(
-                        [KnowledgeDocument.source_uri.in_(source_uri_filter)]
-                        if source_uri_filter
-                        else []
-                    ),
-                )
-            ).all()
-            for chunk, document in rows:
-                if is_index_page_text(chunk.content):
-                    continue
+        if vector_scores:
+            for chunk, document in self._knowledge_rows(
+                source_uri_filter,
+                list(vector_scores),
+            ):
                 candidates[chunk.id] = (chunk, document, vector_scores.get(chunk.id, 0.0))
 
-        lexical_rows = self.db.execute(
-            select(KnowledgeChunk, KnowledgeDocument)
-            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
-            .where(
-                KnowledgeDocument.user_id == self.user_id,
-                KnowledgeDocument.scope == self.scope,
-                *(
-                    [KnowledgeDocument.session_key == self.session_key]
-                    if self.scope == "temporary"
-                    else []
-                ),
-                *(
-                    [KnowledgeDocument.source_uri.in_(source_uri_filter)]
-                    if source_uri_filter
-                    else []
-                ),
-            )
-        ).all()
-        lexical_rows = [
-            (chunk, document)
-            for chunk, document in lexical_rows
-            if not is_index_page_text(chunk.content)
-        ]
-
+        lexical_rows = self._knowledge_rows(source_uri_filter)
         query_features = build_query_features(query)
         lexical_scores = {
             chunk.id: lexical_score(query_features, chunk, document)
@@ -289,8 +232,62 @@ class KnowledgeBaseService:
             key=lambda row: row[2] + (LEXICAL_WEIGHT * lexical_scores.get(row[0].id, 0.0)),
             reverse=True,
         )
+        results = self._search_results(ranked, lexical_scores, limit)
+        return await self.grounding_models.ground_results(query, results)
+
+    async def _vector_search_scores(self, query: str, overfetch: int) -> dict[int, float]:
+        if faiss is None or np is None or not self._index_path.exists():
+            return {}
+        try:
+            query_vector = await self._embed(query)
+            vector = normalize_vectors([query_vector])
+            with FAISS_LOCK:
+                index = self._load_index(len(query_vector))
+                if not index.ntotal:
+                    return {}
+                scores, ids = index.search(vector, min(overfetch, index.ntotal))
+        except (httpx.HTTPError, ValueError):
+            return {}
+        return {
+            int(chunk_id): float(score)
+            for score, chunk_id in zip(scores[0], ids[0], strict=False)
+            if int(chunk_id) >= 0
+        }
+
+    def _knowledge_rows(
+        self,
+        source_uri_filter: list[str],
+        chunk_ids: list[int] | None = None,
+    ) -> list[tuple[KnowledgeChunk, KnowledgeDocument]]:
+        filters = [
+            KnowledgeDocument.user_id == self.user_id,
+            KnowledgeDocument.scope == self.scope,
+        ]
+        if self.scope == "temporary":
+            filters.append(KnowledgeDocument.session_key == self.session_key)
+        if source_uri_filter:
+            filters.append(KnowledgeDocument.source_uri.in_(source_uri_filter))
+        if chunk_ids is not None:
+            filters.append(KnowledgeChunk.id.in_(chunk_ids))
+        rows = self.db.execute(
+            select(KnowledgeChunk, KnowledgeDocument)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(*filters)
+        ).all()
+        return [
+            (chunk, document)
+            for chunk, document in rows
+            if not is_index_page_text(chunk.content)
+        ]
+
+    @staticmethod
+    def _search_results(
+        ranked: list[tuple[KnowledgeChunk, KnowledgeDocument, float]],
+        lexical_scores: dict[int, float],
+        limit: int,
+    ) -> list[dict[str, object]]:
         results: list[dict[str, object]] = []
-        for chunk, document, vector_score in ranked:
+        for chunk, document, vector_score in ranked[:limit]:
             lexical = lexical_scores.get(chunk.id, 0.0)
             combined_score = vector_score + (LEXICAL_WEIGHT * lexical)
             results.append(
@@ -306,9 +303,7 @@ class KnowledgeBaseService:
                     "content": chunk.content,
                 }
             )
-            if len(results) >= limit:
-                break
-        return await self.grounding_models.ground_results(query, results)
+        return results
 
     def delete_temporary_documents(self, document_ids: list[int] | None = None) -> int:
         if self.scope != "temporary" or not self.session_key:
@@ -656,57 +651,10 @@ async def extract_url_chunks(url: str) -> list[ChunkDraft]:
 
 
 def extract_pdf_chunks(content: bytes) -> list[ChunkDraft]:
-    reader = PdfReader(io.BytesIO(content))
     chunks: list[ChunkDraft] = []
-    for index, page in enumerate(reader.pages[:30], start=1):
-        raw_text = page.extract_text() or ""
+    for index, raw_text in enumerate(extract_pdf_page_texts(content, max_pages=30), start=1):
         if is_index_page_text(raw_text):
             continue
         page_text = compact_text(raw_text)
         chunks.extend(chunk_text(page_text, index))
     return chunks
-
-
-def extract_docx_text(content: bytes) -> str:
-    with zipfile.ZipFile(io.BytesIO(content)) as archive:
-        document_xml = archive.read("word/document.xml")
-    root = ElementTree.fromstring(document_xml)
-    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    paragraphs: list[str] = []
-    for paragraph in root.iter(f"{namespace}p"):
-        text = "".join(node.text or "" for node in paragraph.iter(f"{namespace}t")).strip()
-        if text:
-            paragraphs.append(text)
-    return "\n".join(paragraphs)
-
-
-def html_to_text(html: str) -> str:
-    parser = TextExtractor()
-    parser.feed(html)
-    return parser.text()
-
-
-def compact_text(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
-class TextExtractor(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-        self.skip_depth = 0
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style", "noscript"}:
-            self.skip_depth += 1
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "noscript"} and self.skip_depth:
-            self.skip_depth -= 1
-
-    def handle_data(self, data: str) -> None:
-        if not self.skip_depth:
-            self.parts.append(data)
-
-    def text(self) -> str:
-        return " ".join(self.parts)

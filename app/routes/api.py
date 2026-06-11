@@ -1,13 +1,10 @@
-import io
 import json
 import re
 import zipfile
-from html.parser import HTMLParser
 from xml.etree import ElementTree
 
 from fastapi import APIRouter, Depends, Request
 import httpx
-from pypdf import PdfReader
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
@@ -17,6 +14,12 @@ from app.models import AppUser, UserChatMessage, UserSession
 from app.schemas import ChatRequest, ChatResponse
 from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
+from app.services.document_text import (
+    compact_text,
+    extract_docx_text,
+    extract_pdf_page_texts,
+    html_to_text,
+)
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.sector_prompt_rag import SectorPromptRagService
 
@@ -456,7 +459,7 @@ async def _extract_url_text(url: str) -> str:
     encoding = response.encoding or "utf-8"
     text = content.decode(encoding, errors="ignore")
     if "html" in content_type or "<html" in text[:500].casefold():
-        text = _html_to_text(text)
+        text = html_to_text(text)
     return _compact_text(text)
 
 
@@ -471,8 +474,7 @@ def _extract_file_text(filename: str, content: bytes) -> str:
 
 def _extract_pdf_text(content: bytes) -> str:
     try:
-        reader = PdfReader(io.BytesIO(content))
-        text = "\n".join(page.extract_text() or "" for page in reader.pages[:15])
+        text = "\n".join(extract_pdf_page_texts(content, max_pages=15))
     except Exception as exc:
         return f"Unable to extract evidence from PDF: {exc}."
     return _compact_text(text)
@@ -480,53 +482,13 @@ def _extract_pdf_text(content: bytes) -> str:
 
 def _extract_docx_text(content: bytes) -> str:
     try:
-        with zipfile.ZipFile(io.BytesIO(content)) as archive:
-            document_xml = archive.read("word/document.xml")
+        text = extract_docx_text(content)
     except (KeyError, zipfile.BadZipFile) as exc:
         return f"Unable to extract evidence from DOCX: {exc}."
-
-    try:
-        root = ElementTree.fromstring(document_xml)
     except ElementTree.ParseError as exc:
         return f"Unable to parse DOCX evidence: {exc}."
-
-    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    paragraphs: list[str] = []
-    for paragraph in root.iter(f"{namespace}p"):
-        text = "".join(node.text or "" for node in paragraph.iter(f"{namespace}t")).strip()
-        if text:
-            paragraphs.append(text)
-    return _compact_text("\n".join(paragraphs))
-
-
-def _html_to_text(html: str) -> str:
-    parser = _TextExtractor()
-    parser.feed(html)
-    return parser.text()
+    return _compact_text(text)
 
 
 def _compact_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text).strip()
-    return text[:MAX_EVIDENCE_CHARS]
-
-
-class _TextExtractor(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self._parts: list[str] = []
-        self._skip_depth = 0
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style", "noscript"}:
-            self._skip_depth += 1
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "noscript"} and self._skip_depth:
-            self._skip_depth -= 1
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip_depth:
-            self._parts.append(data)
-
-    def text(self) -> str:
-        return " ".join(self._parts)
+    return compact_text(text, max_chars=MAX_EVIDENCE_CHARS)
