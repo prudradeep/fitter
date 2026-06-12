@@ -1987,6 +1987,12 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   color: #64748b;
 }
 
+.validation-dimension-explanation {
+  margin: 2px 0 0;
+  color: #475569;
+  line-height: 1.45;
+}
+
 .validation-badge {
   width: fit-content;
   border-radius: 999px;
@@ -2008,37 +2014,6 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 .validation-badge-pending {
   background: #fef3c7;
   color: #92400e;
-}
-
-.validation-active-clarification {
-  margin: 0 12px 8px;
-  border-left: 3px solid #d97706;
-  border-radius: 4px;
-  background: #fffbeb;
-  padding: 8px 10px;
-  color: #78350f;
-  font-size: 0.76rem;
-}
-
-.validation-clarification-questions {
-  margin: 0 12px 12px;
-  color: #475569;
-  font-size: 0.76rem;
-}
-
-.validation-clarification-questions h4 {
-  margin: 0 0 5px;
-  color: #334155;
-  font-size: 0.76rem;
-}
-
-.validation-clarification-questions ol {
-  margin: 0;
-  padding-left: 18px;
-}
-
-.validation-clarification-questions li + li {
-  margin-top: 4px;
 }
 
 .validation-signal-group {

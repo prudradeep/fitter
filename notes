@@ -68,3 +68,24 @@ Use only RAG & LLM for sector prompts for hazards listing and socio demographic 
 
 After selecting Hazard
 Left panel: Show the selected hazards and the affected socio demographic profiles with icons
+
+
+
+Save mitigation groundng status in DB. It will be shown in future....
+
+Who will receive it? : It should be the benefited groups name
+
+Evaluation: Dimension: +Reach: compare the profiles affected by the hazard to the profiles benefited by the MM. If there is 0% overlap the MM should be flagged as a INSUFFICIENT_INFO CRITICAL
+
+After validation mitigation measure: Left panel
+Remove Affected socio-demographic profiles
+Show
+    Mitigation Measure
+    Benefited socio demographic profiles
+    Grounding confidence score
+    Mitigation grounding status positive only show explanation on hover or click.
+    Signals: 
+        Verdict Stability
+    Checks:
+        Support Corpus
+    Last note

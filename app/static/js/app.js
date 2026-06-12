@@ -1460,31 +1460,18 @@ function renderValidationDetails(row, details) {
         scoreText.textContent = `Support score: ${formatValidationNumber(score)}`;
         item.appendChild(scoreText);
       }
+      const explanation = typeof value === "object"
+        ? String(value?.explanation || "").trim()
+        : "";
+      if (explanation) {
+        const explanationText = document.createElement("p");
+        explanationText.className = "validation-dimension-explanation";
+        explanationText.textContent = explanation;
+        item.appendChild(explanationText);
+      }
       grid.appendChild(item);
     });
     panel.appendChild(grid);
-  }
-
-  if (details.active_dimension) {
-    const active = document.createElement("p");
-    active.className = "validation-active-clarification";
-    active.innerHTML = `<strong>Currently clarifying:</strong> ${escapeHtml(validationLabel(details.active_dimension))}`;
-    panel.appendChild(active);
-  }
-
-  if (Array.isArray(details.clarification_questions) && details.clarification_questions.length) {
-    const group = document.createElement("div");
-    group.className = "validation-clarification-questions";
-    const heading = document.createElement("h4");
-    heading.textContent = "What needs clarification";
-    const list = document.createElement("ol");
-    details.clarification_questions.forEach((question) => {
-      const item = document.createElement("li");
-      item.textContent = question;
-      list.appendChild(item);
-    });
-    group.append(heading, list);
-    panel.appendChild(group);
   }
 
   appendValidationGroup(panel, "Signals", details.metrics, true);
@@ -1653,6 +1640,15 @@ function updateSessionCard(session) {
   updateNewSessionButton();
   renderSelectedHazardContext(session);
   updateStageVisual(currentStep, currentSession, currentOptions);
+}
+
+function applyInputValues(values = {}) {
+  if (!values || typeof values !== "object") return;
+  if (typeof values.reason === "string") reasonInput.value = values.reason;
+  if (typeof values.secondary_reason === "string") {
+    secondaryReasonInput.value = values.secondary_reason;
+  }
+  if (typeof values.evidence_url === "string") evidenceInput.value = values.evidence_url;
 }
 
 function updateNewSessionButton() {
@@ -2461,6 +2457,7 @@ async function restoreSession(nextSessionId) {
     });
     updateSessionCard(data.session || {});
     setInputMode(data.input_mode || "text", data.step, data.options || []);
+    applyInputValues(data.input_values);
     renderOptions(data.options || [], data.other_options || []);
     applySavedInputState();
     sessionsPanel.hidden = true;
@@ -2641,6 +2638,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     renderValidationDetails(botRow, data.validation_details);
     updateSessionCard(data.session);
     setInputMode(data.input_mode || "text", data.step, data.options || []);
+    applyInputValues(data.input_values);
     renderOptions(data.options || [], data.other_options || []);
     loadSessions();
     shouldScheduleAuto = true;

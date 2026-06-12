@@ -33,5 +33,6 @@ class ChatResponse(BaseModel):
     other_options: list[str] = Field(default_factory=list)
     session: SessionSummary
     input_mode: str = "text"
+    input_values: dict[str, str] = Field(default_factory=dict)
     error: bool = False
     validation_details: dict[str, object] | None = None

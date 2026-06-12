@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 
@@ -94,7 +95,7 @@ class KnowledgeBaseService:
             source_type=source_type,
             source_uri=source_uri,
             scope=self.scope,
-            session_key=self.session_key if self.scope == "temporary" else None,
+            session_key=self.session_key if self.scope in {"temporary", "quarantined"} else None,
         )
         self.db.add(document)
         self.db.flush()
@@ -354,7 +355,12 @@ class KnowledgeBaseService:
         self.db.commit()
         return int(result.rowcount or 0)
 
-    def promote_temporary_documents(self) -> int:
+    def promote_temporary_documents(
+        self,
+        *,
+        target_scope: str = "main",
+        provenance: str | None = None,
+    ) -> int:
         if self.scope != "temporary" or not self.session_key:
             return 0
         documents = self.db.scalars(
@@ -374,12 +380,26 @@ class KnowledgeBaseService:
         )
         vectors = self._reconstruct_vectors(chunk_ids)
         self._remove_vectors(chunk_ids)
-        main_service = KnowledgeBaseService(self.db, self.user_id)
         if vectors:
-            main_service._add_vectors(list(vectors), list(vectors.values()))
+            target_service = KnowledgeBaseService(self.db, self.user_id, scope=target_scope)
+            target_service._add_vectors(list(vectors), list(vectors.values()))
+        validated_at = datetime.now(timezone.utc).isoformat()
         for document in documents:
-            document.scope = "main"
-            document.session_key = None
+            if provenance:
+                original_source_type = document.source_type
+                document.title = (
+                    f"[{provenance}; original_source_type={original_source_type}; "
+                    f"validated_at={validated_at}; "
+                    f"session={self.session_key}] {document.title}"
+                )[:255]
+                document.source_type = provenance[:40]
+                chunks = self.db.scalars(
+                    select(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id)
+                ).all()
+                for chunk in chunks:
+                    chunk.source_type = provenance[:40]
+            document.scope = target_scope
+            document.session_key = self.session_key if target_scope == "quarantined" else None
         self.db.commit()
         return len(documents)
 
@@ -478,6 +498,8 @@ class KnowledgeBaseService:
             return main_path.with_name(f"{main_path.stem}.temporary{main_path.suffix}")
         if self.scope == "sector_prompt":
             return main_path.with_name(f"{main_path.stem}.sector_prompts{main_path.suffix}")
+        if self.scope == "quarantined":
+            return main_path.with_name(f"{main_path.stem}.quarantined{main_path.suffix}")
         return main_path
 
 

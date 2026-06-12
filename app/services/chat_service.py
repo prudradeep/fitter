@@ -89,6 +89,8 @@ class ChatService:
     invalid_message = render_message("invalid_selection.md")
     fuzzy_rejected_message = render_message("fuzzy_rejected.md")
     mitigation_clarity_turn_cap = 5
+    mitigation_support_label_user_evidence = "USER_EVIDENCE"
+    mitigation_support_label_curated_knowledge_base = "CURATED_KNOWLEDGE_BASE"
     mitigation_grounding_dimensions = (
         "hazard_fit",
         "mechanism",
@@ -99,7 +101,6 @@ class ChatService:
     )
     mitigation_critical_grounding_dimensions = (
         "hazard_fit",
-        "mechanism",
         "justification_soundness",
     )
     mitigation_clarity_dimensions = (
@@ -670,8 +671,12 @@ class ChatService:
             "reason": str(clarity.get("reason") or "").strip(),
         }
 
-    def _grounding_validation_details(self, session: ChatSession) -> dict[str, object] | None:
-        validation = session.mitigation_validation
+    def _grounding_validation_details(
+        self,
+        session: ChatSession,
+        validation: dict[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        validation = validation or session.mitigation_validation
         if not isinstance(validation, dict):
             return None
         return {
@@ -679,6 +684,7 @@ class ChatService:
             "title": "Mitigation grounding status",
             "dimensions": validation.get("dimensions") or {},
             "metrics": {
+                "outcome": validation.get("outcome"),
                 "rubric_coverage": validation.get("rubric_coverage"),
                 "retrieval_support": validation.get("retrieval_support"),
                 "verdict_stability": validation.get("verdict_stability"),
@@ -1906,7 +1912,7 @@ Return Markdown only.
                 error=True,
             )
 
-        evidence_text = evidence or ""
+        evidence_text = evidence or session.pending_mitigation_evidence or ""
         evidence_branch = self._has_user_supplied_evidence(evidence_text)
         if evidence_branch and not self._has_readable_evidence_content(evidence_text):
             return ChatResponse(
@@ -2404,8 +2410,25 @@ Return Markdown only.
                 frozen.get("measure_description") or mitigation_measure
             ).strip(),
             "justification": str(frozen.get("justification") or reason).strip(),
-            "evidence": str(frozen.get("evidence") or evidence_text).strip(),
+            # Evidence is an immutable source reference/content payload. Do not
+            # let the clarity model replace an absent value with "Not provided"
+            # or rewrite uploaded-document identifiers.
+            "evidence": evidence_text.strip(),
         }
+
+    @staticmethod
+    def _normalized_mitigation_evidence(evidence: str | None) -> str:
+        clean_evidence = str(evidence or "").strip()
+        if clean_evidence.casefold() in {
+            "none",
+            "none yet",
+            "not provided",
+            "no evidence",
+            "no evidence provided",
+            "n/a",
+        }:
+            return ""
+        return clean_evidence
 
     async def _validate_frozen_mitigation_inputs(
         self,
@@ -2415,8 +2438,20 @@ Return Markdown only.
         reason: str,
         evidence_text: str,
     ) -> ChatResponse:
+        evaluated_inputs = {
+            "measure_description": mitigation_measure.strip(),
+            "justification": reason.strip(),
+            "evidence": self._normalized_mitigation_evidence(evidence_text),
+        }
+        mitigation_measure = evaluated_inputs["measure_description"]
+        reason = evaluated_inputs["justification"]
+        evidence_text = evaluated_inputs["evidence"]
+        session.mitigation_frozen_inputs = evaluated_inputs
         session.phase = "mitigation_reason"
         evidence_branch = self._has_user_supplied_evidence(evidence_text)
+        session.pending_mitigation_measure = mitigation_measure
+        session.pending_mitigation_reason = reason
+        session.pending_mitigation_evidence = evidence_text
 
         validation = await self._validate_mitigation_against_stats(
             session=session,
@@ -2436,19 +2471,41 @@ Return Markdown only.
                 error=True,
             )
 
-        if not validation["valid"]:
+        validation["evaluated_inputs"] = evaluated_inputs.copy()
+        outcome = str(validation.get("outcome") or ("PASS" if validation["valid"] else "REJECT"))
+        if outcome == "REJECT":
             self._discard_temporary_evidence(session, evidence_text)
+            session.pending_mitigation_evidence = None
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_reason",
                 bot_message=render_message(
-                    "mitigation_validation_failed.md",
-                    reason=self._mitigation_revision_reason(validation),
+                    "mitigation_validation_rejected.md",
+                    reason=self._mitigation_outcome_reason(validation, "REJECT"),
                 ),
                 options=[],
                 session=session.summary(),
                 input_mode="reason_evidence",
                 error=True,
+                validation_details=self._grounding_validation_details(session, validation),
+            )
+        if outcome == "ABSTAIN":
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_validation_abstained.md",
+                    reason=self._mitigation_outcome_reason(validation, "ABSTAIN"),
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                input_values={
+                    "reason": reason,
+                    "evidence_url": self._evidence_url(evidence_text),
+                },
+                error=False,
+                validation_details=self._grounding_validation_details(session, validation),
             )
 
         synthesis = await self._grounded_mitigation_synthesis(
@@ -2469,7 +2526,16 @@ Return Markdown only.
             )
 
         if evidence_branch:
-            self._promote_temporary_evidence(session)
+            self._promote_temporary_evidence(
+                session,
+                target_scope="quarantined",
+                provenance="validated_user_evidence",
+            )
+            await self._admit_inline_evidence_to_quarantine(
+                session,
+                evidence_text,
+                validation,
+            )
         session.mitigation_measure = mitigation_measure
         session.mitigation_reason = reason
         session.mitigation_validation = validation
@@ -4613,7 +4679,13 @@ Retrieved knowledge-base excerpts:
         except Exception:
             logger.exception("Failed to discard rejected temporary evidence")
 
-    def _promote_temporary_evidence(self, session: ChatSession) -> None:
+    def _promote_temporary_evidence(
+        self,
+        session: ChatSession,
+        *,
+        target_scope: str = "main",
+        provenance: str | None = None,
+    ) -> None:
         if not session.session_key:
             return
         try:
@@ -4622,7 +4694,10 @@ Retrieved knowledge-base excerpts:
                 self.user_id,
                 scope="temporary",
                 session_key=session.session_key,
-            ).promote_temporary_documents()
+            ).promote_temporary_documents(
+                target_scope=target_scope,
+                provenance=provenance,
+            )
         except Exception:
             logger.exception("Failed to promote temporary evidence")
 
@@ -7573,16 +7648,19 @@ CALIBRATION (justification_clarity).
         evidence: str = "",
     ) -> dict[str, object] | None:
         has_evidence = self._has_user_supplied_evidence(evidence)
-        support_context = (
+        raw_support_context = (
             await self._mitigation_evidence_context(session, mitigation_measure, reason, evidence)
             if has_evidence
             else await self._mitigation_main_knowledge_context(session, mitigation_measure, reason)
         )
         support_label = (
-            "user-supplied evidence only"
+            self.mitigation_support_label_user_evidence
             if has_evidence
-            else "the curated main knowledge base only"
+            else self.mitigation_support_label_curated_knowledge_base
         )
+        support_context = self._floor_filtered_support_context(raw_support_context)
+        valid_citation_ids = set(self._support_citation_scores(support_context))
+        clarification_block = self._mitigation_clarification_history_block(session)
         context = f"""
 You are the groundedness validator for Dr Transition. You decide, per
 dimension, whether the AUTHORITATIVE SUPPORT CORPUS backs the proposed
@@ -7595,7 +7673,12 @@ its excerpts. That selection is final: cite ONLY those excerpts. Do not
 reason about which corpus should apply, do not pull in any other corpus, and
 do not use your own background knowledge or sector statistics as support.
 User assertions in the measure or justification are NOT support — only the
-provided excerpts are.
+provided excerpts are. However, the mitigation measure and justification are
+the AUTHORITATIVE USER INPUTS that you must evaluate. Assess
+justification_soundness directly from the complete justification text. The
+justification may establish its own internal coherence, but it cannot serve as
+support evidence for hazard_fit, mechanism, evidence_quality,
+contraindications, or feasibility.
 
 VERDICTS — resolve each dimension as exactly one of:
 SUPPORTED: the dimension's pass test (below) is met. For every dimension
@@ -7614,14 +7697,21 @@ citation. If no, INSUFFICIENT_INFO. Do not withhold SUPPORTED when a clear
 excerpt exists, and do not manufacture SUPPORTED when none does.
 
 DIMENSIONS:
-1. hazard_fit — does the measure address the selected hazard? (critical)
+1. hazard_fit — does the measure address the selected hazard? An excerpt
+   supports hazard_fit when it links the intervention or its underlying
+   mechanism to reducing the selected harm/outcome. It does not need to name
+   the exact target population, country, or program implementation. (critical)
 2. mechanism — SUPPORTED if excerpts support the causal pathway by which the
    measure reduces harm, INCLUDING when they support the component steps or
    the underlying mechanism rather than the exact named implementation.
    (Example: excerpts on metering or consumption visibility can support the
    mechanism of a platform that surfaces consumption data.) Cite the
-   excerpt(s). Mark INSUFFICIENT_INFO only if no excerpt speaks to the
-   pathway at all; do not invent a pathway. (critical)
+   excerpt(s). The excerpt does not need to mention the exact target
+   population, country, subsidy design, or program name. For example, an
+   excerpt stating that insulation reduces energy bills supports the mechanism
+   of a subsidized insulation program intended to reduce heating and cooling
+   costs. Mark INSUFFICIENT_INFO only if no excerpt speaks to the pathway at
+   all; do not invent a pathway. (critical)
 3. justification_soundness — SUPPORTED if the user's reasoning is internally
    coherent (the measure plausibly connects to its intended effect on the
    hazard) AND no excerpt contradicts it. This dimension does NOT require an
@@ -7629,11 +7719,13 @@ DIMENSIONS:
    the mechanism dimension's job — so it MAY be SUPPORTED with an empty
    citation list. Mark CONTRADICTED only if an excerpt conflicts with the
    reasoning (cite it). Mark INSUFFICIENT_INFO only if the reasoning cannot be
-   followed at all. (critical)
+   followed at all. You MUST evaluate the complete text under
+   "Justification to evaluate" in the user message; do not ignore it merely
+   because it is not part of the support corpus. (critical)
 4. evidence_quality — branch-aware:
-   - If support_label is USER-SUPPLIED EVIDENCE: are those excerpts relevant
+   - If support_label is USER_EVIDENCE: are those excerpts relevant
      and adequate for this specific measure and hazard?
-   - If support_label is the CURATED KNOWLEDGE BASE: do the KB excerpts give
+   - If support_label is CURATED_KNOWLEDGE_BASE: do the KB excerpts give
      relevant, adequate coverage for this measure and hazard? The absence of
      user-supplied evidence is NEVER the finding here and never counts against
      the measure — assess KB coverage, not whether the user attached evidence.
@@ -7684,47 +7776,69 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
             {
                 "role": "user",
                 "content": (
-                    f"Authoritative support corpus for this verdict: {support_label}"
-                    "Support excerpts:"
-                    f"{support_context or "- No relevant support excerpts were found."}\n\n"
-
+                    f"Authoritative support corpus for this verdict: {support_label}\n"
+                    "\nValidated user inputs to evaluate:\n"
                     f"Selected Country: {session.country}\n"
                     f"Selected Sector: {session.sector}\n"
                     f"Selected Region: {session.region}\n"
                     f"Selected hazard: {session.selected_hazard or 'No selected hazard'}\n"
-                    "Socio-demographic profiles:\n"
+                    "Affected socio-demographic profiles:\n"
                     f"{format_all_dgs(session)}\n\n"
-                    f"Mitigation measure: {mitigation_measure}\n"
-                    f"Justification reason: {reason}\n\n"
-                    f"User-supplied evidence: {evidence or 'Not provided'}\n\n"
+                    f"Mitigation measure: {mitigation_measure}\n\n"
+                    f"Justification to evaluate: {reason}\n\n"
+                    f"Clarification history:\n{clarification_block}\n\n"
+                    f"User-supplied evidence description: {evidence or 'Not provided'}\n\n"
+                    "Support excerpts eligible as citations:\n"
+                    f"{support_context or '- No relevant support excerpts were found.'}\n\n"
+                    "Evaluate every dimension. For justification_soundness, directly "
+                    "evaluate the complete justification above for internal coherence "
+                    "and check whether any support excerpt contradicts it."
                 ),
             }
         ]
-        responses = await asyncio.gather(
-            *[
-                ask_llm_chat(
-                    context=context,
-                    messages=messages,
-                    temperature=self.settings.mitigation_verdict_temperature,
-                    max_tokens=700,
-                )
-                for _ in range(max(1, self.settings.mitigation_verdict_samples))
-            ]
-        )
-        print("responses", responses)
-        if any(is_llm_unavailable_response(response) for response in responses):
-            return None
 
-        parsed_samples = [
-            parsed
-            for response in responses
-            if not (parsed := parse_grounded_validation_response(response)).get("error")
-        ]
-        print("parsed_samples:", parsed_samples)
+        print("Grounding validator input messages:", messages)
+        async def sample_validator(sample_count: int) -> list[dict[str, object]]:
+            responses = await asyncio.gather(
+                *[
+                    ask_llm_chat(
+                        context=context,
+                        messages=messages,
+                        temperature=self.settings.mitigation_verdict_temperature,
+                        max_tokens=700,
+                    )
+                    for _ in range(max(0, sample_count))
+                ]
+            )
+            if any(is_llm_unavailable_response(response) for response in responses):
+                return []
+            return [
+                self._sanitize_grounding_sample(parsed, valid_citation_ids)
+                for response in responses
+                if not (parsed := parse_grounded_validation_response(response)).get("error")
+            ]
+
+        parsed_samples = await sample_validator(max(1, self.settings.mitigation_verdict_samples))
+        
+        print(f"Grounding validator parsed samples ({len(parsed_samples)}):", parsed_samples)
+        
         if not parsed_samples:
             return None
-        parsed = self._majority_grounding_verdict(parsed_samples)
-        print("parsed:", parsed)
+        contradiction_dimensions = self._dimensions_with_any_status(
+            parsed_samples,
+            "CONTRADICTED",
+        )
+        contradiction_samples = (
+            await sample_validator(self.settings.mitigation_contradiction_resamples)
+            if contradiction_dimensions
+            else []
+        )
+        parsed = self._majority_grounding_verdict(
+            parsed_samples,
+            contradiction_samples=contradiction_samples,
+            contradiction_dimensions=contradiction_dimensions,
+        )
+        print("Grounding validator final parsed verdict:", parsed)
         return self._score_mitigation_grounding(
             parsed,
             support_context=support_context,
@@ -7732,15 +7846,89 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
             has_user_evidence=has_evidence,
         )
 
+    def _sanitize_grounding_sample(
+        self,
+        sample: dict[str, object],
+        valid_citation_ids: set[str],
+    ) -> dict[str, object]:
+        raw_dimensions = sample.get("dimensions")
+        raw_dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
+        dimensions: dict[str, dict[str, object]] = {}
+        for name in self.mitigation_grounding_dimensions:
+            raw_dimension = raw_dimensions.get(name)
+            raw_dimension = raw_dimension if isinstance(raw_dimension, dict) else {}
+            status = str(raw_dimension.get("status") or "INSUFFICIENT_INFO").upper()
+            raw_citation_ids = raw_dimension.get("citation_ids")
+            raw_citation_ids = raw_citation_ids if isinstance(raw_citation_ids, list) else []
+            citation_ids = sorted({
+                citation_id.upper()
+                for citation_id in raw_citation_ids
+                if isinstance(citation_id, str)
+                and citation_id.upper() in valid_citation_ids
+            })
+            citation_required = not (
+                name == "justification_soundness" and status == "SUPPORTED"
+            )
+            if status in {"SUPPORTED", "CONTRADICTED"} and citation_required and not citation_ids:
+                status = "INSUFFICIENT_INFO"
+            dimensions[name] = {
+                "status": status,
+                "citation_ids": citation_ids,
+                "explanation": str(raw_dimension.get("explanation") or "").strip(),
+            }
+        return {
+            "dimensions": dimensions,
+            "reason": str(sample.get("reason") or "").strip(),
+        }
+
+    def _dimensions_with_any_status(
+        self,
+        samples: list[dict[str, object]],
+        status: str,
+    ) -> set[str]:
+        dimensions: set[str] = set()
+        for sample in samples:
+            sample_dimensions = sample.get("dimensions")
+            if not isinstance(sample_dimensions, dict):
+                continue
+            for name in self.mitigation_grounding_dimensions:
+                dimension = sample_dimensions.get(name)
+                if isinstance(dimension, dict) and dimension.get("status") == status:
+                    dimensions.add(name)
+        return dimensions
+
+    def _floor_filtered_support_context(self, support_context: str) -> str:
+        floor = self.settings.mitigation_support_score_floor
+        lines: list[str] = []
+        keep_current_excerpt = False
+        for line in support_context.splitlines():
+            if re.match(r"^\s*-\s*\[S\d+\]", line, flags=re.IGNORECASE):
+                score_match = re.search(r", score (-?\d+(?:\.\d+)?)[: ,]", line)
+                keep_current_excerpt = bool(
+                    score_match and float(score_match.group(1)) >= floor
+                )
+            if keep_current_excerpt:
+                lines.append(line)
+        return "\n".join(lines)
+
     def _majority_grounding_verdict(
         self,
         samples: list[dict[str, object]],
+        *,
+        contradiction_samples: list[dict[str, object]] | None = None,
+        contradiction_dimensions: set[str] | None = None,
     ) -> dict[str, object]:
         dimensions: dict[str, dict[str, object]] = {}
         stability_values: list[float] = []
+        contradiction_samples = contradiction_samples or []
+        contradiction_dimensions = contradiction_dimensions or set()
         for name in self.mitigation_grounding_dimensions:
             candidates: list[dict[str, object]] = []
-            for sample in samples:
+            dimension_samples = [
+                *samples,
+                *(contradiction_samples if name in contradiction_dimensions else []),
+            ]
+            for sample in dimension_samples:
                 sample_dimensions = sample.get("dimensions")
                 if not isinstance(sample_dimensions, dict):
                     continue
@@ -7751,20 +7939,39 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
             for candidate in candidates:
                 status = str(candidate.get("status") or "INSUFFICIENT_INFO")
                 status_counts[status] = status_counts.get(status, 0) + 1
-            winning_status = max(
-                ("SUPPORTED", "CONTRADICTED", "INSUFFICIENT_INFO"),
-                key=lambda status: (
-                    status_counts.get(status, 0),
-                    status == "CONTRADICTED",
-                    status == "INSUFFICIENT_INFO",
-                ),
-            )
+            total_samples = max(1, len(candidates))
+            contradiction_fraction = status_counts.get("CONTRADICTED", 0) / total_samples
+            if (
+                status_counts.get("CONTRADICTED", 0)
+                and contradiction_fraction
+                >= self.settings.mitigation_contradiction_confirmation_fraction
+            ):
+                winning_status = "CONTRADICTED"
+            else:
+                supported_count = status_counts.get("SUPPORTED", 0)
+                insufficient_count = (
+                    status_counts.get("INSUFFICIENT_INFO", 0)
+                    + status_counts.get("CONTRADICTED", 0)
+                )
+                winning_status = (
+                    "SUPPORTED"
+                    if supported_count > insufficient_count
+                    else "INSUFFICIENT_INFO"
+                )
             winning = [
                 candidate
                 for candidate in candidates
                 if candidate.get("status") == winning_status
             ]
-            stability_values.append(status_counts.get(winning_status, 0) / len(samples))
+            unconfirmed_contradiction = (
+                winning_status == "INSUFFICIENT_INFO"
+                and not winning
+                and status_counts.get("CONTRADICTED", 0) > 0
+            )
+            winning_count = status_counts.get(winning_status, 0)
+            if winning_status == "INSUFFICIENT_INFO":
+                winning_count += status_counts.get("CONTRADICTED", 0)
+            stability_values.append(winning_count / total_samples)
             citation_ids = sorted({
                 citation_id
                 for candidate in winning
@@ -7780,7 +7987,12 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
                         for candidate in winning
                         if candidate.get("explanation")
                     ),
-                    "",
+                    (
+                        "A possible contradiction was sampled but did not meet the "
+                        "confirmation threshold."
+                        if unconfirmed_contradiction
+                        else ""
+                    ),
                 ),
             }
         reasons = [str(sample.get("reason") or "").strip() for sample in samples]
@@ -7790,7 +8002,7 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
             "verdict_stability": (
                 sum(stability_values) / len(stability_values) if stability_values else 0.0
             ),
-            "sample_count": len(samples),
+            "sample_count": len(samples) + len(contradiction_samples),
         }
 
     def _score_mitigation_grounding(
@@ -7802,7 +8014,7 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
         has_user_evidence: bool | None = None,
     ) -> dict[str, object]:
         if has_user_evidence is None:
-            has_user_evidence = support_label == "user-supplied evidence only"
+            has_user_evidence = support_label == self.mitigation_support_label_user_evidence
         citation_scores = self._support_citation_scores(support_context)
         raw_dimensions = parsed.get("dimensions")
         raw_dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
@@ -7827,11 +8039,20 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
         ]
         supported_count = critical_statuses.count("SUPPORTED")
         coverage = supported_count / len(critical_dimensions) if critical_dimensions else 0.0
-        contradicted = any(
+        has_contradiction = any(
             dimension["status"] == "CONTRADICTED"
             for dimension in applicable_dimensions.values()
         )
-        valid = coverage >= .85 and not contradicted
+        all_critical_supported = bool(critical_dimensions) and all(
+            dimension["status"] == "SUPPORTED"
+            for dimension in critical_dimensions.values()
+        )
+        if has_contradiction:
+            outcome = "REJECT"
+        elif not all_critical_supported:
+            outcome = "ABSTAIN"
+        else:
+            outcome = "PASS"
         retrieval_support = (
             sum(min(score, 1.0) for score in supported_scores) / len(supported_scores)
             if supported_scores
@@ -7842,19 +8063,16 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
             100 * ((0.6 * coverage) + (0.25 * retrieval_support) + (0.15 * verdict_stability))
         )
 
-        print("citation_scores:", citation_scores)
-        print("coverage:", coverage, "contradicted:", contradicted, "valid:", valid)
-        print(dimensions, supported_scores)
-
         reason = self._mitigation_grounding_reason(
             str(parsed.get("reason") or "").strip(),
-            valid,
+            outcome,
             applicable_dimensions,
             critical_dimensions,
         )
 
         return {
-            "valid": valid,
+            "valid": outcome == "PASS",
+            "outcome": outcome,
             "reason": reason or "The grounded validation rubric was incomplete.",
             "dimensions": dimensions,
             "rubric_coverage": round(coverage, 4),
@@ -7877,15 +8095,6 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
         for name in self.mitigation_grounding_dimensions:
             raw_dimension = raw_dimensions.get(name)
             raw_dimension = raw_dimension if isinstance(raw_dimension, dict) else {}
-            if name == "evidence_quality" and not has_user_evidence:
-                dimensions[name] = {
-                    "status": "NOT_APPLICABLE",
-                    "citation_ids": [],
-                    "support_score": None,
-                    "explanation": "User-provided evidence is optional and was not supplied.",
-                }
-                continue
-
             status = str(raw_dimension.get("status") or "INSUFFICIENT_INFO").upper()
             citation_ids = raw_dimension.get("citation_ids")
             citation_ids = citation_ids if isinstance(citation_ids, list) else []
@@ -7896,9 +8105,10 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
                 and citation_id in citation_scores
                 and citation_scores[citation_id] >= self.settings.mitigation_support_score_floor
             ]
-            if status == "SUPPORTED" and not valid_scores:
+            citation_optional = name == "justification_soundness" and status == "SUPPORTED"
+            if status == "SUPPORTED" and not valid_scores and not citation_optional:
                 status = "INSUFFICIENT_INFO"
-            if status == "SUPPORTED":
+            if status == "SUPPORTED" and valid_scores:
                 supported_scores.append(max(valid_scores))
             dimensions[name] = {
                 "status": status,
@@ -7911,11 +8121,11 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
     def _mitigation_grounding_reason(
         self,
         reason: str,
-        valid: bool,
+        outcome: str,
         applicable_dimensions: dict[str, dict[str, object]],
         critical_dimensions: dict[str, dict[str, object]],
     ) -> str:
-        if valid:
+        if outcome == "PASS":
             unresolved_cautions = self._dimension_names_with_status(
                 applicable_dimensions,
                 "INSUFFICIENT_INFO",
@@ -7930,17 +8140,22 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
             )
             return f"{reason} {caution}".strip()
 
-        reason_parts = [
-            "I could not validate the mitigation measure because its critical "
-            "hazard fit, mechanism, and justification must be supported by the "
-            "authoritative corpus, with no contradicted validation dimensions."
-        ]
+        reason_parts: list[str] = []
         contradicted = self._dimension_names_with_status(
             applicable_dimensions,
             "CONTRADICTED",
         )
-        if contradicted:
+        if outcome == "REJECT":
+            reason_parts.append(
+                "The authoritative corpus actively conflicts with the mitigation measure."
+            )
             reason_parts.append("Contradicted dimensions: " + ", ".join(contradicted) + ".")
+            return " ".join(reason_parts)
+
+        reason_parts.append(
+            "The authoritative corpus does not cover every critical dimension needed "
+            "to validate this mitigation measure."
+        )
         insufficient = self._dimension_names_with_status(
             critical_dimensions,
             "INSUFFICIENT_INFO",
@@ -7949,32 +8164,125 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
             reason_parts.append(
                 "Insufficiently supported dimensions: " + ", ".join(insufficient) + "."
             )
-        reason_parts.append(
-            "You may optionally provide supporting evidence, revise the measure or "
-            "justification, or add relevant material to the curated knowledge base."
-        )
         return " ".join(reason_parts)
 
-    def _mitigation_revision_reason(self, validation: dict[str, object]) -> str:
-        reason = str(validation.get("reason") or "").strip()
-        raw_dimensions = validation.get("dimensions")
-        dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
-        dimension_names = [
-            *self.mitigation_grounding_dimensions,
-            *(name for name in dimensions if name not in self.mitigation_grounding_dimensions),
-        ]
-        lines = [reason] if reason else []
-        lines.extend(["", "### Validation dimensions", ""])
-        for name in dimension_names:
-            raw_dimension = dimensions.get(name)
-            dimension = raw_dimension if isinstance(raw_dimension, dict) else {}
-            status = str(dimension.get("status") or "UNKNOWN").strip().upper()
-            explanation = str(dimension.get("explanation") or "").strip()
-            if not explanation:
-                explanation = "No explanation was provided."
-            label = str(name).replace("_", " ").strip().title()
-            lines.append(f"- **{label}** - `{status}`: {explanation}")
+    def _mitigation_outcome_reason(
+        self,
+        validation: dict[str, object],
+        outcome: str,
+    ) -> str:
+        dimensions = validation.get("dimensions")
+        dimensions = dimensions if isinstance(dimensions, dict) else {}
+        support_context = str(validation.get("support_context") or "")
+        support_label = str(validation.get("support_label") or "")
+        if outcome == "REJECT":
+            relevant_names = self._dimension_names_with_status_keys(dimensions, "CONTRADICTED")
+            heading = "### Confirmed contradictions"
+        else:
+            relevant_names = self._dimension_names_with_status_keys(
+                dimensions,
+                "INSUFFICIENT_INFO",
+                include=set(self.mitigation_critical_grounding_dimensions),
+            )
+            heading = "### Critical coverage gaps"
+
+        lines = [str(validation.get("reason") or "").strip(), "", heading, ""]
+        for name in relevant_names:
+            dimension = dimensions.get(name)
+            dimension = dimension if isinstance(dimension, dict) else {}
+            explanation = str(dimension.get("explanation") or "No explanation was provided.")
+            citations = [
+                str(citation_id)
+                for citation_id in dimension.get("citation_ids", [])
+                if isinstance(citation_id, str)
+            ]
+            label = name.replace("_", " ").title()
+            citation_text = f" Citations: {', '.join(citations)}." if citations else ""
+            lines.append(f"- **{label}:** {explanation}{citation_text}")
+            if outcome == "REJECT":
+                lines.extend(
+                    f"  - `{citation_id}`: {self._support_excerpt(support_context, citation_id)}"
+                    for citation_id in citations
+                )
+
+        if outcome == "ABSTAIN":
+            if support_label == self.mitigation_support_label_user_evidence:
+                lines.extend([
+                    "",
+                    "Add a published source that directly covers the critical gap, or "
+                    "revise the justification so the claimed mechanism is clear.",
+                ])
+            else:
+                lines.extend([
+                    "",
+                    "This measure is beyond the curated knowledge base's current scope. "
+                    "Attach a published source that covers the critical gap to proceed.",
+                ])
         return "\n".join(lines).strip()
+
+    @staticmethod
+    def _dimension_names_with_status_keys(
+        dimensions: dict[str, object],
+        status: str,
+        include: set[str] | None = None,
+    ) -> list[str]:
+        return [
+            name
+            for name, dimension in dimensions.items()
+            if (include is None or name in include)
+            and isinstance(dimension, dict)
+            and dimension.get("status") == status
+        ]
+
+    @staticmethod
+    def _support_excerpt(support_context: str, citation_id: str) -> str:
+        marker = f"[{citation_id}]"
+        return next(
+            (
+                line.split(":", 1)[1].strip()
+                for line in support_context.splitlines()
+                if marker in line and ":" in line
+            ),
+            "The cited excerpt was not available.",
+        )
+
+    @staticmethod
+    def _evidence_url(evidence: str | None) -> str:
+        if not evidence:
+            return ""
+        match = re.search(r"^Evidence URL:\s*(.+)$", evidence, flags=re.IGNORECASE | re.MULTILINE)
+        return match.group(1).strip() if match else ""
+
+    async def _admit_inline_evidence_to_quarantine(
+        self,
+        session: ChatSession,
+        evidence: str,
+        validation: dict[str, object],
+    ) -> None:
+        inline_evidence = self._inline_evidence_content(evidence)
+        if not inline_evidence or self._temporary_evidence_document_ids(evidence):
+            return
+        source_uri = self._evidence_url(evidence) or None
+        validated_at = datetime.now(timezone.utc).isoformat()
+        title = (
+            f"[validated_user_evidence; validated_at={validated_at}; "
+            f"session={session.session_key}; outcome={validation.get('outcome')}] "
+            f"{source_uri or 'Inline user evidence'}"
+        )
+        try:
+            await KnowledgeBaseService(
+                self.db,
+                self.user_id,
+                scope="quarantined",
+                session_key=session.session_key,
+            ).ingest_text(
+                inline_evidence,
+                title[:255],
+                "validated_user_evidence",
+                source_uri,
+            )
+        except Exception:
+            logger.exception("Failed to admit validated inline evidence to quarantine")
 
     @staticmethod
     def _dimension_names_with_status(
@@ -8093,7 +8401,7 @@ Support excerpts:
         confidence_score = int(validation.get("confidence_score") or 0)
         evidence_note = (
             "This conclusion is grounded in user-supplied evidence."
-            if support_label == "user-supplied evidence only"
+            if support_label == self.mitigation_support_label_user_evidence
             else "This conclusion is grounded in the curated main knowledge base."
         )
         claim_lines = []
@@ -8101,9 +8409,28 @@ Support excerpts:
             citations = [*claim.get("citation_ids", []), *claim.get("user_fields", [])]
             citation_text = ", ".join(f"`{citation}`" for citation in citations)
             claim_lines.append(f"- {claim['text']} ({citation_text})")
+        dimensions = validation.get("dimensions")
+        dimensions = dimensions if isinstance(dimensions, dict) else {}
+        caution_lines = [
+            (
+                f"- The authoritative corpus does not address "
+                f"**{name.replace('_', ' ')}** for this measure: "
+                f"{str(dimension.get('explanation') or 'coverage is insufficient.').strip()}"
+            )
+            for name, dimension in dimensions.items()
+            if name not in self.mitigation_critical_grounding_dimensions
+            and isinstance(dimension, dict)
+            and dimension.get("status") == "INSUFFICIENT_INFO"
+        ]
+        caution_block = (
+            "\n\n### What to be careful about\n\n" + "\n".join(caution_lines)
+            if caution_lines
+            else ""
+        )
         return (
             "### Grounded conclusion\n\n"
             + "\n".join(claim_lines)
+            + caution_block
             + f"\n\n**Grounding confidence:** {confidence_score}/100. {evidence_note}"
         )
 
@@ -8291,7 +8618,7 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
     ) -> str:
         query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
         try:
-            main_results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=4)
+            main_results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=5)
         except Exception:
             logger.exception("Main knowledge-base lookup failed during mitigation validation")
             main_results = []
@@ -8318,9 +8645,12 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         mitigation_measure: str,
         reason: str,
     ) -> str:
+        # Retrieval must prioritize the proposed intervention and its mechanism.
+        # A long affected-profile list dilutes cross-encoder relevance and can
+        # push genuinely supporting evidence below the eligibility floor.
         return (
-            f"{session.country or ''} {session.sector or ''} {session.selected_hazard or ''} "
-            f"{format_all_dgs(session)} {mitigation_measure} {reason}"
+            f"{session.selected_hazard or ''} {mitigation_measure} {reason} "
+            f"{session.country or ''} {session.sector or ''} {session.region or ''}"
         )
 
     @staticmethod
