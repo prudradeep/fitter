@@ -62,3 +62,9 @@ Add Select all option in target population named as "Target all general populati
 Store MM conclusion and target/effected groups.
 Confidence scoring for MM clarity
 Use only RAG & LLM for sector prompts for hazards listing and socio demographic profiles and for any other stat searches.
+
+
+
+
+After selecting Hazard
+Left panel: Show the selected hazards and the affected socio demographic profiles with icons

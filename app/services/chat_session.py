@@ -34,6 +34,7 @@ class ChatSession:
     pending_mitigation_evidence: str | None = None
     pending_mitigation_clarity_dimension: str | None = None
     mitigation_clarity_turns: int = 0
+    mitigation_clarification_history: list[dict[str, str]] | None = None
     mitigation_frozen_inputs: dict[str, str] | None = None
     suggested_mitigation_measure_id: int | None = None
     suggested_mitigation_measure_name: str | None = None
@@ -66,12 +67,12 @@ class ChatSession:
             affected_profiles.extend(self._profile_lines(self.socio_demographic_findings))
         affected_profiles.extend(self.additional_dgs or [])
         seen_profiles: set[str] = set()
-        affected_profile_count = 0
+        deduped_affected_profiles: list[str] = []
         for profile in affected_profiles:
             key = profile.strip().casefold()
             if key and key not in seen_profiles:
                 seen_profiles.add(key)
-                affected_profile_count += 1
+                deduped_affected_profiles.append(profile.strip())
         return SessionSummary(
             country=self.country,
             region=self.region,
@@ -79,7 +80,8 @@ class ChatSession:
             selected_hazard=self.selected_hazard or self.accepted_custom_hazard,
             target_population_questions=self.target_population_questions or [],
             hazard_count=system_hazard_count + regional_hazard_count,
-            affected_profile_count=affected_profile_count,
+            affected_profile_count=len(deduped_affected_profiles),
+            affected_profiles=deduped_affected_profiles,
             mitigation_measure_count=1 if self.mitigation_measure else 0,
         )
 

@@ -636,6 +636,7 @@ class ChatService:
         session.pending_mitigation_evidence = None
         session.pending_mitigation_clarity_dimension = None
         session.mitigation_clarity_turns = 0
+        session.mitigation_clarification_history = None
         session.mitigation_frozen_inputs = None
 
     @staticmethod
@@ -2035,6 +2036,7 @@ Return Markdown only.
                 error=True,
             )
 
+        self._append_mitigation_clarification_message(session, "user", message)
         mitigation_measure, reason, evidence_text = self._merge_mitigation_clarification(
             mitigation_measure,
             reason,
@@ -2231,6 +2233,15 @@ Return Markdown only.
         session.pending_mitigation_evidence = evidence_text
         session.pending_mitigation_clarity_dimension = unresolved_dimension
         session.mitigation_clarity_turns += 1
+        clarification_prompt = (
+            f"Currently clarifying: {dimension_label}\n\n"
+            f"Please answer these questions in one response:\n\n{question_list}"
+        )
+        self._append_mitigation_clarification_message(
+            session,
+            "assistant",
+            clarification_prompt,
+        )
         return ChatResponse(
             session_id=session_id,
             step="mitigation_clarity",
@@ -2251,6 +2262,45 @@ Return Markdown only.
                 unresolved_dimension,
                 follow_up_questions,
             ),
+        )
+
+    @staticmethod
+    def _append_mitigation_clarification_message(
+        session: ChatSession,
+        role: str,
+        content: str,
+    ) -> None:
+        clean_content = content.strip()
+        if not clean_content:
+            return
+        history = session.mitigation_clarification_history or []
+        history.append({"role": role, "content": clean_content})
+        session.mitigation_clarification_history = history
+
+    @staticmethod
+    def _mitigation_clarification_history_block(
+        session: ChatSession,
+        clarification_answer: str | None = None,
+    ) -> str:
+        history = [
+            entry
+            for entry in (session.mitigation_clarification_history or [])
+            if isinstance(entry, dict)
+            and str(entry.get("role") or "").strip()
+            and str(entry.get("content") or "").strip()
+        ]
+        latest_answer = (clarification_answer or "").strip()
+        if latest_answer and not any(
+            entry.get("role") == "user"
+            and str(entry.get("content") or "").strip() == latest_answer
+            for entry in history
+        ):
+            history.append({"role": "user", "content": latest_answer})
+        if not history:
+            return "None yet"
+        return "\n\n".join(
+            f"{str(entry['role']).strip().title()}:\n{str(entry['content']).strip()}"
+            for entry in history
         )
 
     @classmethod
@@ -2393,7 +2443,7 @@ Return Markdown only.
                 step="mitigation_reason",
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
-                    reason=validation["reason"],
+                    reason=self._mitigation_revision_reason(validation),
                 ),
                 options=[],
                 session=session.summary(),
@@ -7403,81 +7453,105 @@ Use these retrieved sector-prompt excerpts as the authoritative statistical sour
     ) -> dict[str, object] | None:
         context = f"""
 You are the Step 1 clarity-track assessor for Dr Transition.
+Your only job is INPUT UNDERSTANDABILITY: can a later stage tell what the
+user means? You do NOT judge correctness, validity, completeness,
+sufficiency, feasibility, evidence quality, or groundedness. Those are
+checked later or not at all here.
 
-Your task is input understandability only, not correctness and not groundedness.
-Do not decide whether the mitigation measure is supported by evidence or the
-knowledge base. Do not reward extra user text as
-support. You only decide whether the inputs are unambiguous enough for a later
-grounded validation stage.
+OPERATING PRINCIPLE — default to CLEAR.
+Mark a dimension NEEDS_CLARIFICATION only if you can point to a SPECIFIC
+word or phrase whose meaning you genuinely cannot recover. If you cannot
+name the specific ambiguity, the dimension is CLEAR. A weak, partial, or
+unsupported reason is still CLEAR as long as you can tell what it claims.
 
-{self._scope_instruction(session)}
+DIMENSIONS — resolve each as CLEAR or NEEDS_CLARIFICATION using these
+operational pass tests:
+1. specificity — CLEAR if you can name WHAT would be done (an action or
+   instrument), even if amounts, timing, or implementation detail are
+   missing.
+2. justification_clarity — CLEAR if you can restate the user's reason as ONE
+   declarative sentence linking the measure to its intended effect on the
+   hazard, WITHOUT inventing content. Being able to write that sentence is
+   the test. Do not require the reasoning to be correct, complete, or
+   supported.
+3. evidence_identifiability — CLEAR if you can tell what source or content is
+   being pointed to. If no evidence is present, mark CLEAR.
+
+CLARIFICATION HISTORY IS AUTHORITATIVE.
+The clarification history in the user message overrides and extends the
+original input. Evaluate the justification AS CLARIFIED by it. Never ask
+again about a point the user has already addressed; if your only remaining
+doubt is something they already answered, mark the dimension CLEAR. If a
+'Clarification:' line makes the intended meaning recoverable, mark CLEAR even
+if a later stage might reject the claim on the merits.
+
+SCOPE ANCHORING (output framing only — NEVER a reason to mark
+NEEDS_CLARIFICATION).
+Phrase frozen_inputs and any examples in terms of the user's selected country
+and sector. If the user references another context, relate it back to the
+selection; treat other-country/sector material as labelled background. The
+user does NOT have to restate things in terms of the selection for an input
+to be CLEAR — missing anchoring is a framing task for you, not a gap in the
+user's input.
+
+QUESTIONING.
+If ALL dimensions are CLEAR, produce frozen_inputs: a concise, unambiguous
+restatement of measure_description, justification, and evidence, integrating
+the clarification history only to pin down what the user meant (add no new
+claims).
+If ANY dimension is NEEDS_CLARIFICATION, pick only the FIRST unresolved one
+in this order: specificity, justification_clarity, evidence_identifiability.
+Return two or three short questions about THAT ONE dimension, each pointing at
+the specific phrase you could not interpret, answerable in one reply. Do not
+ask about any other dimension this round.
+
+OUTPUT — return ONLY valid JSON with this exact shape:
+{{
+  \"clear\": false,
+  \"dimensions\": {{
+    \"specificity\": \"CLEAR\",
+    \"justification_clarity\": \"NEEDS_CLARIFICATION\",
+    \"evidence_identifiability\": \"CLEAR\"
+  }},
+  \"follow_up_questions\": [\"q1 about the one unresolved dimension\", \"q2 about the same dimension\"],
+  \"frozen_inputs\": {{ \"measure_description\": \"\", \"justification\": \"\", \"evidence\": \"\" }},
+  \"reason\": \"short clarity explanation\"
+}}
+
+RULES.
+- \"clear\" is true only when all three dimensions are CLEAR.
+- follow_up_questions: two or three questions, only the selected dimension,
+  each tied to a specific ambiguous phrase you quote.
+- Do not require implementation detail, evidence, feasibility, or correctness.
+- Do not penalise unsupported or arguable reasoning — support is checked later.
+- Scope anchoring is framing only and must never cause NEEDS_CLARIFICATION.
+- Keep "reason" under 50 words.
+
+CALIBRATION (justification_clarity).
+- "It will reduce flood risk because raising the road keeps it above the
+  waterline" -> CLEAR (restatable in one sentence; correctness is for later).
+- "It helps with the situation and is generally good practice" ->
+  NEEDS_CLARIFICATION (cannot name the mechanism or the intended effect).
+
 """.strip()
-        clarification_block = (
-            f"\nClarification answer from user:\n{clarification_answer}\n"
-            if clarification_answer
-            else ""
+        clarification_block = self._mitigation_clarification_history_block(
+            session,
+            clarification_answer,
         )
         messages = [
             {
                 "role": "user",
                 "content": (
-                    "Resolve these three clarity dimensions as CLEAR or "
-                    "NEEDS_CLARIFICATION:\n"
-                    "1. specificity: is the measure concrete enough to evaluate?\n"
-                    "2. justification_clarity: is the user's reasoning unambiguous?\n"
-                    "3. evidence_identifiability: if evidence is present, is it clear "
-                    "what source/content is being offered? If no evidence is present, "
-                    "mark this CLEAR.\n\n"
-                    "Current inputs:\n"
+                    f"- Selected country: {session.country or 'Not selected'}\n"
+                    f"- Selected region: {session.region or 'Not selected'}\n"
+                    f"- Selected sector: {session.sector or 'Not selected'}\n"
+
                     f"Measure description: {mitigation_measure or 'Not provided'}\n"
                     f"Justification: {reason or 'Not provided'}\n"
                     f"Evidence: {evidence or 'Not provided'}\n"
-                    f"{clarification_block}\n"
-                    "If all dimensions are CLEAR, produce frozen_inputs as a concise, "
-                    "unambiguous statement of the measure_description, justification, "
-                    "and evidence. Integrate the clarification answer only to clarify "
-                    "what the user meant. If a clarification answer or a "
-                    "'Clarification:' line makes the user's intended reasoning "
-                    "understandable, mark justification_clarity CLEAR even if the "
-                    "later grounded validation stage might reject the claim.\n\n"
-                    "If any dimensions NEEDS_CLARIFICATION, select only the first "
-                    "unresolved dimension in this priority order: specificity, "
-                    "justification_clarity, evidence_identifiability. Return two or "
-                    "three concise targeted questions about that one dimension so the "
-                    "user can answer them in one response. Do not ask about any other "
-                    "dimension in the same response. Do not validate groundedness.\n\n"
-                    "Return ONLY valid JSON with this exact shape:\n"
-                    "{"
-                    '"clear": false, '
-                    '"dimensions": {'
-                    '"specificity": "CLEAR", '
-                    '"justification_clarity": "NEEDS_CLARIFICATION", '
-                    '"evidence_identifiability": "CLEAR"'
-                    "}, "
-                    '"follow_up_questions": ["question 1 about one unresolved dimension", '
-                    '"question 2 about the same unresolved dimension"], '
-                    '"frozen_inputs": {'
-                    '"measure_description": "", '
-                    '"justification": "", '
-                    '"evidence": ""'
-                    "}, "
-                    '"reason": "short clarity explanation"'
-                    "}\n\n"
-                    "Rules:\n"
-                    "- clear must be true only when all dimensions are CLEAR.\n"
-                    "- follow_up_questions must contain two or three questions about "
-                    "only the selected unresolved dimension.\n"
-                    "- Do not ask questions about the other unresolved dimensions until "
-                    "a later clarification round.\n"
-                    "- This stage cannot touch groundedness, support, citations, retrieval, "
-                    "or policy correctness.\n"
-                    "- A specific but unsupported claim is still CLEAR; support is checked later.\n"
-                    "- Do not require complete implementation details, evidence proof, "
-                    "or policy feasibility. The question is only whether the text states "
-                    "what the user means clearly enough to evaluate later.\n"
-                    "- Evidence identifiability is about whether the source/content is "
-                    "recognizable enough to validate later, not whether it is credible.\n"
-                    "- Keep reason under 50 words."
+
+                    "Clarification history:\n"
+                    f"{clarification_block}"
                 ),
             }
         ]
@@ -7510,74 +7584,119 @@ grounded validation stage.
             else "the curated main knowledge base only"
         )
         context = f"""
-You are a strict groundedness validator for Dr Transition.
+You are the groundedness validator for Dr Transition. You decide, per
+dimension, whether the AUTHORITATIVE SUPPORT CORPUS backs the proposed
+mitigation measure and the user's justification. You judge support from the
+corpus only — not whether you personally find the measure wise.
 
-{self._scope_instruction(session)}
+AUTHORITATIVE CORPUS IS FIXED.
+The user message names the authoritative corpus (support_label) and provides
+its excerpts. That selection is final: cite ONLY those excerpts. Do not
+reason about which corpus should apply, do not pull in any other corpus, and
+do not use your own background knowledge or sector statistics as support.
+User assertions in the measure or justification are NOT support — only the
+provided excerpts are.
 
-Variant B mitigation validation rule:
-- If user evidence is supplied, validate against the user-supplied evidence ONLY.
-- If no user evidence is supplied, validate against the curated main knowledge base ONLY.
-- Never merge those two corpora for the validation verdict.
-- More user explanation can improve input clarity, but it must not increase groundedness.
+VERDICTS — resolve each dimension as exactly one of:
+SUPPORTED: the dimension's pass test (below) is met. For every dimension
+  except justification_soundness, this requires at least one provided excerpt;
+  cite its ID(s).
+CONTRADICTED: a provided excerpt states something that conflicts with the
+  measure or justification on this dimension. Cite the excerpt ID(s).
+INSUFFICIENT_INFO: the excerpts neither establish nor contradict this
+  dimension. This is the correct, neutral verdict when the corpus is simply
+  silent — it is NOT a failure to try harder, and you must NOT infer support
+  from general principles to avoid it.
 
-Authoritative support corpus for this verdict: {support_label}.
+CALIBRATION — when unsure between SUPPORTED and INSUFFICIENT_INFO, ask only:
+"Does an excerpt meet this dimension's pass test?" If yes, SUPPORTED with that
+citation. If no, INSUFFICIENT_INFO. Do not withhold SUPPORTED when a clear
+excerpt exists, and do not manufacture SUPPORTED when none does.
 
-Support excerpts:
-{support_context or "- No relevant support excerpts were found."}
+DIMENSIONS:
+1. hazard_fit — does the measure address the selected hazard? (critical)
+2. mechanism — SUPPORTED if excerpts support the causal pathway by which the
+   measure reduces harm, INCLUDING when they support the component steps or
+   the underlying mechanism rather than the exact named implementation.
+   (Example: excerpts on metering or consumption visibility can support the
+   mechanism of a platform that surfaces consumption data.) Cite the
+   excerpt(s). Mark INSUFFICIENT_INFO only if no excerpt speaks to the
+   pathway at all; do not invent a pathway. (critical)
+3. justification_soundness — SUPPORTED if the user's reasoning is internally
+   coherent (the measure plausibly connects to its intended effect on the
+   hazard) AND no excerpt contradicts it. This dimension does NOT require an
+   excerpt that affirmatively proves the reasoning — proving the pathway is
+   the mechanism dimension's job — so it MAY be SUPPORTED with an empty
+   citation list. Mark CONTRADICTED only if an excerpt conflicts with the
+   reasoning (cite it). Mark INSUFFICIENT_INFO only if the reasoning cannot be
+   followed at all. (critical)
+4. evidence_quality — branch-aware:
+   - If support_label is USER-SUPPLIED EVIDENCE: are those excerpts relevant
+     and adequate for this specific measure and hazard?
+   - If support_label is the CURATED KNOWLEDGE BASE: do the KB excerpts give
+     relevant, adequate coverage for this measure and hazard? The absence of
+     user-supplied evidence is NEVER the finding here and never counts against
+     the measure — assess KB coverage, not whether the user attached evidence.
+5. contraindications — CONTRADICTED if an excerpt states a conflict, risk, or
+   incompatibility (cite it); SUPPORTED only if an excerpt affirmatively
+   endorses the measure as conflict-free; otherwise INSUFFICIENT_INFO
+   ("no conflict found in corpus"). Finding no conflict is INSUFFICIENT_INFO,
+   not a low score.
+6. feasibility — do the excerpts support practical applicability?
+
+SEVERITY (for your explanations, not an aggregate verdict you compute):
+hazard_fit, mechanism, justification_soundness are CRITICAL.
+evidence_quality, contraindications, feasibility are CAUTION dimensions:
+  INSUFFICIENT_INFO in these is a caution, not proof the measure needs
+  revision.
+Any CONTRADICTED verdict, in any dimension, is a hard veto.
+You output per-dimension verdicts only. Do not compute or state an overall
+pass/fail — the pipeline decides that from your verdicts.
+
+SCOPE ANCHORING (framing only — NEVER a reason for CONTRADICTED):
+Anchor wording and examples to the user's selected country and sector. Treat
+excerpts about other countries/sectors as labelled general background; do not
+cite them as if they matched the selection unless the text explicitly does.
+A mismatch of country/sector framing is not a contradiction of the measure.
+
+OUTPUT — return ONLY one valid JSON object, no Markdown, fences, headers, or
+text before/after:
+{{"dimensions": {{
+  "hazard_fit": {{"status": "SUPPORTED", "citation_ids": ["S1"], "explanation": "..."}},
+  "mechanism": {{"status": "SUPPORTED", "citation_ids": ["S1"], "explanation": "..."}},
+  "justification_soundness": {{"status": "SUPPORTED", "citation_ids": [], "explanation": "..."}},
+  "evidence_quality": {{"status": "INSUFFICIENT_INFO", "citation_ids": [], "explanation": "..."}},
+  "contraindications": {{"status": "INSUFFICIENT_INFO", "citation_ids": [], "explanation": "..."}},
+  "feasibility": {{"status": "SUPPORTED", "citation_ids": ["S1"], "explanation": "..."}}
+}}, "reason": "short grounded validation explanation"}}
+
+RULES:
+SUPPORTED and CONTRADICTED must carry at least one citation_id from the
+  provided excerpts — EXCEPT justification_soundness, which may be SUPPORTED
+  with an empty citation_ids list (its test is coherence + no contradiction).
+  A CONTRADICTED justification_soundness must still cite the conflicting
+  excerpt.
+INSUFFICIENT_INFO always carries an empty citation_ids list.
+Cite only IDs that appear in the provided excerpts; never invent IDs.
+Keep each explanation to one or two sentences. Keep "reason" under 90 words.
 """.strip()
         messages = [
             {
                 "role": "user",
                 "content": (
-                    "Validate the proposed mitigation measure and justification reason "
-                    "for reducing the negative impact of the selected hazard on the relevant "
-                    "socio-demographic groups.\n\n"
-                    f"Country: {session.country}\n"
-                    f"Sector: {session.sector}\n"
-                    f"Region: {session.region}\n"
+                    f"Authoritative support corpus for this verdict: {support_label}"
+                    "Support excerpts:"
+                    f"{support_context or "- No relevant support excerpts were found."}\n\n"
+
+                    f"Selected Country: {session.country}\n"
+                    f"Selected Sector: {session.sector}\n"
+                    f"Selected Region: {session.region}\n"
                     f"Selected hazard: {session.selected_hazard or 'No selected hazard'}\n"
                     "Socio-demographic profiles:\n"
                     f"{format_all_dgs(session)}\n\n"
                     f"Mitigation measure: {mitigation_measure}\n"
                     f"Justification reason: {reason}\n\n"
-                    f"Evidence: {evidence or 'Not provided'}\n\n"
-                    "Return ONLY one valid JSON object with this exact shape:\n"
-                    '{"dimensions": {'
-                    '"hazard_fit": {"status": "SUPPORTED", "citation_ids": ["S1"], "explanation": "..."}, '
-                    '"mechanism": {"status": "SUPPORTED", "citation_ids": ["S1"], "explanation": "..."}, '
-                    '"justification_soundness": {"status": "SUPPORTED", "citation_ids": ["S1"], "explanation": "..."}, '
-                    '"evidence_quality": {"status": "SUPPORTED", "citation_ids": ["S1"], "explanation": "..."}, '
-                    '"contraindications": {"status": "SUPPORTED", "citation_ids": ["S1"], "explanation": "..."}, '
-                    '"feasibility": {"status": "SUPPORTED", "citation_ids": ["S1"], "explanation": "..."}'
-                    '}, "reason": "short grounded validation explanation"}\n\n'
-                    "Do not include Markdown, code fences, headers, bullets, or text "
-                    "before or after the JSON.\n\n"
-                    "Resolve each dimension as exactly SUPPORTED, CONTRADICTED, or "
-                    "INSUFFICIENT_INFO. SUPPORTED and CONTRADICTED verdicts must cite one "
-                    "or more support excerpt IDs. User assertions alone are not support.\n\n"
-                    "Rules:\n"
-                    "- hazard_fit checks whether the measure addresses the selected hazard.\n"
-                    "- mechanism checks whether the corpus supports how the measure reduces harm.\n"
-                    "- justification_soundness checks the user's stated reasoning.\n"
-                    "- evidence_quality checks whether the authoritative corpus is relevant "
-                    "and adequate for this specific measure and hazard. User-provided evidence "
-                    "is optional. When no user evidence was provided, do not reject the measure "
-                    "because evidence is absent; evaluate the other dimensions against the "
-                    "curated main knowledge base.\n"
-                    "- contraindications is SUPPORTED only when the corpus permits the measure "
-                    "without a stated conflict; cite the relevant excerpt. Mark CONTRADICTED "
-                    "when the corpus identifies a conflict.\n"
-                    "- feasibility checks whether the corpus supports practical applicability.\n"
-                    "- Use INSUFFICIENT_INFO whenever the corpus does not address a dimension. "
-                    "Do not infer support from general principles.\n"
-                    "- hazard_fit, mechanism, and justification_soundness are the critical "
-                    "dimensions required to validate the measure. Evidence quality, "
-                    "contraindications, and feasibility still must be assessed, but "
-                    "INSUFFICIENT_INFO in those dimensions is a caution rather than proof "
-                    "that the measure needs revision. Any CONTRADICTED verdict is a hard veto.\n"
-                    "- When evidence is provided, do not use the curated knowledge base or "
-                    "sector statistics to rescue the claim.\n"
-                    "- The reason field must explain the rubric outcome in under 90 words."
+                    f"User-supplied evidence: {evidence or 'Not provided'}\n\n"
                 ),
             }
         ]
@@ -7592,6 +7711,7 @@ Support excerpts:
                 for _ in range(max(1, self.settings.mitigation_verdict_samples))
             ]
         )
+        print("responses", responses)
         if any(is_llm_unavailable_response(response) for response in responses):
             return None
 
@@ -7600,9 +7720,11 @@ Support excerpts:
             for response in responses
             if not (parsed := parse_grounded_validation_response(response)).get("error")
         ]
+        print("parsed_samples:", parsed_samples)
         if not parsed_samples:
             return None
         parsed = self._majority_grounding_verdict(parsed_samples)
+        print("parsed:", parsed)
         return self._score_mitigation_grounding(
             parsed,
             support_context=support_context,
@@ -7709,7 +7831,7 @@ Support excerpts:
             dimension["status"] == "CONTRADICTED"
             for dimension in applicable_dimensions.values()
         )
-        valid = coverage == 1.0 and not contradicted
+        valid = coverage >= .85 and not contradicted
         retrieval_support = (
             sum(min(score, 1.0) for score in supported_scores) / len(supported_scores)
             if supported_scores
@@ -7719,6 +7841,11 @@ Support excerpts:
         confidence_score = round(
             100 * ((0.6 * coverage) + (0.25 * retrieval_support) + (0.15 * verdict_stability))
         )
+
+        print("citation_scores:", citation_scores)
+        print("coverage:", coverage, "contradicted:", contradicted, "valid:", valid)
+        print(dimensions, supported_scores)
+
         reason = self._mitigation_grounding_reason(
             str(parsed.get("reason") or "").strip(),
             valid,
@@ -7827,6 +7954,27 @@ Support excerpts:
             "justification, or add relevant material to the curated knowledge base."
         )
         return " ".join(reason_parts)
+
+    def _mitigation_revision_reason(self, validation: dict[str, object]) -> str:
+        reason = str(validation.get("reason") or "").strip()
+        raw_dimensions = validation.get("dimensions")
+        dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
+        dimension_names = [
+            *self.mitigation_grounding_dimensions,
+            *(name for name in dimensions if name not in self.mitigation_grounding_dimensions),
+        ]
+        lines = [reason] if reason else []
+        lines.extend(["", "### Validation dimensions", ""])
+        for name in dimension_names:
+            raw_dimension = dimensions.get(name)
+            dimension = raw_dimension if isinstance(raw_dimension, dict) else {}
+            status = str(dimension.get("status") or "UNKNOWN").strip().upper()
+            explanation = str(dimension.get("explanation") or "").strip()
+            if not explanation:
+                explanation = "No explanation was provided."
+            label = str(name).replace("_", " ").strip().title()
+            lines.append(f"- **{label}** - `{status}`: {explanation}")
+        return "\n".join(lines).strip()
 
     @staticmethod
     def _dimension_names_with_status(
@@ -8072,7 +8220,7 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
     ) -> str:
         query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
         try:
-            results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=4)
+            results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=8)
         except Exception:
             logger.exception("Main knowledge-base lookup failed during mitigation validation")
             results = []

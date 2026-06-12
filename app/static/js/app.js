@@ -5,8 +5,10 @@ const voicePreferenceKey = "dr_transition_voice_preference";
 const typingEffectKey = "dr_transition_typing_effect_enabled";
 const autoConversationKey = "dr_transition_auto_conversation_enabled";
 const teacherAvatarPath = "/static/img/teacher.png";
+const collapsibleMessageWordLimit = 100;
 
 const chatLog = document.querySelector("#chatLog");
+const chatScrollBottomButton = document.querySelector("#chatScrollBottomButton");
 const optionTray = document.querySelector("#optionTray");
 const chatForm = document.querySelector("#chatForm");
 const messageInputRow = document.querySelector("#messageInputRow");
@@ -91,6 +93,10 @@ const closeTargetPopulationButton = document.querySelector("#closeTargetPopulati
 const cancelTargetPopulationButton = document.querySelector("#cancelTargetPopulationButton");
 const targetAllGeneralPopulationButton = document.querySelector("#targetAllGeneralPopulationButton");
 const sessionEmpty = document.querySelector("#sessionEmpty");
+const selectedHazardContext = document.querySelector("#selectedHazardContext");
+const selectedHazardName = document.querySelector("#selectedHazardName");
+const affectedProfileList = document.querySelector("#affectedProfileList");
+const affectedProfileEmpty = document.querySelector("#affectedProfileEmpty");
 const stageVisualTitle = document.querySelector("#stageVisualTitle");
 const stageVisualText = document.querySelector("#stageVisualText");
 const stageProgressFill = document.querySelector("#stageProgressFill");
@@ -477,6 +483,10 @@ async function fetchMapTopology(path) {
 }
 
 async function renderDynamicStageVisual(key, session = {}, options = currentOptions) {
+  if (session?.selected_hazard) {
+    renderStageIcons(key, session, options);
+    return;
+  }
   if (key === "country") {
     await renderCountrySelectionMap();
     return;
@@ -1243,14 +1253,41 @@ function nowLabel() {
 function scrollToBottom(targetLog = chatLog) {
   if (!targetLog) return;
   targetLog.scrollTop = targetLog.scrollHeight;
+  if (targetLog === chatLog) updateChatScrollBottomButton();
 }
+
+function updateChatScrollBottomButton() {
+  if (!chatLog || !chatScrollBottomButton) return;
+  const distanceFromBottom = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight;
+  chatScrollBottomButton.hidden = distanceFromBottom <= 100;
+}
+
+chatLog?.addEventListener("scroll", updateChatScrollBottomButton, { passive: true });
+chatScrollBottomButton?.addEventListener("click", () => {
+  chatLog?.scrollTo({ top: chatLog.scrollHeight, behavior: "smooth" });
+});
 
 function collapseExpandedMessages(targetLog = chatLog) {
   if (!targetLog) return;
   targetLog.querySelectorAll(".bubble.is-collapsible.is-expanded").forEach((bubble) => {
-    bubble.classList.remove("is-expanded");
-    const toggle = bubble.querySelector(".bubble-toggle");
-    if (toggle) toggle.textContent = "Show more";
+    setCollapsibleBubbleExpanded(bubble, false);
+  });
+}
+
+function setCollapsibleBubbleExpanded(bubble, expanded) {
+  if (!bubble?.classList.contains("is-collapsible")) return;
+  bubble.classList.toggle("is-expanded", expanded);
+  const toggle = bubble.querySelector(".bubble-toggle");
+  if (toggle) toggle.textContent = expanded ? "Show less" : "Show more";
+}
+
+function syncCollapsibleMessages(targetLog = chatLog) {
+  if (!targetLog) return;
+  const messageBubbles = Array.from(targetLog.querySelectorAll(".message-row .bubble"));
+  const latestBubble = messageBubbles.at(-1);
+  messageBubbles.forEach((bubble) => {
+    if (!bubble.classList.contains("is-collapsible")) return;
+    setCollapsibleBubbleExpanded(bubble, bubble === latestBubble);
   });
 }
 
@@ -1301,6 +1338,7 @@ function addMessage(role, text, isError = false, targetLog = chatLog) {
     row.appendChild(bubble);
   }
   targetLog.appendChild(row);
+  syncCollapsibleMessages(targetLog);
   scrollToBottom(targetLog);
   return row;
 }
@@ -1322,6 +1360,7 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
     content.innerHTML = html;
     bubble.appendChild(timestamp);
     applyCollapsibleBubble(bubble);
+    syncCollapsibleMessages(targetLog);
     scrollToBottom(targetLog);
     return;
   }
@@ -1356,6 +1395,7 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
   }
   bubble.appendChild(timestamp);
   applyCollapsibleBubble(bubble);
+  syncCollapsibleMessages(targetLog);
   scrollToBottom(targetLog);
 }
 
@@ -1364,7 +1404,7 @@ function applyCollapsibleBubble(bubble) {
   if (!content) return;
   bubble.querySelector(".bubble-toggle")?.remove();
   const wordCount = (content.textContent || "").trim().split(/\s+/).filter(Boolean).length;
-  if (wordCount <= 100) {
+  if (wordCount <= collapsibleMessageWordLimit) {
     bubble.classList.remove("is-collapsible", "is-expanded");
     return;
   }
@@ -1375,8 +1415,8 @@ function applyCollapsibleBubble(bubble) {
   button.className = "bubble-toggle";
   button.textContent = "Show less";
   button.addEventListener("click", () => {
-    const expanded = bubble.classList.toggle("is-expanded");
-    button.textContent = expanded ? "Show less" : "Show more";
+    const expanded = !bubble.classList.contains("is-expanded");
+    setCollapsibleBubbleExpanded(bubble, expanded);
     const row = bubble.closest(".message-row");
     row?.scrollIntoView({ block: "start", behavior: "smooth" });
   });
@@ -1459,6 +1499,7 @@ function renderValidationDetails(row, details) {
 
   content.appendChild(panel);
   applyCollapsibleBubble(row.querySelector(".bubble"));
+  syncCollapsibleMessages(row.parentElement);
 }
 
 function appendValidationGroup(panel, title, values, formatMetrics) {
@@ -1609,7 +1650,46 @@ function updateSessionCard(session) {
   const hasSession = Boolean(session?.country || session?.region || session?.sector);
   if (sessionEmpty) sessionEmpty.hidden = hasSession;
   document.querySelector(".stage-selection")?.classList.toggle("has-session", hasSession);
+  updateNewSessionButton();
+  renderSelectedHazardContext(session);
   updateStageVisual(currentStep, currentSession, currentOptions);
+}
+
+function updateNewSessionButton() {
+  if (!resetButton) return;
+  const canStartNewSession = Boolean(currentSession?.country);
+  resetButton.disabled = !canStartNewSession;
+  resetButton.title = canStartNewSession
+    ? "Start a new session"
+    : "Select a country before starting another session";
+}
+
+function renderSelectedHazardContext(session = {}) {
+  if (!selectedHazardContext || !selectedHazardName || !affectedProfileList) return;
+  const hazard = String(session.selected_hazard || "").trim();
+  const profiles = Array.isArray(session.affected_profiles)
+    ? session.affected_profiles.map((profile) => String(profile || "").trim()).filter(Boolean)
+    : [];
+
+  selectedHazardContext.hidden = !hazard;
+  selectedHazardName.textContent = hazard;
+  affectedProfileList.innerHTML = "";
+  profiles.forEach((profile) => {
+    const item = document.createElement("li");
+    const icon = document.createElement("span");
+    icon.className = "affected-profile-item-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.innerHTML = `
+      <svg viewBox="0 0 24 24">
+        <path d="M15 8a3 3 0 10-6 0 3 3 0 006 0zM5 20a7 7 0 0114 0"></path>
+      </svg>
+    `;
+    const label = document.createElement("span");
+    label.textContent = profile;
+    item.append(icon, label);
+    affectedProfileList.appendChild(item);
+  });
+  if (affectedProfileEmpty) affectedProfileEmpty.hidden = profiles.length > 0;
 }
 
 function syncTargetPopulationQuestion(step, options = []) {
@@ -2747,6 +2827,7 @@ micButton?.addEventListener("click", () => {
 });
 
 resetButton.addEventListener("click", async () => {
+  if (!currentSession?.country) return;
   pauseSpeech();
   stopAutoConversation();
   autoConversationTurns = 0;

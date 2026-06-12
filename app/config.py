@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     nli_url: str = ""
     nli_timeout_seconds: int = 60
     nli_model: str = "cross-encoder/nli-deberta-v3-small"
-    mitigation_verdict_samples: int = 3
+    mitigation_verdict_samples: int = 1
     mitigation_verdict_temperature: float = 0.25
     mitigation_support_score_floor: float = 0.15
 
