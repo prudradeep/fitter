@@ -18,6 +18,9 @@ class SessionSummary(BaseModel):
     region: str | None = None
     sector: str | None = None
     selected_hazard: str | None = None
+    mitigation_measure: str | None = None
+    benefited_profiles: list[str] = Field(default_factory=list)
+    mitigation_review: dict[str, object] | None = None
     target_population_questions: list[dict[str, object]] = Field(default_factory=list)
     hazard_count: int = 0
     affected_profile_count: int = 0

@@ -165,7 +165,7 @@
         <section
           id="selectedHazardContext"
           class="selected-hazard-context"
-          aria-label="Selected hazard and affected socio-demographic profiles"
+          aria-label="Selected analysis context"
           hidden
         >
           <div class="selected-context-heading">
@@ -175,11 +175,11 @@
               </svg>
             </span>
             <div>
-              <span>Selected hazard</span>
+              <span id="selectedContextLabel">Selected hazard</span>
               <strong id="selectedHazardName"></strong>
             </div>
           </div>
-          <div class="affected-profile-context">
+          <div id="affectedProfileContext" class="affected-profile-context">
             <div class="affected-profile-heading">
               <span class="selected-context-icon profile-context-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24">
@@ -192,6 +192,52 @@
             <p id="affectedProfileEmpty" class="affected-profile-empty">
               Identifying affected profiles...
             </p>
+          </div>
+          <div id="mitigationReviewContext" class="mitigation-review-context" hidden>
+            <div>
+              <span>Benefited socio demographic profiles</span>
+              <ul id="benefitedProfileList" class="affected-profile-list"></ul>
+              <p id="benefitedProfileEmpty" class="affected-profile-empty">
+                No benefited profiles recorded.
+              </p>
+            </div>
+            <dl class="mitigation-review-facts">
+              <div>
+                <dt>Grounding confidence score</dt>
+                <dd id="mitigationConfidenceScore">Not available</dd>
+              </div>
+              <div>
+                <dt>Mitigation grounding status</dt>
+                <dd>
+                  <button
+                    id="mitigationGroundingStatus"
+                    class="mitigation-status-button"
+                    type="button"
+                    aria-label="Mitigation grounding explanation"
+                  >
+                    Not available
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Signals</dt>
+                <dd>
+                  <span>Verdict Stability</span>
+                  <strong id="mitigationVerdictStability">Not available</strong>
+                </dd>
+              </div>
+              <div>
+                <dt>Checks</dt>
+                <dd>
+                  <span>Support Corpus</span>
+                  <strong id="mitigationSupportCorpus">Not available</strong>
+                </dd>
+              </div>
+              <div>
+                <dt>Last note</dt>
+                <dd id="mitigationLastNote">Not available</dd>
+              </div>
+            </dl>
           </div>
         </section>
         <div class="stage-dynamic-visual">

@@ -7797,7 +7797,6 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
             }
         ]
 
-        print("Grounding validator input messages:", messages)
         async def sample_validator(sample_count: int) -> list[dict[str, object]]:
             responses = await asyncio.gather(
                 *[
@@ -7818,10 +7817,7 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
                 if not (parsed := parse_grounded_validation_response(response)).get("error")
             ]
 
-        parsed_samples = await sample_validator(max(1, self.settings.mitigation_verdict_samples))
-        
-        print(f"Grounding validator parsed samples ({len(parsed_samples)}):", parsed_samples)
-        
+        parsed_samples = await sample_validator(max(1, self.settings.mitigation_verdict_samples))        
         if not parsed_samples:
             return None
         contradiction_dimensions = self._dimensions_with_any_status(
@@ -7838,7 +7834,6 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
             contradiction_samples=contradiction_samples,
             contradiction_dimensions=contradiction_dimensions,
         )
-        print("Grounding validator final parsed verdict:", parsed)
         return self._score_mitigation_grounding(
             parsed,
             support_context=support_context,

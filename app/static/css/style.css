@@ -1625,6 +1625,11 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   padding-top: 9px;
 }
 
+.affected-profile-context[hidden],
+.mitigation-review-context[hidden] {
+  display: none;
+}
+
 .affected-profile-list {
   display: flex;
   flex-wrap: wrap;
@@ -1673,6 +1678,90 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .affected-profile-empty[hidden] {
+  display: none;
+}
+
+.mitigation-review-context {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 9px;
+}
+
+.mitigation-review-context > div {
+  display: grid;
+  gap: 7px;
+}
+
+.mitigation-review-context > div > span,
+.mitigation-review-facts dt {
+  color: #64748b;
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mitigation-review-facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.mitigation-review-facts div {
+  display: grid;
+  gap: 3px;
+}
+
+.mitigation-review-facts dd {
+  min-width: 0;
+  margin: 0;
+  color: #111827;
+  font-size: 0.74rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.mitigation-review-facts dd span {
+  margin-right: 5px;
+  color: #475569;
+  font-weight: 700;
+}
+
+.mitigation-review-facts dd strong {
+  font-weight: 900;
+}
+
+.mitigation-status-button {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid rgba(22, 163, 74, 0.28);
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #166534;
+  padding: 5px 9px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: left;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease;
+}
+
+.mitigation-status-button:hover,
+.mitigation-status-button.expanded {
+  border-color: rgba(22, 163, 74, 0.48);
+  background: #dcfce7;
+}
+
+.mitigation-status-button.expanded {
+  border-radius: 8px;
+  line-height: 1.35;
+}
+
+.mitigation-status-button[hidden] {
   display: none;
 }
 

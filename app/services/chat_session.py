@@ -73,11 +73,15 @@ class ChatSession:
             if key and key not in seen_profiles:
                 seen_profiles.add(key)
                 deduped_affected_profiles.append(profile.strip())
+        benefited_profiles = self._target_population_profiles(self.target_population_answers or [])
         return SessionSummary(
             country=self.country,
             region=self.region,
             sector=self.sector,
             selected_hazard=self.selected_hazard or self.accepted_custom_hazard,
+            mitigation_measure=self.mitigation_measure,
+            benefited_profiles=benefited_profiles,
+            mitigation_review=self._mitigation_review_summary(self.mitigation_validation),
             target_population_questions=self.target_population_questions or [],
             hazard_count=system_hazard_count + regional_hazard_count,
             affected_profile_count=len(deduped_affected_profiles),
@@ -93,6 +97,31 @@ class ChatSession:
             if match:
                 profiles.append(match.group(1).strip())
         return profiles or ([markdown_text.strip()] if markdown_text.strip() else [])
+
+    @staticmethod
+    def _target_population_profiles(answers: list[dict[str, str | int]]) -> list[str]:
+        profiles: list[str] = []
+        seen: set[str] = set()
+        for answer in answers:
+            for profile in str(answer.get("answer") or "").split(","):
+                label = profile.strip()
+                key = label.casefold()
+                if label and key not in seen:
+                    seen.add(key)
+                    profiles.append(label)
+        return profiles
+
+    @staticmethod
+    def _mitigation_review_summary(validation: dict[str, object] | None) -> dict[str, object] | None:
+        if not isinstance(validation, dict):
+            return None
+        return {
+            "confidence_score": validation.get("confidence_score"),
+            "grounding_status": validation.get("outcome"),
+            "verdict_stability": validation.get("verdict_stability"),
+            "support_corpus": validation.get("support_label"),
+            "explanation": str(validation.get("reason") or "").strip(),
+        }
 
 
 class ChatSessionStore:

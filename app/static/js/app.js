@@ -94,9 +94,19 @@ const cancelTargetPopulationButton = document.querySelector("#cancelTargetPopula
 const targetAllGeneralPopulationButton = document.querySelector("#targetAllGeneralPopulationButton");
 const sessionEmpty = document.querySelector("#sessionEmpty");
 const selectedHazardContext = document.querySelector("#selectedHazardContext");
+const selectedContextLabel = document.querySelector("#selectedContextLabel");
 const selectedHazardName = document.querySelector("#selectedHazardName");
+const affectedProfileContext = document.querySelector("#affectedProfileContext");
 const affectedProfileList = document.querySelector("#affectedProfileList");
 const affectedProfileEmpty = document.querySelector("#affectedProfileEmpty");
+const mitigationReviewContext = document.querySelector("#mitigationReviewContext");
+const benefitedProfileList = document.querySelector("#benefitedProfileList");
+const benefitedProfileEmpty = document.querySelector("#benefitedProfileEmpty");
+const mitigationConfidenceScore = document.querySelector("#mitigationConfidenceScore");
+const mitigationGroundingStatus = document.querySelector("#mitigationGroundingStatus");
+const mitigationVerdictStability = document.querySelector("#mitigationVerdictStability");
+const mitigationSupportCorpus = document.querySelector("#mitigationSupportCorpus");
+const mitigationLastNote = document.querySelector("#mitigationLastNote");
 const stageVisualTitle = document.querySelector("#stageVisualTitle");
 const stageVisualText = document.querySelector("#stageVisualText");
 const stageProgressFill = document.querySelector("#stageProgressFill");
@@ -299,6 +309,7 @@ function stageKeyForStep(step = "") {
 function updateStageVisual(step = "", session = {}, options = currentOptions) {
   currentStep = step;
   currentOptions = options || [];
+  renderSelectedHazardContext(session);
   const key = stageKeyForStep(step);
   const visual = stageVisuals[key] || stageVisuals.country;
   if (stageVisualTitle) stageVisualTitle.textContent = visual.title;
@@ -1662,13 +1673,24 @@ function updateNewSessionButton() {
 
 function renderSelectedHazardContext(session = {}) {
   if (!selectedHazardContext || !selectedHazardName || !affectedProfileList) return;
+  const isMitigationReview = currentStep === "mitigation_review";
   const hazard = String(session.selected_hazard || "").trim();
+  const mitigationMeasure = String(session.mitigation_measure || "").trim();
   const profiles = Array.isArray(session.affected_profiles)
     ? session.affected_profiles.map((profile) => String(profile || "").trim()).filter(Boolean)
     : [];
 
-  selectedHazardContext.hidden = !hazard;
-  selectedHazardName.textContent = hazard;
+  selectedHazardContext.hidden = isMitigationReview ? !mitigationMeasure : !hazard;
+  if (selectedContextLabel) {
+    selectedContextLabel.textContent = isMitigationReview ? "Mitigation Measure" : "Selected hazard";
+  }
+  selectedHazardName.textContent = isMitigationReview ? mitigationMeasure : hazard;
+  if (affectedProfileContext) affectedProfileContext.hidden = isMitigationReview;
+  if (mitigationReviewContext) mitigationReviewContext.hidden = !isMitigationReview;
+  if (isMitigationReview) {
+    renderMitigationReviewContext(session);
+    return;
+  }
   affectedProfileList.innerHTML = "";
   profiles.forEach((profile) => {
     const item = document.createElement("li");
@@ -1687,6 +1709,73 @@ function renderSelectedHazardContext(session = {}) {
   });
   if (affectedProfileEmpty) affectedProfileEmpty.hidden = profiles.length > 0;
 }
+
+function renderMitigationReviewContext(session = {}) {
+  const review = session.mitigation_review && typeof session.mitigation_review === "object"
+    ? session.mitigation_review
+    : {};
+  const profiles = Array.isArray(session.benefited_profiles)
+    ? session.benefited_profiles.map((profile) => String(profile || "").trim()).filter(Boolean)
+    : [];
+
+  if (benefitedProfileList) {
+    benefitedProfileList.innerHTML = "";
+    profiles.forEach((profile) => {
+      const item = document.createElement("li");
+      const icon = document.createElement("span");
+      icon.className = "affected-profile-item-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = `
+        <svg viewBox="0 0 24 24">
+          <path d="M20 6L9 17l-5-5"></path>
+        </svg>
+      `;
+      const label = document.createElement("span");
+      label.textContent = profile;
+      item.append(icon, label);
+      benefitedProfileList.appendChild(item);
+    });
+  }
+  if (benefitedProfileEmpty) benefitedProfileEmpty.hidden = profiles.length > 0;
+  if (mitigationConfidenceScore) {
+    mitigationConfidenceScore.textContent =
+      review.confidence_score === null || review.confidence_score === undefined
+        ? "Not available"
+        : formatValidationMetric("confidence_score", review.confidence_score);
+  }
+  const status = String(review.grounding_status || "").trim();
+  const explanation = String(review.explanation || "").trim();
+  if (mitigationGroundingStatus) {
+    const positiveStatus = ["clear", "supported", "positive"].includes(status.toLowerCase());
+    mitigationGroundingStatus.textContent = positiveStatus ? validationLabel(status) : "Not available";
+    mitigationGroundingStatus.hidden = !positiveStatus;
+    mitigationGroundingStatus.title = explanation || "No grounding explanation available.";
+    mitigationGroundingStatus.dataset.explanation = explanation;
+    mitigationGroundingStatus.classList.toggle("expanded", false);
+    mitigationGroundingStatus.setAttribute("aria-expanded", "false");
+  }
+  if (mitigationVerdictStability) {
+    mitigationVerdictStability.textContent =
+      review.verdict_stability === null || review.verdict_stability === undefined
+        ? "Not available"
+        : formatValidationMetric("verdict_stability", review.verdict_stability);
+  }
+  if (mitigationSupportCorpus) {
+    mitigationSupportCorpus.textContent = review.support_corpus ? validationLabel(review.support_corpus) : "Not available";
+  }
+  if (mitigationLastNote) {
+    mitigationLastNote.textContent = explanation || "No note available.";
+  }
+}
+
+mitigationGroundingStatus?.addEventListener("click", () => {
+  const explanation = mitigationGroundingStatus.dataset.explanation || "No grounding explanation available.";
+  const expanded = mitigationGroundingStatus.classList.toggle("expanded");
+  mitigationGroundingStatus.setAttribute("aria-expanded", String(expanded));
+  mitigationGroundingStatus.textContent = expanded
+    ? explanation
+    : validationLabel(currentSession?.mitigation_review?.grounding_status || "Supported");
+});
 
 function syncTargetPopulationQuestion(step, options = []) {
   if (step !== "target_population_question" && step !== "add_dgs") {
@@ -2624,6 +2713,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     localStorage.setItem(sessionKey, sessionId);
 
     typing.remove();
+    currentStep = data.step;
     if (data.step === "stats_deep_dive_dialog") {
       updateSessionCard(data.session);
       setInputMode(data.input_mode || "text", currentStep, data.options || []);
