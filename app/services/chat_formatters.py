@@ -83,19 +83,6 @@ def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) 
         "     - Relevance "
         f"**{relevance}** | Salience {salience} | EffectSize {effect} | Reach {reach}"
     )
-    profiles = ranking.get("profiles")
-    if isinstance(profiles, list) and profiles:
-        lines.append("     - Regional profile prevalence")
-        for profile in profiles[:5]:
-            if not isinstance(profile, dict):
-                continue
-            name = str(profile.get("name") or "").strip()
-            pct = _format_score(profile.get("population_pct"), suffix="%")
-            national_pct = _format_score(profile.get("national_population_pct"), suffix="%")
-            source = str(profile.get("source") or "").strip()
-            dataset = str(profile.get("dataset") or "").strip()
-            if name:
-                lines.append(f"       - {name}: regional {pct}, national {national_pct} ({source}, {dataset})")
 
 
 def _format_score(value: object, suffix: str = "") -> str:

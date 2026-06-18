@@ -74,7 +74,6 @@ from app.services.chat_parsers import (
 from app.services.chat_session import ChatSession, session_store
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.grounding_models import GroundingModelService
-from app.services.eurostat_service import EurostatService, population_percentages
 from app.services.hazard_ranking_service import HazardRankingService
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.sector_prompt_rag import (
@@ -1281,6 +1280,29 @@ class ChatService:
         ranked_names = [str(row["hazard"]) for row in ranked_rows if str(row["hazard"]) in ranked_by_name]
         session.hazards = ranked_names
         session.hazard_rankings = ranked_by_name
+        await self._enrich_listed_hazard_profiles_with_population_context(session)
+
+    async def _enrich_listed_hazard_profiles_with_population_context(
+        self,
+        session: ChatSession,
+    ) -> None:
+        if not session.hazard_profiles or not session.hazard_rankings:
+            return
+        enriched_profiles: dict[str, list[dict[str, str]]] = {}
+        for hazard in session.hazards or []:
+            profiles = self._stored_hazard_profiles(session, hazard)
+            if not profiles:
+                continue
+            enriched_profiles[hazard] = await self._profiles_with_population_context(
+                session,
+                hazard,
+                profiles,
+            )
+        if enriched_profiles:
+            session.hazard_profiles = {
+                **(session.hazard_profiles or {}),
+                **enriched_profiles,
+            }
 
     def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         session.phase = "hazards"
@@ -3356,21 +3378,20 @@ Return Markdown only.
                 if session.hazard_profiles is None:
                     session.hazard_profiles = {}
                 session.hazard_profiles[hazard] = profiles
-        answer = self._format_hazard_profiles_markdown(
-            hazard,
-            profiles,
-            user_profiles=user_profiles,
-        )
-        prevalence_note = await self._regional_profile_prevalence_markdown(
+        display_profiles = await self._profiles_with_population_context(session, hazard, profiles)
+        display_user_profiles = await self._profiles_with_population_context(
             session,
             hazard,
-            profiles=[*profiles, *user_profiles],
+            user_profiles,
         )
-        if prevalence_note:
-            answer = f"{answer}\n\n{prevalence_note}"
+        answer = self._format_hazard_profiles_markdown(
+            hazard,
+            display_profiles,
+            user_profiles=display_user_profiles,
+        )
         session.socio_demographic_findings = self._format_hazard_profiles_markdown(
             hazard,
-            profiles,
+            display_profiles,
         )
         session.socio_demographic_profiles = [
             profile["name"] for profile in profiles if profile.get("name")
@@ -3410,54 +3431,6 @@ Return Markdown only.
             session=session.summary(),
             error=False,
         )
-
-    async def _regional_profile_prevalence_markdown(
-        self,
-        session: ChatSession,
-        hazard: str,
-        *,
-        profiles: list[dict[str, str]],
-    ) -> str:
-        rankings = session.hazard_rankings or {}
-        ranking = rankings.get(hazard)
-        if ranking is None:
-            hazard_key = normalize(hazard)
-            for stored_hazard, stored_ranking in rankings.items():
-                if normalize(str(stored_hazard)) == hazard_key:
-                    ranking = stored_ranking
-                    break
-        if not isinstance(ranking, dict):
-            return ""
-        lines = ["#### Regional population prevalence and reach coverage"]
-        profile_names = [
-            str(profile.get("name") or profile.get("profile") or "").strip()
-            for profile in profiles
-            if isinstance(profile, dict)
-        ]
-        profile_names = list(dict.fromkeys(name for name in profile_names if name))
-        if profile_names and session.country and session.region:
-            eurostat = EurostatService(self.db)
-            for profile_name in profile_names:
-                response = await eurostat.get_profile_population(
-                    country=session.country,
-                    region=session.region,
-                    sector=session.sector or "",
-                    hazard=hazard,
-                    confirmed_predictor_category=profile_name,
-                )
-                percentages = population_percentages(response)
-                lines.append(
-                    f"- **{profile_name}**: regional affected population "
-                    f"**{percentages['regional_pct']:.1f}%**, national affected population "
-                    f"**{percentages['national_pct']:.1f}%** (mock Eurostat, cached)."
-                )
-        elif not profile_names:
-            lines.append(
-                "- Regional Eurostat prevalence is not available yet for the mapped affected profiles."
-            )
-        else:
-            lines.append("- Select a country and region to show Eurostat affected-population percentages.")
-        return "\n".join(lines)
 
     async def _negative_impact_reasons(self, session: ChatSession) -> str:
         context, messages = await self._build_deep_dive_messages(
@@ -4957,6 +4930,174 @@ Retrieved knowledge-base excerpts:
         if start != -1 and end != -1 and end > start:
             return value[start : end + 1]
         return "[]"
+
+    async def _profiles_with_population_context(
+        self,
+        session: ChatSession,
+        hazard: str,
+        profiles: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        if not profiles:
+            return profiles
+        population_profiles = self._ranking_population_profiles(session, hazard)
+        if not population_profiles:
+            return profiles
+        llm_matches = await self._match_population_profiles_with_llm(profiles, population_profiles)
+        enriched: list[dict[str, str]] = []
+        for profile in profiles:
+            name = str(profile.get("name") or profile.get("profile") or "").strip()
+            if not name:
+                enriched.append(profile)
+                continue
+            match = llm_matches.get(normalize(name)) or self._deterministic_population_profile_match(
+                name,
+                population_profiles,
+            )
+            sentence = self._population_context_sentence(match) if match else ""
+            if not sentence:
+                enriched.append(profile)
+                continue
+            updated = dict(profile)
+            explanation = str(updated.get("explanation") or "").strip()
+            if sentence.casefold() not in explanation.casefold():
+                updated["explanation"] = f"{explanation} {sentence}".strip()
+            updated["population_context"] = sentence
+            enriched.append(updated)
+        return enriched
+
+    async def _match_population_profiles_with_llm(
+        self,
+        profiles: list[dict[str, str]],
+        population_profiles: list[dict[str, object]],
+    ) -> dict[str, dict[str, object]]:
+        profile_names = [
+            str(profile.get("name") or profile.get("profile") or "").strip()
+            for profile in profiles
+            if str(profile.get("name") or profile.get("profile") or "").strip()
+        ]
+        candidate_names = [
+            str(profile.get("name") or "").strip()
+            for profile in population_profiles
+            if str(profile.get("name") or "").strip()
+        ]
+        if not profile_names or not candidate_names:
+            return {}
+        context = """
+You match socio-demographic profile labels for Dr Transition.
+
+Return only exact JSON. Match a displayed profile to a population profile only
+when they refer to the same people, household group, income group, age group,
+education group, or dwelling group. If there is no clear match, use null.
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Displayed profiles:\n"
+                    + json.dumps(profile_names, ensure_ascii=False)
+                    + "\n\nPopulation profiles:\n"
+                    + json.dumps(candidate_names, ensure_ascii=False)
+                    + "\n\nReturn ONLY a JSON array like:\n"
+                    '[{"profile": "displayed profile", "matched_profile": "population profile or null"}]'
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0,
+            max_tokens=500,
+        )
+        try:
+            parsed = json.loads(response.strip())
+        except json.JSONDecodeError:
+            try:
+                parsed = json.loads(self._extract_json_array(response))
+            except json.JSONDecodeError:
+                return {}
+        if not isinstance(parsed, list):
+            return {}
+        population_by_name = {
+            normalize(str(profile.get("name") or "")): profile
+            for profile in population_profiles
+            if str(profile.get("name") or "").strip()
+        }
+        matches: dict[str, dict[str, object]] = {}
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            profile_name = str(item.get("profile") or "").strip()
+            raw_matched_name = item.get("matched_profile")
+            if raw_matched_name is None:
+                continue
+            matched_name = str(raw_matched_name or "").strip()
+            if not profile_name or not matched_name or matched_name.casefold() == "null":
+                continue
+            population_profile = population_by_name.get(normalize(matched_name))
+            if population_profile:
+                matches[normalize(profile_name)] = population_profile
+        return matches
+
+    @staticmethod
+    def _ranking_population_profiles(
+        session: ChatSession,
+        hazard: str,
+    ) -> list[dict[str, object]]:
+        rankings = session.hazard_rankings or {}
+        ranking = rankings.get(hazard)
+        if ranking is None:
+            hazard_key = normalize(hazard)
+            for stored_hazard, stored_ranking in rankings.items():
+                if normalize(str(stored_hazard)) == hazard_key:
+                    ranking = stored_ranking
+                    break
+        if not isinstance(ranking, dict):
+            return []
+        profiles = ranking.get("profiles")
+        if not isinstance(profiles, list):
+            return []
+        return [
+            profile
+            for profile in profiles
+            if isinstance(profile, dict)
+            and str(profile.get("name") or "").strip()
+            and profile.get("population_pct") is not None
+        ]
+
+    @staticmethod
+    def _deterministic_population_profile_match(
+        profile_name: str,
+        population_profiles: list[dict[str, object]],
+    ) -> dict[str, object] | None:
+        profile_key = normalize(profile_name)
+        for population_profile in population_profiles:
+            candidate = str(population_profile.get("name") or "").strip()
+            candidate_key = normalize(candidate)
+            if profile_key == candidate_key:
+                return population_profile
+        for population_profile in population_profiles:
+            candidate = str(population_profile.get("name") or "").strip()
+            candidate_key = normalize(candidate)
+            if profile_key and candidate_key and (
+                profile_key in candidate_key or candidate_key in profile_key
+            ):
+                return population_profile
+        return None
+
+    @staticmethod
+    def _population_context_sentence(profile: dict[str, object] | None) -> str:
+        if not profile:
+            return ""
+        try:
+            regional_pct = float(profile.get("population_pct"))
+            national_pct = float(profile.get("national_population_pct"))
+        except (TypeError, ValueError):
+            return ""
+        return (
+            "This profile represents about "
+            f"{regional_pct:.1f}% of the regional population, compared with "
+            f"{national_pct:.1f}% nationally."
+        )
 
     def _format_hazard_profiles_markdown(
         self,
