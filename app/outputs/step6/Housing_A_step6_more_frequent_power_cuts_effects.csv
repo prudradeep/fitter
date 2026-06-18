@@ -1,0 +1,5 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+heat_fuel_bottle_gas,1.4628,0.745,4.3182,1.0026,18.5995,1.9634,0.0496,*,increases,9.0,True,0.3082,30.82,binary,True
+housing_cost_band__1_Low,0.6838,0.2309,1.9814,1.2602,3.1153,2.9619,0.0031,**,increases,100.0,False,0.1106,11.06,binary,True
+age_group__45+,0.6712,0.3409,1.9566,1.003,3.8168,1.9688,0.049,*,increases,34.0,False,0.1191,11.91,binary,True
+macro_asthma_death_rate,-0.0049,0.0019,0.9951,0.9914,0.9989,-2.5234,0.0116,*,decreases,,False,-0.0007,-0.07,continuous/ordinal,True

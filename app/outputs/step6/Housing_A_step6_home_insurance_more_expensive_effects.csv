@@ -1,0 +1,20 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+solar_install_likelihood__Not sure,2.2998,0.7576,9.9725,2.259,44.0247,3.0356,0.0024,**,increases,6,True,0.495,49.5,binary,True
+dwelling_year__Before 1945,-1.9551,0.951,0.1415,0.0219,0.9129,-2.0558,0.0398,*,decreases,5,True,-0.1436,-14.36,binary,True
+ethnic_minority__Prefer not to say,1.3131,0.5076,3.7178,1.3747,10.0548,2.5869,0.0097,**,increases,13,False,0.2531,25.31,binary,True
+dwelling_year__2022 or after,1.2543,0.4079,3.5055,1.5759,7.7979,3.075,0.0021,**,increases,33,False,0.2289,22.89,binary,True
+ber_rating__E-G (poor efficiency),1.2287,0.4456,3.4166,1.4265,8.183,2.7572,0.0058,**,increases,25,False,0.2273,22.73,binary,True
+housing_cost_band__1_Low,1.0341,0.3017,2.8126,1.557,5.0806,3.4276,0.0006,***,increases,100,False,0.1565,15.65,binary,True
+dwelling_year__I don't know,0.9169,0.3786,2.5015,1.1911,5.2535,2.422,0.0154,*,increases,33,False,0.1573,15.73,binary,True
+ber_rating__C (moderate),0.8834,0.3787,2.4191,1.1516,5.0817,2.3327,0.0197,*,increases,29,False,0.1517,15.17,binary,True
+ber_rating__D (below average),0.6907,0.5717,1.9951,0.6507,6.1176,1.2083,0.2269,,increases,11,False,0.1168,11.68,binary,True
+housing_situation__I own the house or flat where I live and I am paying if with a mortgage,-0.6332,0.3202,0.5309,0.2834,0.9943,-1.9777,0.048,*,decreases,60,False,-0.0786,-7.86,binary,True
+lgbtiqa__Yes or PNS,-0.5953,0.355,0.5514,0.275,1.1057,-1.6771,0.0935,,decreases,34,False,-0.0713,-7.13,binary,True
+dwelling_year__2001-2010,0.5367,0.3502,1.7104,0.861,3.3977,1.5327,0.1254,,increases,38,False,0.0844,8.44,binary,True
+solar_install_likelihood__Somewhat unlikely,0.371,0.6734,1.4491,0.3872,5.4235,0.5509,0.5817,,increases,7,True,0.0578,5.78,binary,True
+housing_cost_band__3_High,0.2452,0.3148,1.2779,0.6894,2.3687,0.7789,0.436,,increases,80,False,0.0352,3.52,binary,True
+dwelling_year__1945-1960,0.2333,0.514,1.2628,0.4611,3.4584,0.4539,0.6499,,increases,14,False,0.0347,3.47,binary,True
+age_group__45+,-0.2258,0.3488,0.7979,0.4027,1.5808,-0.6473,0.5175,,decreases,34,False,-0.0297,-2.97,binary,True
+dwelling_year__2016-2021,0.1594,0.379,1.1728,0.558,2.4649,0.4206,0.674,,increases,31,False,0.0231,2.31,binary,True
+ber_rating__A-B (high efficiency),-0.051,0.3282,0.9503,0.4994,1.8081,-0.1554,0.8765,,decreases,44,False,-0.007,-0.7,binary,True
+housing_situation__I own the house or flat where I live and I do not pay a mortgage,-0.0502,0.3853,0.9511,0.4469,2.0239,-0.1302,0.8964,,decreases,29,False,-0.0069,-0.69,binary,True

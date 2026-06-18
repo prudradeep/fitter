@@ -1,0 +1,5 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+"utility_arrears__Yes, twice or more",1.0971,0.3962,2.9954,1.3778,6.5122,2.7687,0.0056,**,increases,24.0,False,0.2146,21.46,binary,True
+religious_minority__Yes,-0.9551,0.4228,0.3848,0.168,0.8812,-2.2593,0.0239,*,decreases,22.0,False,-0.1093,-10.93,binary,True
+home_problems_count,0.2516,0.0677,1.2861,1.1263,1.4687,3.7158,0.0002,***,increases,,False,0.0412,4.12,continuous/ordinal,True
+macro_electricity_consumption,0.2078,0.0666,1.231,1.0805,1.4025,3.1227,0.0018,**,increases,,False,0.0336,3.36,continuous/ordinal,True

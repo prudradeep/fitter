@@ -1,0 +1,2 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+ev_perception,0.4181,0.0941,1.5191,1.2632,1.8269,4.443,0.0,***,increases,,False,0.0735,7.35,continuous/ordinal,True

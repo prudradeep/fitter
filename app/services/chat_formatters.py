@@ -27,6 +27,7 @@ def format_system_hazards(session: ChatSession) -> str:
     for hazard in hazards:
         display_hazard = _clean_hazard_display_name(hazard)
         lines.append(f"- **{display_hazard}**")
+        _append_hazard_ranking(lines, session, hazard)
         _append_hazard_profiles(lines, session, hazard)
     return "\n".join(lines)
 
@@ -61,6 +62,48 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
                 lines.append(f"     - **{name}**")
         else:
             lines.append(f"     - **{profile}**")
+
+
+def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) -> None:
+    rankings = session.hazard_rankings or {}
+    ranking = rankings.get(hazard)
+    if ranking is None:
+        hazard_key = normalize_markdown_text(hazard).casefold()
+        for stored_hazard, stored_ranking in rankings.items():
+            if normalize_markdown_text(str(stored_hazard)).casefold() == hazard_key:
+                ranking = stored_ranking
+                break
+    if not isinstance(ranking, dict):
+        return
+    relevance = _format_score(ranking.get("relevance_score"))
+    salience = _format_score(ranking.get("salience_score"))
+    effect = _format_score(ranking.get("effect_size_score"))
+    reach = _format_score(ranking.get("reach_score"))
+    lines.append(
+        "     - Relevance "
+        f"**{relevance}** | Salience {salience} | EffectSize {effect} | Reach {reach}"
+    )
+    profiles = ranking.get("profiles")
+    if isinstance(profiles, list) and profiles:
+        lines.append("     - Regional profile prevalence")
+        for profile in profiles[:5]:
+            if not isinstance(profile, dict):
+                continue
+            name = str(profile.get("name") or "").strip()
+            pct = _format_score(profile.get("population_pct"), suffix="%")
+            national_pct = _format_score(profile.get("national_population_pct"), suffix="%")
+            source = str(profile.get("source") or "").strip()
+            dataset = str(profile.get("dataset") or "").strip()
+            if name:
+                lines.append(f"       - {name}: regional {pct}, national {national_pct} ({source}, {dataset})")
+
+
+def _format_score(value: object, suffix: str = "") -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    return f"{number:.2f}{suffix}"
 
 
 def format_additional_dgs(session: ChatSession) -> str:

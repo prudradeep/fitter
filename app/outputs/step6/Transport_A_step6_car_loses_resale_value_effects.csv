@@ -1,0 +1,5 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+ev_likelihood__Very unlikely,-1.3926,0.3577,0.2484,0.1232,0.5008,-3.8932,0.0001,***,decreases,30.0,False,-0.0059,-0.59,binary,True
+ev_likelihood__Unlikely,-1.1354,0.3462,0.3213,0.163,0.6332,-3.2798,0.001,**,decreases,29.0,False,-0.0042,-0.42,binary,True
+activity_status__Unemployed (actively seeking work or available to start work),0.8682,0.2929,2.3827,1.3418,4.2308,2.9637,0.003,**,increases,41.0,False,0.0014,0.14,binary,True
+household_size,0.1133,0.0825,1.12,0.9527,1.3167,1.3727,0.1698,,increases,,False,0.0002,0.02,continuous/ordinal,True

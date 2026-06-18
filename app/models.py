@@ -289,6 +289,27 @@ class KnowledgeChunk(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class EurostatPopulationCache(Base):
+    __tablename__ = "eurostat_population_cache"
+    __table_args__ = (
+        UniqueConstraint("country", "region", "profile", name="uq_eurostat_population_lookup"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    country: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    region: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    profile: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    response_json: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class UserActivity(Base):
     __tablename__ = "user_activities"
 

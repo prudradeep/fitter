@@ -1,0 +1,3 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+political_group__Yes,-1.0669,0.3652,0.3441,0.1682,0.7039,-2.9216,0.0035,**,decreases,26.0,False,-0.1252,-12.52,binary,True
+macro_electricity_consumption,0.1464,0.0653,1.1577,1.0187,1.3156,2.2432,0.0249,*,increases,,False,0.0242,2.42,continuous/ordinal,True

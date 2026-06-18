@@ -1,0 +1,7 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+bill_confidence__Not at all confident — I find it very difficult to understand my energy bill.,1.8001,0.5943,6.0502,1.8874,19.3942,3.0288,0.0025,**,increases,13,False,0.3897,38.97,binary,True
+"utility_arrears__Yes, twice or more",1.2037,0.4199,3.3323,1.4632,7.5889,2.8665,0.0042,**,increases,24,False,0.2404,24.04,binary,True
+political_group__Yes,-0.8141,0.3571,0.443,0.22,0.8921,-2.2796,0.0226,*,decreases,26,False,-0.0983,-9.83,binary,True
+"utility_arrears__Yes, once",0.7676,0.377,2.1545,1.0291,4.5108,2.0361,0.0417,*,increases,28,False,0.1409,14.09,binary,True
+gender__Woman or Non-binary,0.747,0.1824,2.1107,1.4763,3.0178,4.0956,0.0,***,increases,199,False,0.1146,11.46,binary,True
+bill_confidence__Not very confident — I often need help or support,0.4691,0.283,1.5986,0.9181,2.7836,1.6579,0.0973,,increases,50,False,0.0794,7.94,binary,True

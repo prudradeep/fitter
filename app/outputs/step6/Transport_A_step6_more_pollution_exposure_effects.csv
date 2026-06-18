@@ -1,0 +1,6 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+ev_likelihood__Unlikely,-1.1049,0.3481,0.3312,0.1674,0.6553,-3.174,0.0015,**,decreases,29.0,False,-0.1185,-11.85,binary,True
+ev_likelihood__Very unlikely,-1.0907,0.3716,0.336,0.1622,0.696,-2.9354,0.0033,**,decreases,30.0,False,-0.1177,-11.77,binary,True
+ev_likelihood__Likely,0.7088,0.2412,2.0315,1.2662,3.2591,2.9387,0.0033,**,increases,81.0,False,0.1167,11.67,binary,True
+macro_modal_split_cars,0.5918,0.3194,1.8073,0.9664,3.3801,1.8529,0.0639,,increases,,False,0.1031,10.31,continuous/ordinal,True
+ev_perception,0.3277,0.0995,1.3877,1.1418,1.6867,3.2918,0.001,***,increases,,False,0.053,5.3,continuous/ordinal,True

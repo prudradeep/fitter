@@ -277,6 +277,22 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
   INDEX ix_knowledge_chunks_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS eurostat_population_cache (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  country VARCHAR(120) NOT NULL,
+  region VARCHAR(120) NOT NULL,
+  profile VARCHAR(255) NOT NULL,
+  response_json TEXT NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT uq_eurostat_population_lookup UNIQUE (country, region, profile),
+  INDEX ix_eurostat_population_cache_country (country),
+  INDEX ix_eurostat_population_cache_region (region),
+  INDEX ix_eurostat_population_cache_profile (profile),
+  INDEX ix_eurostat_population_cache_expires_at (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_activities (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_session_id INT NOT NULL,

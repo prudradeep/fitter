@@ -3,14 +3,14 @@ import re
 import zipfile
 from xml.etree import ElementTree
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 import httpx
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.auth import hash_password, password_rule_errors, require_current_user, verify_password
 from app.database import get_db
-from app.models import AppUser, UserChatMessage, UserSession
+from app.models import AppUser, Country, Region, Sector, UserChatMessage, UserSession
 from app.schemas import ChatRequest, ChatResponse
 from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
@@ -20,7 +20,10 @@ from app.services.document_text import (
     extract_pdf_page_texts,
     html_to_text,
 )
+from app.services.hazard_effect_size import hazard_effect_size_rows
+from app.services.hazard_ranking_service import HazardRankingService
 from app.services.knowledge_base import KnowledgeBaseService
+from app.services.hazard_salience import country_hazard_salience
 from app.services.sector_prompt_rag import SectorPromptRagService
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -81,6 +84,64 @@ async def sessions(
             }
             for row in rows
         ]
+    }
+
+
+@router.get("/hazard-salience")
+async def hazard_salience(
+    country: str | None = Query(default=None, max_length=120),
+    sector: str | None = Query(default=None, max_length=120),
+    current_user: AppUser = Depends(require_current_user),
+) -> dict[str, object]:
+    return {
+        "threshold": "> 12",
+        "formula": "mean_concern * pct_high_concern / 100",
+        "salience": country_hazard_salience(country=country, sector=sector),
+    }
+
+
+@router.get("/hazard-effect-size")
+async def hazard_effect_size(
+    sector: str | None = Query(default=None, max_length=120),
+    hazard: str | None = Query(default=None, max_length=180),
+    min_or: float = Query(default=1.0, gt=0),
+    current_user: AppUser = Depends(require_current_user),
+) -> dict[str, object]:
+    return {
+        "formula": "mean(abs(log(OR_k))) for OR_k > min_or",
+        "min_or": min_or,
+        "effect_sizes": hazard_effect_size_rows(sector=sector, hazard=hazard, min_or=min_or),
+    }
+
+
+@router.get("/hazards/ranked")
+async def ranked_hazards(
+    country_id: int = Query(..., gt=0),
+    region_id: int | None = Query(default=None, gt=0),
+    sector_id: int = Query(..., gt=0),
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    country = db.get(Country, country_id)
+    sector = db.get(Sector, sector_id)
+    region = db.get(Region, region_id) if region_id else None
+    if country is None or sector is None:
+        return {"error": True, "detail": "Country or sector not found.", "hazards": []}
+    if region_id and region is None:
+        return {"error": True, "detail": "Region not found.", "hazards": []}
+    ranking_service = HazardRankingService(db)
+    hazards = await ranking_service.rank_hazards(
+        country=country,
+        region=region,
+        sector=sector,
+    )
+    return {
+        "error": False,
+        "country": country.name,
+        "region": region.name if region else None,
+        "sector": sector.name,
+        "formula": "salience_score + effect_size_score + reach_score",
+        "hazards": hazards,
     }
 
 

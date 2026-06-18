@@ -74,6 +74,8 @@ from app.services.chat_parsers import (
 from app.services.chat_session import ChatSession, session_store
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.grounding_models import GroundingModelService
+from app.services.eurostat_service import EurostatService, population_percentages
+from app.services.hazard_ranking_service import HazardRankingService
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.sector_prompt_rag import (
     SectorPromptRagService,
@@ -148,6 +150,7 @@ class ChatService:
         self.user_id = user_id
         self.settings = get_settings()
         self.grounding_models = GroundingModelService()
+        self.hazard_ranking = HazardRankingService(db)
 
     async def handle_message(self, message: str, session_id: str | None) -> ChatResponse:
         clean_message = message.strip()
@@ -1245,9 +1248,39 @@ class ChatService:
         }
         session.custom_hazards = self._saved_custom_hazards_for_context(session)
         self._hydrate_custom_hazard_profiles(session)
+        await self._rank_session_hazards(session)
         self._ensure_user_session(session_id, session)
         self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
         return self._hazards_step(session_id, session)
+
+    async def _rank_session_hazards(self, session: ChatSession) -> None:
+        if not session.country_id or not session.sector_id or not session.hazards:
+            return
+        country = self.db.get(Country, session.country_id)
+        sector = self.db.get(Sector, session.sector_id)
+        region = self.db.get(Region, session.region_id) if session.region_id else None
+        if country is None or sector is None:
+            return
+        try:
+            ranked_rows = await self.hazard_ranking.rank_hazards(
+                country=country,
+                region=region,
+                sector=sector,
+                hazards=session.hazards,
+            )
+        except Exception:
+            logger.exception("Failed to rank hazards")
+            return
+        if not ranked_rows:
+            return
+        ranked_by_name = {
+            str(row["hazard"]): row
+            for row in ranked_rows
+            if int(row.get("total_predictors") or 0) > 0
+        }
+        ranked_names = [str(row["hazard"]) for row in ranked_rows if str(row["hazard"]) in ranked_by_name]
+        session.hazards = ranked_names
+        session.hazard_rankings = ranked_by_name
 
     def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         session.phase = "hazards"
@@ -1312,6 +1345,7 @@ class ChatService:
             }
             session.custom_hazards = self._saved_custom_hazards_for_context(session)
             self._hydrate_custom_hazard_profiles(session)
+            await self._rank_session_hazards(session)
             self._record_activity(session_id, session, "hazards_refreshed", session.sector or "")
             return self._hazards_step(session_id, session)
 
@@ -1383,6 +1417,9 @@ class ChatService:
                 for item in hazard_items
                 if item.get("profiles")
             }
+            session.custom_hazards = self._saved_custom_hazards_for_context(session)
+            self._hydrate_custom_hazard_profiles(session)
+            await self._rank_session_hazards(session)
             self._record_activity(session_id, session, "hazards_refreshed", session.sector or "")
             return self._hazards_step(session_id, session)
 
@@ -3324,6 +3361,13 @@ Return Markdown only.
             profiles,
             user_profiles=user_profiles,
         )
+        prevalence_note = await self._regional_profile_prevalence_markdown(
+            session,
+            hazard,
+            profiles=[*profiles, *user_profiles],
+        )
+        if prevalence_note:
+            answer = f"{answer}\n\n{prevalence_note}"
         session.socio_demographic_findings = self._format_hazard_profiles_markdown(
             hazard,
             profiles,
@@ -3366,6 +3410,54 @@ Return Markdown only.
             session=session.summary(),
             error=False,
         )
+
+    async def _regional_profile_prevalence_markdown(
+        self,
+        session: ChatSession,
+        hazard: str,
+        *,
+        profiles: list[dict[str, str]],
+    ) -> str:
+        rankings = session.hazard_rankings or {}
+        ranking = rankings.get(hazard)
+        if ranking is None:
+            hazard_key = normalize(hazard)
+            for stored_hazard, stored_ranking in rankings.items():
+                if normalize(str(stored_hazard)) == hazard_key:
+                    ranking = stored_ranking
+                    break
+        if not isinstance(ranking, dict):
+            return ""
+        lines = ["#### Regional population prevalence and reach coverage"]
+        profile_names = [
+            str(profile.get("name") or profile.get("profile") or "").strip()
+            for profile in profiles
+            if isinstance(profile, dict)
+        ]
+        profile_names = list(dict.fromkeys(name for name in profile_names if name))
+        if profile_names and session.country and session.region:
+            eurostat = EurostatService(self.db)
+            for profile_name in profile_names:
+                response = await eurostat.get_profile_population(
+                    country=session.country,
+                    region=session.region,
+                    sector=session.sector or "",
+                    hazard=hazard,
+                    confirmed_predictor_category=profile_name,
+                )
+                percentages = population_percentages(response)
+                lines.append(
+                    f"- **{profile_name}**: regional affected population "
+                    f"**{percentages['regional_pct']:.1f}%**, national affected population "
+                    f"**{percentages['national_pct']:.1f}%** (mock Eurostat, cached)."
+                )
+        elif not profile_names:
+            lines.append(
+                "- Regional Eurostat prevalence is not available yet for the mapped affected profiles."
+            )
+        else:
+            lines.append("- Select a country and region to show Eurostat affected-population percentages.")
+        return "\n".join(lines)
 
     async def _negative_impact_reasons(self, session: ChatSession) -> str:
         context, messages = await self._build_deep_dive_messages(

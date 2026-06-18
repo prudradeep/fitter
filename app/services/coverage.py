@@ -3,12 +3,14 @@ from sqlalchemy.orm import selectinload
 
 from app.database import SessionLocal
 from app.models import Country, CountrySector, SystemHazard, UserSession
+from app.services.hazard_salience import top_hazard_salience_by_country
 
 COUNTRY_DISPLAY_ORDER = ["Germany", "Hungary", "Ireland", "Italy", "Spain", "Portugal"]
 
 
-def get_coverage_rows() -> list[dict[str, str]]:
+def get_coverage_rows() -> list[dict[str, object]]:
     order_index = {country: index for index, country in enumerate(COUNTRY_DISPLAY_ORDER)}
+    salience_by_country = top_hazard_salience_by_country(limit=3)
 
     with SessionLocal() as db:
         countries = db.scalars(
@@ -48,12 +50,13 @@ def get_coverage_rows() -> list[dict[str, str]]:
                 sector.name for sector in sorted(country.sectors, key=lambda item: item.name)
             )
             or "Not configured",
+            "top_hazard_salience": salience_by_country.get(country.name, []),
         }
         for country in sorted_countries
     ]
 
 
-def get_coverage_map_rows() -> list[dict[str, str]]:
+def get_coverage_map_rows() -> list[dict[str, object]]:
     return [
         {
             "code": row["code"],
@@ -62,6 +65,7 @@ def get_coverage_map_rows() -> list[dict[str, str]]:
             "map_path": row["map_path"],
             "hazards": row["hazards"],
             "analyses": row["analyses"],
+            "top_hazard_salience": row["top_hazard_salience"],
         }
         for row in get_coverage_rows()
         if row["code"]

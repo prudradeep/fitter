@@ -1,0 +1,18 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+solar_install_likelihood__Very unlikely,-2.0684,0.5978,0.1264,0.0392,0.4079,-3.4598,0.0005,***,decreases,11,False,-0.1628,-16.28,binary,True
+dwelling_year__1945-1960,1.3082,0.4336,3.6994,1.5815,8.6538,3.0172,0.0026,**,increases,20,False,0.2639,26.39,binary,True
+political_group__Yes,-1.1206,0.3829,0.3261,0.154,0.6907,-2.9266,0.0034,**,decreases,26,False,-0.1214,-12.14,binary,True
+solar_install_likelihood__Unlikely,-0.9512,0.4403,0.3863,0.163,0.9157,-2.16,0.0308,*,decreases,18,False,-0.1068,-10.68,binary,True
+solar_install_likelihood__Not sure,-0.736,0.6119,0.479,0.1444,1.5893,-1.2028,0.229,,decreases,7,True,-0.087,-8.7,binary,True
+dwelling_year__2016-2021,0.7187,0.339,2.0517,1.0558,3.987,2.1203,0.034,*,increases,32,False,0.1283,12.83,binary,True
+home_type__Semi-detached house – a house joined to one other house,-0.6629,0.3509,0.5153,0.2591,1.0252,-1.8892,0.0589,,decreases,34,False,-0.0828,-8.28,binary,True
+political_group__Prefer not to say,-0.6073,0.4844,0.5448,0.2108,1.4079,-1.2537,0.2099,,decreases,14,False,-0.0755,-7.55,binary,True
+solar_install_likelihood__Somewhat unlikely,-0.5316,0.4178,0.5877,0.2591,1.3327,-1.2725,0.2032,,decreases,17,False,-0.0678,-6.78,binary,True
+solar_install_likelihood__Somewhat likely,-0.4345,0.2934,0.6476,0.3644,1.1509,-1.4809,0.1386,,decreases,40,False,-0.0581,-5.81,binary,True
+english_proficiency__Well,-0.4129,0.1815,0.6617,0.4637,0.9444,-2.2754,0.0229,*,decreases,196,False,-0.0622,-6.22,binary,True
+dwelling_year__Before 1945,-0.3981,0.509,0.6716,0.2476,1.8215,-0.782,0.4342,,decreases,14,False,-0.0528,-5.28,binary,True
+solar_install_likelihood__Likely,0.2793,0.3035,1.3221,0.7293,2.3969,0.92,0.3576,,increases,39,False,0.0448,4.48,binary,True
+dwelling_year__I don't know,0.2623,0.3333,1.2999,0.6764,2.4982,0.7869,0.4314,,increases,32,False,0.042,4.2,binary,True
+dwelling_year__2022 or after,0.2596,0.3373,1.2964,0.6692,2.5113,0.7695,0.4416,,increases,32,False,0.0416,4.16,binary,True
+home_type__Detached house – a house that stands alone and is not joined to any other,-0.238,0.2633,0.7882,0.4705,1.3205,-0.9041,0.366,,decreases,67,False,-0.0339,-3.39,binary,True
+"home_type__Apartment or flat with more than 10 dwellings – a home in a building with other homes above, below or next to yours",0.1158,0.2128,1.1228,0.7398,1.704,0.5442,0.5863,,increases,126,False,0.0176,1.76,binary,True

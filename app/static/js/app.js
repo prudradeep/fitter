@@ -104,6 +104,7 @@ const benefitedProfileList = document.querySelector("#benefitedProfileList");
 const benefitedProfileEmpty = document.querySelector("#benefitedProfileEmpty");
 const mitigationConfidenceScore = document.querySelector("#mitigationConfidenceScore");
 const mitigationGroundingStatus = document.querySelector("#mitigationGroundingStatus");
+const mitigationSupportedDimensions = document.querySelector("#mitigationSupportedDimensions");
 const mitigationVerdictStability = document.querySelector("#mitigationVerdictStability");
 const mitigationSupportCorpus = document.querySelector("#mitigationSupportCorpus");
 const mitigationLastNote = document.querySelector("#mitigationLastNote");
@@ -173,6 +174,7 @@ const coverageCountries = stageCoverageRows
     sectors: row.sectors || "Not configured",
     hazards: Number(row.hazards) || 0,
     analyses: Number(row.analyses) || 0,
+    topHazardSalience: Array.isArray(row.top_hazard_salience) ? row.top_hazard_salience : [],
   }));
 const countryMapData = new Map(
   coverageCountries.filter((country) => country.mapPath).map((country) => [country.name, country.mapPath]),
@@ -547,6 +549,7 @@ async function renderCountrySelectionMap() {
         sectors: countryMeta?.sectors || "Not configured",
         hazards: countryMeta?.hazards ?? 0,
         analyses: countryMeta?.analyses ?? 0,
+        topHazardSalience: countryMeta?.topHazardSalience || [],
         enabledCountry: active,
       };
     });
@@ -577,6 +580,15 @@ async function renderCountrySelectionMap() {
           if (!this.point.enabledCountry) return false;
           const country = escapeHtml(this.point.name);
           const sectors = escapeHtml(this.point.sectors);
+          const salienceItems = (this.point.topHazardSalience || [])
+            .slice(0, 3)
+            .map((item) => {
+              const hazard = escapeHtml(validationLabel(item.hazard || ""));
+              const sector = escapeHtml(item.sector || "");
+              const score = Number(item.salience);
+              return `<li><span>${hazard}</span><strong>${Number.isFinite(score) ? score.toFixed(2) : "n/a"}</strong><small>${sector}</small></li>`;
+            })
+            .join("");
           const tooltipWidth = stageCountryTooltipWidth();
           return `
             <div class="stage-country-tooltip" style="width: ${tooltipWidth}px; max-width: ${tooltipWidth}px;">
@@ -587,6 +599,11 @@ async function renderCountrySelectionMap() {
                   <p>${sectors.replace(/, /g, " / ")}</p>
                 </div>
               </div>
+              ${
+                salienceItems
+                  ? `<div class="stage-country-tooltip-salience"><small>Top salience</small><ul>${salienceItems}</ul></div>`
+                  : ""
+              }
               <div class="stage-country-tooltip-count">
                 <small>Analyses</small>
                 <strong>${this.point.analyses}</strong>
@@ -1664,30 +1681,31 @@ function applyInputValues(values = {}) {
 
 function updateNewSessionButton() {
   if (!resetButton) return;
-  const canStartNewSession = Boolean(currentSession?.country);
-  resetButton.disabled = !canStartNewSession;
-  resetButton.title = canStartNewSession
-    ? "Start a new session"
-    : "Select a country before starting another session";
+  resetButton.disabled = false;
+  resetButton.title = "Start a new session";
 }
 
 function renderSelectedHazardContext(session = {}) {
   if (!selectedHazardContext || !selectedHazardName || !affectedProfileList) return;
-  const isMitigationReview = currentStep === "mitigation_review";
+  const hasMitigationReview = session.mitigation_review && typeof session.mitigation_review === "object";
+  const showMitigationReviewPanel =
+    currentStep === "mitigation_review"
+    || currentStep === "evaluation_question"
+    || (currentStep === "mitigation" && hasMitigationReview);
   const hazard = String(session.selected_hazard || "").trim();
   const mitigationMeasure = String(session.mitigation_measure || "").trim();
   const profiles = Array.isArray(session.affected_profiles)
     ? session.affected_profiles.map((profile) => String(profile || "").trim()).filter(Boolean)
     : [];
 
-  selectedHazardContext.hidden = isMitigationReview ? !mitigationMeasure : !hazard;
+  selectedHazardContext.hidden = showMitigationReviewPanel ? !mitigationMeasure : !hazard;
   if (selectedContextLabel) {
-    selectedContextLabel.textContent = isMitigationReview ? "Mitigation Measure" : "Selected hazard";
+    selectedContextLabel.textContent = showMitigationReviewPanel ? "Mitigation Measure" : "Selected hazard";
   }
-  selectedHazardName.textContent = isMitigationReview ? mitigationMeasure : hazard;
-  if (affectedProfileContext) affectedProfileContext.hidden = isMitigationReview;
-  if (mitigationReviewContext) mitigationReviewContext.hidden = !isMitigationReview;
-  if (isMitigationReview) {
+  selectedHazardName.textContent = showMitigationReviewPanel ? mitigationMeasure : hazard;
+  if (affectedProfileContext) affectedProfileContext.hidden = showMitigationReviewPanel;
+  if (mitigationReviewContext) mitigationReviewContext.hidden = !showMitigationReviewPanel;
+  if (showMitigationReviewPanel) {
     renderMitigationReviewContext(session);
     return;
   }
@@ -1745,14 +1763,31 @@ function renderMitigationReviewContext(session = {}) {
   }
   const status = String(review.grounding_status || "").trim();
   const explanation = String(review.explanation || "").trim();
-  if (mitigationGroundingStatus) {
-    const positiveStatus = ["clear", "supported", "positive"].includes(status.toLowerCase());
-    mitigationGroundingStatus.textContent = positiveStatus ? validationLabel(status) : "Not available";
+  const supportedDimensions = Array.isArray(review.supported_dimensions) ? review.supported_dimensions : [];
+  /* if (mitigationGroundingStatus) {
+    const positiveStatus =
+      ["accepted", "clear", "grounded", "pass", "passed", "supported", "validated", "positive"].includes(status.toLowerCase())
+      || supportedDimensions.length > 0;
+    mitigationGroundingStatus.textContent = positiveStatus ? validationLabel(status || "Supported") : "Not available";
     mitigationGroundingStatus.hidden = !positiveStatus;
     mitigationGroundingStatus.title = explanation || "No grounding explanation available.";
     mitigationGroundingStatus.dataset.explanation = explanation;
     mitigationGroundingStatus.classList.toggle("expanded", false);
     mitigationGroundingStatus.setAttribute("aria-expanded", "false");
+  } */
+  if (mitigationSupportedDimensions) {
+    const dimensions = supportedDimensions;
+    mitigationSupportedDimensions.innerHTML = "";
+    dimensions.forEach((dimension) => {
+      const name = String(dimension?.name || "").trim();
+      if (!name) return;
+      const item = document.createElement("li");
+      item.textContent = validationLabel(name);
+      const dimensionExplanation = String(dimension?.explanation || "").trim();
+      if (dimensionExplanation) item.title = dimensionExplanation;
+      mitigationSupportedDimensions.appendChild(item);
+    });
+    mitigationSupportedDimensions.hidden = dimensions.length === 0;
   }
   if (mitigationVerdictStability) {
     mitigationVerdictStability.textContent =
@@ -2915,7 +2950,6 @@ micButton?.addEventListener("click", () => {
 });
 
 resetButton.addEventListener("click", async () => {
-  if (!currentSession?.country) return;
   pauseSpeech();
   stopAutoConversation();
   autoConversationTurns = 0;

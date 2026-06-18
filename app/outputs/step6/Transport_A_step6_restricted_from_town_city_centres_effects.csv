@@ -1,0 +1,4 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+macro_modal_split_cars,-0.8332,0.3227,0.4346,0.2309,0.8181,-2.582,0.0098,**,decreases,,False,-0.0991,-9.91,continuous/ordinal,True
+newest_car_year_band__2010-2019,-0.5508,0.2027,0.5765,0.3875,0.8577,-2.7171,0.0066,**,decreases,110.0,False,-0.0806,-8.06,binary,True
+speaks_national_language__No,0.5497,0.2222,1.7328,1.121,2.6783,2.4742,0.0134,*,increases,87.0,False,0.0933,9.33,binary,True

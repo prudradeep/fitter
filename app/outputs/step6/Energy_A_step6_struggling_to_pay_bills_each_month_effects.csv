@@ -1,0 +1,22 @@
+predictor,coef,SE,OR,CI_lower,CI_upper,z,p_value,sig,direction,min_nonref_n,epp_warning,MEM,MEM_pct_pts,type,confirmed_via_LRT
+"utility_arrears__Yes, once",1.394,0.4,4.031,1.8404,8.8287,3.485,0.0005,***,increases,28.0,False,0.2547,25.47,binary,True
+"utility_arrears__Yes, twice or more",1.2228,0.4303,3.3968,1.4615,7.8949,2.8418,0.0045,**,increases,24.0,False,0.2173,21.73,binary,True
+dwelling_year__1961-1980,-0.992,0.2412,0.3708,0.2311,0.595,-4.113,0.0,***,decreases,87.0,False,-0.1044,-10.44,binary,True
+bill_confidence__Not very confident — I often need help or support,0.9383,0.2905,2.5557,1.4461,4.5166,3.2297,0.0012,**,increases,50.0,False,0.151,15.1,binary,True
+household_type__Multi-generational / extended,0.8815,0.2657,2.4146,1.4343,4.065,3.3173,0.0009,***,increases,72.0,False,0.1362,13.62,binary,True
+can_cover_solar_cost__No,0.8804,0.2575,2.4118,1.4558,3.9954,3.4183,0.0006,***,increases,110.0,False,0.1293,12.93,binary,True
+energy_improvements__I don't know,0.8352,0.3188,2.3052,1.234,4.3061,2.6196,0.0088,**,increases,38.0,False,0.1333,13.33,binary,True
+disability__Yes,-0.7708,0.3098,0.4627,0.2521,0.8492,-2.4878,0.0129,*,decreases,43.0,False,-0.0795,-7.95,binary,True
+dwelling_year__I don't know,-0.7518,0.3619,0.4715,0.232,0.9584,-2.0773,0.0378,*,decreases,32.0,False,-0.0767,-7.67,binary,True
+aware_gov_programmes__No,0.7434,0.3227,2.1031,1.1174,3.9586,2.3039,0.0212,*,increases,40.0,False,0.1157,11.57,binary,True
+home_type__Detached house – a house that stands alone and is not joined to any other,0.674,0.2545,1.9621,1.1915,3.2312,2.6483,0.0081,**,increases,67.0,False,0.1003,10.03,binary,True
+can_cover_solar_cost__Not sure,0.6736,0.2513,1.9613,1.1986,3.2095,2.6809,0.0073,**,increases,81.0,False,0.0988,9.88,binary,True
+housing_situation__I own the house or flat where I live and I do not pay a mortgage,-0.6631,0.2347,0.5153,0.3253,0.8161,-2.8258,0.0047,**,decreases,114.0,False,-0.0767,-7.67,binary,True
+dwelling_year__2022 or after,0.5016,0.3813,1.6514,0.7821,3.4868,1.3155,0.1883,,increases,32.0,False,0.0739,7.39,binary,True
+dwelling_year__1945-1960,0.403,0.4474,1.4963,0.6225,3.5964,0.9007,0.3678,,increases,20.0,False,0.0582,5.82,binary,True
+dwelling_year__Before 1945,0.3161,0.4778,1.3717,0.5377,3.4995,0.6615,0.5083,,increases,14.0,False,0.0446,4.46,binary,True
+aware_gov_programmes__Not sure,-0.2632,0.2568,0.7686,0.4646,1.2714,-1.0249,0.3054,,decreases,62.0,False,-0.0315,-3.15,binary,True
+bill_confidence__Not at all confident — I find it very difficult to understand my energy bill.,0.233,0.5229,1.2624,0.453,3.5179,0.4456,0.6559,,increases,13.0,False,0.0321,3.21,binary,True
+dwelling_year__2011-2015,-0.2029,0.4202,0.8163,0.3582,1.8603,-0.4829,0.6291,,decreases,20.0,False,-0.0243,-2.43,binary,True
+income_band,-0.1853,0.049,0.8309,0.7547,0.9147,-3.7777,0.0002,***,decreases,,False,-0.0222,-2.22,continuous/ordinal,True
+age,0.0256,0.0092,1.0259,1.0076,1.0446,2.7829,0.0054,**,increases,,False,0.0033,0.33,continuous/ordinal,True

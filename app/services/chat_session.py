@@ -17,6 +17,7 @@ class ChatSession:
     phase: str = "wizard"
     hazards: list[str] | None = None
     hazard_profiles: dict[str, list[dict[str, str] | str] | str] | None = None
+    hazard_rankings: dict[str, dict[str, object]] | None = None
     custom_hazards: list[str] | None = None
     pending_hazard: str | None = None
     selected_hazard: str | None = None
@@ -115,9 +116,25 @@ class ChatSession:
     def _mitigation_review_summary(validation: dict[str, object] | None) -> dict[str, object] | None:
         if not isinstance(validation, dict):
             return None
+        dimensions = validation.get("dimensions")
+        supported_dimensions: list[dict[str, str]] = []
+        if isinstance(dimensions, dict):
+            for name, value in dimensions.items():
+                if not isinstance(value, dict):
+                    continue
+                status = str(value.get("status") or "").strip()
+                if status.casefold() != "supported":
+                    continue
+                supported_dimensions.append(
+                    {
+                        "name": str(name or "").strip(),
+                        "explanation": str(value.get("explanation") or "").strip(),
+                    }
+                )
         return {
             "confidence_score": validation.get("confidence_score"),
             "grounding_status": validation.get("outcome"),
+            "supported_dimensions": supported_dimensions,
             "verdict_stability": validation.get("verdict_stability"),
             "support_corpus": validation.get("support_label"),
             "explanation": str(validation.get("reason") or "").strip(),

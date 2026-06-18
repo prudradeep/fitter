@@ -1722,6 +1722,11 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   overflow-wrap: anywhere;
 }
 
+#mitigationLastNote {
+  font-weight: 400;
+  line-height: 1.45;
+}
+
 .mitigation-review-facts dd span {
   margin-right: 5px;
   color: #475569;
@@ -1763,6 +1768,29 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
 .mitigation-status-button[hidden] {
   display: none;
+}
+
+.mitigation-supported-dimensions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mitigation-supported-dimensions[hidden] {
+  display: none;
+}
+
+.mitigation-supported-dimensions li {
+  border: 1px solid rgba(22, 163, 74, 0.22);
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #166534;
+  padding: 3px 7px;
+  font-size: 0.66rem;
+  font-weight: 800;
 }
 
 .chat-card,
@@ -3252,7 +3280,8 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .stage-country-tooltip-main small,
-.stage-country-tooltip-count small {
+.stage-country-tooltip-count small,
+.stage-country-tooltip-salience > small {
   display: block;
   color: #9aa3b1;
   font-size: 0.68rem;
@@ -3285,6 +3314,48 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   font-size: 1.65rem;
   line-height: 1;
   font-weight: 900;
+}
+
+.stage-country-tooltip-salience {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 10px;
+}
+
+.stage-country-tooltip-salience ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stage-country-tooltip-salience li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 10px;
+  align-items: baseline;
+  font-size: 0.76rem;
+}
+
+.stage-country-tooltip-salience li span {
+  color: #374151;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.stage-country-tooltip-salience li strong {
+  color: #111827;
+  font-weight: 900;
+}
+
+.stage-country-tooltip-salience li small {
+  grid-column: 1 / -1;
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 800;
 }
 
 .map-tooltip-title {
