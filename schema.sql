@@ -178,8 +178,6 @@ CREATE TABLE IF NOT EXISTS user_hazard_socio_demographics (
 CREATE TABLE IF NOT EXISTS system_hazard_socio_demographics (
   id INT AUTO_INCREMENT PRIMARY KEY,
   system_hazard_id INT NOT NULL,
-  country_id INT NULL,
-  region_id INT NULL,
   sector_id INT NULL,
   variable_name VARCHAR(160) NULL,
   profile TEXT NOT NULL,
@@ -189,12 +187,8 @@ CREATE TABLE IF NOT EXISTS system_hazard_socio_demographics (
   metadata_json TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_system_hazard_dgs_hazard FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE,
-  CONSTRAINT fk_system_hazard_dgs_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
-  CONSTRAINT fk_system_hazard_dgs_region FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL,
   CONSTRAINT fk_system_hazard_dgs_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
   INDEX ix_system_hazard_socio_demographics_hazard_id (system_hazard_id),
-  INDEX ix_system_hazard_socio_demographics_country_id (country_id),
-  INDEX ix_system_hazard_socio_demographics_region_id (region_id),
   INDEX ix_system_hazard_socio_demographics_sector_id (sector_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -291,6 +285,26 @@ CREATE TABLE IF NOT EXISTS eurostat_population_cache (
   INDEX ix_eurostat_population_cache_region (region),
   INDEX ix_eurostat_population_cache_profile (profile),
   INDEX ix_eurostat_population_cache_expires_at (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_population_matches (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  system_hazard_socio_demographic_id INT NOT NULL,
+  eurostat_population_cache_id INT NULL,
+  match_status INT NOT NULL DEFAULT 1,
+  attempt_count INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_system_dg_population_match_system_dg
+    FOREIGN KEY (system_hazard_socio_demographic_id)
+    REFERENCES system_hazard_socio_demographics(id) ON DELETE CASCADE,
+  CONSTRAINT fk_system_dg_population_match_eurostat_cache
+    FOREIGN KEY (eurostat_population_cache_id)
+    REFERENCES eurostat_population_cache(id) ON DELETE CASCADE,
+  CONSTRAINT uq_system_dg_eurostat_cache_match
+    UNIQUE (system_hazard_socio_demographic_id, eurostat_population_cache_id),
+  INDEX ix_system_dg_population_match_system_dg (system_hazard_socio_demographic_id),
+  INDEX ix_system_dg_population_match_eurostat_cache (eurostat_population_cache_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_activities (

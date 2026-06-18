@@ -63,6 +63,7 @@ class ReachService:
                 {
                     "name": profile_name,
                     "predictor": predictor_name,
+                    "eurostat_population_cache_id": prevalence.get("eurostat_population_cache_id"),
                     "population_pct": round(float(prevalence["population_pct"]), 1),
                     "national_population_pct": round(float(prevalence["national_population_pct"]), 1),
                     "source": prevalence["source"],

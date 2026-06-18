@@ -203,8 +203,6 @@ class SystemHazardSocioDemographic(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     system_hazard_id: Mapped[int] = mapped_column(ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True)
-    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
-    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     variable_name: Mapped[str | None] = mapped_column(String(160))
     profile: Mapped[str] = mapped_column(Text, nullable=False)
@@ -301,6 +299,37 @@ class EurostatPopulationCache(Base):
     profile: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     response_json: Mapped[str] = mapped_column(Text, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class SystemHazardSocioDemographicPopulationMatch(Base):
+    __tablename__ = "system_hazard_socio_demographic_population_matches"
+    __table_args__ = (
+        UniqueConstraint(
+            "system_hazard_socio_demographic_id",
+            "eurostat_population_cache_id",
+            name="uq_system_dg_eurostat_cache_match",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    system_hazard_socio_demographic_id: Mapped[int] = mapped_column(
+        ForeignKey("system_hazard_socio_demographics.id", ondelete="CASCADE"),
+        index=True,
+    )
+    eurostat_population_cache_id: Mapped[int | None] = mapped_column(
+        ForeignKey("eurostat_population_cache.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    match_status: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

@@ -499,8 +499,6 @@ def ensure_runtime_schema() -> None:
                     CREATE TABLE IF NOT EXISTS system_hazard_socio_demographics (
                       id INT AUTO_INCREMENT PRIMARY KEY,
                       system_hazard_id INT NOT NULL,
-                      country_id INT NULL,
-                      region_id INT NULL,
                       sector_id INT NULL,
                       variable_name VARCHAR(160) NULL,
                       profile TEXT NOT NULL,
@@ -511,16 +509,91 @@ def ensure_runtime_schema() -> None:
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       CONSTRAINT fk_system_hazard_dgs_hazard
                         FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE,
-                      CONSTRAINT fk_system_hazard_dgs_country
-                        FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
-                      CONSTRAINT fk_system_hazard_dgs_region
-                        FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL,
                       CONSTRAINT fk_system_hazard_dgs_sector
                         FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
                       INDEX ix_system_hazard_socio_demographics_hazard_id (system_hazard_id),
-                      INDEX ix_system_hazard_socio_demographics_country_id (country_id),
-                      INDEX ix_system_hazard_socio_demographics_region_id (region_id),
                       INDEX ix_system_hazard_socio_demographics_sector_id (sector_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """
+                )
+            )
+            inspector = inspect(engine)
+            system_dg_columns = {
+                column["name"]
+                for column in inspector.get_columns("system_hazard_socio_demographics")
+            }
+            system_dg_indexes = {
+                index["name"]
+                for index in inspector.get_indexes("system_hazard_socio_demographics")
+            }
+            foreign_key_rows = connection.execute(
+                text(
+                    """
+                    SELECT DISTINCT CONSTRAINT_NAME
+                    FROM information_schema.KEY_COLUMN_USAGE
+                    WHERE TABLE_SCHEMA = DATABASE()
+                      AND TABLE_NAME = 'system_hazard_socio_demographics'
+                      AND COLUMN_NAME IN ('country_id', 'region_id')
+                      AND REFERENCED_TABLE_NAME IS NOT NULL
+                    """
+                )
+            ).all()
+            for row in foreign_key_rows:
+                foreign_key_name = str(row[0] or "").strip()
+                if foreign_key_name:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE system_hazard_socio_demographics "
+                            f"DROP FOREIGN KEY `{foreign_key_name}`"
+                        )
+                    )
+            inspector = inspect(engine)
+            system_dg_columns = {
+                column["name"]
+                for column in inspector.get_columns("system_hazard_socio_demographics")
+            }
+            system_dg_indexes = {
+                index["name"]
+                for index in inspector.get_indexes("system_hazard_socio_demographics")
+            }
+            if "affected_population_pct_regional" in system_dg_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE system_hazard_socio_demographics "
+                        "DROP COLUMN affected_population_pct_regional"
+                    )
+                )
+            if "affected_population_pct_national" in system_dg_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE system_hazard_socio_demographics "
+                        "DROP COLUMN affected_population_pct_national"
+                    )
+                )
+            if "affected_population_updated_at" in system_dg_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE system_hazard_socio_demographics "
+                        "DROP COLUMN affected_population_updated_at"
+                    )
+                )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS eurostat_population_cache (
+                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      country VARCHAR(120) NOT NULL,
+                      region VARCHAR(120) NOT NULL,
+                      profile VARCHAR(255) NOT NULL,
+                      response_json TEXT NOT NULL,
+                      expires_at DATETIME NOT NULL,
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                      CONSTRAINT uq_eurostat_population_lookup UNIQUE (country, region, profile),
+                      INDEX ix_eurostat_population_cache_country (country),
+                      INDEX ix_eurostat_population_cache_region (region),
+                      INDEX ix_eurostat_population_cache_profile (profile),
+                      INDEX ix_eurostat_population_cache_expires_at (expires_at)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                     """
                 )
@@ -528,12 +601,56 @@ def ensure_runtime_schema() -> None:
             connection.execute(
                 text(
                     """
-                    UPDATE system_hazard_socio_demographics
-                    SET country_id = NULL, region_id = NULL
-                    WHERE country_id IS NOT NULL OR region_id IS NOT NULL
+                    CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_population_matches (
+                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      system_hazard_socio_demographic_id INT NOT NULL,
+                      eurostat_population_cache_id INT NULL,
+                      match_status INT NOT NULL DEFAULT 1,
+                      attempt_count INT NOT NULL DEFAULT 0,
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                      CONSTRAINT fk_system_dg_population_match_system_dg
+                        FOREIGN KEY (system_hazard_socio_demographic_id)
+                        REFERENCES system_hazard_socio_demographics(id) ON DELETE CASCADE,
+                      CONSTRAINT fk_system_dg_population_match_eurostat_cache
+                        FOREIGN KEY (eurostat_population_cache_id)
+                        REFERENCES eurostat_population_cache(id) ON DELETE CASCADE,
+                      CONSTRAINT uq_system_dg_eurostat_cache_match
+                        UNIQUE (system_hazard_socio_demographic_id, eurostat_population_cache_id),
+                      INDEX ix_system_dg_population_match_system_dg (system_hazard_socio_demographic_id),
+                      INDEX ix_system_dg_population_match_eurostat_cache (eurostat_population_cache_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                     """
                 )
             )
+            inspector = inspect(engine)
+            match_columns = {
+                column["name"]
+                for column in inspector.get_columns(
+                    "system_hazard_socio_demographic_population_matches"
+                )
+            }
+            if "eurostat_population_cache_id" in match_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE system_hazard_socio_demographic_population_matches "
+                        "MODIFY COLUMN eurostat_population_cache_id INT NULL"
+                    )
+                )
+            if "match_status" not in match_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE system_hazard_socio_demographic_population_matches "
+                        "ADD COLUMN match_status INT NOT NULL DEFAULT 1 AFTER eurostat_population_cache_id"
+                    )
+                )
+            if "attempt_count" not in match_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE system_hazard_socio_demographic_population_matches "
+                        "ADD COLUMN attempt_count INT NOT NULL DEFAULT 0 AFTER match_status"
+                    )
+                )
     except Exception:
         logger.exception("Runtime schema migration failed")
         raise

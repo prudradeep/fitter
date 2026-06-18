@@ -77,8 +77,14 @@ class EurostatService:
             hazard=hazard or "",
             confirmed_predictor_category=confirmed_predictor_category or predictor_name,
         )
+        cache_row = self._profile_population_cache_row(
+            country=country_code,
+            region=region,
+            profile=confirmed_predictor_category or predictor_name,
+        )
         percentages = population_percentages(response)
         return {
+            "eurostat_population_cache_id": cache_row.id if cache_row is not None else None,
             "prevalence": percentages["regional_pct"] / 100,
             "population_pct": percentages["regional_pct"],
             "national_population_pct": percentages["national_pct"],
@@ -95,9 +101,24 @@ class EurostatService:
         region: str,
         profile: str,
     ) -> dict[str, object] | None:
+        row = self._profile_population_cache_row(country=country, region=region, profile=profile)
+        if row is None:
+            return None
+        try:
+            return json.loads(row.response_json)
+        except json.JSONDecodeError:
+            return None
+
+    def _profile_population_cache_row(
+        self,
+        *,
+        country: str,
+        region: str,
+        profile: str,
+    ) -> EurostatPopulationCache | None:
         if self.db is None:
             return None
-        row = self.db.scalar(
+        return self.db.scalar(
             select(EurostatPopulationCache).where(
                 EurostatPopulationCache.country == country,
                 EurostatPopulationCache.region == region,
@@ -105,12 +126,6 @@ class EurostatService:
                 EurostatPopulationCache.expires_at > datetime.now(timezone.utc).replace(tzinfo=None),
             )
         )
-        if row is None:
-            return None
-        try:
-            return json.loads(row.response_json)
-        except json.JSONDecodeError:
-            return None
 
     def _store_profile_population(
         self,
