@@ -192,7 +192,12 @@ class ChatService:
         self._attach_other_options(response, session)
         if clean_message and not response.error:
             self._record_activity(current_session_id, session, "message_received", clean_message)
-            self._record_chat_message(current_session_id, session, "user", clean_message)
+            self._record_chat_message(
+                current_session_id,
+                session,
+                "user",
+                self._chat_message_display_content(clean_message),
+            )
         self._finalize_chat_response(current_session_id, session, response)
         return response
 
@@ -309,7 +314,7 @@ class ChatService:
             return await self._validate_custom_hazard(current_session_id, session, clean_message)
 
         if session.phase == "target_population_question":
-            return self._handle_target_population_answer(
+            return await self._handle_target_population_answer(
                 current_session_id, session, clean_message
             )
 
@@ -4111,16 +4116,17 @@ Retrieved knowledge-base excerpts:
             error=bool(error_reason),
         )
 
-    def _handle_target_population_answer(
+    async def _handle_target_population_answer(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         if message.strip() == "Quick Select Target Population":
             return self._target_population_question_step(session_id, session)
         if message.strip().startswith("TARGET_POPULATION_BATCH:"):
-            return self._handle_target_population_batch(session_id, session, message)
+            return await self._handle_target_population_batch(session_id, session, message)
 
         question = self._current_target_population_question(session)
         if question is None:
+            await self._synthesize_target_population_profile(session)
             return self._custom_hazard_added_step(session_id, session)
 
         options = self._target_population_options(question)
@@ -4136,11 +4142,13 @@ Retrieved knowledge-base excerpts:
         if any(normalize(label) == normalize("Skip all") for label in selected_labels):
             session.target_population_index += 1
             session.target_population_index = len(session.target_population_questions or [])
+            await self._synthesize_target_population_profile(session)
             return self._custom_hazard_added_step(session_id, session)
 
         if any(normalize(label) == normalize("Skip") for label in selected_labels):
             session.target_population_index += 1
             if session.target_population_index >= len(session.target_population_questions or []):
+                await self._synthesize_target_population_profile(session)
                 return self._custom_hazard_added_step(session_id, session)
             return self._target_population_question_step(session_id, session)
 
@@ -4148,11 +4156,12 @@ Retrieved knowledge-base excerpts:
         session.target_population_index += 1
 
         if session.target_population_index >= len(session.target_population_questions or []):
+            await self._synthesize_target_population_profile(session)
             return self._custom_hazard_added_step(session_id, session)
 
         return self._target_population_question_step(session_id, session)
 
-    def _handle_target_population_batch(
+    async def _handle_target_population_batch(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         raw_json = message.split(":", 1)[1].strip()
@@ -4214,6 +4223,7 @@ Retrieved knowledge-base excerpts:
             )
 
         session.target_population_index = len(session.target_population_questions or [])
+        await self._synthesize_target_population_profile(session)
         return self._custom_hazard_added_step(session_id, session)
 
     def _record_target_population_answer(
@@ -4226,29 +4236,45 @@ Retrieved knowledge-base excerpts:
         if session.target_population_answers is None:
             session.target_population_answers = []
         answer_text = ", ".join(selected_labels)
+        question_id = int(question["id"])
+        session.target_population_answers = [
+            answer
+            for answer in session.target_population_answers
+            if int(answer.get("question_id") or 0) != question_id
+        ]
         session.target_population_answers.append(
             {
-                "question_id": int(question["id"]),
+                "question_id": question_id,
                 "question": str(question["question"]),
                 "answer": answer_text,
+                "selected": list(selected_labels),
             }
         )
+        hazard_id = session.accepted_custom_hazard_record_id or session.selected_hazard_record_id
+        if hazard_id is not None:
+            self.db.execute(
+                delete(UserQuestionResponse).where(
+                    UserQuestionResponse.user_hazard_id == hazard_id,
+                    UserQuestionResponse.question_id == question_id,
+                    UserQuestionResponse.category == "target_population",
+                )
+            )
+            self.db.commit()
         for selected in selected_labels:
             question_option_id = self.db.scalar(
                 select(QuestionOption.id).where(
-                    QuestionOption.question_id == int(question["id"]),
+                    QuestionOption.question_id == question_id,
                     QuestionOption.option == selected,
                 )
             )
             self._store_question_response(
                 session_id,
                 session,
-                question_id=int(question["id"]),
+                question_id=question_id,
                 category="target_population",
                 response_text=selected,
                 question_option_id=question_option_id,
-                hazard_id=session.accepted_custom_hazard_record_id
-                or session.selected_hazard_record_id,
+                hazard_id=hazard_id,
             )
         self._record_activity(
             session_id,
@@ -4266,10 +4292,14 @@ Retrieved knowledge-base excerpts:
             {"name": profile, "profile": profile}
             for profile in (session.socio_demographic_profiles or [])
         ]
+        hazard_record_id = (
+            session.accepted_custom_hazard_record_id or session.selected_hazard_record_id
+        )
+        self._clear_target_population_profiles(hazard_record_id)
         for profile in profile_items:
             self._store_socio_demographic(
                 session,
-                session.accepted_custom_hazard_record_id or session.selected_hazard_record_id,
+                hazard_record_id,
                 str(profile.get("name") or profile.get("profile") or ""),
                 source="target_population",
                 variable_name=str(profile.get("variable_name") or "") or None,
@@ -4292,6 +4322,21 @@ Retrieved knowledge-base excerpts:
             session=session.summary(),
             error=False,
         )
+
+    def _clear_target_population_profiles(self, hazard_id: int | None) -> None:
+        if hazard_id is None:
+            return
+        try:
+            self.db.execute(
+                delete(UserHazardSocioDemographic).where(
+                    UserHazardSocioDemographic.user_hazard_id == hazard_id,
+                    UserHazardSocioDemographic.source == "target_population",
+                )
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("Failed to clear prior target-population profiles")
 
     def _current_target_population_question(self, session: ChatSession) -> dict[str, object] | None:
         questions = session.target_population_questions or []
@@ -4369,9 +4414,134 @@ Retrieved knowledge-base excerpts:
             lines.append(f"  - {answer['answer']}")
         return "\n".join(lines)
 
+    async def _synthesize_target_population_profile(self, session: ChatSession) -> None:
+        hazard = session.accepted_custom_hazard
+        answers = session.target_population_answers or []
+        if not hazard or not answers:
+            return
+        questions_by_id = {
+            int(question["id"]): question
+            for question in (session.target_population_questions or [])
+            if question.get("id") is not None
+        }
+        answers_by_id = {
+            int(answer.get("question_id") or 0): answer
+            for answer in answers
+            if int(answer.get("question_id") or 0) > 0
+        }
+        all_options_selected = bool(questions_by_id)
+        structured_answers: list[dict[str, object]] = []
+        for question_id, question in questions_by_id.items():
+            answer = answers_by_id.get(question_id, {})
+            available = [str(item) for item in question.get("options", [])]
+            stored_selected = answer.get("selected")
+            selected = (
+                [str(item).strip() for item in stored_selected if str(item).strip()]
+                if isinstance(stored_selected, list)
+                else [
+                    option
+                    for option in available
+                    if normalize(option)
+                    in normalize(str(answer.get("answer") or ""))
+                ]
+            )
+            if {normalize(item) for item in selected} != {normalize(item) for item in available}:
+                all_options_selected = False
+            structured_answers.append(
+                {
+                    "question": str(answer.get("question") or "").strip(),
+                    "selected": selected,
+                    "available": available,
+                }
+            )
+        required_title = "General Population" if all_options_selected else ""
+        context = """
+You summarize target-population selections for a policy hazard.
+Return only a JSON object with `title` and `description`.
+Create exactly one inclusive socio-demographic profile. Do not list every option.
+The title must be short and the description must be one plain-English sentence.
+Do not invent characteristics that were not selected.
+""".strip()
+        response = await ask_llm_chat(
+            context=context,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Hazard: {hazard}\n"
+                        f"Required title: {required_title or 'Choose a concise title'}\n"
+                        f"All options selected: {all_options_selected}\n"
+                        "Selections:\n"
+                        + json.dumps(structured_answers, ensure_ascii=False)
+                    ),
+                }
+            ],
+            temperature=0,
+            max_tokens=180,
+        )
+        title = required_title
+        description = ""
+        if not is_llm_unavailable_response(response):
+            try:
+                parsed = json.loads(response.strip())
+            except json.JSONDecodeError:
+                start = response.find("{")
+                end = response.rfind("}")
+                try:
+                    parsed = json.loads(response[start : end + 1]) if start >= 0 and end > start else {}
+                except json.JSONDecodeError:
+                    parsed = {}
+            if isinstance(parsed, dict):
+                if not required_title:
+                    title = str(parsed.get("title") or "").strip()
+                description = str(parsed.get("description") or "").strip()
+        selected_labels = [
+            label
+            for answer in structured_answers
+            for label in answer.get("selected", [])
+            if str(label).strip()
+        ]
+        if not title:
+            title = "Selected Target Population"
+        if not description:
+            description = (
+                "The hazard is considered across the general population without restricting it "
+                "to a particular socio-demographic group."
+                if all_options_selected
+                else "This profile summarizes the selected target groups: "
+                + ", ".join(str(label) for label in selected_labels[:6])
+                + "."
+            )
+        title = re.sub(r"\s+", " ", normalize_markdown_text(title)).strip("`*_ #.-")[:120]
+        description = re.sub(
+            r"\s+", " ", normalize_markdown_text(description)
+        ).strip("`*_ #")
+        first_sentence = re.match(r"^(.+?[.!?])(?:\s|$)", description)
+        if first_sentence:
+            description = first_sentence.group(1)
+        description = description[:260]
+        profile = {
+            "name": title,
+            "profile": title,
+            "variable_name": "generalized_target_population",
+            "explanation": description,
+            "statistical_basis": "LLM synthesis of user-selected target-population responses.",
+            "source": "target_population",
+        }
+        if session.hazard_profiles is None:
+            session.hazard_profiles = {}
+        session.hazard_profiles[hazard] = [profile]
+        session.socio_demographic_profiles = [title]
+
     def _set_custom_hazard_profiles_from_target_population(self, session: ChatSession) -> None:
         hazard = session.accepted_custom_hazard
         if not hazard:
+            return
+        existing_profiles = self._stored_hazard_profiles(session, hazard)
+        if any(
+            profile.get("variable_name") == "generalized_target_population"
+            for profile in existing_profiles
+        ):
             return
         profiles = self._target_population_profiles_from_answers(
             session.target_population_answers or [],
@@ -4387,6 +4557,12 @@ Retrieved knowledge-base excerpts:
     def _hydrate_custom_hazard_profiles(self, session: ChatSession) -> None:
         for hazard in session.custom_hazards or []:
             if self._stored_hazard_profiles(session, hazard):
+                continue
+            stored_profiles = self._stored_user_hazard_profiles(session, hazard)
+            if stored_profiles:
+                if session.hazard_profiles is None:
+                    session.hazard_profiles = {}
+                session.hazard_profiles[hazard] = stored_profiles
                 continue
             profiles = self._target_population_profiles_for_saved_hazard(session, hazard)
             if not profiles:
@@ -4425,6 +4601,7 @@ Retrieved knowledge-base excerpts:
             {
                 "question": normalize_markdown_text(question),
                 "answer": str(response or "").strip(),
+                "selected": [str(response or "").strip()],
             }
             for question, response in rows
             if str(response or "").strip()
@@ -4443,7 +4620,13 @@ Retrieved knowledge-base excerpts:
             answer_text = str(answer.get("answer") or "").strip()
             if not question or not answer_text:
                 continue
-            for label in [item.strip() for item in answer_text.split(",") if item.strip()]:
+            stored_selected = answer.get("selected")
+            labels = (
+                [str(item).strip() for item in stored_selected if str(item).strip()]
+                if isinstance(stored_selected, list)
+                else [item.strip() for item in answer_text.split(",") if item.strip()]
+            )
+            for label in labels:
                 name = ChatService._target_population_profile_name(question, label)
                 key = normalize(name)
                 if not name or key in seen:
@@ -5795,6 +5978,12 @@ is no clear match, return an empty matched_profiles array.
             self.db.rollback()
             logger.exception("Failed to persist chat message")
 
+    @staticmethod
+    def _chat_message_display_content(content: str) -> str:
+        if content.strip().startswith("TARGET_POPULATION_BATCH:"):
+            return "Quick Select Target Population"
+        return content
+
     def _recent_chat_messages_for_auto_user(
         self, session_id: str, limit: int = 10
     ) -> list[dict[str, str]]:
@@ -6695,11 +6884,16 @@ Current session:
         answers: list[dict[str, object]] = []
         for answer in session.target_population_answers or []:
             question = str(answer.get("question") or "").strip()
-            selected = [
-                item.strip()
-                for item in str(answer.get("answer") or "").split(",")
-                if item.strip()
-            ]
+            stored_selected = answer.get("selected")
+            selected = (
+                [str(item).strip() for item in stored_selected if str(item).strip()]
+                if isinstance(stored_selected, list)
+                else [
+                    item.strip()
+                    for item in str(answer.get("answer") or "").split(",")
+                    if item.strip()
+                ]
+            )
             if not question and not selected:
                 continue
             answers.append(

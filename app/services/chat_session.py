@@ -49,7 +49,7 @@ class ChatSession:
     evaluation_answers: list[dict[str, str | int | None]] | None = None
     target_population_questions: list[dict[str, object]] | None = None
     target_population_index: int = 0
-    target_population_answers: list[dict[str, str | int]] | None = None
+    target_population_answers: list[dict[str, object]] | None = None
     saved_target_population_answers: str | None = None
     accepted_custom_hazard: str | None = None
     accepted_custom_hazard_reason: str | None = None
@@ -79,11 +79,12 @@ class ChatSession:
             country=self.country,
             region=self.region,
             sector=self.sector,
-            selected_hazard=self.selected_hazard or self.accepted_custom_hazard,
+            selected_hazard=self.selected_hazard,
             mitigation_measure=self.mitigation_measure,
             benefited_profiles=benefited_profiles,
             mitigation_review=self._mitigation_review_summary(self.mitigation_validation),
             target_population_questions=self.target_population_questions or [],
+            target_population_answers=[dict(answer) for answer in (self.target_population_answers or [])],
             hazard_count=system_hazard_count + regional_hazard_count,
             top_hazards=self._top_hazard_population_summary(),
             affected_profile_count=self.eligible_hazard_profile_count(),
@@ -168,12 +169,14 @@ class ChatSession:
         return profiles or ([markdown_text.strip()] if markdown_text.strip() else [])
 
     @staticmethod
-    def _target_population_profiles(answers: list[dict[str, str | int]]) -> list[str]:
+    def _target_population_profiles(answers: list[dict[str, object]]) -> list[str]:
         profiles: list[str] = []
         seen: set[str] = set()
         for answer in answers:
-            for profile in str(answer.get("answer") or "").split(","):
-                label = profile.strip()
+            selected = answer.get("selected")
+            values = selected if isinstance(selected, list) else str(answer.get("answer") or "").split(",")
+            for profile in values:
+                label = str(profile).strip()
                 key = label.casefold()
                 if label and key not in seen:
                     seen.add(key)

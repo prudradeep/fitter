@@ -152,6 +152,7 @@ let currentOptions = [];
 let currentOtherOptions = [];
 let currentTargetPopulationQuestion = null;
 let targetPopulationQuestions = [];
+let targetPopulationAnswers = [];
 let autoConversationTimer = null;
 let autoConversationTurns = 0;
 const autoConversationTurnLimit = 80;
@@ -778,7 +779,11 @@ function renderHazardPopulationTable(session = {}) {
     )
     .join("");
   stageIconGrid.innerHTML = `
-    <div class="stage-hazard-summary" aria-label="Sector analysis totals">${countCards}</div>
+    ${
+      session.selected_hazard
+        ? ""
+        : `<div class="stage-hazard-summary" aria-label="Sector analysis totals">${countCards}</div>`
+    }
     <section class="stage-hazard-table" aria-label="Top three hazard population comparison">
       <div class="stage-hazard-table-heading">
         <div>
@@ -808,7 +813,7 @@ function renderStageIcons(key, session = {}, options = currentOptions, { keepMap
   const topHazardKey = (session.top_hazards || [])
     .map((hazard) => `${hazard.hazard}:${hazard.regional_population_pct}:${hazard.national_population_pct}`)
     .join("|");
-  const visualKey = `icons-${key}-${session.country || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${options.map((option) => option.label).join("|")}`;
+  const visualKey = `icons-${key}-${session.country || ""}-${session.selected_hazard || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${options.map((option) => option.label).join("|")}`;
   if (renderedStageCardsKey === visualKey) return;
   renderedStageCardsKey = visualKey;
   if (!keepMap) stageVisualRenderId += 1;
@@ -1698,6 +1703,9 @@ function updateSessionCard(session) {
   targetPopulationQuestions = Array.isArray(session?.target_population_questions)
     ? session.target_population_questions
     : [];
+  targetPopulationAnswers = Array.isArray(session?.target_population_answers)
+    ? session.target_population_answers
+    : [];
   [
     [sessionFields.country, session?.country],
     [sessionFields.region, session?.region],
@@ -1896,6 +1904,7 @@ function renderOptions(options, otherOptions = []) {
 }
 
 function renderTargetPopulationOptions(options = []) {
+  const previouslySelected = selectedTargetPopulationLabels(currentTargetPopulationQuestion?.id);
   const normalOptions = options.filter(
     (option) =>
       !["Skip", "Skip all", "Quick Select Target Population"].includes(option.label),
@@ -1914,6 +1923,7 @@ function renderTargetPopulationOptions(options = []) {
       checkbox.type = "checkbox";
       checkbox.value = option.label;
       checkbox.dataset.targetOption = "true";
+      checkbox.checked = previouslySelected.has(normalizeForMatch(option.label));
       const span = document.createElement("span");
       span.textContent = option.label;
       label.appendChild(checkbox);
@@ -2057,6 +2067,20 @@ function closeTargetPopulationDialog() {
   }
 }
 
+function selectedTargetPopulationLabels(questionId) {
+  const answer = [...targetPopulationAnswers].reverse().find(
+    (item) => Number(item.question_id) === Number(questionId),
+  );
+  const selected = Array.isArray(answer?.selected)
+    ? answer.selected
+    : String(answer?.answer || "").split(",");
+  return new Set(
+    selected
+      .map((label) => normalizeForMatch(label))
+      .filter(Boolean),
+  );
+}
+
 function openTargetPopulationDialog() {
   if (!targetPopulationDialogBody) return;
   const questions = targetPopulationQuestions.length
@@ -2066,6 +2090,7 @@ function openTargetPopulationDialog() {
       : [];
   targetPopulationDialogBody.innerHTML = "";
   questions.forEach((question) => {
+    const previouslySelected = selectedTargetPopulationLabels(question.id);
     const section = document.createElement("fieldset");
     section.className = "target-dialog-question";
     section.dataset.questionId = question.id;
@@ -2081,6 +2106,7 @@ function openTargetPopulationDialog() {
       checkbox.type = "checkbox";
       checkbox.value = option;
       checkbox.dataset.quickTargetOption = "true";
+      checkbox.checked = previouslySelected.has(normalizeForMatch(option));
       const span = document.createElement("span");
       span.textContent = option;
       label.appendChild(checkbox);

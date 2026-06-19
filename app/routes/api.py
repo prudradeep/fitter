@@ -188,7 +188,7 @@ async def restore_session(
         "messages": [
             {
                 "role": message.role,
-                "content": message.content,
+                "content": service._chat_message_display_content(message.content),
                 "is_error": message.is_error,
             }
             for message in messages

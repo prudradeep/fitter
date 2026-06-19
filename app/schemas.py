@@ -22,6 +22,7 @@ class SessionSummary(BaseModel):
     benefited_profiles: list[str] = Field(default_factory=list)
     mitigation_review: dict[str, object] | None = None
     target_population_questions: list[dict[str, object]] = Field(default_factory=list)
+    target_population_answers: list[dict[str, object]] = Field(default_factory=list)
     hazard_count: int = 0
     top_hazards: list[dict[str, object]] = Field(default_factory=list)
     affected_profile_count: int = 0
