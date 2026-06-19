@@ -1,10 +1,9 @@
-These are the following hazards for the **{{ sector }}** sector. Regional additions are shown separately when available.
+These are the following hazards for the **{{ sector }}** sector as per the sectoral survey carried out across 6 case study countries in Europe. The survey results are augmented with data for **{{ region }}** to show the effects of the hazards at regional level.
 
 {{ hazards }}
 
 ---
 Take a moment to dive into the findings by clicking on **Dive Deeper into Statistical Findings**.
-The sectoral hazards have been obtained through a hazard perception survey carried out in the 6 use case countries.
 
 ---
 What would you like to do next?

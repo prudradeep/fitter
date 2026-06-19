@@ -1,34 +1,50 @@
 import re
+from html import escape
 
 from app.services.chat_session import ChatSession
 
 
 def format_hazards(session: ChatSession) -> str:
+    survey_hazards = list(session.hazards or [])
     sections = [
-        "### Sector Hazards from FITTER Survey",
-        format_system_hazards(session),
+        '<h3 class="hazard-group-heading">Top 3 <span>From the survey</span></h3>',
+        format_system_hazards(session, survey_hazards[:3]),
+        "",
+        '<h3 class="hazard-group-heading">Other hazards <span>From the survey</span></h3>',
+        format_system_hazards(session, survey_hazards[3:]),
     ]
-    if session.custom_hazards:
+    if any(str(hazard or "").strip() for hazard in (session.custom_hazards or [])):
         sections.extend(
             [
                 "",
-                "### Additional hazards specific to your region",
+                '<h3 class="hazard-group-heading">Additional hazards '
+                '<span>Added by experts</span></h3>',
                 format_custom_hazards(session),
             ]
         )
     return "\n".join(sections)
 
 
-def format_system_hazards(session: ChatSession) -> str:
-    hazards = list(session.hazards or [])
+def format_system_hazards(
+    session: ChatSession,
+    hazards: list[str] | None = None,
+) -> str:
+    hazards = list(session.hazards or []) if hazards is None else hazards
     if not hazards:
-        return "- No hazards were returned by the LLM for the loaded sector prompt."
+        return "- No hazards in this category."
     lines: list[str] = []
     for hazard in hazards:
         display_hazard = _clean_hazard_display_name(hazard)
-        lines.append(f"- **{display_hazard}**")
+        lines.append(
+            '<article class="hazard-card">'
+            '<div class="hazard-card-heading">'
+            '<span class="hazard-alert-icon" aria-hidden="true">!</span>'
+            f"<strong>{escape(display_hazard)}</strong>"
+            "</div>"
+        )
         _append_hazard_ranking(lines, session, hazard)
         _append_hazard_profiles(lines, session, hazard)
+        lines.append("</article>")
     return "\n".join(lines)
 
 
@@ -38,8 +54,15 @@ def format_custom_hazards(session: ChatSession) -> str:
         return ""
     lines: list[str] = []
     for hazard in hazards:
-        lines.append(f"- **{hazard}**")
+        lines.append(
+            '<article class="hazard-card">'
+            '<div class="hazard-card-heading">'
+            '<span class="hazard-alert-icon" aria-hidden="true">!</span>'
+            f"<strong>{escape(str(hazard))}</strong>"
+            "</div>"
+        )
         _append_hazard_profiles(lines, session, hazard)
+        lines.append("</article>")
     return "\n".join(lines)
 
 
@@ -50,6 +73,7 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
         profile_list = [profile_values]
     else:
         profile_list = list(profile_values or [])
+    profile_lines: list[str] = []
     for profile in profile_list:
         if isinstance(profile, dict):
             name = str(profile.get("name") or "").strip()
@@ -57,11 +81,25 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
             if not name:
                 continue
             if explanation:
-                lines.append(f"     - **{name}** — {explanation}")
+                profile_lines.append(
+                    f"<li><strong>{escape(name)}</strong><p>{escape(explanation)}</p></li>"
+                )
             else:
-                lines.append(f"     - **{name}**")
+                profile_lines.append(f"<li><strong>{escape(name)}</strong></li>")
         else:
-            lines.append(f"     - **{profile}**")
+            profile_lines.append(f"<li><strong>{escape(str(profile))}</strong></li>")
+    if not profile_lines:
+        return
+    count = len(profile_lines)
+    region = escape(str(session.region or "the selected region"))
+    profile_label = "profile" if count == 1 else "profiles"
+    lines.append(
+        "<details class=\"hazard-profiles\">"
+        f"<summary>Influence on <strong>{region}</strong>"
+        f" <span>({count} socio-demographic {profile_label})</span></summary>"
+        f"<ul>{''.join(profile_lines)}</ul>"
+        "</details>"
+    )
 
 
 def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) -> None:
@@ -79,10 +117,16 @@ def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) 
     salience = _format_score(ranking.get("salience_score"))
     effect = _format_score(ranking.get("effect_size_score"))
     reach = _format_score(ranking.get("reach_score"))
-    lines.append(
-        "     - Relevance "
-        f"**{relevance}** | Salience {salience} | EffectSize {effect} | Reach {reach}"
+    metrics = (
+        ("Relevance", relevance),
+        ("Salience", salience),
+        ("Effect size", effect),
+        ("Reach", reach),
     )
+    metric_items = "".join(
+        f"<div><dt>{label}</dt><dd>{value}</dd></div>" for label, value in metrics
+    )
+    lines.append(f'<dl class="hazard-metrics">{metric_items}</dl>')
 
 
 def _format_score(value: object, suffix: str = "") -> str:

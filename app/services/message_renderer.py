@@ -9,9 +9,15 @@ TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "chat"
 
 ALLOWED_TAGS = [
     "a",
+    "article",
     "blockquote",
     "br",
     "code",
+    "details",
+    "div",
+    "dd",
+    "dl",
+    "dt",
     "em",
     "h1",
     "h2",
@@ -21,11 +27,19 @@ ALLOWED_TAGS = [
     "ol",
     "p",
     "pre",
+    "span",
     "strong",
+    "summary",
     "ul",
 ]
 ALLOWED_ATTRIBUTES = {
     "a": ["href", "rel", "target", "title"],
+    "article": ["class"],
+    "details": ["class", "open"],
+    "div": ["class"],
+    "dl": ["class"],
+    "h3": ["class"],
+    "span": ["class", "aria-hidden"],
 }
 
 

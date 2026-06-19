@@ -98,3 +98,17 @@ Mean Concern => Country, Hazard wise, High concern pct => Percentage of responde
 Reach => Country, Region, Predictor
 
 mitigation measure examples chat gpt
+
+=========================================
+Remove map after sector selection
+
+hazards: {
+    index: 3,
+    title: "Top 3 hazards for your region",
+    text: "Show tabular data regiona vs national",
+  },
+
+Hazard segregation:
+Top 3 (from the survey)
+Others (from the survey)
+Additional Hazards(Added by Experts)

@@ -85,10 +85,43 @@ class ChatSession:
             mitigation_review=self._mitigation_review_summary(self.mitigation_validation),
             target_population_questions=self.target_population_questions or [],
             hazard_count=system_hazard_count + regional_hazard_count,
+            top_hazards=self._top_hazard_population_summary(),
             affected_profile_count=len(deduped_affected_profiles),
             affected_profiles=deduped_affected_profiles,
             mitigation_measure_count=1 if self.mitigation_measure else 0,
         )
+
+    def _top_hazard_population_summary(self) -> list[dict[str, object]]:
+        rankings = self.hazard_rankings or {}
+        rows: list[dict[str, object]] = []
+        for hazard in (self.hazards or [])[:3]:
+            ranking = rankings.get(hazard)
+            profiles = ranking.get("profiles", []) if isinstance(ranking, dict) else []
+            regional_values: list[float] = []
+            national_values: list[float] = []
+            for profile in profiles if isinstance(profiles, list) else []:
+                if not isinstance(profile, dict):
+                    continue
+                try:
+                    regional_values.append(float(profile["population_pct"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
+                try:
+                    national_values.append(float(profile["national_population_pct"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
+            rows.append(
+                {
+                    "hazard": hazard,
+                    "regional_population_pct": self._average_percentage(regional_values),
+                    "national_population_pct": self._average_percentage(national_values),
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _average_percentage(values: list[float]) -> float | None:
+        return round(sum(values) / len(values), 1) if values else None
 
     @staticmethod
     def _profile_lines(markdown_text: str) -> list[str]:

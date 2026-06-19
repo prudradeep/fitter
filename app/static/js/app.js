@@ -270,8 +270,8 @@ const stageVisuals = {
   },
   hazards: {
     index: 3,
-    title: "Identify social hazards",
-    text: "This stage captures risks, negative impacts, and evidence for the selected policy context.",
+    title: "",
+    text: "",
   },
   mitigation: {
     index: 4,
@@ -506,12 +506,6 @@ async function renderDynamicStageVisual(key, session = {}, options = currentOpti
   }
   if (key === "region" || key === "sector") {
     await renderRegionMap(session.country, session.region);
-    return;
-  }
-  if (session?.country && session?.region) {
-    await renderRegionMap(session.country, session.region, { keepCards: true });
-    const mapVisible = Boolean(stageMap && !stageMap.hidden);
-    renderStageIcons(key, session, options, { keepMap: mapVisible });
     return;
   }
   renderStageIcons(key, session, options);
@@ -766,13 +760,64 @@ function hazardSummaryItems(session = {}) {
   ];
 }
 
+function populationPercentage(value) {
+  const percentage = Number(value);
+  return Number.isFinite(percentage) ? `${percentage.toFixed(1)}%` : "—";
+}
+
+function renderHazardPopulationTable(session = {}) {
+  const hazards = Array.isArray(session.top_hazards) ? session.top_hazards.slice(0, 3) : [];
+  const rows = hazards
+    .map(
+      (hazard, index) => `
+        <tr>
+          <td><span>${index + 1}</span>${escapeHtml(hazard.hazard || "Hazard")}</td>
+          <td>${populationPercentage(hazard.regional_population_pct)}</td>
+          <td>${populationPercentage(hazard.national_population_pct)}</td>
+        </tr>
+      `,
+    )
+    .join("");
+  stageIconGrid.innerHTML = `
+    <section class="stage-hazard-table" aria-label="Top three hazard population comparison">
+      <div class="stage-hazard-table-heading">
+        <div>
+          <span>Population comparison</span>
+          <h3>Top 3 hazards</h3>
+        </div>
+        <small>Average across mapped affected profiles</small>
+      </div>
+      <div class="stage-hazard-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Hazard</th>
+              <th scope="col">Regional</th>
+              <th scope="col">National</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 function renderStageIcons(key, session = {}, options = currentOptions, { keepMap = false } = {}) {
   if (!stageIconGrid) return;
-  const visualKey = `icons-${key}-${session.country || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${options.map((option) => option.label).join("|")}`;
+  const topHazardKey = (session.top_hazards || [])
+    .map((hazard) => `${hazard.hazard}:${hazard.regional_population_pct}:${hazard.national_population_pct}`)
+    .join("|");
+  const visualKey = `icons-${key}-${session.country || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${options.map((option) => option.label).join("|")}`;
   if (renderedStageCardsKey === visualKey) return;
   renderedStageCardsKey = visualKey;
   if (!keepMap) stageVisualRenderId += 1;
   showStageIcons({ keepMap });
+
+  if (key === "hazards" && Array.isArray(session.top_hazards) && session.top_hazards.length) {
+    renderHazardPopulationTable(session);
+    return;
+  }
 
   const items =
     (key === "sector" && sectorItemsForSession(session, options).length
