@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import EurostatPopulationCache
+from app.models import Country, EurostatPopulationCache, Region, Sector, SystemHazard
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,15 @@ class EurostatService:
         confirmed_predictor_category: str,
     ) -> dict[str, object]:
         profile = confirmed_predictor_category
-        cached = self._cached_profile_population(country=country, region=region, profile=profile)
+        context_ids = self._context_ids(country, region, sector, hazard)
+        cached = self._cached_profile_population(
+            country=country,
+            region=region,
+            sector=sector,
+            hazard=hazard,
+            profile=profile,
+            context_ids=context_ids,
+        )
         if cached is not None:
             return cached
         request_body = {
@@ -51,8 +59,11 @@ class EurostatService:
         self._store_profile_population(
             country=country,
             region=region,
+            sector=sector,
+            hazard=hazard,
             profile=profile,
             response=response,
+            context_ids=context_ids,
         )
         return response
 
@@ -80,6 +91,8 @@ class EurostatService:
         cache_row = self._profile_population_cache_row(
             country=country_code,
             region=region,
+            sector=sector or "",
+            hazard=hazard or "",
             profile=confirmed_predictor_category or predictor_name,
         )
         percentages = population_percentages(response)
@@ -99,9 +112,19 @@ class EurostatService:
         *,
         country: str,
         region: str,
+        sector: str,
+        hazard: str,
         profile: str,
+        context_ids: dict[str, int | None] | None = None,
     ) -> dict[str, object] | None:
-        row = self._profile_population_cache_row(country=country, region=region, profile=profile)
+        row = self._profile_population_cache_row(
+            country=country,
+            region=region,
+            sector=sector,
+            hazard=hazard,
+            profile=profile,
+            context_ids=context_ids,
+        )
         if row is None:
             return None
         try:
@@ -114,14 +137,22 @@ class EurostatService:
         *,
         country: str,
         region: str,
+        sector: str,
+        hazard: str,
         profile: str,
+        context_ids: dict[str, int | None] | None = None,
     ) -> EurostatPopulationCache | None:
         if self.db is None:
             return None
+        ids = context_ids or self._context_ids(country, region, sector, hazard)
         return self.db.scalar(
             select(EurostatPopulationCache).where(
                 EurostatPopulationCache.country == country,
                 EurostatPopulationCache.region == region,
+                EurostatPopulationCache.country_id == ids["country_id"],
+                EurostatPopulationCache.region_id == ids["region_id"],
+                EurostatPopulationCache.sector_id == ids["sector_id"],
+                EurostatPopulationCache.system_hazard_id == ids["system_hazard_id"],
                 EurostatPopulationCache.profile == profile,
                 EurostatPopulationCache.expires_at > datetime.now(timezone.utc).replace(tzinfo=None),
             )
@@ -132,8 +163,11 @@ class EurostatService:
         *,
         country: str,
         region: str,
+        sector: str,
+        hazard: str,
         profile: str,
         response: dict[str, object],
+        context_ids: dict[str, int | None] | None = None,
     ) -> None:
         if self.db is None:
             return
@@ -142,10 +176,13 @@ class EurostatService:
         ).replace(tzinfo=None)
         expires_at = add_months(timestamp, self.settings.eurostat_cache_expiry_months)
         payload = json.dumps(response, ensure_ascii=False)
+        ids = context_ids or self._context_ids(country, region, sector, hazard)
         row = self.db.scalar(
             select(EurostatPopulationCache).where(
-                EurostatPopulationCache.country == country,
-                EurostatPopulationCache.region == region,
+                EurostatPopulationCache.country_id == ids["country_id"],
+                EurostatPopulationCache.region_id == ids["region_id"],
+                EurostatPopulationCache.sector_id == ids["sector_id"],
+                EurostatPopulationCache.system_hazard_id == ids["system_hazard_id"],
                 EurostatPopulationCache.profile == profile,
             )
         )
@@ -153,6 +190,10 @@ class EurostatService:
             row = EurostatPopulationCache(
                 country=country,
                 region=region,
+                country_id=ids["country_id"],
+                region_id=ids["region_id"],
+                sector_id=ids["sector_id"],
+                system_hazard_id=ids["system_hazard_id"],
                 profile=profile,
                 response_json=payload,
                 expires_at=expires_at,
@@ -161,11 +202,63 @@ class EurostatService:
         else:
             row.response_json = payload
             row.expires_at = expires_at
+            row.country = country
+            row.region = region
         try:
             self.db.commit()
         except Exception:
             self.db.rollback()
             raise
+
+    def _context_ids(
+        self,
+        country: str,
+        region: str,
+        sector: str,
+        hazard: str,
+    ) -> dict[str, int | None]:
+        ids: dict[str, int | None] = {
+            "country_id": None,
+            "region_id": None,
+            "sector_id": None,
+            "system_hazard_id": None,
+        }
+        if self.db is None:
+            return ids
+        country_row = self.db.scalar(
+            select(Country).where(
+                or_(
+                    func.lower(Country.name) == country.casefold(),
+                    func.lower(Country.map_code) == country.casefold(),
+                )
+            )
+        )
+        sector_row = self.db.scalar(
+            select(Sector).where(func.lower(Sector.name) == sector.casefold())
+        )
+        region_row = None
+        if country_row is not None:
+            region_row = self.db.scalar(
+                select(Region).where(
+                    Region.country_id == country_row.id,
+                    func.lower(Region.name) == region.casefold(),
+                )
+            )
+        hazard_row = None
+        if sector_row is not None:
+            hazard_row = self.db.scalar(
+                select(SystemHazard).where(
+                    SystemHazard.sector_id == sector_row.id,
+                    func.lower(SystemHazard.name) == hazard.casefold(),
+                )
+            )
+        ids.update(
+            country_id=country_row.id if country_row is not None else None,
+            region_id=region_row.id if region_row is not None else None,
+            sector_id=sector_row.id if sector_row is not None else None,
+            system_hazard_id=hazard_row.id if hazard_row is not None else None,
+        )
+        return ids
 
     @staticmethod
     def _mock_profile_population(request_body: dict[str, str]) -> dict[str, object]:

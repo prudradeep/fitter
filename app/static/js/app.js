@@ -174,7 +174,6 @@ const coverageCountries = stageCoverageRows
     sectors: row.sectors || "Not configured",
     hazards: Number(row.hazards) || 0,
     analyses: Number(row.analyses) || 0,
-    topHazardSalience: Array.isArray(row.top_hazard_salience) ? row.top_hazard_salience : [],
   }));
 const countryMapData = new Map(
   coverageCountries.filter((country) => country.mapPath).map((country) => [country.name, country.mapPath]),
@@ -543,7 +542,6 @@ async function renderCountrySelectionMap() {
         sectors: countryMeta?.sectors || "Not configured",
         hazards: countryMeta?.hazards ?? 0,
         analyses: countryMeta?.analyses ?? 0,
-        topHazardSalience: countryMeta?.topHazardSalience || [],
         enabledCountry: active,
       };
     });
@@ -574,15 +572,6 @@ async function renderCountrySelectionMap() {
           if (!this.point.enabledCountry) return false;
           const country = escapeHtml(this.point.name);
           const sectors = escapeHtml(this.point.sectors);
-          const salienceItems = (this.point.topHazardSalience || [])
-            .slice(0, 3)
-            .map((item) => {
-              const hazard = escapeHtml(validationLabel(item.hazard || ""));
-              const sector = escapeHtml(item.sector || "");
-              const score = Number(item.salience);
-              return `<li><span>${hazard}</span><strong>${Number.isFinite(score) ? score.toFixed(2) : "n/a"}</strong><small>${sector}</small></li>`;
-            })
-            .join("");
           const tooltipWidth = stageCountryTooltipWidth();
           return `
             <div class="stage-country-tooltip" style="width: ${tooltipWidth}px; max-width: ${tooltipWidth}px;">
@@ -593,11 +582,6 @@ async function renderCountrySelectionMap() {
                   <p>${sectors.replace(/, /g, " / ")}</p>
                 </div>
               </div>
-              ${
-                salienceItems
-                  ? `<div class="stage-country-tooltip-salience"><small>Top salience</small><ul>${salienceItems}</ul></div>`
-                  : ""
-              }
               <div class="stage-country-tooltip-count">
                 <small>Analyses</small>
                 <strong>${this.point.analyses}</strong>
@@ -767,6 +751,21 @@ function populationPercentage(value) {
 
 function renderHazardPopulationTable(session = {}) {
   const hazards = Array.isArray(session.top_hazards) ? session.top_hazards.slice(0, 3) : [];
+  const counts = [
+    ["Hazards", session.hazard_count],
+    ["Unique profiles", session.affected_profile_count],
+    ["Mitigation measures", session.mitigation_measure_count],
+  ];
+  const countCards = counts
+    .map(
+      ([label, value]) => `
+        <article>
+          <strong>${Number(value) || 0}</strong>
+          <span>${label}</span>
+        </article>
+      `,
+    )
+    .join("");
   const rows = hazards
     .map(
       (hazard, index) => `
@@ -779,6 +778,7 @@ function renderHazardPopulationTable(session = {}) {
     )
     .join("");
   stageIconGrid.innerHTML = `
+    <div class="stage-hazard-summary" aria-label="Sector analysis totals">${countCards}</div>
     <section class="stage-hazard-table" aria-label="Top three hazard population comparison">
       <div class="stage-hazard-table-heading">
         <div>

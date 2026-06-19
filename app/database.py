@@ -505,7 +505,6 @@ def ensure_runtime_schema() -> None:
                       explanation TEXT NULL,
                       statistical_basis TEXT NULL,
                       source VARCHAR(40) NOT NULL DEFAULT 'sector_prompt',
-                      metadata_json TEXT NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       CONSTRAINT fk_system_hazard_dgs_hazard
                         FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE,
@@ -577,6 +576,13 @@ def ensure_runtime_schema() -> None:
                         "DROP COLUMN affected_population_updated_at"
                     )
                 )
+            if "metadata_json" in system_dg_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE system_hazard_socio_demographics "
+                        "DROP COLUMN metadata_json"
+                    )
+                )
             connection.execute(
                 text(
                     """
@@ -584,12 +590,25 @@ def ensure_runtime_schema() -> None:
                       id INT AUTO_INCREMENT PRIMARY KEY,
                       country VARCHAR(120) NOT NULL,
                       region VARCHAR(120) NOT NULL,
+                      country_id INT NULL,
+                      region_id INT NULL,
+                      sector_id INT NULL,
+                      system_hazard_id INT NULL,
                       profile VARCHAR(255) NOT NULL,
                       response_json TEXT NOT NULL,
                       expires_at DATETIME NOT NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                      CONSTRAINT uq_eurostat_population_lookup UNIQUE (country, region, profile),
+                      CONSTRAINT fk_eurostat_population_country
+                        FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE CASCADE,
+                      CONSTRAINT fk_eurostat_population_region
+                        FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE CASCADE,
+                      CONSTRAINT fk_eurostat_population_sector
+                        FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
+                      CONSTRAINT fk_eurostat_population_hazard
+                        FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE,
+                      CONSTRAINT uq_eurostat_population_lookup
+                        UNIQUE (country_id, region_id, sector_id, system_hazard_id, profile),
                       INDEX ix_eurostat_population_cache_country (country),
                       INDEX ix_eurostat_population_cache_region (region),
                       INDEX ix_eurostat_population_cache_profile (profile),
@@ -598,6 +617,86 @@ def ensure_runtime_schema() -> None:
                     """
                 )
             )
+            inspector = inspect(engine)
+            cache_columns = {
+                column["name"] for column in inspector.get_columns("eurostat_population_cache")
+            }
+            cache_id_columns = (
+                ("country_id", "countries"),
+                ("region_id", "regions"),
+                ("sector_id", "sectors"),
+                ("system_hazard_id", "system_hazards"),
+            )
+            for column_name, _ in cache_id_columns:
+                if column_name not in cache_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE eurostat_population_cache "
+                            f"ADD COLUMN {column_name} INT NULL"
+                        )
+                    )
+            connection.execute(
+                text(
+                    "UPDATE eurostat_population_cache ep "
+                    "JOIN countries c ON LOWER(c.name) = LOWER(ep.country) "
+                    "OR LOWER(c.map_code) = LOWER(ep.country) "
+                    "SET ep.country_id = c.id WHERE ep.country_id IS NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE eurostat_population_cache ep "
+                    "JOIN regions r ON r.country_id = ep.country_id "
+                    "AND LOWER(r.name) = LOWER(ep.region) "
+                    "SET ep.region_id = r.id WHERE ep.region_id IS NULL"
+                )
+            )
+            inspector = inspect(engine)
+            cache_foreign_key_columns = {
+                tuple(foreign_key.get("constrained_columns") or [])
+                for foreign_key in inspector.get_foreign_keys("eurostat_population_cache")
+            }
+            for column_name, table_name in cache_id_columns:
+                if (column_name,) not in cache_foreign_key_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE eurostat_population_cache "
+                            f"ADD CONSTRAINT fk_eurostat_population_{column_name} "
+                            f"FOREIGN KEY ({column_name}) REFERENCES {table_name}(id) "
+                            "ON DELETE CASCADE"
+                        )
+                    )
+            expected_lookup_columns = [
+                "country_id",
+                "region_id",
+                "sector_id",
+                "system_hazard_id",
+                "profile",
+            ]
+            lookup_index = next(
+                (
+                    index
+                    for index in inspector.get_indexes("eurostat_population_cache")
+                    if index["name"] == "uq_eurostat_population_lookup"
+                ),
+                None,
+            )
+            if lookup_index and lookup_index.get("column_names") != expected_lookup_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE eurostat_population_cache "
+                        "DROP INDEX uq_eurostat_population_lookup"
+                    )
+                )
+                lookup_index = None
+            if lookup_index is None:
+                connection.execute(
+                    text(
+                        "ALTER TABLE eurostat_population_cache "
+                        "ADD CONSTRAINT uq_eurostat_population_lookup "
+                        "UNIQUE (country_id, region_id, sector_id, system_hazard_id, profile)"
+                    )
+                )
             connection.execute(
                 text(
                     """
@@ -651,11 +750,16 @@ def ensure_runtime_schema() -> None:
                         "ADD COLUMN attempt_count INT NOT NULL DEFAULT 0 AFTER match_status"
                     )
                 )
+            if "matched_profiles_json" in match_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE system_hazard_socio_demographic_population_matches "
+                        "DROP COLUMN matched_profiles_json"
+                    )
+                )
     except Exception:
         logger.exception("Runtime schema migration failed")
         raise
-
-
 def ensure_mitigation_measure_examples() -> None:
     with engine.begin() as connection:
         connection.execute(

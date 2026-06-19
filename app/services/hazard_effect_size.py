@@ -106,7 +106,7 @@ def _hazard_predictor_effects(min_or: float = 1.0) -> tuple[HazardPredictorEffec
                 if not _confirmed_predictor(record):
                     continue
                 odds_ratio = _to_float(record.get("OR"))
-                if odds_ratio is None or odds_ratio <= min_or:
+                if odds_ratio is None or odds_ratio < min_or:
                     continue
                 rows.append(
                     HazardPredictorEffect(

@@ -45,6 +45,9 @@ class RankedHazard:
     used_predictors: int
     total_predictors: int
     profiles: list[dict[str, object]]
+    matched_population_profiles: list[dict[str, object]]
+    regional_population_pct: float | None
+    national_population_pct: float | None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -57,6 +60,9 @@ class RankedHazard:
             "used_predictors": self.used_predictors,
             "total_predictors": self.total_predictors,
             "profiles": self.profiles,
+            "matched_population_profiles": self.matched_population_profiles,
+            "regional_population_pct": self.regional_population_pct,
+            "national_population_pct": self.national_population_pct,
         }
 
 
@@ -132,6 +138,11 @@ class HazardRankingService:
                     "total_predictors": confirmed_predictor_count,
                     "positive_predictors": positive_predictor_count,
                     "profiles": list(reach["profiles"]),
+                    "matched_population_profiles": list(
+                        reach.get("matched_population_profiles") or []
+                    ),
+                    "regional_population_pct": reach.get("regional_population_pct"),
+                    "national_population_pct": reach.get("national_population_pct"),
                 }
             )
 
@@ -154,6 +165,17 @@ class HazardRankingService:
                     used_predictors=int(row["used_predictors"]),
                     total_predictors=int(row["total_predictors"]),
                     profiles=list(row["profiles"]),
+                    matched_population_profiles=list(row["matched_population_profiles"]),
+                    regional_population_pct=(
+                        float(row["regional_population_pct"])
+                        if row.get("regional_population_pct") is not None
+                        else None
+                    ),
+                    national_population_pct=(
+                        float(row["national_population_pct"])
+                        if row.get("national_population_pct") is not None
+                        else None
+                    ),
                 )
             )
         return [

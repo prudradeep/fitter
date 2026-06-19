@@ -1414,6 +1414,36 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   animation: stage-card-in 260ms ease forwards;
 }
 
+.stage-hazard-summary {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stage-hazard-summary article {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #d9dee7;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 10px 11px;
+  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.04);
+}
+
+.stage-hazard-summary strong {
+  color: #312e81;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.stage-hazard-summary span {
+  color: #64748b;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
 .stage-hazard-table-heading {
   display: flex;
   align-items: flex-end;
@@ -3599,8 +3629,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .stage-country-tooltip-main small,
-.stage-country-tooltip-count small,
-.stage-country-tooltip-salience > small {
+.stage-country-tooltip-count small {
   display: block;
   color: #9aa3b1;
   font-size: 0.68rem;
@@ -3633,48 +3662,6 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   font-size: 1.65rem;
   line-height: 1;
   font-weight: 900;
-}
-
-.stage-country-tooltip-salience {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 7px;
-  border-top: 1px solid #e5e7eb;
-  padding-top: 10px;
-}
-
-.stage-country-tooltip-salience ul {
-  display: grid;
-  gap: 5px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.stage-country-tooltip-salience li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px 10px;
-  align-items: baseline;
-  font-size: 0.76rem;
-}
-
-.stage-country-tooltip-salience li span {
-  color: #374151;
-  font-weight: 800;
-  overflow-wrap: anywhere;
-}
-
-.stage-country-tooltip-salience li strong {
-  color: #111827;
-  font-weight: 900;
-}
-
-.stage-country-tooltip-salience li small {
-  grid-column: 1 / -1;
-  color: #64748b;
-  font-size: 0.68rem;
-  font-weight: 800;
 }
 
 .map-tooltip-title {

@@ -86,10 +86,35 @@ class ChatSession:
             target_population_questions=self.target_population_questions or [],
             hazard_count=system_hazard_count + regional_hazard_count,
             top_hazards=self._top_hazard_population_summary(),
-            affected_profile_count=len(deduped_affected_profiles),
+            affected_profile_count=self.eligible_hazard_profile_count(),
             affected_profiles=deduped_affected_profiles,
             mitigation_measure_count=1 if self.mitigation_measure else 0,
         )
+
+    def eligible_hazard_profile_count(self) -> int:
+        unique_profiles: set[str] = set()
+        stored_profiles = self.hazard_profiles or {}
+        for hazard in self.hazards or []:
+            profiles = stored_profiles.get(hazard)
+            if profiles is None:
+                hazard_key = hazard.casefold()
+                profiles = next(
+                    (
+                        value
+                        for stored_hazard, value in stored_profiles.items()
+                        if str(stored_hazard).casefold() == hazard_key
+                    ),
+                    [],
+                )
+            profile_values = [profiles] if isinstance(profiles, str) else list(profiles or [])
+            for profile in profile_values:
+                if isinstance(profile, dict):
+                    name = str(profile.get("name") or profile.get("profile") or "").strip()
+                else:
+                    name = str(profile or "").strip()
+                if name:
+                    unique_profiles.add(name.casefold())
+        return len(unique_profiles)
 
     def _top_hazard_population_summary(self) -> list[dict[str, object]]:
         rankings = self.hazard_rankings or {}
@@ -113,8 +138,18 @@ class ChatSession:
             rows.append(
                 {
                     "hazard": hazard,
-                    "regional_population_pct": self._average_percentage(regional_values),
-                    "national_population_pct": self._average_percentage(national_values),
+                    "regional_population_pct": (
+                        ranking.get("regional_population_pct")
+                        if isinstance(ranking, dict)
+                        and ranking.get("regional_population_pct") is not None
+                        else self._average_percentage(regional_values)
+                    ),
+                    "national_population_pct": (
+                        ranking.get("national_population_pct")
+                        if isinstance(ranking, dict)
+                        and ranking.get("national_population_pct") is not None
+                        else self._average_percentage(national_values)
+                    ),
                 }
             )
         return rows

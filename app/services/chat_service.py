@@ -78,6 +78,7 @@ from app.services.knowledge_base import KnowledgeBaseService
 from app.services.grounding_models import GroundingModelService
 from app.services.hazard_ranking_service import HazardRankingService
 from app.services.message_renderer import markdown_to_html, render_message
+from app.services.profile_metadata import compact_profile_metadata
 from app.services.sector_prompt_rag import (
     SectorPromptRagService,
     section_five_primary_data,
@@ -713,66 +714,7 @@ class ChatService:
         ]
 
     def _apply_country_profile_count(self, response: ChatResponse, session: ChatSession) -> None:
-        if session.country_id is None or session.sector_id is None:
-            return
-        response.session.affected_profile_count = self._country_sector_affected_profile_count(
-            session,
-        )
-
-    def _country_sector_affected_profile_count(self, session: ChatSession) -> int:
-        if session.country_id is None or session.sector_id is None:
-            return 0
-        try:
-            self._normalize_stored_sdp_variable_names(session)
-            system_rows = self.db.execute(
-                select(SystemHazardSocioDemographic, SystemHazard)
-                .join(
-                    SystemHazard,
-                    SystemHazard.id == SystemHazardSocioDemographic.system_hazard_id,
-                )
-                .where(
-                    SystemHazardSocioDemographic.sector_id == session.sector_id,
-                )
-            ).all()
-
-            user_query = (
-                select(UserHazardSocioDemographic, UserHazard)
-                .join(
-                    UserHazard,
-                    UserHazard.id == UserHazardSocioDemographic.user_hazard_id,
-                )
-                .join(UserSession, UserSession.id == UserHazard.user_session_id)
-                .where(
-                    UserHazardSocioDemographic.country_id == session.country_id,
-                    UserHazardSocioDemographic.region_id.is_(None)
-                    if session.region_id is None
-                    else UserHazardSocioDemographic.region_id == session.region_id,
-                    UserHazardSocioDemographic.sector_id == session.sector_id,
-                    UserHazardSocioDemographic.source != "llm",
-                )
-            )
-            if self.user_id is not None:
-                user_query = user_query.where(UserSession.user_id == self.user_id)
-            user_rows = self.db.execute(user_query).all()
-
-            variable_names = {
-                normalized.casefold()
-                for normalized in [
-                    *[
-                        self._valid_sdp_variable_name(session, profile.variable_name)
-                        for profile, _hazard in system_rows
-                    ],
-                    *[
-                        self._valid_sdp_variable_name(session, profile.variable_name)
-                        for profile, _hazard in user_rows
-                    ],
-                ]
-                if normalized
-            }
-            return len(variable_names)
-        except Exception:
-            logger.exception("Failed to count country-sector affected variable names")
-            return 0
+        response.session.affected_profile_count = session.eligible_hazard_profile_count()
 
     def _valid_sdp_variable_name(
         self, session: ChatSession, variable_name: str | None
@@ -1283,6 +1225,28 @@ class ChatService:
         session.hazards = ranked_names
         session.hazard_rankings = ranked_by_name
         await self._enrich_listed_hazard_profiles_with_population_context(session)
+        try:
+            refreshed_rows = await self.hazard_ranking.rank_hazards(
+                country=country,
+                region=region,
+                sector=sector,
+                hazards=session.hazards,
+            )
+        except Exception:
+            logger.exception("Failed to recalculate hazard reach from population matches")
+            return
+        refreshed_by_name = {
+            str(row["hazard"]): row
+            for row in refreshed_rows
+            if int(row.get("total_predictors") or 0) > 0
+        }
+        if refreshed_by_name:
+            session.hazards = [
+                str(row["hazard"])
+                for row in refreshed_rows
+                if str(row["hazard"]) in refreshed_by_name
+            ]
+            session.hazard_rankings = refreshed_by_name
 
     async def _enrich_listed_hazard_profiles_with_population_context(
         self,
@@ -4921,7 +4885,9 @@ Retrieved knowledge-base excerpts:
                 "source": source[:40] if source else "sector_prompt",
             }
             if isinstance(item, dict):
-                profile_item["metadata"] = item
+                metadata = compact_profile_metadata(item)
+                if metadata:
+                    profile_item["metadata"] = metadata
             profiles.append(profile_item)
         return profiles[:12]
 
@@ -4943,14 +4909,13 @@ Retrieved knowledge-base excerpts:
             return profiles
         population_profiles = self._ranking_population_profiles(session, hazard)
         if not population_profiles:
-            return profiles
-        cached_matches: dict[str, dict[str, object]] = {}
+            return []
+        cached_matches: dict[str, list[dict[str, object]]] = {}
         blocked_profiles: set[str] = set()
         profiles_needing_match: list[dict[str, str]] = []
         for profile in profiles:
             name = str(profile.get("name") or profile.get("profile") or "").strip()
-            if not name:
-                profiles_needing_match.append(profile)
+            if not name or self._profile_has_odds_ratio_below_one(profile):
                 continue
             if self._profile_population_match_blocked(session, hazard, profile):
                 blocked_profiles.add(normalize(name))
@@ -4961,7 +4926,7 @@ Retrieved knowledge-base excerpts:
                 profile,
                 population_profiles,
             )
-            if cached_match is not None:
+            if cached_match:
                 cached_matches[normalize(name)] = cached_match
             else:
                 profiles_needing_match.append(profile)
@@ -4976,26 +4941,28 @@ Retrieved knowledge-base excerpts:
         enriched: list[dict[str, str]] = []
         for profile in profiles:
             name = str(profile.get("name") or profile.get("profile") or "").strip()
-            if not name:
-                enriched.append(profile)
+            if not name or self._profile_has_odds_ratio_below_one(profile):
                 continue
             if normalize(name) in blocked_profiles:
-                enriched.append(profile)
                 continue
-            match = (
-                cached_matches.get(normalize(name))
-                or llm_matches.get(normalize(name))
-                or self._deterministic_population_profile_match(
+            matches = self._merge_population_profile_matches(
+                cached_matches.get(normalize(name), []),
+                llm_matches.get(normalize(name), []),
+                self._deterministic_population_profile_matches(
                     name,
                     population_profiles,
-                )
+                ),
             )
-            sentence = self._population_context_sentence(match) if match else ""
+            sentence = self._population_context_sentences(matches) if matches else ""
             if not sentence:
                 self._record_profile_population_match_failure(session, hazard, profile)
-                enriched.append(profile)
                 continue
-            self._store_matched_profile_population_reference(session, hazard, profile, match)
+            self._store_matched_profile_population_references(
+                session,
+                hazard,
+                profile,
+                matches,
+            )
             updated = dict(profile)
             explanation = str(updated.get("explanation") or "").strip()
             if sentence.casefold() not in explanation.casefold():
@@ -5004,11 +4971,43 @@ Retrieved knowledge-base excerpts:
             enriched.append(updated)
         return enriched
 
+    @staticmethod
+    def _profile_has_odds_ratio_below_one(profile: dict[str, object]) -> bool:
+        candidates: list[object] = [profile]
+        metadata = profile.get("metadata")
+        if isinstance(metadata, dict):
+            candidates.append(metadata)
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            for key in ("odds_ratio", "or", "OR"):
+                if candidate.get(key) is None:
+                    continue
+                try:
+                    return float(candidate[key]) < 1
+                except (TypeError, ValueError):
+                    pass
+        text_value = " ".join(
+            str(profile.get(key) or "")
+            for key in ("explanation", "statistical_basis", "basis")
+        )
+        ratio_match = re.search(
+            r"(?i)(?:odds\s+ratio|\bOR\b)\s*(?:=|:|is)?\s*(0(?:\.\d+)?|1(?:\.0+)?)",
+            text_value,
+        )
+        if ratio_match:
+            return float(ratio_match.group(1)) < 1
+        normalized_text = normalize_for_match(text_value)
+        return any(
+            marker in normalized_text
+            for marker in ("protective", "lower odds", "lower concern")
+        )
+
     async def _match_population_profiles_with_llm(
         self,
         profiles: list[dict[str, str]],
         population_profiles: list[dict[str, object]],
-    ) -> dict[str, dict[str, object]]:
+    ) -> dict[str, list[dict[str, object]]]:
         profile_items = [
             {
                 "name": str(profile.get("name") or profile.get("profile") or "").strip(),
@@ -5029,7 +5028,8 @@ You match socio-demographic profile labels for Dr Transition.
 
 Return only exact JSON. Match a displayed profile to a population profile only
 when they refer to the same people, household group, income group, age group,
-education group, or dwelling group. If there is no clear match, use null.
+education group, or dwelling group. Return every compatible category. If there
+is no clear match, return an empty matched_profiles array.
 """.strip()
         messages = [
             {
@@ -5040,7 +5040,8 @@ education group, or dwelling group. If there is no clear match, use null.
                     + "\n\nPopulation profiles:\n"
                     + json.dumps(candidate_names, ensure_ascii=False)
                     + "\n\nReturn ONLY a JSON array like:\n"
-                    '[{"profile": "displayed profile", "matched_profile": "population profile or null"}]'
+                    '[{"profile": "displayed profile", '
+                    '"matched_profiles": ["population profile 1", "population profile 2"]}]'
                 ),
             }
         ]
@@ -5064,20 +5065,24 @@ education group, or dwelling group. If there is no clear match, use null.
             for profile in population_profiles
             if str(profile.get("name") or "").strip()
         }
-        matches: dict[str, dict[str, object]] = {}
+        matches: dict[str, list[dict[str, object]]] = {}
         for item in parsed:
             if not isinstance(item, dict):
                 continue
             profile_name = str(item.get("profile") or "").strip()
-            raw_matched_name = item.get("matched_profile")
-            if raw_matched_name is None:
+            raw_matched_names = item.get("matched_profiles")
+            if not isinstance(raw_matched_names, list):
+                legacy_name = item.get("matched_profile")
+                raw_matched_names = [legacy_name] if legacy_name is not None else []
+            if not profile_name:
                 continue
-            matched_name = str(raw_matched_name or "").strip()
-            if not profile_name or not matched_name or matched_name.casefold() == "null":
-                continue
-            population_profile = population_by_name.get(normalize(matched_name))
-            if population_profile:
-                matches[normalize(profile_name)] = population_profile
+            matched_profiles = [
+                population_by_name[normalize(str(matched_name or "").strip())]
+                for matched_name in raw_matched_names
+                if normalize(str(matched_name or "").strip()) in population_by_name
+            ]
+            if matched_profiles:
+                matches[normalize(profile_name)] = matched_profiles
         return matches
 
     @staticmethod
@@ -5112,12 +5117,12 @@ education group, or dwelling group. If there is no clear match, use null.
         hazard: str,
         profile: dict[str, object],
         population_profiles: list[dict[str, object]],
-    ) -> dict[str, object] | None:
+    ) -> list[dict[str, object]]:
         if session.sector_id is None:
-            return None
+            return []
         profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
         if not profile_name:
-            return None
+            return []
         cache_ids: set[int] = set()
         for population_profile in population_profiles:
             try:
@@ -5127,7 +5132,7 @@ education group, or dwelling group. If there is no clear match, use null.
             if cache_id > 0:
                 cache_ids.add(cache_id)
         if not cache_ids:
-            return None
+            return []
         system_hazard = self.db.scalar(
             select(SystemHazard).where(
                 SystemHazard.sector_id == session.sector_id,
@@ -5135,7 +5140,7 @@ education group, or dwelling group. If there is no clear match, use null.
             )
         )
         if system_hazard is None:
-            return None
+            return []
         system_profile = self.db.scalar(
             select(SystemHazardSocioDemographic).where(
                 SystemHazardSocioDemographic.system_hazard_id == system_hazard.id,
@@ -5144,8 +5149,8 @@ education group, or dwelling group. If there is no clear match, use null.
             )
         )
         if system_profile is None:
-            return None
-        matched_cache = self.db.scalar(
+            return []
+        matched_caches = self.db.scalars(
             select(EurostatPopulationCache)
             .join(
                 SystemHazardSocioDemographicPopulationMatch,
@@ -5157,19 +5162,20 @@ education group, or dwelling group. If there is no clear match, use null.
                 == system_profile.id,
                 SystemHazardSocioDemographicPopulationMatch.match_status == 1,
                 EurostatPopulationCache.id.in_(cache_ids),
+                EurostatPopulationCache.country_id == session.country_id,
+                EurostatPopulationCache.region_id == session.region_id,
+                EurostatPopulationCache.sector_id == session.sector_id,
+                EurostatPopulationCache.system_hazard_id == system_hazard.id,
                 EurostatPopulationCache.expires_at > datetime.now(timezone.utc).replace(tzinfo=None),
             )
-        )
-        if matched_cache is None:
-            return None
-        for population_profile in population_profiles:
-            try:
-                cache_id = int(population_profile.get("eurostat_population_cache_id") or 0)
-            except (TypeError, ValueError):
-                continue
-            if cache_id == matched_cache.id:
-                return population_profile
-        return None
+        ).all()
+        matched_cache_ids = {cache.id for cache in matched_caches}
+        return [
+            population_profile
+            for population_profile in population_profiles
+            if int(population_profile.get("eurostat_population_cache_id") or 0)
+            in matched_cache_ids
+        ]
 
     def _profile_population_match_blocked(
         self,
@@ -5223,37 +5229,63 @@ education group, or dwelling group. If there is no clear match, use null.
             logger.exception("Failed to record profile population match failure")
 
     @staticmethod
-    def _deterministic_population_profile_match(
+    def _deterministic_population_profile_matches(
         profile_name: str,
         population_profiles: list[dict[str, object]],
-    ) -> dict[str, object] | None:
+    ) -> list[dict[str, object]]:
         profile_key = normalize(profile_name)
-        for population_profile in population_profiles:
-            candidate = str(population_profile.get("name") or "").strip()
-            candidate_key = normalize(candidate)
-            if profile_key == candidate_key:
-                return population_profile
-        for population_profile in population_profiles:
-            candidate = str(population_profile.get("name") or "").strip()
-            candidate_key = normalize(candidate)
-            if profile_key and candidate_key and (
-                profile_key in candidate_key or candidate_key in profile_key
-            ):
-                return population_profile
-        return None
+        return [
+            population_profile
+            for population_profile in population_profiles
+            if (
+                (candidate_key := normalize(str(population_profile.get("name") or "").strip()))
+                and profile_key
+                and (profile_key in candidate_key or candidate_key in profile_key)
+            )
+        ]
 
     @staticmethod
-    def _population_context_sentence(profile: dict[str, object] | None) -> str:
-        if not profile:
+    def _merge_population_profile_matches(
+        *match_groups: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        matches: list[dict[str, object]] = []
+        seen: set[tuple[int, str]] = set()
+        for group in match_groups:
+            for profile in group:
+                try:
+                    cache_id = int(profile.get("eurostat_population_cache_id") or 0)
+                except (TypeError, ValueError):
+                    cache_id = 0
+                key = (cache_id, normalize(str(profile.get("name") or "")))
+                if key in seen:
+                    continue
+                seen.add(key)
+                matches.append(profile)
+        return matches
+
+    @staticmethod
+    def _population_context_sentences(profiles: list[dict[str, object]]) -> str:
+        regional_values: list[float] = []
+        national_values: list[float] = []
+        for profile in profiles:
+            try:
+                regional_values.append(float(profile.get("population_pct")))
+                national_values.append(float(profile.get("national_population_pct")))
+            except (TypeError, ValueError):
+                continue
+        if not regional_values or not national_values:
             return ""
-        try:
-            regional_pct = float(profile.get("population_pct"))
-            national_pct = float(profile.get("national_population_pct"))
-        except (TypeError, ValueError):
-            return ""
+        regional_pct = sum(regional_values) / len(regional_values)
+        national_pct = sum(national_values) / len(national_values)
+        if len(regional_values) == 1:
+            return (
+                "This profile represents about "
+                f"{regional_pct:.1f}% of the regional population, compared with "
+                f"{national_pct:.1f}% nationally."
+            )
         return (
-            "This profile represents about "
-            f"{regional_pct:.1f}% of the regional population, compared with "
+            f"Across {len(regional_values)} matched Eurostat profiles, the average "
+            f"population share is {regional_pct:.1f}% regionally and "
             f"{national_pct:.1f}% nationally."
         )
 
@@ -6017,7 +6049,6 @@ Current session:
                         "variable_name": str(profile_row.variable_name or ""),
                         "statistical_basis": str(profile_row.statistical_basis or ""),
                         "source": str(profile_row.source or "sector_prompt"),
-                        "metadata": self._metadata_from_json(profile_row.metadata_json),
                     }
                 )
         return list(items_by_hazard.values())
@@ -6401,45 +6432,67 @@ Current session:
             row.explanation = explanation or None
             row.statistical_basis = statistical_basis or None
             row.source = source
-            row.metadata_json = self._metadata_to_json(profile)
             self.db.commit()
         except Exception:
             self.db.rollback()
             logger.exception("Failed to persist system socio-demographic profile")
 
-    def _store_matched_profile_population_reference(
+    def _store_matched_profile_population_references(
         self,
         session: ChatSession,
         hazard: str,
         profile: dict[str, object],
-        matched_population_profile: dict[str, object],
+        matched_population_profiles: list[dict[str, object]],
     ) -> None:
-        try:
-            cache_id = int(matched_population_profile.get("eurostat_population_cache_id") or 0)
-        except (TypeError, ValueError):
-            return
-        if cache_id <= 0:
-            return
         system_profile = self._ensure_system_socio_demographic_row(session, hazard, profile)
         if system_profile is None:
             return
         try:
-            row = self.db.scalar(
+            valid_cache_ids: set[int] = set()
+            for matched_profile in matched_population_profiles:
+                try:
+                    cache_id = int(matched_profile.get("eurostat_population_cache_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                cache_row = self.db.get(EurostatPopulationCache, cache_id)
+                if (
+                    cache_row is None
+                    or cache_row.country_id != session.country_id
+                    or cache_row.region_id != session.region_id
+                    or cache_row.sector_id != session.sector_id
+                    or cache_row.system_hazard_id != system_profile.system_hazard_id
+                ):
+                    continue
+                valid_cache_ids.add(cache_id)
+            if not valid_cache_ids:
+                return
+            existing_rows = self.db.scalars(
                 select(SystemHazardSocioDemographicPopulationMatch).where(
                     SystemHazardSocioDemographicPopulationMatch.system_hazard_socio_demographic_id
                     == system_profile.id,
-                    SystemHazardSocioDemographicPopulationMatch.eurostat_population_cache_id
-                    == cache_id,
                 )
-            )
-            if row is None:
-                row = SystemHazardSocioDemographicPopulationMatch(
-                    system_hazard_socio_demographic_id=system_profile.id,
-                    eurostat_population_cache_id=cache_id,
-                )
-                self.db.add(row)
-            row.match_status = 1
-            row.attempt_count = 0
+            ).all()
+            rows_by_cache_id = {
+                row.eurostat_population_cache_id: row
+                for row in existing_rows
+                if row.eurostat_population_cache_id is not None
+            }
+            for row in existing_rows:
+                if (
+                    row.eurostat_population_cache_id is not None
+                    and row.eurostat_population_cache_id not in valid_cache_ids
+                ):
+                    row.match_status = 0
+            for cache_id in valid_cache_ids:
+                row = rows_by_cache_id.get(cache_id)
+                if row is None:
+                    row = SystemHazardSocioDemographicPopulationMatch(
+                        system_hazard_socio_demographic_id=system_profile.id,
+                        eurostat_population_cache_id=cache_id,
+                    )
+                    self.db.add(row)
+                row.match_status = 1
+                row.attempt_count = 0
             self.db.commit()
         except Exception:
             self.db.rollback()
@@ -6512,7 +6565,6 @@ Current session:
                 profile.get("statistical_basis") or profile.get("basis") or ""
             ).strip() or None
             row.source = str(profile.get("source") or "sector_prompt").strip()[:40] or "sector_prompt"
-            row.metadata_json = self._metadata_to_json(profile)
             self.db.commit()
             self.db.refresh(row)
             return row

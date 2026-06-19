@@ -209,7 +209,6 @@ class SystemHazardSocioDemographic(Base):
     explanation: Mapped[str | None] = mapped_column(Text)
     statistical_basis: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="sector_prompt")
-    metadata_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
@@ -290,12 +289,31 @@ class KnowledgeChunk(Base):
 class EurostatPopulationCache(Base):
     __tablename__ = "eurostat_population_cache"
     __table_args__ = (
-        UniqueConstraint("country", "region", "profile", name="uq_eurostat_population_lookup"),
+        UniqueConstraint(
+            "country_id",
+            "region_id",
+            "sector_id",
+            "system_hazard_id",
+            "profile",
+            name="uq_eurostat_population_lookup",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     country: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     region: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    country_id: Mapped[int | None] = mapped_column(
+        ForeignKey("countries.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    region_id: Mapped[int | None] = mapped_column(
+        ForeignKey("regions.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    sector_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sectors.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    system_hazard_id: Mapped[int | None] = mapped_column(
+        ForeignKey("system_hazards.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     profile: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     response_json: Mapped[str] = mapped_column(Text, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
