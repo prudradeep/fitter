@@ -107,6 +107,10 @@ class ChatService:
         "hazard_fit",
         "justification_soundness",
     )
+    mitigation_input_supported_dimensions = (
+        "hazard_fit",
+        "justification_soundness",
+    )
     mitigation_clarity_dimensions = (
         "specificity",
         "justification_clarity",
@@ -8423,18 +8427,16 @@ The user message names the authoritative corpus (support_label) and provides
 its excerpts. That selection is final: cite ONLY those excerpts. Do not
 reason about which corpus should apply, do not pull in any other corpus, and
 do not use your own background knowledge or sector statistics as support.
-User assertions in the measure or justification are NOT support — only the
-provided excerpts are. However, the mitigation measure and justification are
-the AUTHORITATIVE USER INPUTS that you must evaluate. Assess
-justification_soundness directly from the complete justification text. The
-justification may establish its own internal coherence, but it cannot serve as
-support evidence for hazard_fit, mechanism, evidence_quality,
+User assertions are not corpus evidence. However, the mitigation measure and
+justification are the AUTHORITATIVE USER INPUTS for hazard_fit and
+justification_soundness. Assess those two dimensions directly from the complete
+input. The user input cannot serve as evidence for mechanism, evidence_quality,
 contraindications, or feasibility.
 
 VERDICTS — resolve each dimension as exactly one of:
-SUPPORTED: the dimension's pass test (below) is met. For every dimension
-  except justification_soundness, this requires at least one provided excerpt;
-  cite its ID(s).
+SUPPORTED: the dimension's pass test (below) is met. Hazard_fit and
+  justification_soundness may be supported directly by the authoritative user
+  input. Every other dimension requires at least one provided excerpt.
 CONTRADICTED: a provided excerpt states something that conflicts with the
   measure or justification on this dimension. Cite the excerpt ID(s).
 INSUFFICIENT_INFO: the excerpts neither establish nor contradict this
@@ -8448,10 +8450,12 @@ citation. If no, INSUFFICIENT_INFO. Do not withhold SUPPORTED when a clear
 excerpt exists, and do not manufacture SUPPORTED when none does.
 
 DIMENSIONS:
-1. hazard_fit — does the measure address the selected hazard? An excerpt
-   supports hazard_fit when it links the intervention or its underlying
-   mechanism to reducing the selected harm/outcome. It does not need to name
-   the exact target population, country, or program implementation. (critical)
+1. hazard_fit — does the submitted measure directly address the selected
+   hazard? Mark SUPPORTED when the measure description or complete
+   justification explicitly links its action to reducing the selected
+   harm/outcome; no corpus citation is required for that direct semantic fit.
+   A supporting excerpt may also establish fit. Mark CONTRADICTED only when an
+   excerpt conflicts with the claimed fit. (critical)
 2. mechanism — SUPPORTED if excerpts support the causal pathway by which the
    measure reduces harm, INCLUDING when they support the component steps or
    the underlying mechanism rather than the exact named implementation.
@@ -8515,8 +8519,9 @@ text before/after:
 
 RULES:
 SUPPORTED and CONTRADICTED must carry at least one citation_id from the
-  provided excerpts — EXCEPT justification_soundness, which may be SUPPORTED
-  with an empty citation_ids list (its test is coherence + no contradiction).
+  provided excerpts — EXCEPT hazard_fit and justification_soundness, which may
+  be SUPPORTED with an empty citation_ids list based on the authoritative user
+  input.
   A CONTRADICTED justification_soundness must still cite the conflicting
   excerpt.
 INSUFFICIENT_INFO always carries an empty citation_ids list.
@@ -8613,7 +8618,8 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
                 and citation_id.upper() in valid_citation_ids
             })
             citation_required = not (
-                name == "justification_soundness" and status == "SUPPORTED"
+                name in self.mitigation_input_supported_dimensions
+                and status == "SUPPORTED"
             )
             if status in {"SUPPORTED", "CONTRADICTED"} and citation_required and not citation_ids:
                 status = "INSUFFICIENT_INFO"
@@ -8851,7 +8857,10 @@ Keep each explanation to one or two sentences. Keep "reason" under 90 words.
                 and citation_id in citation_scores
                 and citation_scores[citation_id] >= self.settings.mitigation_support_score_floor
             ]
-            citation_optional = name == "justification_soundness" and status == "SUPPORTED"
+            citation_optional = (
+                name in self.mitigation_input_supported_dimensions
+                and status == "SUPPORTED"
+            )
             if status == "SUPPORTED" and not valid_scores and not citation_optional:
                 status = "INSUFFICIENT_INFO"
             if status == "SUPPORTED" and valid_scores:
