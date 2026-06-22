@@ -2804,6 +2804,7 @@ Return Markdown only.
             {
                 "question_id": question["id"],
                 "category": question["category"],
+                "chart_title": question.get("chart_title") or question["question"],
                 "question": question["question"],
                 "score": score,
                 "reason": reason,
@@ -4689,6 +4690,7 @@ Do not invent characteristics that were not selected.
             {
                 "id": row.id,
                 "category": row.category,
+                "chart_title": row.chart_title or normalize_markdown_text(row.question),
                 "question": normalize_markdown_text(row.question),
             }
             for row in sorted_rows
@@ -5140,8 +5142,8 @@ Do not invent characteristics that were not selected.
                     population_profiles,
                 ),
             )
-            sentence = self._population_context_sentences(matches) if matches else ""
-            if not sentence:
+            percentages = self._population_context_percentages(matches) if matches else None
+            if percentages is None:
                 self._record_profile_population_match_failure(session, hazard, profile)
                 continue
             self._store_matched_profile_population_references(
@@ -5151,10 +5153,9 @@ Do not invent characteristics that were not selected.
                 matches,
             )
             updated = dict(profile)
-            explanation = str(updated.get("explanation") or "").strip()
-            if sentence.casefold() not in explanation.casefold():
-                updated["explanation"] = f"{explanation} {sentence}".strip()
-            updated["population_context"] = sentence
+            updated["regional_population_pct"] = percentages[0]
+            updated["national_population_pct"] = percentages[1]
+            updated.pop("population_context", None)
             enriched.append(updated)
         return enriched
 
@@ -5451,7 +5452,9 @@ is no clear match, return an empty matched_profiles array.
         return matches
 
     @staticmethod
-    def _population_context_sentences(profiles: list[dict[str, object]]) -> str:
+    def _population_context_percentages(
+        profiles: list[dict[str, object]],
+    ) -> tuple[float, float] | None:
         regional_values: list[float] = []
         national_values: list[float] = []
         for profile in profiles:
@@ -5461,20 +5464,10 @@ is no clear match, return an empty matched_profiles array.
             except (TypeError, ValueError):
                 continue
         if not regional_values or not national_values:
-            return ""
+            return None
         regional_pct = sum(regional_values) / len(regional_values)
         national_pct = sum(national_values) / len(national_values)
-        if len(regional_values) == 1:
-            return (
-                "This profile represents about "
-                f"{regional_pct:.1f}% of the regional population, compared with "
-                f"{national_pct:.1f}% nationally."
-            )
-        return (
-            f"Across {len(regional_values)} matched Eurostat profiles, the average "
-            f"population share is {regional_pct:.1f}% regionally and "
-            f"{national_pct:.1f}% nationally."
-        )
+        return round(regional_pct, 1), round(national_pct, 1)
 
     def _format_hazard_profiles_markdown(
         self,

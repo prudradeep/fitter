@@ -750,6 +750,18 @@ function populationPercentage(value) {
   return Number.isFinite(percentage) ? `${percentage.toFixed(1)}%` : "—";
 }
 
+function populationTrend(regionalValue, nationalValue) {
+  const regional = Number(regionalValue);
+  const national = Number(nationalValue);
+  if (!Number.isFinite(regional) || !Number.isFinite(national)) return "";
+  const difference = regional - national;
+  if (Math.abs(difference) < 0.05) {
+    return '<span class="population-trend is-equal" title="Equal to national" aria-label="equal to national">•</span>';
+  }
+  const higher = difference > 0;
+  return `<span class="population-trend ${higher ? "is-up" : "is-down"}" title="${higher ? "Higher" : "Lower"} than national" aria-label="${higher ? "higher" : "lower"} than national">${higher ? "↑" : "↓"}</span>`;
+}
+
 function renderHazardPopulationTable(session = {}) {
   const hazards = Array.isArray(session.top_hazards) ? session.top_hazards.slice(0, 3) : [];
   const counts = [
@@ -772,7 +784,7 @@ function renderHazardPopulationTable(session = {}) {
       (hazard, index) => `
         <tr>
           <td><span>${index + 1}</span>${escapeHtml(hazard.hazard || "Hazard")}</td>
-          <td>${populationPercentage(hazard.regional_population_pct)}</td>
+          <td>${populationPercentage(hazard.regional_population_pct)}${populationTrend(hazard.regional_population_pct, hazard.national_population_pct)}</td>
           <td>${populationPercentage(hazard.national_population_pct)}</td>
         </tr>
       `,
@@ -1378,6 +1390,185 @@ function flashRequiredField(field) {
   window.setTimeout(() => field.classList.remove("field-required-flash"), 2400);
 }
 
+function parseChartData(element, attribute) {
+  try {
+    const value = JSON.parse(element.dataset[attribute] || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function renderRadarCategoryRing(chart, categories) {
+  chart.parentCategoryRing?.destroy();
+  if (!chart.pane?.[0]?.center || !categories.length) return;
+
+  const groups = [];
+  categories.forEach((category, index) => {
+    const label = String(category || "Evaluation");
+    const previous = groups.at(-1);
+    if (previous?.label === label) previous.end = index;
+    else groups.push({ label, start: index, end: index });
+  });
+
+  const [paneX, paneY, paneSize] = chart.pane[0].center;
+  const centerX = chart.plotLeft + paneX;
+  const centerY = chart.plotTop + paneY;
+  const radarRadius = paneSize / 2;
+  const outerRadius = radarRadius + 65;
+  const step = (Math.PI * 2) / categories.length;
+  const firstAxisAngle = -Math.PI / 2;
+  const ring = chart.renderer.g("radar-parent-category-ring").attr({ zIndex: 3 }).add();
+  const categoryColors = ["#7c3aed", "#0891b2", "#ea580c", "#16a34a", "#db2777", "#2563eb"];
+
+  groups.forEach((group, groupIndex) => {
+    const color = categoryColors[groupIndex % categoryColors.length];
+    const categoryGap = 0.035;
+    const startAngle = firstAxisAngle + (group.start - 0.5) * step + categoryGap;
+    const endAngle = firstAxisAngle + (group.end + 0.5) * step - categoryGap;
+    const middleAngle = (startAngle + endAngle) / 2;
+    const startX = centerX + Math.cos(startAngle) * outerRadius;
+    const startY = centerY + Math.sin(startAngle) * outerRadius;
+    const endX = centerX + Math.cos(endAngle) * outerRadius;
+    const endY = centerY + Math.sin(endAngle) * outerRadius;
+    chart.renderer
+      .path([
+        "M", startX, startY,
+        "A", outerRadius, outerRadius, 0, endAngle - startAngle > Math.PI ? 1 : 0, 1, endX, endY,
+      ])
+      .attr({
+        fill: "none",
+        stroke: color,
+        "stroke-linecap": "round",
+        "stroke-width": 3,
+      })
+      .add(ring);
+
+    [startAngle, endAngle].forEach((angle) => {
+      const tickInner = outerRadius - 7;
+      const tickOuter = outerRadius + 7;
+      chart.renderer
+        .path([
+          "M", centerX + Math.cos(angle) * tickInner, centerY + Math.sin(angle) * tickInner,
+          "L", centerX + Math.cos(angle) * tickOuter, centerY + Math.sin(angle) * tickOuter,
+        ])
+        .attr({ stroke: color, "stroke-linecap": "round", "stroke-width": 3 })
+        .add(ring);
+    });
+
+    const labelRadius = outerRadius + 32;
+    const isLowerArc = Math.sin(middleAngle) > 0;
+    const textStartAngle = isLowerArc ? endAngle : startAngle;
+    const textEndAngle = isLowerArc ? startAngle : endAngle;
+    const textStartX = centerX + Math.cos(textStartAngle) * labelRadius;
+    const textStartY = centerY + Math.sin(textStartAngle) * labelRadius;
+    const textEndX = centerX + Math.cos(textEndAngle) * labelRadius;
+    const textEndY = centerY + Math.sin(textEndAngle) * labelRadius;
+    const guideId = `radar-category-path-${chart.index}-${groupIndex}`;
+    const textGuide = chart.renderer
+      .path([
+        "M", textStartX, textStartY,
+        "A", labelRadius, labelRadius, 0, endAngle - startAngle > Math.PI ? 1 : 0,
+        isLowerArc ? 0 : 1, textEndX, textEndY,
+      ])
+      .attr({
+        fill: "none",
+        id: guideId,
+        stroke: "none",
+      })
+      .add(ring);
+    const svgNamespace = "http://www.w3.org/2000/svg";
+    const xlinkNamespace = "http://www.w3.org/1999/xlink";
+    const textElement = document.createElementNS(svgNamespace, "text");
+    const textPathElement = document.createElementNS(svgNamespace, "textPath");
+    textElement.setAttribute("dy", "-2");
+    textElement.setAttribute("fill", color);
+    textElement.setAttribute("font-family", "Arial, sans-serif");
+    textElement.setAttribute("font-size", "13px");
+    textElement.setAttribute("font-weight", "800");
+    textElement.setAttribute("letter-spacing", "0.2px");
+    textElement.setAttribute("paint-order", "stroke");
+    textElement.setAttribute("stroke", "#ffffff");
+    textElement.setAttribute("stroke-linejoin", "round");
+    textElement.setAttribute("stroke-width", "2");
+    textPathElement.setAttribute("href", `#${guideId}`);
+    textPathElement.setAttributeNS(xlinkNamespace, "xlink:href", `#${guideId}`);
+    textPathElement.setAttribute("startOffset", "50%");
+    textPathElement.setAttribute("text-anchor", "middle");
+    textPathElement.textContent = group.label;
+    textElement.appendChild(textPathElement);
+    ring.element.appendChild(textElement);
+  });
+
+  chart.parentCategoryRing = ring;
+}
+
+function rotateRadarAxisLabels(chart, labelCount) {
+  const ticks = chart.xAxis?.[0]?.ticks || {};
+  Object.values(ticks).forEach((tick) => {
+    if (!tick?.label || !Number.isFinite(Number(tick.pos))) return;
+    let rotation = (Number(tick.pos) * 360) / labelCount;
+    while (rotation > 90) rotation -= 180;
+    while (rotation < -90) rotation += 180;
+    tick.label
+      .attr({ rotation })
+      .css({ color: "#475569", fontWeight: "500", textOutline: "4px #ffffff" });
+  });
+}
+
+function initializeHighcharts(root = document) {
+  if (!root?.querySelectorAll) return;
+  const metricTiles = Array.from(root.querySelectorAll(".metric-tile:not([data-bar-ready])"));
+  const maxMetric = Math.max(1, ...metricTiles.map((element) => Number(element.dataset.value) || 0));
+  metricTiles.forEach((element) => {
+    const percentage = Math.max(0, Math.min(100, ((Number(element.dataset.value) || 0) / maxMetric) * 100));
+    element.style.setProperty("--metric-fill", `${percentage}%`);
+    element.dataset.barReady = "true";
+  });
+
+  if (!window.Highcharts) return;
+
+  root.querySelectorAll(".js-evaluation-radar-chart:not([data-chart-ready])").forEach((element) => {
+    const labels = parseChartData(element, "labels");
+    const categories = parseChartData(element, "categories");
+    const values = parseChartData(element, "values").map((value) => Math.max(1, Math.min(10, Number(value) || 1)));
+    if (!labels.length || labels.length !== values.length) return;
+    element.dataset.chartReady = "true";
+    Highcharts.chart(element, {
+      chart: {
+        polar: true,
+        type: "line",
+        height: 600,
+        backgroundColor: "transparent",
+        spacing: [70, 112, 88, 112],
+        events: {
+          render() {
+            renderRadarCategoryRing(this, categories);
+            rotateRadarAxisLabels(this, labels.length);
+          },
+        },
+      },
+      title: { text: "Evaluation score profile", align: "center", style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" } },
+      credits: { enabled: false },
+      legend: { enabled: false },
+      pane: { size: "50%" },
+      xAxis: {
+        categories: labels,
+        tickmarkPlacement: "on",
+        lineWidth: 0,
+        labels: {
+          distance: 16,
+          style: { color: "#475569", fontSize: "11px", textOverflow: "none", width: "92px" },
+        },
+      },
+      yAxis: { min: 0, max: 10, tickInterval: 2, gridLineInterpolation: "polygon", lineWidth: 0 },
+      tooltip: { pointFormatter() { return `<span style="color:${this.color}">●</span> ${categories[this.index] || "Evaluation"}<br><b>${this.y} / 10</b>`; } },
+      plotOptions: { series: { pointPlacement: "on", color: "#6d28d9", fillColor: "rgba(109, 40, 217, 0.18)", fillOpacity: 0.2, lineWidth: 3, marker: { radius: 4 } } },
+      series: [{ name: "Score", data: values }],
+    });
+  });
+}
+
 function addMessage(role, text, isError = false, targetLog = chatLog) {
   const row = document.createElement("div");
   row.className = `message-row ${role}${isError ? " error" : ""}`;
@@ -1416,6 +1607,7 @@ function addMessage(role, text, isError = false, targetLog = chatLog) {
     row.appendChild(bubble);
   }
   targetLog.appendChild(row);
+  initializeHighcharts(content);
   syncCollapsibleMessages(targetLog);
   scrollToBottom(targetLog);
   return row;
@@ -1436,6 +1628,7 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
 
   if (!typingEffectEnabled()) {
     content.innerHTML = html;
+    initializeHighcharts(content);
     bubble.appendChild(timestamp);
     applyCollapsibleBubble(bubble);
     syncCollapsibleMessages(targetLog);
@@ -1471,6 +1664,7 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
   for (const child of Array.from(template.content.childNodes)) {
     await typeNode(child, content);
   }
+  initializeHighcharts(content);
   bubble.appendChild(timestamp);
   applyCollapsibleBubble(bubble);
   syncCollapsibleMessages(targetLog);

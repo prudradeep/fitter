@@ -106,7 +106,7 @@ hazards: {
     index: 3,
     title: "Top 3 hazards for your region",
     text: "Show tabular data regiona vs national",
-  },
+},
 
 Hazard segregation:
 Top 3 (from the survey)
@@ -118,3 +118,10 @@ Additional Hazards(Added by Experts)
 Per predictor / hazard mitigation measure search which is led by some reference. Downloadable file most credible source should show.
 
 General population selection.
+
+target group clarification in prompt mitigation measure
+store target group in json
+Mapping with existing target population profiles
+Pre-identified socio demographic profiles with target population
+
+pull MD output to recreate the complete system as it is.

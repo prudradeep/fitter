@@ -28,18 +28,26 @@ ALLOWED_TAGS = [
     "p",
     "pre",
     "span",
+    "small",
     "strong",
     "summary",
+    "table",
+    "tbody",
+    "td",
+    "th",
+    "thead",
+    "tr",
     "ul",
 ]
 ALLOWED_ATTRIBUTES = {
     "a": ["href", "rel", "target", "title"],
     "article": ["class"],
     "details": ["class", "open"],
-    "div": ["class"],
+    "div": ["class", "data-categories", "data-labels", "data-value", "data-values", "role", "aria-label"],
     "dl": ["class"],
     "h3": ["class"],
-    "span": ["class", "aria-hidden"],
+    "span": ["class", "aria-hidden", "aria-label", "title"],
+    "th": ["scope"],
 }
 
 

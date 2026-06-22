@@ -65,6 +65,7 @@ class EvaluationQuestion(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     category: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    chart_title: Mapped[str | None] = mapped_column(String(160), nullable=True)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)

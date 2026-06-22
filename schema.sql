@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS country_sectors (
 CREATE TABLE IF NOT EXISTS evaluation_questions (
   id INT AUTO_INCREMENT PRIMARY KEY,
   category VARCHAR(120) NOT NULL,
+  chart_title VARCHAR(160) NULL,
   question TEXT NOT NULL,
   sort_order INT NOT NULL,
   active BOOLEAN NOT NULL DEFAULT TRUE,

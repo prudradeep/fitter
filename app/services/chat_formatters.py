@@ -1,3 +1,4 @@
+import json
 import re
 from html import escape
 
@@ -73,33 +74,99 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
         profile_list = [profile_values]
     else:
         profile_list = list(profile_values or [])
-    profile_lines: list[str] = []
+    ranking = (session.hazard_rankings or {}).get(hazard, {})
+    ranked_profiles = ranking.get("profiles", []) if isinstance(ranking, dict) else []
+    population_by_profile = {
+        normalize_markdown_text(str(item.get("name") or item.get("profile") or "")).casefold(): item
+        for item in ranked_profiles
+        if isinstance(item, dict)
+    }
+    profile_rows: list[str] = []
     for profile in profile_list:
         if isinstance(profile, dict):
-            name = str(profile.get("name") or "").strip()
+            name = str(profile.get("name") or profile.get("profile") or "").strip()
             explanation = str(profile.get("explanation") or "").strip()
-            if not name:
-                continue
-            if explanation:
-                profile_lines.append(
-                    f"<li><strong>{escape(name)}</strong><p>{escape(explanation)}</p></li>"
-                )
-            else:
-                profile_lines.append(f"<li><strong>{escape(name)}</strong></li>")
         else:
-            profile_lines.append(f"<li><strong>{escape(str(profile))}</strong></li>")
-    if not profile_lines:
+            name = str(profile).strip()
+            explanation = ""
+        if not name:
+            continue
+        population = population_by_profile.get(normalize_markdown_text(name).casefold(), {})
+        regional, national = _profile_population_values(profile, population, explanation)
+        explanation = _without_population_sentence(explanation)
+        description = f'<small>{escape(explanation)}</small>' if explanation else ""
+        profile_rows.append(
+            "<tr>"
+            f'<th scope="row"><strong>{escape(name)}</strong>{description}</th>'
+            f'<td>{_format_population(regional)}{_population_comparison(regional, national)}</td>'
+            f'<td>{_format_population(national)}</td>'
+            "</tr>"
+        )
+    if not profile_rows:
         return
-    count = len(profile_lines)
+    count = len(profile_rows)
     region = escape(str(session.region or "the selected region"))
     profile_label = "profile" if count == 1 else "profiles"
     lines.append(
         "<details class=\"hazard-profiles\">"
         f"<summary>Influence on <strong>{region}</strong>"
         f" <span>({count} socio-demographic {profile_label})</span></summary>"
-        f"<ul>{''.join(profile_lines)}</ul>"
+        '<div class="hazard-population-table"><table>'
+        '<thead><tr><th scope="col">Population profile</th>'
+        '<th scope="col">Regional</th><th scope="col">National</th></tr></thead>'
+        f"<tbody>{''.join(profile_rows)}</tbody></table></div>"
         "</details>"
     )
+
+
+def _format_population(value: object) -> str:
+    try:
+        return f"{float(value):.1f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _profile_population_values(
+    profile: object, population: object, explanation: str
+) -> tuple[object, object]:
+    profile_data = profile if isinstance(profile, dict) else {}
+    population_data = population if isinstance(population, dict) else {}
+    regional = profile_data.get("regional_population_pct") or profile_data.get("population_pct")
+    national = profile_data.get("national_population_pct")
+    regional = regional if regional is not None else population_data.get("population_pct")
+    national = national if national is not None else population_data.get("national_population_pct")
+    if regional is not None and national is not None:
+        return regional, national
+    match = re.search(
+        r"(?i)(?:represents about|population share is)\s+([0-9]+(?:\.[0-9]+)?)%"
+        r"(?:\s+of the regional population, compared with|\s+regionally and)\s+"
+        r"([0-9]+(?:\.[0-9]+)?)%\s+nationally",
+        explanation,
+    )
+    return (match.group(1), match.group(2)) if match else (regional, national)
+
+
+def _without_population_sentence(explanation: str) -> str:
+    cleaned = re.sub(
+        r"(?i)\s*(?:This profile represents about [0-9.]+% of the regional population, "
+        r"compared with [0-9.]+% nationally\.|Across \d+ matched Eurostat profiles, the average "
+        r"population share is [0-9.]+% regionally and [0-9.]+% nationally\.)",
+        "",
+        explanation,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _population_comparison(regional: object, national: object) -> str:
+    try:
+        difference = float(regional) - float(national)
+    except (TypeError, ValueError):
+        return ""
+    if abs(difference) < 0.05:
+        return '<span class="population-trend is-equal" title="Equal to national" aria-label="equal to national">•</span>'
+    if difference > 0:
+        return '<span class="population-trend is-up" title="Higher than national" aria-label="higher than national">↑</span>'
+    return '<span class="population-trend is-down" title="Lower than national" aria-label="lower than national">↓</span>'
 
 
 def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) -> None:
@@ -123,8 +190,13 @@ def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) 
         ("Effect size", effect),
         ("Reach", reach),
     )
+    raw_values = [ranking.get(key) for key in (
+        "relevance_score", "salience_score", "effect_size_score", "reach_score"
+    )]
     metric_items = "".join(
-        f"<div><dt>{label}</dt><dd>{value}</dd></div>" for label, value in metrics
+        f'<div class="metric-tile" data-value="{escape(str(raw_value), quote=True)}">'
+        f"<dt>{label}</dt><dd>{value}</dd></div>"
+        for (label, value), raw_value in zip(metrics, raw_values)
     )
     lines.append(f'<dl class="hazard-metrics">{metric_items}</dl>')
 
@@ -182,7 +254,20 @@ def format_evaluation_answers(session: ChatSession) -> str:
         if answer.get("evidence"):
             lines.append(f"- **Evidence:** {answer['evidence']}")
 
-    return "\n".join(lines).strip()
+    labels = [
+        normalize_markdown_text(str(answer.get("chart_title") or answer["question"]))
+        for answer in session.evaluation_answers
+    ]
+    categories = [str(answer["category"]) for answer in session.evaluation_answers]
+    scores = [int(answer["score"]) for answer in session.evaluation_answers]
+    chart = (
+        '\n<div class="evaluation-radar-chart js-evaluation-radar-chart" '
+        f'data-labels="{escape(json.dumps(labels), quote=True)}" '
+        f'data-categories="{escape(json.dumps(categories), quote=True)}" '
+        f'data-values="{escape(json.dumps(scores), quote=True)}" '
+        'role="img" aria-label="Radar chart of evaluation answers from 1 to 10"></div>'
+    )
+    return "\n".join(lines).strip() + chart
 
 
 def hazard_names(session: ChatSession) -> list[str]:

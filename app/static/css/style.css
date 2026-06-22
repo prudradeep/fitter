@@ -1520,6 +1520,19 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   white-space: nowrap;
 }
 
+.population-trend {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 5px;
+  font-size: 0.9em;
+  font-weight: 950;
+}
+
+.population-trend.is-up { color: #15803d; }
+.population-trend.is-down { color: #dc2626; }
+.population-trend.is-equal { color: #64748b; }
+
 .stage-hazard-table td:first-child {
   max-width: 190px;
   color: #334155;
@@ -2252,10 +2265,24 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .bubble .hazard-metrics > div {
+  position: relative;
   min-width: 0;
+  overflow: hidden;
   border-radius: 8px;
   background: #f8fafc;
-  padding: 8px 9px;
+  padding: 8px 9px 11px;
+}
+
+.bubble .hazard-metrics > div::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--metric-fill, 0%);
+  height: 3px;
+  border-radius: 0 999px 999px 0;
+  background: #6d28d9;
+  content: "";
 }
 
 .bubble .hazard-metrics dt {
@@ -2274,6 +2301,15 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   color: #0f172a;
   font-size: 0.88rem;
   font-weight: 850;
+}
+
+.bubble .evaluation-radar-chart {
+  min-height: 600px;
+  margin: 20px 0 8px;
+  border: 1px solid #dbe2ea;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 10px;
 }
 
 .bubble .hazard-profiles {
@@ -2321,35 +2357,15 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   font-weight: 700;
 }
 
-.bubble .hazard-profiles > ul {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin: 0;
-  padding: 12px 15px 15px;
-  list-style: none;
-}
-
-.bubble .hazard-profiles > ul > li {
-  margin: 0;
-  border: 1px solid #dbe2ee;
-  border-radius: 9px;
-  background: #ffffff;
-  color: #526078;
-  padding: 12px 14px;
-}
-
-.bubble .hazard-profiles > ul > li > strong {
-  display: block;
-  margin-bottom: 6px;
-  color: #475569;
-  font-size: 0.84rem;
-}
-
-.bubble .hazard-profiles > ul > li > p {
-  margin: 0;
-  line-height: 1.5;
-}
+.bubble .hazard-population-table { overflow-x: auto; padding: 12px 15px 15px; }
+.bubble .hazard-population-table table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.78rem; }
+.bubble .hazard-population-table th,
+.bubble .hazard-population-table td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align: right; vertical-align: top; }
+.bubble .hazard-population-table th:first-child { text-align: left; }
+.bubble .hazard-population-table thead th { color: #64748b; font-size: 0.65rem; text-transform: uppercase; }
+.bubble .hazard-population-table tbody th { color: #334155; font-weight: 700; }
+.bubble .hazard-population-table tbody td { color: #312e81; font-weight: 850; white-space: nowrap; }
+.bubble .hazard-population-table small { display: block; margin-top: 4px; color: #64748b; font-weight: 400; line-height: 1.4; }
 
 @media (max-width: 680px) {
   .bubble .hazard-metrics {

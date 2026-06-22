@@ -139,6 +139,36 @@ def ensure_runtime_schema() -> None:
 
         inspector = inspect(engine)
         table_names = inspector.get_table_names()
+        if "evaluation_questions" in table_names:
+            evaluation_columns = {
+                column["name"] for column in inspector.get_columns("evaluation_questions")
+            }
+            with engine.begin() as connection:
+                if "chart_title" not in evaluation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE evaluation_questions "
+                            "ADD COLUMN chart_title VARCHAR(160) NULL AFTER category"
+                        )
+                    )
+                connection.execute(
+                    text(
+                        """
+                        UPDATE evaluation_questions
+                        SET chart_title = CASE
+                          WHEN category = 'The transformative impact' AND sort_order = 1 THEN 'Direct effect'
+                          WHEN category = 'The transformative impact' AND sort_order = 2 THEN 'Systemic impact'
+                          WHEN category = 'The transformative impact' AND sort_order = 3 THEN 'Societal transformation & equity'
+                          WHEN category = 'Feasibility and Implementation' AND sort_order = 1 THEN 'Accessibility'
+                          WHEN category = 'Feasibility and Implementation' AND sort_order = 2 THEN 'Affordability'
+                          WHEN category = 'Feasibility and Implementation' AND sort_order = 3 THEN 'Acceptability'
+                          WHEN category = 'Feasibility and Implementation' AND sort_order = 4 THEN 'Availability & timing'
+                          ELSE chart_title
+                        END
+                        WHERE chart_title IS NULL OR chart_title = ''
+                        """
+                    )
+                )
         if "countries" in table_names:
             country_columns = {column["name"] for column in inspector.get_columns("countries")}
             country_indexes = {index["name"] for index in inspector.get_indexes("countries")}
