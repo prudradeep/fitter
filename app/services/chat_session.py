@@ -41,6 +41,7 @@ class ChatSession:
     suggested_mitigation_measure_name: str | None = None
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
+    mitigation_target_population: list[str] | None = None
     mitigation_record_id: int | None = None
     mitigation_validation: dict[str, object] | None = None
     mitigation_grounded_synthesis: str | None = None
@@ -59,21 +60,27 @@ class ChatSession:
     stats_dialog_conversation: list[dict[str, str]] | None = None
 
     def summary(self) -> SessionSummary:
-        system_hazard_count = len([hazard for hazard in (self.hazards or []) if hazard])
-        regional_hazard_count = len([hazard for hazard in (self.custom_hazards or []) if hazard])
-        affected_profiles = []
-        if self.socio_demographic_profiles:
-            affected_profiles.extend(self.socio_demographic_profiles)
-        elif self.socio_demographic_findings:
-            affected_profiles.extend(self._profile_lines(self.socio_demographic_findings))
-        affected_profiles.extend(self.additional_dgs or [])
+        system_hazard_count = len(
+            [hazard for hazard in (self.hazards or []) if self._hazard_has_profiles(hazard)]
+        )
+        regional_hazard_count = len(
+            [
+                hazard
+                for hazard in (self.custom_hazards or [])
+                if self._hazard_has_profiles(hazard)
+            ]
+        )
+        affected_profile_details = self._affected_profile_details()
         seen_profiles: set[str] = set()
         deduped_affected_profiles: list[str] = []
-        for profile in affected_profiles:
-            key = profile.strip().casefold()
+        deduped_affected_profile_details: list[dict[str, object]] = []
+        for item in affected_profile_details:
+            profile = str(item.get("name") or "").strip()
+            key = profile.casefold()
             if key and key not in seen_profiles:
                 seen_profiles.add(key)
-                deduped_affected_profiles.append(profile.strip())
+                deduped_affected_profiles.append(profile)
+                deduped_affected_profile_details.append(item)
         benefited_profiles = self._target_population_profiles(self.target_population_answers or [])
         return SessionSummary(
             country=self.country,
@@ -89,6 +96,7 @@ class ChatSession:
             top_hazards=self._top_hazard_population_summary(),
             affected_profile_count=self.eligible_hazard_profile_count(),
             affected_profiles=deduped_affected_profiles,
+            affected_profile_details=deduped_affected_profile_details,
             mitigation_measure_count=1 if self.mitigation_measure else 0,
         )
 
@@ -117,10 +125,90 @@ class ChatSession:
                     unique_profiles.add(name.casefold())
         return len(unique_profiles)
 
+    def _hazard_has_profiles(self, hazard: str) -> bool:
+        stored_profiles = self.hazard_profiles or {}
+        values = stored_profiles.get(hazard)
+        if values is None:
+            key = str(hazard or "").strip().casefold()
+            values = next(
+                (
+                    stored_values
+                    for stored_hazard, stored_values in stored_profiles.items()
+                    if str(stored_hazard or "").strip().casefold() == key
+                ),
+                None,
+            )
+        items = [values] if isinstance(values, str) else list(values or [])
+        return any(
+            (
+                isinstance(item, dict)
+                and bool(str(item.get("name") or item.get("profile") or "").strip())
+            )
+            or (isinstance(item, str) and bool(item.strip()))
+            for item in items
+        )
+
+    def _affected_profile_details(self) -> list[dict[str, object]]:
+        details: list[dict[str, object]] = []
+        if self.selected_hazard:
+            stored_profiles = self.hazard_profiles or {}
+            values = stored_profiles.get(self.selected_hazard)
+            if values is None:
+                selected_key = self.selected_hazard.strip().casefold()
+                values = next(
+                    (
+                        stored_values
+                        for stored_hazard, stored_values in stored_profiles.items()
+                        if str(stored_hazard or "").strip().casefold() == selected_key
+                    ),
+                    None,
+                )
+            for profile in [values] if isinstance(values, str) else list(values or []):
+                if isinstance(profile, dict):
+                    name = str(profile.get("name") or profile.get("profile") or "").strip()
+                    variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
+                    variable_type = str(profile.get("variable_type") or "").strip()
+                else:
+                    name = str(profile or "").strip()
+                    variable_name = ""
+                    variable_type = ""
+                if name:
+                    details.append(
+                        {
+                            "name": name,
+                            "variable_name": variable_name,
+                            "variable_type": self._profile_variable_type(variable_name, variable_type),
+                        }
+                    )
+        if not details:
+            if self.socio_demographic_profiles:
+                details.extend({"name": profile, "variable_name": "", "variable_type": "individual"} for profile in self.socio_demographic_profiles)
+            elif self.socio_demographic_findings:
+                details.extend(
+                    {"name": profile, "variable_name": "", "variable_type": "individual"}
+                    for profile in self._profile_lines(self.socio_demographic_findings)
+                )
+        details.extend(
+            {"name": profile, "variable_name": "", "variable_type": "individual"}
+            for profile in self.additional_dgs or []
+        )
+        return details
+
+    @staticmethod
+    def _profile_variable_type(variable_name: str, variable_type: str = "") -> str:
+        if variable_type.strip().casefold() == "macro":
+            return "macro"
+        if variable_name.strip().casefold().startswith("macro_"):
+            return "macro"
+        return "individual"
+
     def _top_hazard_population_summary(self) -> list[dict[str, object]]:
         rankings = self.hazard_rankings or {}
         rows: list[dict[str, object]] = []
-        for hazard in (self.hazards or [])[:3]:
+        profiled_hazards = [
+            hazard for hazard in (self.hazards or []) if self._hazard_has_profiles(hazard)
+        ]
+        for hazard in profiled_hazards[:3]:
             ranking = rankings.get(hazard)
             profiles = ranking.get("profiles", []) if isinstance(ranking, dict) else []
             regional_values: list[float] = []

@@ -206,10 +206,33 @@ class SystemHazardSocioDemographic(Base):
     system_hazard_id: Mapped[int] = mapped_column(ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True)
     sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     variable_name: Mapped[str | None] = mapped_column(String(160))
+    variable_type: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="individual", server_default="individual"
+    )
     profile: Mapped[str] = mapped_column(Text, nullable=False)
     explanation: Mapped[str | None] = mapped_column(Text)
     statistical_basis: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="sector_prompt")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class SystemHazardSocioDemographicTargetPopulation(Base):
+    __tablename__ = "system_hazard_socio_demographic_target_populations"
+    __table_args__ = (
+        UniqueConstraint(
+            "system_hazard_socio_demographic_id",
+            "question_option_id",
+            name="uq_system_dg_target_population_option",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    system_hazard_socio_demographic_id: Mapped[int] = mapped_column(
+        ForeignKey("system_hazard_socio_demographics.id", ondelete="CASCADE"), index=True
+    )
+    question_option_id: Mapped[int] = mapped_column(
+        ForeignKey("question_options.id", ondelete="CASCADE"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
@@ -220,6 +243,7 @@ class UserMitigationMeasure(Base):
     user_hazard_id: Mapped[int] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
     measure: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    target_population: Mapped[str | None] = mapped_column(Text)
     conclusion: Mapped[str | None] = mapped_column(Text)
     target_groups_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

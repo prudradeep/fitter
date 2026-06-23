@@ -181,6 +181,7 @@ CREATE TABLE IF NOT EXISTS system_hazard_socio_demographics (
   system_hazard_id INT NOT NULL,
   sector_id INT NULL,
   variable_name VARCHAR(160) NULL,
+  variable_type VARCHAR(40) NOT NULL DEFAULT 'individual',
   profile TEXT NOT NULL,
   explanation TEXT NULL,
   statistical_basis TEXT NULL,
@@ -192,11 +193,29 @@ CREATE TABLE IF NOT EXISTS system_hazard_socio_demographics (
   INDEX ix_system_hazard_socio_demographics_sector_id (sector_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_target_populations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  system_hazard_socio_demographic_id INT NOT NULL,
+  question_option_id INT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_system_dg_target_population_system_dg
+    FOREIGN KEY (system_hazard_socio_demographic_id)
+    REFERENCES system_hazard_socio_demographics(id) ON DELETE CASCADE,
+  CONSTRAINT fk_system_dg_target_population_option
+    FOREIGN KEY (question_option_id)
+    REFERENCES question_options(id) ON DELETE CASCADE,
+  CONSTRAINT uq_system_dg_target_population_option
+    UNIQUE (system_hazard_socio_demographic_id, question_option_id),
+  INDEX ix_system_dg_target_population_system_dg (system_hazard_socio_demographic_id),
+  INDEX ix_system_dg_target_population_option (question_option_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_mitigation_measures (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_hazard_id INT NOT NULL,
   measure TEXT NOT NULL,
   reason TEXT NOT NULL,
+  target_population TEXT NULL,
   conclusion TEXT NULL,
   target_groups_json TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

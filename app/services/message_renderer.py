@@ -43,7 +43,10 @@ ALLOWED_ATTRIBUTES = {
     "a": ["href", "rel", "target", "title"],
     "article": ["class"],
     "details": ["class", "open"],
-    "div": ["class", "data-categories", "data-labels", "data-value", "data-values", "role", "aria-label"],
+    "div": [
+        "class", "data-affected", "data-categories", "data-labels",
+        "data-mitigation", "data-series", "data-value", "data-values", "role", "aria-label",
+    ],
     "dl": ["class"],
     "h3": ["class"],
     "span": ["class", "aria-hidden", "aria-label", "title"],

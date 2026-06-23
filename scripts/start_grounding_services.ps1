@@ -12,7 +12,7 @@ $logDir = Join-Path $runtimeDir "logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
 $services = @(
-    @{
+   <#  @{
         Name = "app"
         Arguments = @(
             "-m", "uvicorn", "app.main:app",
@@ -22,7 +22,7 @@ $services = @(
             "--reload-dir", "app"
         )
         Health = "http://localhost:8000/health"
-    },
+    }, #>
     @{
         Name = "reranker"
         Arguments = @(

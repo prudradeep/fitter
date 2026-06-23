@@ -358,11 +358,18 @@ def ensure_runtime_schema() -> None:
                 for column in inspector.get_columns("user_mitigation_measures")
             }
             with engine.begin() as connection:
+                if "target_population" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN target_population TEXT NULL AFTER reason"
+                        )
+                    )
                 if "conclusion" not in mitigation_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_mitigation_measures "
-                            "ADD COLUMN conclusion TEXT NULL AFTER reason"
+                            "ADD COLUMN conclusion TEXT NULL AFTER target_population"
                         )
                     )
                 if "target_groups_json" not in mitigation_columns:
@@ -531,6 +538,7 @@ def ensure_runtime_schema() -> None:
                       system_hazard_id INT NOT NULL,
                       sector_id INT NULL,
                       variable_name VARCHAR(160) NULL,
+                      variable_type VARCHAR(40) NOT NULL DEFAULT 'individual',
                       profile TEXT NOT NULL,
                       explanation TEXT NULL,
                       statistical_basis TEXT NULL,
@@ -542,6 +550,29 @@ def ensure_runtime_schema() -> None:
                         FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
                       INDEX ix_system_hazard_socio_demographics_hazard_id (system_hazard_id),
                       INDEX ix_system_hazard_socio_demographics_sector_id (sector_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_target_populations (
+                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      system_hazard_socio_demographic_id INT NOT NULL,
+                      question_option_id INT NOT NULL,
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      CONSTRAINT fk_system_dg_target_population_system_dg
+                        FOREIGN KEY (system_hazard_socio_demographic_id)
+                        REFERENCES system_hazard_socio_demographics(id) ON DELETE CASCADE,
+                      CONSTRAINT fk_system_dg_target_population_option
+                        FOREIGN KEY (question_option_id)
+                        REFERENCES question_options(id) ON DELETE CASCADE,
+                      CONSTRAINT uq_system_dg_target_population_option
+                        UNIQUE (system_hazard_socio_demographic_id, question_option_id),
+                      INDEX ix_system_dg_target_population_system_dg
+                        (system_hazard_socio_demographic_id),
+                      INDEX ix_system_dg_target_population_option (question_option_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                     """
                 )
@@ -613,6 +644,29 @@ def ensure_runtime_schema() -> None:
                         "DROP COLUMN metadata_json"
                     )
                 )
+            inspector = inspect(engine)
+            system_dg_columns = {
+                column["name"]
+                for column in inspector.get_columns("system_hazard_socio_demographics")
+            }
+            if "variable_type" not in system_dg_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE system_hazard_socio_demographics "
+                        "ADD COLUMN variable_type VARCHAR(40) NOT NULL DEFAULT 'individual' AFTER variable_name"
+                    )
+                )
+            connection.execute(
+                text(
+                    """
+                    UPDATE system_hazard_socio_demographics
+                    SET variable_type = CASE
+                      WHEN variable_name LIKE 'macro\\_%' THEN 'macro'
+                      ELSE 'individual'
+                    END
+                    """
+                )
+            )
             connection.execute(
                 text(
                     """

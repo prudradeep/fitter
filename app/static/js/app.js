@@ -1516,6 +1516,36 @@ function rotateRadarAxisLabels(chart, labelCount) {
   });
 }
 
+function renderMitigationVennFallback(chart, affected, mitigation, overlap) {
+  chart.mitigationVennGroup?.destroy();
+  const group = chart.renderer.g("mitigation-venn-fallback").attr({ zIndex: 2 }).add();
+  const centerX = chart.plotLeft + chart.plotWidth / 2;
+  const centerY = chart.plotTop + chart.plotHeight / 2 + 12;
+  const radius = Math.min(chart.plotWidth, chart.plotHeight) * 0.3;
+  const offset = radius * 0.48;
+
+  chart.renderer.circle(centerX - offset, centerY, radius).attr({
+    fill: "rgba(8, 145, 178, 0.48)", stroke: "#0e7490", "stroke-width": 2,
+  }).add(group);
+  chart.renderer.circle(centerX + offset, centerY, radius).attr({
+    fill: "rgba(124, 58, 237, 0.43)", stroke: "#6d28d9", "stroke-width": 2,
+  }).add(group);
+
+  const addCenteredText = (textValue, x, y, style = {}) => {
+    const label = chart.renderer.text(textValue, x, y).css({
+      color: "#0f172a", fontSize: "12px", fontWeight: "700", textOutline: "3px #ffffff", ...style,
+    }).add(group);
+    label.attr({ x: x - label.getBBox().width / 2 });
+  };
+  addCenteredText("Hazard profiles", centerX - offset * 1.45, centerY - 8);
+  addCenteredText(String(affected.length), centerX - offset * 1.45, centerY + 14, { fontSize: "16px" });
+  addCenteredText("Shared", centerX, centerY - 8);
+  addCenteredText(String(overlap.length), centerX, centerY + 14, { fontSize: "16px" });
+  addCenteredText("Mitigation measure", centerX + offset * 1.45, centerY - 8);
+  addCenteredText(String(mitigation.length), centerX + offset * 1.45, centerY + 14, { fontSize: "16px" });
+  chart.mitigationVennGroup = group;
+}
+
 function initializeHighcharts(root = document) {
   if (!root?.querySelectorAll) return;
   const metricTiles = Array.from(root.querySelectorAll(".metric-tile:not([data-bar-ready])"));
@@ -1528,11 +1558,123 @@ function initializeHighcharts(root = document) {
 
   if (!window.Highcharts) return;
 
+  root.querySelectorAll(".js-mitigation-venn-chart:not([data-chart-ready])").forEach((element) => {
+    const affected = parseChartData(element, "affected").map(String);
+    const mitigation = parseChartData(element, "mitigation").map(String);
+    if (!affected.length || !mitigation.length) return;
+    const mitigationKeys = new Set(mitigation.map(normalizeForMatch));
+    const overlap = affected.filter((label) => mitigationKeys.has(normalizeForMatch(label)));
+    element.dataset.chartReady = "true";
+    if (!Highcharts.seriesTypes?.venn) {
+      Highcharts.chart(element, {
+        chart: {
+          height: 390,
+          backgroundColor: "transparent",
+          events: {
+            render() { renderMitigationVennFallback(this, affected, mitigation, overlap); },
+          },
+        },
+        title: {
+          text: "Affected and mitigation target populations",
+          style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" },
+        },
+        credits: { enabled: false },
+        legend: { enabled: false },
+        xAxis: { visible: false },
+        yAxis: { visible: false },
+        series: [],
+      });
+      return;
+    }
+    Highcharts.chart(element, {
+      chart: { type: "venn", height: 390, backgroundColor: "transparent" },
+      title: {
+        text: "Affected and mitigation target populations",
+        style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" },
+      },
+      credits: { enabled: false },
+      legend: { enabled: false },
+      tooltip: {
+        useHTML: true,
+        formatter() {
+          const members = this.point.custom?.members || [];
+          const items = members.length
+            ? `<ul>${members.map((label) => `<li>${escapeHtml(label)}</li>`).join("")}</ul>`
+            : "<p>No shared target populations</p>";
+          return `<strong>${escapeHtml(this.point.name)}</strong>${items}`;
+        },
+      },
+      plotOptions: {
+        venn: {
+          borderColor: "#ffffff",
+          borderWidth: 2,
+          opacity: 0.72,
+          dataLabels: {
+            enabled: true,
+            formatter() {
+              return `${this.point.custom?.shortTitle || this.point.name}<br/>${this.point.value}`;
+            },
+            style: { color: "#0f172a", fontSize: "11px", fontWeight: "700", textOutline: "3px #ffffff" },
+          },
+        },
+      },
+      series: [{
+        type: "venn",
+        data: [
+          {
+            sets: ["affected"],
+            value: affected.length,
+            name: "Hazard profiles’ target populations",
+            color: "#0891b2",
+            custom: { members: affected, shortTitle: "Hazard profiles" },
+          },
+          {
+            sets: ["mitigation"],
+            value: mitigation.length,
+            name: "Mitigation measure target populations",
+            color: "#7c3aed",
+            custom: { members: mitigation, shortTitle: "Mitigation measure" },
+          },
+          {
+            sets: ["affected", "mitigation"],
+            value: overlap.length,
+            name: "Shared target populations",
+            color: "#4f46e5",
+            custom: { members: overlap, shortTitle: "Shared" },
+          },
+        ],
+      }],
+    });
+  });
+
   root.querySelectorAll(".js-evaluation-radar-chart:not([data-chart-ready])").forEach((element) => {
     const labels = parseChartData(element, "labels");
     const categories = parseChartData(element, "categories");
     const values = parseChartData(element, "values").map((value) => Math.max(1, Math.min(10, Number(value) || 1)));
+    const storedSeries = parseChartData(element, "series");
     if (!labels.length || labels.length !== values.length) return;
+    const colors = ["#6d28d9", "#0891b2", "#ea580c", "#16a34a", "#db2777"];
+    const radarSeries = (storedSeries.length
+      ? storedSeries
+      : [{ name: "Current mitigation", values, current: true }]
+    ).map((item, index) => {
+      const color = colors[index % colors.length];
+      const itemValues = Array.isArray(item.values)
+        ? item.values.map((value) =>
+            value === null || value === undefined
+              ? null
+              : Math.max(1, Math.min(10, Number(value) || 1)),
+          )
+        : [];
+      return {
+        name: String(item.name || `Mitigation ${index + 1}`),
+        data: itemValues,
+        color,
+        fillColor: Highcharts.color(color).setOpacity(item.current ? 0.16 : 0.035).get(),
+        lineWidth: item.current ? 3 : 2,
+        marker: { radius: item.current ? 4 : 3 },
+      };
+    }).filter((item) => item.data.length === labels.length);
     element.dataset.chartReady = "true";
     Highcharts.chart(element, {
       chart: {
@@ -1550,7 +1692,13 @@ function initializeHighcharts(root = document) {
       },
       title: { text: "Evaluation score profile", align: "center", style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" } },
       credits: { enabled: false },
-      legend: { enabled: false },
+      legend: {
+        enabled: radarSeries.length > 1,
+        align: "center",
+        verticalAlign: "bottom",
+        layout: "horizontal",
+        itemStyle: { color: "#334155", fontSize: "10px", fontWeight: "600" },
+      },
       pane: { size: "50%" },
       xAxis: {
         categories: labels,
@@ -1562,9 +1710,14 @@ function initializeHighcharts(root = document) {
         },
       },
       yAxis: { min: 0, max: 10, tickInterval: 2, gridLineInterpolation: "polygon", lineWidth: 0 },
-      tooltip: { pointFormatter() { return `<span style="color:${this.color}">●</span> ${categories[this.index] || "Evaluation"}<br><b>${this.y} / 10</b>`; } },
-      plotOptions: { series: { pointPlacement: "on", color: "#6d28d9", fillColor: "rgba(109, 40, 217, 0.18)", fillOpacity: 0.2, lineWidth: 3, marker: { radius: 4 } } },
-      series: [{ name: "Score", data: values }],
+      tooltip: {
+        shared: true,
+        pointFormatter() {
+          return `<span style="color:${this.color}">●</span> ${escapeHtml(this.series.name)}: <b>${this.y} / 10</b><br>`;
+        },
+      },
+      plotOptions: { series: { pointPlacement: "on", fillOpacity: 1 } },
+      series: radarSeries,
     });
   });
 }
@@ -1938,12 +2091,27 @@ function renderSelectedHazardContext(session = {}) {
   const showMitigationReviewPanel =
     currentStep === "mitigation_review"
     || currentStep === "evaluation_question"
+    || currentStep === "evaluation_complete"
+    || (currentStep === "complete" && hasMitigationReview)
     || (currentStep === "mitigation" && hasMitigationReview);
   const hazard = String(session.selected_hazard || "").trim();
   const mitigationMeasure = String(session.mitigation_measure || "").trim();
-  const profiles = Array.isArray(session.affected_profiles)
-    ? session.affected_profiles.map((profile) => String(profile || "").trim()).filter(Boolean)
+  const profileDetails = Array.isArray(session.affected_profile_details)
+    ? session.affected_profile_details
+        .map((profile) => ({
+          name: String(profile?.name || profile?.profile || "").trim(),
+          variableType: String(profile?.variable_type || "").trim().toLowerCase(),
+          variableName: String(profile?.variable_name || profile?.variable || "").trim().toLowerCase(),
+        }))
+        .filter((profile) => profile.name)
     : [];
+  const profiles = profileDetails.length
+    ? profileDetails
+    : (Array.isArray(session.affected_profiles)
+        ? session.affected_profiles
+            .map((profile) => ({ name: String(profile || "").trim(), variableType: "", variableName: "" }))
+            .filter((profile) => profile.name)
+        : []);
 
   selectedHazardContext.hidden = showMitigationReviewPanel ? !mitigationMeasure : !hazard;
   if (selectedContextLabel) {
@@ -1968,7 +2136,13 @@ function renderSelectedHazardContext(session = {}) {
       </svg>
     `;
     const label = document.createElement("span");
-    label.textContent = profile;
+    label.textContent = profile.name;
+    if (profile.variableType === "macro" || profile.variableName.startsWith("macro_")) {
+      const typeLabel = document.createElement("span");
+      typeLabel.className = "affected-profile-type-label";
+      typeLabel.textContent = "macro";
+      label.appendChild(typeLabel);
+    }
     item.append(icon, label);
     affectedProfileList.appendChild(item);
   });

@@ -6,7 +6,9 @@ from app.services.chat_session import ChatSession
 
 
 def format_hazards(session: ChatSession) -> str:
-    survey_hazards = list(session.hazards or [])
+    survey_hazards = [
+        hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
+    ]
     sections = [
         '<h3 class="hazard-group-heading">Top 3 <span>From the survey</span></h3>',
         format_system_hazards(session, survey_hazards[:3]),
@@ -14,7 +16,10 @@ def format_hazards(session: ChatSession) -> str:
         '<h3 class="hazard-group-heading">Other hazards <span>From the survey</span></h3>',
         format_system_hazards(session, survey_hazards[3:]),
     ]
-    if any(str(hazard or "").strip() for hazard in (session.custom_hazards or [])):
+    if any(
+        _hazard_has_profiles(session, hazard)
+        for hazard in (session.custom_hazards or [])
+    ):
         sections.extend(
             [
                 "",
@@ -50,7 +55,11 @@ def format_system_hazards(
 
 
 def format_custom_hazards(session: ChatSession) -> str:
-    hazards = list(session.custom_hazards or [])
+    hazards = [
+        hazard
+        for hazard in (session.custom_hazards or [])
+        if _hazard_has_profiles(session, hazard)
+    ]
     if not hazards:
         return ""
     lines: list[str] = []
@@ -86,18 +95,27 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
         if isinstance(profile, dict):
             name = str(profile.get("name") or profile.get("profile") or "").strip()
             explanation = str(profile.get("explanation") or "").strip()
+            variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
+            variable_type = str(profile.get("variable_type") or "").strip()
         else:
             name = str(profile).strip()
             explanation = ""
+            variable_name = ""
+            variable_type = ""
         if not name:
             continue
         population = population_by_profile.get(normalize_markdown_text(name).casefold(), {})
         regional, national = _profile_population_values(profile, population, explanation)
         explanation = _without_population_sentence(explanation)
         description = f'<small>{escape(explanation)}</small>' if explanation else ""
+        macro_label = (
+            '<span class="profile-type-label">macro</span>'
+            if _is_macro_profile(variable_name, variable_type)
+            else ""
+        )
         profile_rows.append(
             "<tr>"
-            f'<th scope="row"><strong>{escape(name)}</strong>{description}</th>'
+            f'<th scope="row"><strong>{escape(name)}</strong>{macro_label}{description}</th>'
             f'<td>{_format_population(regional)}{_population_comparison(regional, national)}</td>'
             f'<td>{_format_population(national)}</td>'
             "</tr>"
@@ -124,6 +142,13 @@ def _format_population(value: object) -> str:
         return f"{float(value):.1f}%"
     except (TypeError, ValueError):
         return "—"
+
+
+def _is_macro_profile(variable_name: str, variable_type: str = "") -> bool:
+    return (
+        variable_type.strip().casefold() == "macro"
+        or variable_name.strip().casefold().startswith("macro_")
+    )
 
 
 def _profile_population_values(
@@ -234,7 +259,10 @@ def format_all_dgs(session: ChatSession) -> str:
     return "\n\n".join(sections)
 
 
-def format_evaluation_answers(session: ChatSession) -> str:
+def format_evaluation_answers(
+    session: ChatSession,
+    historical_series: list[dict[str, object]] | None = None,
+) -> str:
     if not session.evaluation_answers:
         return "- No evaluation answers were recorded."
 
@@ -260,20 +288,59 @@ def format_evaluation_answers(session: ChatSession) -> str:
     ]
     categories = [str(answer["category"]) for answer in session.evaluation_answers]
     scores = [int(answer["score"]) for answer in session.evaluation_answers]
+    series = [
+        {
+            "name": f"Current — {session.mitigation_measure or 'Mitigation measure'}",
+            "values": scores,
+            "current": True,
+        },
+        *(historical_series or []),
+    ]
     chart = (
         '\n<div class="evaluation-radar-chart js-evaluation-radar-chart" '
         f'data-labels="{escape(json.dumps(labels), quote=True)}" '
         f'data-categories="{escape(json.dumps(categories), quote=True)}" '
         f'data-values="{escape(json.dumps(scores), quote=True)}" '
+        f'data-series="{escape(json.dumps(series), quote=True)}" '
         'role="img" aria-label="Radar chart of evaluation answers from 1 to 10"></div>'
     )
     return "\n".join(lines).strip() + chart
 
 
 def hazard_names(session: ChatSession) -> list[str]:
-    hazards = list(session.hazards or [])
-    hazards.extend(session.custom_hazards or [])
+    hazards = [
+        hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
+    ]
+    hazards.extend(
+        hazard
+        for hazard in (session.custom_hazards or [])
+        if _hazard_has_profiles(session, hazard)
+    )
     return hazards
+
+
+def _hazard_has_profiles(session: ChatSession, hazard: str) -> bool:
+    profiles = session.hazard_profiles or {}
+    values = profiles.get(hazard)
+    if values is None:
+        key = str(hazard or "").strip().casefold()
+        values = next(
+            (
+                stored_values
+                for stored_hazard, stored_values in profiles.items()
+                if str(stored_hazard or "").strip().casefold() == key
+            ),
+            None,
+        )
+    items = [values] if isinstance(values, str) else list(values or [])
+    return any(
+        (
+            isinstance(item, dict)
+            and bool(str(item.get("name") or item.get("profile") or "").strip())
+        )
+        or (isinstance(item, str) and bool(item.strip()))
+        for item in items
+    )
 
 
 def _clean_hazard_display_name(value: str) -> str:

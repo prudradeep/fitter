@@ -6,6 +6,7 @@ PROFILE_COLUMN_KEYS = {
     "profile",
     "explanation",
     "variable_name",
+    "variable_type",
     "variable",
     "statistical_basis",
     "basis",

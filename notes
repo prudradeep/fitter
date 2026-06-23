@@ -125,3 +125,13 @@ Mapping with existing target population profiles
 Pre-identified socio demographic profiles with target population
 
 pull MD output to recreate the complete system as it is.
+
+
+predictor type individual, macro=>macro_%
+    show macro label at the end of the predictor for macro
+
+Remove Sector-specific mitigation measure examples
+
+show hazard profiles if target group not found.
+if no target population not matched/found ask user.
+find the affected target group related to the mitigation measure.
