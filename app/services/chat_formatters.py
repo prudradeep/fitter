@@ -274,9 +274,10 @@ def format_evaluation_answers(
             lines.append(f"\n### {category}")
             current_category = category
 
-        question = normalize_markdown_text(str(answer["question"]))
-        lines.append(f"\n{question}")
-        lines.append(f"\n**Score: {answer['score']} / 10**")
+        title = normalize_markdown_text(
+            str(answer.get("chart_title") or answer["question"])
+        )
+        lines.append(f"\n**{title}: {answer['score']} / 10**")
         if answer.get("reason"):
             lines.append(f"\n- **Reason:** {answer['reason']}")
         if answer.get("evidence"):

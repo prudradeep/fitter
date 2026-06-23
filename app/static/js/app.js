@@ -822,6 +822,14 @@ function renderHazardPopulationTable(session = {}) {
 
 function renderStageIcons(key, session = {}, options = currentOptions, { keepMap = false } = {}) {
   if (!stageIconGrid) return;
+  if (key === "mitigation") {
+    renderedStageCardsKey = `icons-${key}-hidden`;
+    stageIconGrid.innerHTML = "";
+    stageIconGrid.hidden = true;
+    if (!keepMap && stageMap) stageMap.hidden = true;
+    stageMap?.parentElement?.classList.toggle("has-map-summary", false);
+    return;
+  }
   const topHazardKey = (session.top_hazards || [])
     .map((hazard) => `${hazard.hazard}:${hazard.regional_population_pct}:${hazard.national_population_pct}`)
     .join("|");
@@ -1546,6 +1554,33 @@ function renderMitigationVennFallback(chart, affected, mitigation, overlap) {
   chart.mitigationVennGroup = group;
 }
 
+function groupedTargetPopulationLabels(labels = []) {
+  const grouped = new Map();
+  const passthrough = [];
+  labels.map(String).map((label) => label.trim()).filter(Boolean).forEach((label) => {
+    if (!label.includes(":")) {
+      passthrough.push(label);
+      return;
+    }
+    const [questionPart, ...answerParts] = label.split(":");
+    const question = questionPart.trim();
+    const answer = answerParts.join(":").trim();
+    if (!question || !answer) {
+      passthrough.push(label);
+      return;
+    }
+    if (!grouped.has(question)) grouped.set(question, []);
+    const answers = grouped.get(question);
+    if (!answers.some((item) => normalizeForMatch(item) === normalizeForMatch(answer))) {
+      answers.push(answer);
+    }
+  });
+  return [
+    ...Array.from(grouped, ([question, answers]) => `${question}: ${answers.join(", ")}`),
+    ...passthrough,
+  ];
+}
+
 function initializeHighcharts(root = document) {
   if (!root?.querySelectorAll) return;
   const metricTiles = Array.from(root.querySelectorAll(".metric-tile:not([data-bar-ready])"));
@@ -1564,6 +1599,9 @@ function initializeHighcharts(root = document) {
     if (!affected.length || !mitigation.length) return;
     const mitigationKeys = new Set(mitigation.map(normalizeForMatch));
     const overlap = affected.filter((label) => mitigationKeys.has(normalizeForMatch(label)));
+    const affectedDisplay = groupedTargetPopulationLabels(affected);
+    const mitigationDisplay = groupedTargetPopulationLabels(mitigation);
+    const overlapDisplay = groupedTargetPopulationLabels(overlap);
     element.dataset.chartReady = "true";
     if (!Highcharts.seriesTypes?.venn) {
       Highcharts.chart(element, {
@@ -1571,11 +1609,18 @@ function initializeHighcharts(root = document) {
           height: 390,
           backgroundColor: "transparent",
           events: {
-            render() { renderMitigationVennFallback(this, affected, mitigation, overlap); },
+            render() {
+              renderMitigationVennFallback(
+                this,
+                affectedDisplay,
+                mitigationDisplay,
+                overlapDisplay,
+              );
+            },
           },
         },
         title: {
-          text: "Affected and mitigation target populations",
+          text: "Affected and target populations(Hover on chart to see details)",
           style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" },
         },
         credits: { enabled: false },
@@ -1589,7 +1634,7 @@ function initializeHighcharts(root = document) {
     Highcharts.chart(element, {
       chart: { type: "venn", height: 390, backgroundColor: "transparent" },
       title: {
-        text: "Affected and mitigation target populations",
+        text: "Affected and target populations(Hover on chart to see details)",
         style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" },
       },
       credits: { enabled: false },
@@ -1597,7 +1642,7 @@ function initializeHighcharts(root = document) {
       tooltip: {
         useHTML: true,
         formatter() {
-          const members = this.point.custom?.members || [];
+          const members = groupedTargetPopulationLabels(this.point.custom?.members || []);
           const items = members.length
             ? `<ul>${members.map((label) => `<li>${escapeHtml(label)}</li>`).join("")}</ul>`
             : "<p>No shared target populations</p>";
@@ -1623,24 +1668,24 @@ function initializeHighcharts(root = document) {
         data: [
           {
             sets: ["affected"],
-            value: affected.length,
+            value: affectedDisplay.length,
             name: "Hazard profiles’ target populations",
             color: "#0891b2",
-            custom: { members: affected, shortTitle: "Hazard profiles" },
+            custom: { members: affectedDisplay, shortTitle: "Hazard profiles" },
           },
           {
             sets: ["mitigation"],
-            value: mitigation.length,
+            value: mitigationDisplay.length,
             name: "Mitigation measure target populations",
             color: "#7c3aed",
-            custom: { members: mitigation, shortTitle: "Mitigation measure" },
+            custom: { members: mitigationDisplay, shortTitle: "Mitigation measure" },
           },
           {
             sets: ["affected", "mitigation"],
-            value: overlap.length,
+            value: overlapDisplay.length,
             name: "Shared target populations",
             color: "#4f46e5",
-            custom: { members: overlap, shortTitle: "Shared" },
+            custom: { members: overlapDisplay, shortTitle: "Shared" },
           },
         ],
       }],

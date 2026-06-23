@@ -1,4 +1,6 @@
+import csv
 import logging
+import re
 from collections.abc import Generator
 from pathlib import Path
 
@@ -20,6 +22,7 @@ engine = create_engine(
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schema.sql"
+MM_CSV_PATH = Path(__file__).resolve().parents[1] / "mm.csv"
 
 
 class Base(DeclarativeBase):
@@ -844,6 +847,183 @@ def ensure_runtime_schema() -> None:
     except Exception:
         logger.exception("Runtime schema migration failed")
         raise
+
+
+def _normalize_mitigation_example_key(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").casefold())
+
+
+def _read_mm_csv_rows() -> list[dict[str, str]]:
+    if not MM_CSV_PATH.exists():
+        return []
+
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            with MM_CSV_PATH.open(encoding=encoding, newline="") as csv_file:
+                return list(csv.DictReader(csv_file))
+        except UnicodeDecodeError:
+            continue
+    with MM_CSV_PATH.open(encoding="utf-8", errors="replace", newline="") as csv_file:
+        return list(csv.DictReader(csv_file))
+
+
+def _resolve_mitigation_profile_id(
+    profile_label: str,
+    system_hazard_id: int | None,
+    profile_rows: list[dict[str, object]],
+) -> int | None:
+    if system_hazard_id is None:
+        return None
+
+    profile_key = _normalize_mitigation_example_key(profile_label)
+    if not profile_key:
+        return None
+
+    same_hazard_rows = [
+        row for row in profile_rows if row.get("system_hazard_id") == system_hazard_id
+    ]
+    exact_matches: list[int] = []
+    fallback_matches: list[int] = []
+    for row in same_hazard_rows:
+        row_id = row.get("id")
+        if not isinstance(row_id, int):
+            continue
+        row_keys = {
+            _normalize_mitigation_example_key(str(row.get("profile") or "")),
+            _normalize_mitigation_example_key(str(row.get("variable_name") or "")),
+        }
+        if profile_key in row_keys:
+            exact_matches.append(row_id)
+            continue
+        if any(profile_key and profile_key in row_key for row_key in row_keys):
+            fallback_matches.append(row_id)
+
+    if exact_matches:
+        return exact_matches[0]
+    if len(fallback_matches) == 1:
+        return fallback_matches[0]
+    return None
+
+
+def _seed_mm_csv_mitigation_measure_examples(connection) -> None:
+    rows = _read_mm_csv_rows()
+    if not rows:
+        return
+
+    sector_by_key = {
+        _normalize_mitigation_example_key(row["name"]): row["id"]
+        for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
+    }
+    hazard_by_key = {
+        (row["sector_id"], _normalize_mitigation_example_key(row["name"])): row["id"]
+        for row in connection.execute(
+            text("SELECT id, sector_id, name FROM system_hazards")
+        ).mappings()
+    }
+    profile_rows = [
+        dict(row)
+        for row in connection.execute(
+            text(
+                """
+                SELECT id, system_hazard_id, sector_id, variable_name, profile
+                FROM system_hazard_socio_demographics
+                """
+            )
+        ).mappings()
+    ]
+
+    connection.execute(
+        text("DELETE FROM mitigation_measure_examples WHERE source = 'mm_csv'")
+    )
+
+    inserted = 0
+    skipped = 0
+    for csv_index, row in enumerate(rows, start=2):
+        sector_name = (row.get("Sector") or "").strip()
+        hazard_name = (row.get("Hazard") or "").strip()
+        profile_label = (
+            row.get("affected predictor / indicator categories") or ""
+        ).strip()
+        measure = (row.get("Twin-transition mitigation measure") or "").strip()
+        sector_id = sector_by_key.get(_normalize_mitigation_example_key(sector_name))
+        if not sector_id or not measure:
+            skipped += 1
+            continue
+
+        system_hazard_id = hazard_by_key.get(
+            (sector_id, _normalize_mitigation_example_key(hazard_name))
+        )
+        profile_id = _resolve_mitigation_profile_id(
+            profile_label,
+            system_hazard_id if isinstance(system_hazard_id, int) else None,
+            profile_rows,
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO mitigation_measure_examples (
+                    sector_id,
+                    system_hazard_id,
+                    system_hazard_socio_demographic_id,
+                    profile_label,
+                    measure,
+                    policy_case_study,
+                    country_city,
+                    implementation_summary,
+                    evidence,
+                    reference_links,
+                    source,
+                    csv_row_number
+                )
+                VALUES (
+                    :sector_id,
+                    :system_hazard_id,
+                    :profile_id,
+                    :profile_label,
+                    :measure,
+                    :policy_case_study,
+                    :country_city,
+                    :implementation_summary,
+                    :evidence,
+                    :reference_links,
+                    'mm_csv',
+                    :csv_row_number
+                )
+                """
+            ),
+            {
+                "sector_id": sector_id,
+                "system_hazard_id": system_hazard_id,
+                "profile_id": profile_id,
+                "profile_label": profile_label or None,
+                "measure": measure,
+                "policy_case_study": (
+                    row.get("Policy case study across Europe only") or ""
+                ).strip()
+                or None,
+                "country_city": (row.get("Country / city") or "").strip() or None,
+                "implementation_summary": (
+                    row.get("Policy implementation summary") or ""
+                ).strip()
+                or None,
+                "evidence": (
+                    row.get("Evidence of success / why credible") or ""
+                ).strip()
+                or None,
+                "reference_links": (row.get("Reference links") or "").strip()
+                or None,
+                "csv_row_number": csv_index,
+            },
+        )
+        inserted += 1
+
+    logger.info(
+        "Loaded %s mitigation measure examples from mm.csv; skipped %s rows",
+        inserted,
+        skipped,
+    )
+
+
 def ensure_mitigation_measure_examples() -> None:
     with engine.begin() as connection:
         connection.execute(
@@ -852,12 +1032,29 @@ def ensure_mitigation_measure_examples() -> None:
                 CREATE TABLE IF NOT EXISTS mitigation_measure_examples (
                   id INT AUTO_INCREMENT PRIMARY KEY,
                   sector_id INT NOT NULL,
+                  system_hazard_id INT NULL,
+                  system_hazard_socio_demographic_id INT NULL,
+                  profile_label VARCHAR(255) NULL,
                   measure TEXT NOT NULL,
+                  policy_case_study TEXT NULL,
+                  country_city VARCHAR(255) NULL,
+                  implementation_summary TEXT NULL,
+                  evidence TEXT NULL,
+                  reference_links TEXT NULL,
+                  source VARCHAR(40) NOT NULL DEFAULT 'seed',
+                  csv_row_number INT NULL,
                   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   CONSTRAINT fk_mitigation_examples_sector
                     FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
-                  UNIQUE KEY uq_mitigation_example_sector_measure (sector_id, measure(500)),
-                  INDEX ix_mitigation_measure_examples_sector_id (sector_id)
+                  CONSTRAINT fk_mitigation_examples_hazard
+                    FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE SET NULL,
+                  CONSTRAINT fk_mitigation_examples_profile
+                    FOREIGN KEY (system_hazard_socio_demographic_id)
+                    REFERENCES system_hazard_socio_demographics(id) ON DELETE SET NULL,
+                  INDEX ix_mitigation_measure_examples_sector_id (sector_id),
+                  INDEX ix_mitigation_measure_examples_hazard_id (system_hazard_id),
+                  INDEX ix_mitigation_measure_examples_profile_id (system_hazard_socio_demographic_id),
+                  INDEX ix_mitigation_measure_examples_source (source)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
@@ -886,6 +1083,27 @@ def ensure_mitigation_measure_examples() -> None:
                 )
             )
             columns.add("sector_id")
+        new_columns = {
+            "system_hazard_id": "INT NULL AFTER sector_id",
+            "system_hazard_socio_demographic_id": "INT NULL AFTER system_hazard_id",
+            "profile_label": "VARCHAR(255) NULL AFTER system_hazard_socio_demographic_id",
+            "policy_case_study": "TEXT NULL AFTER measure",
+            "country_city": "VARCHAR(255) NULL AFTER policy_case_study",
+            "implementation_summary": "TEXT NULL AFTER country_city",
+            "evidence": "TEXT NULL AFTER implementation_summary",
+            "reference_links": "TEXT NULL AFTER evidence",
+            "source": "VARCHAR(40) NOT NULL DEFAULT 'seed' AFTER reference_links",
+            "csv_row_number": "INT NULL AFTER source",
+        }
+        for column_name, column_definition in new_columns.items():
+            if column_name not in columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE mitigation_measure_examples "
+                        f"ADD COLUMN {column_name} {column_definition}"
+                    )
+                )
+                columns.add(column_name)
         if "sector_name" in columns:
             connection.execute(
                 text(
@@ -957,12 +1175,34 @@ def ensure_mitigation_measure_examples() -> None:
                     "ADD INDEX ix_mitigation_measure_examples_sector_id (sector_id)"
                 )
             )
-        if "uq_mitigation_example_sector_measure" not in indexes:
+        if "uq_mitigation_example_sector_measure" in indexes:
             connection.execute(
                 text(
                     "ALTER TABLE mitigation_measure_examples "
-                    "ADD UNIQUE KEY uq_mitigation_example_sector_measure "
-                    "(sector_id, measure(500))"
+                    "DROP INDEX uq_mitigation_example_sector_measure"
+                )
+            )
+            indexes.remove("uq_mitigation_example_sector_measure")
+        if "ix_mitigation_measure_examples_hazard_id" not in indexes:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_examples "
+                    "ADD INDEX ix_mitigation_measure_examples_hazard_id (system_hazard_id)"
+                )
+            )
+        if "ix_mitigation_measure_examples_profile_id" not in indexes:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_examples "
+                    "ADD INDEX ix_mitigation_measure_examples_profile_id "
+                    "(system_hazard_socio_demographic_id)"
+                )
+            )
+        if "ix_mitigation_measure_examples_source" not in indexes:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_examples "
+                    "ADD INDEX ix_mitigation_measure_examples_source (source)"
                 )
             )
         if "fk_mitigation_examples_sector" not in foreign_keys:
@@ -977,6 +1217,36 @@ def ensure_mitigation_measure_examples() -> None:
             except Exception:
                 logger.warning(
                     "Could not add mitigation example sector foreign key; continuing",
+                    exc_info=True,
+                )
+        if "fk_mitigation_examples_hazard" not in foreign_keys:
+            try:
+                connection.execute(
+                    text(
+                        "ALTER TABLE mitigation_measure_examples "
+                        "ADD CONSTRAINT fk_mitigation_examples_hazard "
+                        "FOREIGN KEY (system_hazard_id) "
+                        "REFERENCES system_hazards(id) ON DELETE SET NULL"
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Could not add mitigation example hazard foreign key; continuing",
+                    exc_info=True,
+                )
+        if "fk_mitigation_examples_profile" not in foreign_keys:
+            try:
+                connection.execute(
+                    text(
+                        "ALTER TABLE mitigation_measure_examples "
+                        "ADD CONSTRAINT fk_mitigation_examples_profile "
+                        "FOREIGN KEY (system_hazard_socio_demographic_id) "
+                        "REFERENCES system_hazard_socio_demographics(id) ON DELETE SET NULL"
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Could not add mitigation example profile foreign key; continuing",
                     exc_info=True,
                 )
 
@@ -998,12 +1268,22 @@ def ensure_mitigation_measure_examples() -> None:
                 connection.execute(
                     text(
                         """
-                        INSERT IGNORE INTO mitigation_measure_examples
-                            (sector_id, measure)
+                        INSERT INTO mitigation_measure_examples
+                            (sector_id, measure, source)
                         SELECT sectors.id, :measure
+                             , 'seed'
                         FROM sectors
                         WHERE sectors.name = :sector_name
+                          AND NOT EXISTS (
+                            SELECT 1
+                            FROM mitigation_measure_examples existing
+                            WHERE existing.sector_id = sectors.id
+                              AND existing.source = 'seed'
+                              AND existing.measure = :measure
+                          )
                         """
                     ),
                     {"sector_name": sector_name, "measure": measure},
                 )
+
+        _seed_mm_csv_mitigation_measure_examples(connection)

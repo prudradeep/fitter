@@ -226,11 +226,25 @@ CREATE TABLE IF NOT EXISTS user_mitigation_measures (
 CREATE TABLE IF NOT EXISTS mitigation_measure_examples (
   id INT AUTO_INCREMENT PRIMARY KEY,
   sector_id INT NOT NULL,
+  system_hazard_id INT NULL,
+  system_hazard_socio_demographic_id INT NULL,
+  profile_label VARCHAR(255) NULL,
   measure TEXT NOT NULL,
+  policy_case_study TEXT NULL,
+  country_city VARCHAR(255) NULL,
+  implementation_summary TEXT NULL,
+  evidence TEXT NULL,
+  reference_links TEXT NULL,
+  source VARCHAR(40) NOT NULL DEFAULT 'seed',
+  csv_row_number INT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_mitigation_examples_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
-  UNIQUE KEY uq_mitigation_example_sector_measure (sector_id, measure(500)),
-  INDEX ix_mitigation_measure_examples_sector_id (sector_id)
+  CONSTRAINT fk_mitigation_examples_hazard FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE SET NULL,
+  CONSTRAINT fk_mitigation_examples_profile FOREIGN KEY (system_hazard_socio_demographic_id) REFERENCES system_hazard_socio_demographics(id) ON DELETE SET NULL,
+  INDEX ix_mitigation_measure_examples_sector_id (sector_id),
+  INDEX ix_mitigation_measure_examples_hazard_id (system_hazard_id),
+  INDEX ix_mitigation_measure_examples_profile_id (system_hazard_socio_demographic_id),
+  INDEX ix_mitigation_measure_examples_source (source)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_question_responses (

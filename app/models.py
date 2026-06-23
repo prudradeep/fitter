@@ -254,7 +254,21 @@ class MitigationMeasureExample(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     sector_id: Mapped[int] = mapped_column(ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    system_hazard_id: Mapped[int | None] = mapped_column(
+        ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True
+    )
+    system_hazard_socio_demographic_id: Mapped[int | None] = mapped_column(
+        ForeignKey("system_hazard_socio_demographics.id", ondelete="SET NULL"), index=True
+    )
+    profile_label: Mapped[str | None] = mapped_column(String(255))
     measure: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_case_study: Mapped[str | None] = mapped_column(Text)
+    country_city: Mapped[str | None] = mapped_column(String(255))
+    implementation_summary: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[str | None] = mapped_column(Text)
+    reference_links: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="seed", server_default="seed")
+    csv_row_number: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

@@ -76,9 +76,10 @@ from app.services.chat_parsers import (
     parse_validation_response,
 )
 from app.services.chat_session import ChatSession, session_store
+from app.services.hazard_effect_size import hazard_predictor_effect_rows
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.grounding_models import GroundingModelService
-from app.services.hazard_ranking_service import HazardRankingService
+from app.services.hazard_ranking_service import HazardRankingService, slugify_hazard
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.profile_metadata import compact_profile_metadata
 from app.services.sector_prompt_rag import (
@@ -381,6 +382,11 @@ class ChatService:
 
         if session.phase == "mitigation_target_population":
             return await self._handle_mitigation_target_population(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "mitigation_target_population_review":
+            return await self._handle_mitigation_target_population_review(
                 current_session_id, session, clean_message
             )
 
@@ -1020,6 +1026,16 @@ class ChatService:
                 error_reason=message if error else None,
             )
 
+        if session.phase == "mitigation_target_population_review":
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_target_population_review",
+                bot_message=message,
+                options=self._mitigation_target_population_review_options(),
+                session=session.summary(),
+                error=error,
+            )
+
         if session.phase == "mitigation_review":
             return ChatResponse(
                 session_id=session_id,
@@ -1631,6 +1647,13 @@ class ChatService:
     def _mitigation_clarity_options() -> list[Option]:
         return [Option(id=1, label="Write mitigation measure again")]
 
+    @staticmethod
+    def _mitigation_target_population_review_options() -> list[Option]:
+        return [
+            Option(id=1, label="Continue"),
+            Option(id=2, label="Add more target population"),
+        ]
+
     async def _other_actions_message_from_llm(self, session: ChatSession) -> str:
         options = self._other_nav_options(session, "complete")
         fallback = (
@@ -2071,7 +2094,10 @@ Return Markdown only.
                 error=True,
             )
 
-        if session.pending_mitigation_clarity_dimension == "target_population":
+        if session.pending_mitigation_clarity_dimension in {
+            "target_population",
+            "target_population_additional",
+        }:
             input_review = {
                 "valid": len(compact_for_match(message)) >= 3,
                 "reason": "Please describe at least one target group in words.",
@@ -2123,43 +2149,58 @@ Return Markdown only.
                 error=True,
             )
 
-        if session.pending_mitigation_clarity_dimension == "target_population":
+        if session.pending_mitigation_clarity_dimension in {
+            "target_population",
+            "target_population_additional",
+        }:
             matched_labels = await self._match_mitigation_target_population_answer(message)
             if not matched_labels:
+                if (
+                    session.pending_mitigation_clarity_dimension
+                    == "target_population_additional"
+                ):
+                    session.pending_mitigation_clarity_dimension = None
+                    return self._mitigation_target_population_review_step(
+                        session_id,
+                        session,
+                        mitigation_measure,
+                        reason,
+                        evidence_text,
+                        error_reason=(
+                            "I could not match that answer to the available target-population "
+                            "groups. Choose **Continue** to proceed with the current groups, "
+                            "or **Add more target population** to try another description."
+                        ),
+                    )
                 return self._mitigation_target_population_clarification_step(
                     session_id,
                     session,
                     mitigation_measure,
                     reason,
                     evidence_text,
+                    additional=session.pending_mitigation_clarity_dimension
+                    == "target_population_additional",
                     error_reason=(
                         "I could not match that answer to the available target-population "
                         "groups. Please name at least one group more specifically."
                     ),
                 )
-            session.mitigation_target_population = matched_labels
+            session.mitigation_target_population = self._merge_target_population_labels(
+                session.mitigation_target_population or [],
+                matched_labels,
+            )
             self._append_mitigation_clarification_message(
                 session,
                 "user",
                 "Target population answer: " + message.strip(),
             )
             session.pending_mitigation_clarity_dimension = None
-            clarity_response = await self._run_mitigation_clarity_track(
+            return self._mitigation_target_population_review_step(
                 session_id,
                 session,
                 mitigation_measure,
                 reason,
                 evidence_text,
-            )
-            if clarity_response is not None:
-                return clarity_response
-            frozen_inputs = session.mitigation_frozen_inputs or {}
-            return await self._validate_frozen_mitigation_inputs(
-                session_id,
-                session,
-                frozen_inputs.get("measure_description") or mitigation_measure,
-                frozen_inputs.get("justification") or reason,
-                frozen_inputs.get("evidence") or evidence_text,
             )
 
         self._append_mitigation_clarification_message(session, "user", message)
@@ -2272,15 +2313,6 @@ Return Markdown only.
         evidence_text: str,
         clarification_answer: str | None = None,
     ) -> ChatResponse | None:
-        if session.mitigation_target_population is None:
-            return self._mitigation_target_population_clarification_step(
-                session_id,
-                session,
-                mitigation_measure,
-                reason,
-                evidence_text,
-            )
-
         clarity = await self._assess_mitigation_clarity(
             session,
             mitigation_measure,
@@ -2406,20 +2438,31 @@ Return Markdown only.
         mitigation_measure: str,
         reason: str,
         evidence_text: str,
+        *,
+        additional: bool = False,
         error_reason: str | None = None,
     ) -> ChatResponse:
         session.phase = "mitigation_clarity"
         session.pending_mitigation_measure = mitigation_measure
         session.pending_mitigation_reason = reason
         session.pending_mitigation_evidence = evidence_text
-        session.pending_mitigation_clarity_dimension = "target_population"
-        question = (
-            "Which target groups or population is this mitigation measure intended "
-            "to support? Describe every relevant group in your own words—for example, "
-            "older adults, low-income tenants, rural residents, women, carers, or "
-            "people with disabilities."
+        session.pending_mitigation_clarity_dimension = (
+            "target_population_additional" if additional else "target_population"
         )
-        message = "### Clarification needed\n\n**Currently clarifying: Target population**\n\n" + question
+        if additional:
+            question = (
+                "Share any additional target population this mitigation measure should "
+                "support. Use open text; I will match it to the available target-population groups."
+            )
+            heading = "Add more target population"
+        else:
+            question = (
+                "I could not identify a target population from the mitigation measure "
+                "and reason. Which target groups or population is this mitigation measure "
+                "intended to support? Describe every relevant group in your own words."
+            )
+            heading = "Target population needed"
+        message = f"### {heading}\n\n{question}"
         if error_reason:
             message += f"\n\n> {error_reason}"
         self._append_mitigation_clarification_message(session, "assistant", question)
@@ -2432,6 +2475,200 @@ Return Markdown only.
             input_mode="textarea",
             error=bool(error_reason),
         )
+
+    async def _ensure_mitigation_target_population_from_inputs(
+        self,
+        session_id: str,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str,
+    ) -> ChatResponse:
+        session.pending_mitigation_measure = mitigation_measure
+        session.pending_mitigation_reason = reason
+        session.pending_mitigation_evidence = evidence_text
+        if session.mitigation_target_population is None:
+            inferred = await self._infer_mitigation_target_population_from_inputs(
+                mitigation_measure,
+                reason,
+            )
+            if inferred:
+                session.mitigation_target_population = inferred
+            else:
+                return self._mitigation_target_population_clarification_step(
+                    session_id,
+                    session,
+                    mitigation_measure,
+                    reason,
+                    evidence_text,
+                )
+        return self._mitigation_target_population_review_step(
+            session_id,
+            session,
+            mitigation_measure,
+            reason,
+            evidence_text,
+        )
+
+    async def _infer_mitigation_target_population_from_inputs(
+        self,
+        mitigation_measure: str,
+        reason: str,
+    ) -> list[str]:
+        text = (
+            f"Mitigation measure:\n{mitigation_measure.strip()}\n\n"
+            f"Justification/reason:\n{reason.strip()}"
+        )
+        return await self._match_mitigation_target_population_answer(text)
+
+    def _mitigation_target_population_review_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str,
+        *,
+        error_reason: str | None = None,
+    ) -> ChatResponse:
+        session.phase = "mitigation_target_population_review"
+        session.pending_mitigation_measure = mitigation_measure
+        session.pending_mitigation_reason = reason
+        session.pending_mitigation_evidence = evidence_text
+        target_population = self._group_target_population_labels(
+            session.mitigation_target_population or []
+        )
+        target_lines = "\n".join(f"- **{label}**" for label in target_population)
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_target_population_review",
+            bot_message=markdown_to_html(
+                "### Target population identified\n\n"
+                "I matched the available mitigation information to these target-population groups:\n\n"
+                f"{target_lines or '- No target population matched.'}\n\n"
+                f"{f'> {error_reason}\n\n' if error_reason else ''}"
+                "Choose **Continue** to use these groups, or **Add more target population** "
+                "to describe another group in open text."
+            ),
+            options=self._mitigation_target_population_review_options(),
+            session=session.summary(),
+            error=bool(error_reason),
+        )
+
+    async def _handle_mitigation_target_population_review(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+    ) -> ChatResponse:
+        exact_label = exact_option_label(
+            message,
+            self._mitigation_target_population_review_options(),
+        )
+        if exact_label is None:
+            fuzzy_label = match_option_label(
+                message,
+                self._mitigation_target_population_review_options(),
+            )
+            if fuzzy_label is not None:
+                exact_label = fuzzy_label
+        action = normalize(exact_label or message)
+        mitigation_measure = session.pending_mitigation_measure or session.mitigation_measure or ""
+        reason = session.pending_mitigation_reason or session.mitigation_reason or ""
+        evidence_text = session.pending_mitigation_evidence or ""
+        if not mitigation_measure or not reason:
+            session.phase = "mitigation_reason"
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason="Please enter the mitigation measure and reason again.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
+        if action == normalize("Add more target population"):
+            return self._mitigation_target_population_clarification_step(
+                session_id,
+                session,
+                mitigation_measure,
+                reason,
+                evidence_text,
+                additional=True,
+            )
+
+        if action == normalize("Continue"):
+            if session.mitigation_validation and session.mitigation_grounded_synthesis:
+                return await self._finalize_validated_mitigation(session_id, session)
+            clarity_response = await self._run_mitigation_clarity_track(
+                session_id,
+                session,
+                mitigation_measure,
+                reason,
+                evidence_text,
+            )
+            if clarity_response is not None:
+                return clarity_response
+            frozen_inputs = session.mitigation_frozen_inputs or {}
+            return await self._validate_frozen_mitigation_inputs(
+                session_id,
+                session,
+                frozen_inputs.get("measure_description") or mitigation_measure,
+                frozen_inputs.get("justification") or reason,
+                frozen_inputs.get("evidence") or evidence_text,
+            )
+
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_target_population_review",
+            bot_message=self.invalid_message,
+            options=self._mitigation_target_population_review_options(),
+            session=session.summary(),
+            error=True,
+        )
+
+    @staticmethod
+    def _merge_target_population_labels(
+        existing: list[str],
+        additions: list[str],
+    ) -> list[str]:
+        labels: list[str] = []
+        seen: set[str] = set()
+        for label in [*existing, *additions]:
+            cleaned = str(label or "").strip()
+            key = normalize(cleaned)
+            if cleaned and key not in seen:
+                seen.add(key)
+                labels.append(cleaned)
+        return labels
+
+    @staticmethod
+    def _group_target_population_labels(labels: list[str]) -> list[str]:
+        grouped: dict[str, list[str]] = {}
+        passthrough: list[str] = []
+        for label in labels:
+            cleaned = str(label or "").strip()
+            if not cleaned:
+                continue
+            if ":" not in cleaned:
+                passthrough.append(cleaned)
+                continue
+            question, answer = [part.strip() for part in cleaned.split(":", 1)]
+            if not question or not answer:
+                passthrough.append(cleaned)
+                continue
+            answers = grouped.setdefault(question, [])
+            if normalize(answer) not in {normalize(existing) for existing in answers}:
+                answers.append(answer)
+        return [
+            f"{question}: {', '.join(answers)}"
+            for question, answers in grouped.items()
+            if answers
+        ] + passthrough
 
     @staticmethod
     def _append_mitigation_clarification_message(
@@ -2705,7 +2942,13 @@ Return Markdown only.
         session.mitigation_grounded_synthesis = synthesis
         session.pending_mitigation_measure = None
         self._clear_mitigation_clarity_state(session)
-        return await self._finalize_validated_mitigation(session_id, session)
+        return await self._ensure_mitigation_target_population_from_inputs(
+            session_id,
+            session,
+            mitigation_measure,
+            reason,
+            evidence_text,
+        )
 
     async def _finalize_validated_mitigation(
         self, session_id: str, session: ChatSession
@@ -2736,32 +2979,168 @@ Return Markdown only.
         if session.sector_id is None or not session.selected_hazard:
             return []
         rows = self.db.execute(
-            select(EvaluationQuestion.question, QuestionOption.option)
-            .join(QuestionOption, QuestionOption.question_id == EvaluationQuestion.id)
-            .join(
-                SystemHazardSocioDemographicTargetPopulation,
-                SystemHazardSocioDemographicTargetPopulation.question_option_id
-                == QuestionOption.id,
-            )
-            .join(
-                SystemHazardSocioDemographic,
-                SystemHazardSocioDemographic.id
-                == SystemHazardSocioDemographicTargetPopulation.system_hazard_socio_demographic_id,
+            select(
+                SystemHazardSocioDemographic.profile,
+                SystemHazardSocioDemographic.variable_name,
+                SystemHazardSocioDemographic.explanation,
+                SystemHazardSocioDemographic.statistical_basis,
+                EvaluationQuestion.question,
+                QuestionOption.option,
             )
             .join(
                 SystemHazard,
                 SystemHazard.id == SystemHazardSocioDemographic.system_hazard_id,
             )
+            .outerjoin(
+                SystemHazardSocioDemographicTargetPopulation,
+                SystemHazardSocioDemographicTargetPopulation.system_hazard_socio_demographic_id
+                == SystemHazardSocioDemographic.id,
+            )
+            .outerjoin(
+                QuestionOption,
+                QuestionOption.id
+                == SystemHazardSocioDemographicTargetPopulation.question_option_id,
+            )
+            .outerjoin(
+                EvaluationQuestion,
+                and_(
+                    EvaluationQuestion.id == QuestionOption.question_id,
+                    EvaluationQuestion.active.is_(True),
+                    EvaluationQuestion.category == "target_population",
+                ),
+            )
             .where(
                 SystemHazard.sector_id == session.sector_id,
                 func.lower(SystemHazard.name) == session.selected_hazard.casefold(),
-                EvaluationQuestion.active.is_(True),
-                EvaluationQuestion.category == "target_population",
+                SystemHazardSocioDemographic.sector_id == session.sector_id,
             )
-            .distinct()
-            .order_by(EvaluationQuestion.question, QuestionOption.option)
+            .order_by(
+                SystemHazardSocioDemographic.id,
+                EvaluationQuestion.question,
+                QuestionOption.option,
+            )
         ).all()
-        return [f"{row.question}: {row.option}" for row in rows]
+        if not rows:
+            selected_labels = self._selected_target_population_labels(session)
+            return selected_labels or self._selected_hazard_profile_names_for_venn(session)
+
+        labels: list[str] = []
+        seen: set[str] = set()
+        labels_by_profile: dict[str, list[str]] = {}
+        profile_names: dict[str, str] = {}
+        excluded_profile_keys = self._selected_hazard_or_below_one_profile_keys(session)
+        for row in rows:
+            profile_name = str(row.profile or "").strip()
+            if not profile_name:
+                continue
+            if normalize(profile_name) in excluded_profile_keys:
+                continue
+            variable_name = str(row.variable_name or "").strip()
+            if self._system_profile_has_or_below_one_effect(
+                session,
+                variable_name,
+                profile_name,
+            ):
+                continue
+            if self._profile_has_odds_ratio_below_one(
+                {
+                    "name": profile_name,
+                    "profile": profile_name,
+                    "variable_name": variable_name,
+                    "explanation": str(row.explanation or ""),
+                    "statistical_basis": str(row.statistical_basis or ""),
+                }
+            ):
+                continue
+            profile_key = normalize(profile_name)
+            profile_names.setdefault(profile_key, profile_name)
+            if row.question and row.option:
+                profile_labels = labels_by_profile.setdefault(profile_key, [])
+                label = f"{row.question}: {row.option}"
+                if normalize(label) not in {normalize(item) for item in profile_labels}:
+                    profile_labels.append(label)
+
+        for profile_key, profile_name in profile_names.items():
+            profile_labels = labels_by_profile.get(profile_key) or [profile_name]
+            for label in profile_labels:
+                key = normalize(label)
+                if key not in seen:
+                    seen.add(key)
+                    labels.append(label)
+        return labels
+
+    def _selected_hazard_or_below_one_profile_keys(self, session: ChatSession) -> set[str]:
+        if not session.selected_hazard:
+            return set()
+        return {
+            normalize(str(profile.get("name") or profile.get("profile") or ""))
+            for profile in self._stored_hazard_profiles(session, session.selected_hazard)
+            if self._profile_has_odds_ratio_below_one(profile)
+        }
+
+    def _system_profile_has_or_below_one_effect(
+        self,
+        session: ChatSession,
+        variable_name: str,
+        profile_name: str,
+    ) -> bool:
+        if not session.sector or not session.selected_hazard:
+            return False
+        candidates = self._effect_predictor_candidates(variable_name, profile_name)
+        if not candidates:
+            return False
+        hazard_key = slugify_hazard(session.selected_hazard)
+        for row in hazard_predictor_effect_rows(sector=session.sector, min_or=0.0):
+            row_hazard = slugify_hazard(str(row.get("hazard") or ""))
+            if row_hazard != hazard_key:
+                continue
+            predictor = normalize_for_match(str(row.get("predictor") or ""))
+            if not predictor:
+                continue
+            if not any(
+                predictor == candidate
+                or predictor.startswith(f"{candidate} ")
+                or candidate.startswith(f"{predictor} ")
+                for candidate in candidates
+            ):
+                continue
+            try:
+                return float(row.get("odds_ratio") or 0) < 1
+            except (TypeError, ValueError):
+                return False
+        return False
+
+    @staticmethod
+    def _effect_predictor_candidates(variable_name: str, profile_name: str) -> set[str]:
+        candidates: set[str] = set()
+        for value in (variable_name, profile_name):
+            cleaned = str(value or "").strip()
+            if not cleaned:
+                continue
+            candidates.add(normalize_for_match(cleaned))
+            if ":" in cleaned:
+                question, answer = [part.strip() for part in cleaned.split(":", 1)]
+                if question:
+                    candidates.add(normalize_for_match(question))
+                if question and answer:
+                    candidates.add(normalize_for_match(f"{question} {answer}"))
+                    candidates.add(normalize_for_match(f"{question}__{answer}"))
+        return {candidate for candidate in candidates if candidate}
+
+    def _selected_hazard_profile_names_for_venn(self, session: ChatSession) -> list[str]:
+        if not session.selected_hazard:
+            return []
+        names: list[str] = []
+        seen: set[str] = set()
+        for profile in self._stored_hazard_profiles(session, session.selected_hazard):
+            if self._profile_has_odds_ratio_below_one(profile):
+                continue
+            name = str(profile.get("name") or profile.get("profile") or "").strip()
+            key = normalize(name)
+            if name and key not in seen:
+                seen.add(key)
+                names.append(name)
+        return names
 
     def _affected_profile_target_population_labels(self, session: ChatSession) -> list[str]:
         return (
@@ -3019,6 +3398,12 @@ form {"option_ids": [1, 2]}. Use an empty list when nothing can be matched.
         )
         affected_target_populations = self._affected_profile_target_population_labels(session)
         mitigation_target_populations = session.mitigation_target_population or []
+        affected_target_population_display = self._group_target_population_labels(
+            affected_target_populations
+        )
+        mitigation_target_population_display = self._group_target_population_labels(
+            mitigation_target_populations
+        )
 
         return ChatResponse(
             session_id=session_id,
@@ -3030,7 +3415,7 @@ form {"option_ids": [1, 2]}. Use an empty list when nothing can be matched.
                     mitigation_measure=session.mitigation_measure or "Not provided",
                     reason=session.mitigation_reason or "Not provided",
                     target_population=", ".join(
-                        session.mitigation_target_population or []
+                        mitigation_target_population_display
                     ),
                     affected_target_population_json=json.dumps(
                         affected_target_populations,
@@ -3040,8 +3425,8 @@ form {"option_ids": [1, 2]}. Use an empty list when nothing can be matched.
                         mitigation_target_populations,
                         ensure_ascii=False,
                     ),
-                    affected_target_populations=affected_target_populations,
-                    mitigation_target_populations=mitigation_target_populations,
+                    affected_target_populations=affected_target_population_display,
+                    mitigation_target_populations=mitigation_target_population_display,
                     show_target_population_venn=bool(
                         affected_target_populations and mitigation_target_populations
                     ),
@@ -3854,21 +4239,26 @@ form {"option_ids": [1, 2]}. Use an empty list when nothing can be matched.
         )
 
     async def _practical_policy_recommendations(self, session: ChatSession) -> str:
+        matched_examples = self._matched_mitigation_measure_examples(session)
         context, messages = await self._build_deep_dive_messages(
             session,
             (
                 f"For the selected hazard '{session.selected_hazard}', provide practical "
-                "considerations and practical policy recommendations based on the loaded "
-                "sector statistical context and the affected socio-demographic profiles "
-                "identified so far.\n\n"
+                "considerations and practical policy recommendations. Use the matched "
+                "mitigation-measure examples for the same sector, hazard, and affected "
+                "profiles as the main policy-design evidence when they are available; "
+                "synthesize them into recommendations instead of copying them verbatim. "
+                "Use the loaded sector statistical context to explain why those "
+                "recommendations fit the affected profiles.\n\n"
                 "Socio-demographic profiles:\n"
                 f"{format_all_dgs(session)}\n\n"
                 "Selected target populations/groups:\n"
                 f"{self._mitigation_target_population_text(session)}\n\n"
-                "Use only the loaded statistical context. Answer in Markdown with these "
-                "two short sections only: Practical Considerations and Practical Policy "
-                "Recommendations. Keep bullets concise and do not create a mitigation "
-                "measure yet."
+                "Matched mitigation-measure examples:\n"
+                f"{matched_examples or '- No matching examples were found for this sector, hazard, and profile set.'}\n\n"
+                "Answer in Markdown with these two short sections only: Practical "
+                "Considerations and Practical Policy Recommendations. Keep bullets "
+                "concise and do not create a final mitigation measure yet."
             ),
         )
         return await ask_llm_chat(
@@ -5640,13 +6030,25 @@ Do not invent characteristics that were not selected.
             str(profile.get(key) or "")
             for key in ("explanation", "statistical_basis", "basis")
         )
-        ratio_match = re.search(
-            r"(?i)(?:odds\s+ratio|\bOR\b)\s*(?:=|:|is)?\s*(0(?:\.\d+)?|1(?:\.0+)?)",
+        ratio_matches = re.finditer(
+            r"(?i)(?:odds\s+ratio|\bOR\b)\s*(?:=|:|is|<|>|<=|>=)?\s*(\d+(?:\.\d+)?)",
             text_value,
         )
-        if ratio_match:
-            return float(ratio_match.group(1)) < 1
+        for ratio_match in ratio_matches:
+            try:
+                if float(ratio_match.group(1)) < 1:
+                    return True
+            except (TypeError, ValueError):
+                continue
         normalized_text = normalize_for_match(text_value)
+        basis_text = normalize_for_match(
+            " ".join(
+                str(profile.get(key) or "")
+                for key in ("statistical_basis", "basis")
+            )
+        )
+        if "decreases" in basis_text or "direction decreases" in basis_text:
+            return True
         return any(
             marker in normalized_text
             for marker in ("protective", "lower odds", "lower concern")
@@ -10430,6 +10832,130 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         )
         rows = self.db.scalars(query).all()
         return "\n".join(f"- {measure}" for measure in rows if str(measure or "").strip())
+
+    def _selected_system_hazard_id(self, session: ChatSession) -> int | None:
+        if session.sector_id is None or not session.selected_hazard:
+            return None
+        if isinstance(session.selected_hazard_record_id, int):
+            linked_hazard_id = self.db.scalar(
+                select(UserHazard.system_hazard_id).where(
+                    UserHazard.id == session.selected_hazard_record_id
+                )
+            )
+            if isinstance(linked_hazard_id, int):
+                return linked_hazard_id
+        hazard_id = self.db.scalar(
+            select(SystemHazard.id).where(
+                SystemHazard.sector_id == session.sector_id,
+                func.lower(SystemHazard.name) == session.selected_hazard.casefold(),
+            )
+        )
+        if isinstance(hazard_id, int):
+            return hazard_id
+        return None
+
+    def _selected_system_profile_ids(
+        self, session: ChatSession, system_hazard_id: int | None
+    ) -> list[int]:
+        if system_hazard_id is None:
+            return []
+
+        selected_profiles = self._selected_hazard_profile_names(session)
+        selected_keys = {normalize(profile) for profile in selected_profiles if normalize(profile)}
+        selected_variable_keys = {
+            normalize(str(profile.get("variable_name") or ""))
+            for profile in self._stored_hazard_profiles(
+                session,
+                session.selected_hazard or session.accepted_custom_hazard or "",
+            )
+            if normalize(str(profile.get("variable_name") or ""))
+        }
+        if not selected_keys and not selected_variable_keys:
+            return []
+
+        rows = self.db.execute(
+            select(
+                SystemHazardSocioDemographic.id,
+                SystemHazardSocioDemographic.profile,
+                SystemHazardSocioDemographic.variable_name,
+            ).where(SystemHazardSocioDemographic.system_hazard_id == system_hazard_id)
+        ).all()
+
+        profile_ids: list[int] = []
+        seen: set[int] = set()
+        for row in rows:
+            row_id = int(row.id)
+            row_keys = {
+                normalize(str(row.profile or "")),
+                normalize(str(row.variable_name or "")),
+            }
+            if row_keys & selected_keys or row_keys & selected_variable_keys:
+                if row_id not in seen:
+                    seen.add(row_id)
+                    profile_ids.append(row_id)
+        return profile_ids
+
+    def _matched_mitigation_measure_examples(
+        self, session: ChatSession, limit: int = 8
+    ) -> str:
+        if session.sector_id is None:
+            return ""
+
+        system_hazard_id = self._selected_system_hazard_id(session)
+        has_selected_profiles = bool(self._selected_hazard_profile_names(session))
+        profile_ids = self._selected_system_profile_ids(session, system_hazard_id)
+
+        filters = [
+            MitigationMeasureExample.sector_id == session.sector_id,
+            MitigationMeasureExample.source == "mm_csv",
+        ]
+        if system_hazard_id is not None:
+            filters.append(MitigationMeasureExample.system_hazard_id == system_hazard_id)
+        if profile_ids:
+            filters.append(
+                MitigationMeasureExample.system_hazard_socio_demographic_id.in_(profile_ids)
+            )
+
+        rows = self.db.scalars(
+            select(MitigationMeasureExample)
+            .where(*filters)
+            .order_by(MitigationMeasureExample.csv_row_number, MitigationMeasureExample.id)
+            .limit(limit)
+        ).all()
+
+        if not rows and system_hazard_id is not None and not has_selected_profiles:
+            rows = self.db.scalars(
+                select(MitigationMeasureExample)
+                .where(
+                    MitigationMeasureExample.sector_id == session.sector_id,
+                    MitigationMeasureExample.source == "mm_csv",
+                    MitigationMeasureExample.system_hazard_id == system_hazard_id,
+                )
+                .order_by(MitigationMeasureExample.csv_row_number, MitigationMeasureExample.id)
+                .limit(limit)
+            ).all()
+
+        if not rows:
+            return ""
+
+        lines: list[str] = []
+        for index, example in enumerate(rows, start=1):
+            profile = str(example.profile_label or "Matched profile").strip()
+            summary = str(example.implementation_summary or "").strip()
+            evidence = str(example.evidence or "").strip()
+            country = str(example.country_city or "").strip()
+            case_study = str(example.policy_case_study or "").strip()
+            details: list[str] = [f"measure: {example.measure}"]
+            if summary:
+                details.append(f"implementation: {summary}")
+            if evidence:
+                details.append(f"evidence: {evidence}")
+            if case_study or country:
+                details.append(
+                    f"case: {case_study}{f' ({country})' if country else ''}"
+                )
+            lines.append(f"{index}. Profile '{profile}' - " + " | ".join(details))
+        return "\n".join(lines)
 
     def _local_mitigation_measure_error(self, mitigation_measure: str) -> str | None:
         if self._is_invalid_user_text(mitigation_measure):

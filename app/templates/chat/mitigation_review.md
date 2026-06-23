@@ -28,7 +28,7 @@ Target population:
 ></div>
 <div class="mitigation-venn-populations" aria-label="Target populations shown in the Venn diagram">
   <div class="mitigation-venn-population-list mitigation-venn-population-list--affected">
-    <strong>Hazard profiles target population</strong>
+    <strong>Hazard profiles affected population</strong>
     <ul>
       {% for population in affected_target_populations %}
       <li>{{ population | e }}</li>
