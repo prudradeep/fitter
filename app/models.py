@@ -164,6 +164,59 @@ class SystemHazard(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class AdditionalHazard(Base):
+    __tablename__ = "additional_hazards"
+    __table_args__ = (
+        UniqueConstraint("country_id", "sector_id", "name", name="uq_additional_hazard_scope_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    country_id: Mapped[int] = mapped_column(ForeignKey("countries.id", ondelete="CASCADE"), index=True)
+    sector_id: Mapped[int] = mapped_column(ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="csv")
+    csv_row_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class AdditionalHazardProfile(Base):
+    __tablename__ = "additional_hazard_profiles"
+    __table_args__ = (
+        UniqueConstraint("additional_hazard_id", "profile", name="uq_additional_hazard_profile"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    additional_hazard_id: Mapped[int] = mapped_column(
+        ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
+    )
+    profile: Mapped[str] = mapped_column(String(255), nullable=False)
+    evidence: Mapped[str | None] = mapped_column(Text)
+    reference: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="d4_2_pdf")
+    csv_row_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class AdditionalHazardProfileTargetPopulation(Base):
+    __tablename__ = "additional_hazard_profile_target_populations"
+    __table_args__ = (
+        UniqueConstraint(
+            "additional_hazard_profile_id",
+            "question_option_id",
+            name="uq_additional_hazard_profile_target_option",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    additional_hazard_profile_id: Mapped[int] = mapped_column(
+        ForeignKey("additional_hazard_profiles.id", ondelete="CASCADE"), index=True
+    )
+    question_option_id: Mapped[int] = mapped_column(
+        ForeignKey("question_options.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class UserHazard(Base):
     __tablename__ = "user_hazards"
     __table_args__ = (UniqueConstraint("user_session_id", "name", name="uq_user_session_hazard"),)

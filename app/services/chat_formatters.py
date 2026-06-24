@@ -28,6 +28,15 @@ def format_hazards(session: ChatSession) -> str:
                 format_custom_hazards(session),
             ]
         )
+    if session.additional_hazards:
+        sections.extend(
+            [
+                "",
+                '<h3 class="hazard-group-heading">Additional hazards '
+                '<span>From country-sector evidence</span></h3>',
+                format_additional_hazards(session),
+            ]
+        )
     return "\n".join(sections)
 
 
@@ -76,6 +85,28 @@ def format_custom_hazards(session: ChatSession) -> str:
     return "\n".join(lines)
 
 
+def format_additional_hazards(session: ChatSession) -> str:
+    hazards = [
+        str(hazard).strip()
+        for hazard in (session.additional_hazards or [])
+        if str(hazard).strip()
+    ]
+    if not hazards:
+        return ""
+    lines: list[str] = []
+    for hazard in hazards:
+        lines.append(
+            '<article class="hazard-card hazard-card--additional">'
+            '<div class="hazard-card-heading">'
+            '<span class="hazard-alert-icon" aria-hidden="true">!</span>'
+            f"<strong>{escape(hazard)}</strong>"
+            "</div>"
+        )
+        _append_hazard_profiles(lines, session, hazard)
+        lines.append("</article>")
+    return "\n".join(lines)
+
+
 def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str) -> None:
     profiles = session.hazard_profiles or {}
     profile_values = profiles.get(hazard)
@@ -97,17 +128,42 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
             explanation = str(profile.get("explanation") or "").strip()
             variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
             variable_type = str(profile.get("variable_type") or "").strip()
+            statistical_basis = str(profile.get("statistical_basis") or "").strip()
+            target_population_labels = profile.get("target_population_labels")
+            population_lookup_labels = profile.get("population_lookup_labels")
         else:
             name = str(profile).strip()
             explanation = ""
             variable_name = ""
             variable_type = ""
+            statistical_basis = ""
+            target_population_labels = []
+            population_lookup_labels = []
         if not name:
             continue
         population = population_by_profile.get(normalize_markdown_text(name).casefold(), {})
         regional, national = _profile_population_values(profile, population, explanation)
         explanation = _without_population_sentence(explanation)
-        description = f'<small>{escape(explanation)}</small>' if explanation else ""
+        description_parts = []
+        if explanation:
+            description_parts.append(escape(explanation))
+        if statistical_basis:
+            description_parts.append(f"Reference: {escape(statistical_basis)}")
+        if isinstance(target_population_labels, list) and target_population_labels:
+            description_parts.append(
+                "Mapped target population: "
+                + escape("; ".join(str(label) for label in target_population_labels if str(label).strip()))
+            )
+        if isinstance(population_lookup_labels, list) and population_lookup_labels:
+            description_parts.append(
+                "Eurostat population lookup: "
+                + escape("; ".join(str(label) for label in population_lookup_labels if str(label).strip()))
+            )
+        description = (
+            f"<small>{'<br>'.join(description_parts)}</small>"
+            if description_parts
+            else ""
+        )
         macro_label = (
             '<span class="profile-type-label">macro</span>'
             if _is_macro_profile(variable_name, variable_type)
@@ -315,6 +371,11 @@ def hazard_names(session: ChatSession) -> list[str]:
     hazards.extend(
         hazard
         for hazard in (session.custom_hazards or [])
+        if _hazard_has_profiles(session, hazard)
+    )
+    hazards.extend(
+        hazard
+        for hazard in (session.additional_hazards or [])
         if _hazard_has_profiles(session, hazard)
     )
     return hazards

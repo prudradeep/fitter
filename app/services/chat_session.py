@@ -19,6 +19,7 @@ class ChatSession:
     hazard_profiles: dict[str, list[dict[str, str] | str] | str] | None = None
     hazard_rankings: dict[str, dict[str, object]] | None = None
     custom_hazards: list[str] | None = None
+    additional_hazards: list[str] | None = None
     pending_hazard: str | None = None
     selected_hazard: str | None = None
     selected_hazard_record_id: int | None = None
@@ -92,7 +93,9 @@ class ChatSession:
             mitigation_review=self._mitigation_review_summary(self.mitigation_validation),
             target_population_questions=self.target_population_questions or [],
             target_population_answers=[dict(answer) for answer in (self.target_population_answers or [])],
-            hazard_count=system_hazard_count + regional_hazard_count,
+            hazard_count=system_hazard_count
+            + regional_hazard_count
+            + len(self.additional_hazards or []),
             top_hazards=self._top_hazard_population_summary(),
             affected_profile_count=self.eligible_hazard_profile_count(),
             affected_profiles=deduped_affected_profiles,

@@ -129,6 +129,55 @@ CREATE TABLE IF NOT EXISTS system_hazards (
   INDEX ix_system_hazards_sector_id (sector_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS additional_hazards (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  country_id INT NOT NULL,
+  sector_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  source VARCHAR(40) NOT NULL DEFAULT 'csv',
+  csv_row_number INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_additional_hazards_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE CASCADE,
+  CONSTRAINT fk_additional_hazards_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
+  CONSTRAINT uq_additional_hazard_scope_name UNIQUE (country_id, sector_id, name),
+  INDEX ix_additional_hazards_country_id (country_id),
+  INDEX ix_additional_hazards_sector_id (sector_id),
+  INDEX ix_additional_hazards_source (source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS additional_hazard_profiles (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  additional_hazard_id INT NOT NULL,
+  profile VARCHAR(255) NOT NULL,
+  evidence TEXT NULL,
+  reference TEXT NULL,
+  source VARCHAR(40) NOT NULL DEFAULT 'd4_2_pdf',
+  csv_row_number INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_additional_hazard_profiles_hazard
+    FOREIGN KEY (additional_hazard_id) REFERENCES additional_hazards(id) ON DELETE CASCADE,
+  CONSTRAINT uq_additional_hazard_profile UNIQUE (additional_hazard_id, profile),
+  INDEX ix_additional_hazard_profiles_hazard_id (additional_hazard_id),
+  INDEX ix_additional_hazard_profiles_source (source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS additional_hazard_profile_target_populations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  additional_hazard_profile_id INT NOT NULL,
+  question_option_id INT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_additional_hazard_profile_target_profile
+    FOREIGN KEY (additional_hazard_profile_id)
+    REFERENCES additional_hazard_profiles(id) ON DELETE CASCADE,
+  CONSTRAINT fk_additional_hazard_profile_target_option
+    FOREIGN KEY (question_option_id)
+    REFERENCES question_options(id) ON DELETE CASCADE,
+  CONSTRAINT uq_additional_hazard_profile_target_option
+    UNIQUE (additional_hazard_profile_id, question_option_id),
+  INDEX ix_additional_hazard_profile_target_profile (additional_hazard_profile_id),
+  INDEX ix_additional_hazard_profile_target_option (question_option_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_hazards (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_session_id INT NOT NULL,

@@ -12,6 +12,9 @@ from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
+    AdditionalHazard,
+    AdditionalHazardProfile,
+    AdditionalHazardProfileTargetPopulation,
     Country,
     EvaluationQuestion,
     MitigationMeasureExample,
@@ -78,6 +81,7 @@ from app.services.chat_parsers import (
 from app.services.chat_session import ChatSession, session_store
 from app.services.hazard_effect_size import hazard_predictor_effect_rows
 from app.services.knowledge_base import KnowledgeBaseService
+from app.services.eurostat_service import EurostatService
 from app.services.grounding_models import GroundingModelService
 from app.services.hazard_ranking_service import HazardRankingService, slugify_hazard
 from app.services.message_renderer import markdown_to_html, render_message
@@ -159,6 +163,7 @@ class ChatService:
         self.user_id = user_id
         self.settings = get_settings()
         self.grounding_models = GroundingModelService()
+        self.eurostat = EurostatService(db)
         self.hazard_ranking = HazardRankingService(db)
 
     async def handle_message(self, message: str, session_id: str | None) -> ChatResponse:
@@ -612,6 +617,7 @@ class ChatService:
         session.hazards = None
         session.hazard_profiles = None
         session.custom_hazards = None
+        session.additional_hazards = None
         ChatService._clear_selected_hazard_context(session)
 
     @staticmethod
@@ -1243,6 +1249,7 @@ class ChatService:
             if item.get("profiles")
         }
         session.custom_hazards = self._saved_custom_hazards_for_context(session)
+        session.additional_hazards = self._additional_hazards_for_context(session)
         self._hydrate_custom_hazard_profiles(session)
         self._filter_session_hazards_without_profiles(session)
         await self._rank_session_hazards(session)
@@ -1306,7 +1313,7 @@ class ChatService:
         self,
         session: ChatSession,
     ) -> None:
-        if not session.hazard_profiles or not session.hazard_rankings:
+        if not session.hazard_profiles:
             return
         enriched_profiles: dict[str, list[dict[str, str]]] = {}
         for hazard in session.hazards or []:
@@ -1314,6 +1321,15 @@ class ChatService:
             if not profiles:
                 continue
             enriched_profiles[hazard] = await self._profiles_with_population_context(
+                session,
+                hazard,
+                profiles,
+            )
+        for hazard in session.additional_hazards or []:
+            profiles = self._stored_hazard_profiles(session, hazard)
+            if not profiles:
+                continue
+            enriched_profiles[hazard] = await self._additional_profiles_with_population_context(
                 session,
                 hazard,
                 profiles,
@@ -1387,6 +1403,7 @@ class ChatService:
                 if item.get("profiles")
             }
             session.custom_hazards = self._saved_custom_hazards_for_context(session)
+            session.additional_hazards = self._additional_hazards_for_context(session)
             self._hydrate_custom_hazard_profiles(session)
             self._filter_session_hazards_without_profiles(session)
             await self._rank_session_hazards(session)
@@ -1462,6 +1479,7 @@ class ChatService:
                 if item.get("profiles")
             }
             session.custom_hazards = self._saved_custom_hazards_for_context(session)
+            session.additional_hazards = self._additional_hazards_for_context(session)
             self._hydrate_custom_hazard_profiles(session)
             self._filter_session_hazards_without_profiles(session)
             await self._rank_session_hazards(session)
@@ -1512,11 +1530,18 @@ class ChatService:
         self._clear_selected_hazard_context(session)
         session.selected_hazard = hazard
         is_saved_custom_hazard = self._is_saved_custom_hazard(session, hazard)
+        is_additional_hazard = self._is_additional_hazard(session, hazard)
         hazard_record = self._ensure_user_hazard(
             session_id,
             session,
             hazard,
-            source="custom" if is_saved_custom_hazard else "system",
+            source=(
+                "custom"
+                if is_saved_custom_hazard
+                else "additional"
+                if is_additional_hazard
+                else "system"
+            ),
         )
         session.selected_hazard_record_id = hazard_record.id if hazard_record else None
         self._record_activity(session_id, session, "hazard_selected", hazard)
@@ -1614,6 +1639,40 @@ class ChatService:
                 options=[],
                 session=session.summary(),
                 input_mode="mitigation_measure",
+                error=False,
+            )
+
+        if action == normalize("Continue with current mitigation measure"):
+            mitigation_measure = self._current_policy_mitigation_measure(session)
+            if not mitigation_measure:
+                return ChatResponse(
+                    session_id=session_id,
+                    step="reason_confirmation",
+                    bot_message=(
+                        "I could not find a current policy implementation to use as "
+                        "the mitigation measure. Choose **Yes** to write one manually."
+                    ),
+                    options=REASON_CONFIRMATION_OPTIONS,
+                    session=session.summary(),
+                    error=True,
+                )
+            self._clear_mitigation_clarity_state(session)
+            self._clear_mitigation_validation_state(session)
+            session.pending_mitigation_measure = mitigation_measure
+            session.phase = "mitigation_reason"
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_measure_reason.md",
+                    hazard=session.selected_hazard or "the selected hazard",
+                    dgs=format_all_dgs(session),
+                    mitigation_measure=mitigation_measure,
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                input_values={"mitigation_measure": mitigation_measure},
                 error=False,
             )
 
@@ -2167,9 +2226,9 @@ Return Markdown only.
                         reason,
                         evidence_text,
                         error_reason=(
-                            "I could not match that answer to the available target-population "
-                            "groups. Choose **Continue** to proceed with the current groups, "
-                            "or **Add more target population** to try another description."
+                            "No valid target population group found. Choose **Continue** "
+                            "to proceed with the current groups, or **Add more target "
+                            "population** to try again."
                         ),
                     )
                 return self._mitigation_target_population_clarification_step(
@@ -2181,8 +2240,7 @@ Return Markdown only.
                     additional=session.pending_mitigation_clarity_dimension
                     == "target_population_additional",
                     error_reason=(
-                        "I could not match that answer to the available target-population "
-                        "groups. Please name at least one group more specifically."
+                        "No valid target population group found. Please try again."
                     ),
                 )
             session.mitigation_target_population = self._merge_target_population_labels(
@@ -2544,7 +2602,7 @@ Return Markdown only.
             step="mitigation_target_population_review",
             bot_message=markdown_to_html(
                 "### Target population identified\n\n"
-                "I matched the available mitigation information to these target-population groups:\n\n"
+                "I identified these target-population groups from the mitigation information:\n\n"
                 f"{target_lines or '- No target population matched.'}\n\n"
                 f"{f'> {error_reason}\n\n' if error_reason else ''}"
                 "Choose **Continue** to use these groups, or **Add more target population** "
@@ -2669,6 +2727,287 @@ Return Markdown only.
             for question, answers in grouped.items()
             if answers
         ] + passthrough
+
+    @classmethod
+    def _normalize_population_group_labels(cls, labels: list[str]) -> list[str]:
+        normalized_labels: list[str] = []
+        seen: set[str] = set()
+        for label in labels:
+            normalized = cls._normalize_population_group_label(label)
+            key = normalize(normalized)
+            if normalized and key not in seen:
+                seen.add(key)
+                normalized_labels.append(normalized)
+        return normalized_labels
+
+    @classmethod
+    def _normalize_population_group_label(cls, label: object) -> str:
+        raw = re.sub(r"\s+", " ", str(label or "")).strip(" .")
+        if not raw:
+            return ""
+        question = ""
+        answer = ""
+        if ":" in raw:
+            question, answer = [part.strip() for part in raw.split(":", 1)]
+        question_key = normalize_for_match(question)
+        answer_key = normalize_for_match(answer)
+        full_key = normalize_for_match(raw)
+        compact_key = compact_for_match(raw)
+
+        mapped = cls._population_group_from_question_answer(question_key, answer_key)
+        if mapped:
+            return mapped
+
+        phrase_map: tuple[tuple[tuple[str, ...], str], ...] = (
+            (
+                (
+                    "households with repeated utility bill arrears",
+                    "repeated utility bill arrears",
+                    "utility bill arrears",
+                    "utility arrears",
+                    "arrears on utility bills",
+                    "struggling to pay bills each month",
+                    "high energy bills",
+                    "issue high energy bills",
+                    "energy affordability",
+                ),
+                "Households experiencing energy affordability challenges",
+            ),
+            (
+                (
+                    "living in a house with low energy efficiency",
+                    "low energy efficiency",
+                    "energy inefficient homes",
+                    "energy inefficient housing",
+                    "poorly insulated homes",
+                    "poor insulation",
+                ),
+                "Residents of energy-inefficient homes",
+            ),
+            (
+                (
+                    "countries with higher electricity consumption",
+                    "higher electricity consumption",
+                    "electricity consumption",
+                    "high energy consumption",
+                ),
+                "Residents of high-energy-consumption regions",
+            ),
+            (
+                (
+                    "countries with higher cold home pct",
+                    "cold home pct",
+                    "cold homes",
+                    "inadequate heating",
+                ),
+                "Residents of cold or inadequately heated homes",
+            ),
+            (
+                (
+                    "countries with higher cost overburden",
+                    "cost overburden",
+                    "housing cost overburden",
+                ),
+                "Households facing housing-cost pressure",
+            ),
+            (
+                (
+                    "damp",
+                    "mould",
+                    "mold",
+                    "leak",
+                    "rot",
+                    "home problems count",
+                    "higher home problems count",
+                ),
+                "Residents of poor-quality housing",
+            ),
+            (
+                ("low income", "income poor", "financially vulnerable"),
+                "Low-income households",
+            ),
+            (
+                ("medium income", "middle income"),
+                "Middle-income households",
+            ),
+            (
+                ("high income", "wealthy households"),
+                "High-income households",
+            ),
+            (
+                ("tenant", "tenants", "renters", "renting"),
+                "Tenant households",
+            ),
+            (
+                ("homeowner", "home owner", "home owners", "owner occupiers"),
+                "Homeowner households",
+            ),
+            (
+                ("unemployed", "jobless"),
+                "Unemployed people",
+            ),
+            (
+                ("retired", "retirees", "pensioners"),
+                "Retired people",
+            ),
+            (
+                ("women", "woman", "female"),
+                "Women",
+            ),
+            (
+                ("non binary", "nonbinary"),
+                "Non-binary people",
+            ),
+            (
+                ("people with disabilities", "disabled people", "long term condition", "chronic illness"),
+                "People with disabilities or long-term conditions",
+            ),
+            (
+                ("rural residents", "rural area", "remote communities"),
+                "Rural residents",
+            ),
+            (
+                ("urban residents", "urban area", "city residents"),
+                "Urban residents",
+            ),
+        )
+        for phrases, canonical in phrase_map:
+            for phrase in phrases:
+                phrase_key = normalize_for_match(phrase)
+                phrase_compact = compact_for_match(phrase)
+                if (
+                    phrase_key and phrase_key in full_key
+                    or phrase_compact and phrase_compact in compact_key
+                ):
+                    return canonical
+
+        if question_key.startswith("countries with higher"):
+            remainder = re.sub(
+                r"(?i)^countries with higher\s+",
+                "",
+                raw,
+            ).strip()
+            if remainder:
+                descriptor = cls._population_region_descriptor(remainder)
+                return f"Residents of {descriptor} regions"
+        if full_key.startswith("countries with higher"):
+            remainder = re.sub(
+                r"(?i)^countries with higher\s+",
+                "",
+                raw,
+            ).strip()
+            if remainder:
+                descriptor = cls._population_region_descriptor(remainder)
+                return f"Residents of {descriptor} regions"
+
+        return cls._people_centric_label(raw)
+
+    @staticmethod
+    def _population_group_from_question_answer(question_key: str, answer_key: str) -> str:
+        if not question_key:
+            return ""
+        mappings: dict[tuple[str, str], str] = {
+            ("level of income", "low income"): "Low-income households",
+            ("level of income", "medium income"): "Middle-income households",
+            ("level of income", "high income"): "High-income households",
+            ("living in a house with low energy efficiency", "yes"): (
+                "Residents of energy-inefficient homes"
+            ),
+            ("tenancy status", "tenant"): "Tenant households",
+            ("tenancy status", "homeowner"): "Homeowner households",
+            ("economic status", "unemployed"): "Unemployed people",
+            ("economic status", "employed"): "Employed people",
+            ("economic status", "retired"): "Retired people",
+            ("gender", "woman"): "Women",
+            ("gender", "male"): "Men",
+            ("gender", "non binary"): "Non-binary people",
+            ("disability of long term condition", "yes"): (
+                "People with disabilities or long-term conditions"
+            ),
+            ("location of residency", "urban area"): "Urban residents",
+            ("location of residency", "suburban area"): "Suburban residents",
+            ("location of residency", "rural area"): "Rural residents",
+            ("need of a car to perform daily activities", "yes"): "Car-dependent residents",
+            ("care responsibility as the main activity", "yes remunerated"): "Paid carers",
+            ("care responsibility as the main activity", "yes non remunerated"): "Unpaid carers",
+            ("eu citizenship", "no"): "Non-EU citizens",
+            ("eu citizenship", "yes"): "EU citizens",
+            ("level of education", "no formal education"): "People with no formal education",
+            ("level of education", "primary"): "People with primary education",
+            ("level of education", "secondary"): "People with secondary education",
+            ("level of education", "further normal education"): (
+                "People with further or higher education"
+            ),
+            ("age range", "18"): "Children and young people",
+            ("age range", "25 35"): "Young adults",
+            ("age range", "35 65"): "Working-age adults",
+            ("age range", "65"): "Older adults",
+        }
+        mapped = mappings.get((question_key, answer_key))
+        if mapped:
+            return mapped
+        if answer_key in {"yes", "no"}:
+            descriptor = ChatService._humanize_population_fragment(question_key)
+            return f"People affected by {descriptor}" if descriptor else ""
+        if answer_key:
+            return ChatService._people_centric_label(
+                ChatService._humanize_population_fragment(answer_key)
+            )
+        return ""
+
+    @staticmethod
+    def _population_region_descriptor(value: str) -> str:
+        fragment = ChatService._humanize_population_fragment(value)
+        fragment = re.sub(r"\b(pct|percentage|rate|count)\b", "", fragment, flags=re.I)
+        fragment = re.sub(r"\s+", " ", fragment).strip().lower()
+        if not fragment:
+            return "higher-risk"
+        return fragment.replace(" ", "-")
+
+    @staticmethod
+    def _humanize_population_fragment(value: str) -> str:
+        words = normalize_for_match(value)
+        replacements = {
+            "electricity consumption": "electricity consumption",
+            "cold home": "cold homes",
+            "cost overburden": "housing cost pressure",
+            "home problems count": "home-quality problems",
+        }
+        for old, new in replacements.items():
+            words = words.replace(old, new)
+        return re.sub(r"\s+", " ", words).strip()
+
+    @staticmethod
+    def _people_centric_label(value: str) -> str:
+        cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" .")
+        if not cleaned:
+            return ""
+        lower = cleaned.casefold()
+        people_prefixes = (
+            "people",
+            "households",
+            "residents",
+            "families",
+            "workers",
+            "tenants",
+            "homeowners",
+            "women",
+            "men",
+            "children",
+            "older adults",
+            "young adults",
+            "students",
+            "carers",
+            "businesses",
+            "communities",
+        )
+        if lower.startswith(people_prefixes):
+            return cleaned[:1].upper() + cleaned[1:]
+        if any(term in lower for term in ("household", "family", "families")):
+            return cleaned[:1].upper() + cleaned[1:]
+        if "business" in lower or "sme" in lower:
+            return cleaned[:1].upper() + cleaned[1:]
+        return f"People in {cleaned[:1].lower() + cleaned[1:]}"
 
     @staticmethod
     def _append_mitigation_clarification_message(
@@ -3021,6 +3360,9 @@ Return Markdown only.
             )
         ).all()
         if not rows:
+            stored_profile_labels = self._target_population_labels_from_stored_profiles(session)
+            if stored_profile_labels:
+                return stored_profile_labels
             selected_labels = self._selected_target_population_labels(session)
             return selected_labels or self._selected_hazard_profile_names_for_venn(session)
 
@@ -3065,6 +3407,22 @@ Return Markdown only.
             for label in profile_labels:
                 key = normalize(label)
                 if key not in seen:
+                    seen.add(key)
+                    labels.append(label)
+        return labels
+
+    def _target_population_labels_from_stored_profiles(self, session: ChatSession) -> list[str]:
+        if not session.selected_hazard:
+            return []
+        labels: list[str] = []
+        seen: set[str] = set()
+        for profile in self._stored_hazard_profiles(session, session.selected_hazard):
+            profile_labels = profile.get("target_population_labels")
+            values = profile_labels if isinstance(profile_labels, list) else []
+            for value in values:
+                label = str(value or "").strip()
+                key = normalize(label)
+                if label and key not in seen:
                     seen.add(key)
                     labels.append(label)
         return labels
@@ -3192,10 +3550,24 @@ Return Markdown only.
             f"- {int(row.id)} | {row.question}: {row.option}" for row in rows
         )
         context = """
-You map a user's free-text description of mitigation target groups to a fixed
-target-population option list. Select every option that is explicitly stated
-or clearly implied. Do not invent characteristics. Return JSON only in the
-form {"option_ids": [1, 2]}. Use an empty list when nothing can be matched.
+You extract mitigation target-population groups from free text.
+
+First map groups to the fixed target-population option list when an option is
+explicitly stated or clearly implied. Then, if the text contains a valid target
+population group that is not represented by the fixed option list, include that
+group in additional_groups.
+
+Valid target population groups are recognizable groups of people, households,
+businesses, institutions, communities, or places that could be targeted by a
+mitigation measure. Do not include policy actions, hazards, mechanisms, vague
+concepts, evidence sources, or random/unrecognizable text. Do not invent
+characteristics. Do not repeat an additional group already covered by a selected
+option.
+
+Return JSON only in this form:
+{"option_ids": [1, 2], "additional_groups": ["small businesses"]}
+
+Use empty arrays when no valid target population group is found.
 """.strip()
         response = await ask_llm_chat(
             context=context,
@@ -3212,6 +3584,7 @@ form {"option_ids": [1, 2]}. Use an empty list when nothing can be matched.
             max_tokens=220,
         )
         matched_ids: set[int] = set()
+        additional_groups: list[str] = []
         if not is_llm_unavailable_response(response):
             try:
                 parsed = json.loads(self._extract_json_object(response))
@@ -3226,13 +3599,59 @@ form {"option_ids": [1, 2]}. Use an empty list when nothing can be matched.
                         continue
                     if option_id in allowed_ids:
                         matched_ids.add(option_id)
+            raw_groups = parsed.get("additional_groups") if isinstance(parsed, dict) else []
+            if isinstance(raw_groups, list):
+                for raw_group in raw_groups:
+                    group = re.sub(r"\s+", " ", str(raw_group or "")).strip()
+                    if self._is_valid_custom_target_population_group(group):
+                        additional_groups.append(group)
 
         matched_ids.update(self._fallback_target_population_option_ids(answer, rows))
-        return [
+        labels = [
             f"{row.question}: {row.option}"
             for row in rows
             if int(row.id) in matched_ids
         ]
+        return self._merge_target_population_labels(labels, additional_groups)
+
+    @staticmethod
+    def _is_valid_custom_target_population_group(group: str) -> bool:
+        cleaned = re.sub(r"\s+", " ", str(group or "")).strip(" .,:;")
+        if len(cleaned) < 3:
+            return False
+        if len(cleaned) > 120:
+            return False
+        normalized = normalize_for_match(cleaned)
+        compact_key = compact_for_match(cleaned)
+        if len(normalized) < 3:
+            return False
+        if re.fullmatch(r"(.)\1{3,}", normalized):
+            return False
+        invalid_terms = {
+            "none",
+            "no",
+            "noadditional",
+            "notapplicable",
+            "n/a",
+            "na",
+            "policy",
+            "mitigation",
+            "hazard",
+            "measure",
+            "evidence",
+            "targetpopulation",
+            "noadditionaltargetpopulation",
+            "notargetpopulation",
+            "noneidentified",
+        }
+        if normalized in {normalize_for_match(term) for term in invalid_terms}:
+            return False
+        compact_invalid_terms = {compact_for_match(term) for term in invalid_terms}
+        if compact_key in compact_invalid_terms:
+            return False
+        if compact_key.startswith("noadditional") or compact_key.startswith("notarget"):
+            return False
+        return bool(re.search(r"[A-Za-z]", cleaned))
 
     @staticmethod
     def _fallback_target_population_option_ids(answer: str, rows: list[object]) -> set[int]:
@@ -3396,8 +3815,12 @@ form {"option_ids": [1, 2]}. Use an empty list when nothing can be matched.
             answer,
             self._mitigation_target_affected_groups_json(session),
         )
-        affected_target_populations = self._affected_profile_target_population_labels(session)
-        mitigation_target_populations = session.mitigation_target_population or []
+        affected_target_populations = self._normalize_population_group_labels(
+            self._affected_profile_target_population_labels(session)
+        )
+        mitigation_target_populations = self._normalize_population_group_labels(
+            session.mitigation_target_population or []
+        )
         affected_target_population_display = self._group_target_population_labels(
             affected_target_populations
         )
@@ -4244,28 +4667,36 @@ form {"option_ids": [1, 2]}. Use an empty list when nothing can be matched.
             session,
             (
                 f"For the selected hazard '{session.selected_hazard}', provide practical "
-                "considerations and practical policy recommendations. Use the matched "
+                "considerations. Use the matched "
                 "mitigation-measure examples for the same sector, hazard, and affected "
                 "profiles as the main policy-design evidence when they are available; "
-                "synthesize them into recommendations instead of copying them verbatim. "
+                "synthesize them into implementation guidance instead of copying them verbatim. "
                 "Use the loaded sector statistical context to explain why those "
-                "recommendations fit the affected profiles.\n\n"
+                "implementation examples fit the affected profiles.\n\n"
                 "Socio-demographic profiles:\n"
                 f"{format_all_dgs(session)}\n\n"
                 "Selected target populations/groups:\n"
                 f"{self._mitigation_target_population_text(session)}\n\n"
                 "Matched mitigation-measure examples:\n"
                 f"{matched_examples or '- No matching examples were found for this sector, hazard, and profile set.'}\n\n"
-                "Answer in Markdown with these two short sections only: Practical "
-                "Considerations and Practical Policy Recommendations. Keep bullets "
-                "concise and do not create a final mitigation measure yet."
+                "Answer in Markdown with one short section only: Practical "
+                "Considerations. Keep bullets concise and do not create a final "
+                "mitigation measure yet. Do not include a Current Policy "
+                "Implementation section; it will be rendered separately from the "
+                "database examples."
             ),
         )
-        return await ask_llm_chat(
+        practical_considerations = await ask_llm_chat(
             context=context,
             messages=messages,
             temperature=0.25,
             max_tokens=750,
+        )
+        current_policy = self._current_policy_implementations_section(session)
+        return "\n\n".join(
+            section.strip()
+            for section in (practical_considerations, current_policy)
+            if section and section.strip()
         )
 
     async def _mitigation_review_response(self, session: ChatSession, user_message: str) -> str:
@@ -5412,10 +5843,19 @@ Do not invent characteristics that were not selected.
             for hazard in (session.custom_hazards or [])
             if ChatService._stored_hazard_profiles(session, hazard)
         ]
+        additional_hazards = [
+            hazard
+            for hazard in (session.additional_hazards or [])
+            if ChatService._stored_hazard_profiles(session, hazard)
+        ]
         session.hazards = system_hazards
         session.custom_hazards = custom_hazards
+        session.additional_hazards = additional_hazards
 
-        allowed = {normalize(hazard) for hazard in [*system_hazards, *custom_hazards]}
+        allowed = {
+            normalize(hazard)
+            for hazard in [*system_hazards, *custom_hazards, *additional_hazards]
+        }
         session.hazard_profiles = {
             hazard: profiles
             for hazard, profiles in (session.hazard_profiles or {}).items()
@@ -6010,6 +6450,104 @@ Do not invent characteristics that were not selected.
             enriched.append(updated)
         return enriched
 
+    async def _additional_profiles_with_population_context(
+        self,
+        session: ChatSession,
+        hazard: str,
+        profiles: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        if not profiles:
+            return profiles
+        country = self.db.get(Country, session.country_id) if session.country_id else None
+        sector = self.db.get(Sector, session.sector_id) if session.sector_id else None
+        region = self.db.get(Region, session.region_id) if session.region_id else None
+        if country is None or sector is None:
+            return profiles
+        country_name = str(country.name or "").strip()
+        region_name = str((region.name if region else country.name) or "").strip()
+        sector_name = str(sector.name or "").strip()
+        if not country_name or not region_name or not sector_name:
+            return profiles
+
+        enriched: list[dict[str, str]] = []
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                enriched.append(profile)
+                continue
+            lookup_labels = self._additional_profile_population_lookup_labels(profile)
+            if not lookup_labels:
+                enriched.append(profile)
+                continue
+            population_profiles: list[dict[str, object]] = []
+            for label in lookup_labels:
+                try:
+                    prevalence = await self.eurostat.get_prevalence(
+                        label,
+                        country_code=country_name,
+                        nuts_code=region_name,
+                        sector=sector_name,
+                        hazard=hazard,
+                        confirmed_predictor_category=label,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to fetch Eurostat population for additional hazard profile"
+                    )
+                    continue
+                if prevalence is None:
+                    continue
+                population_profiles.append(
+                    {
+                        "name": label,
+                        "eurostat_population_cache_id": prevalence.get(
+                            "eurostat_population_cache_id"
+                        ),
+                        "population_pct": prevalence.get("population_pct"),
+                        "national_population_pct": prevalence.get("national_population_pct"),
+                        "source": prevalence.get("source"),
+                        "dataset": prevalence.get("dataset"),
+                        "geo": prevalence.get("geo"),
+                    }
+                )
+            percentages = (
+                self._population_context_percentages(population_profiles)
+                if population_profiles
+                else None
+            )
+            if percentages is None:
+                enriched.append(profile)
+                continue
+            updated = dict(profile)
+            updated["regional_population_pct"] = percentages[0]
+            updated["national_population_pct"] = percentages[1]
+            updated["population_context"] = population_profiles
+            updated["population_source"] = "Eurostat"
+            updated["population_lookup_labels"] = lookup_labels
+            enriched.append(updated)
+        return enriched
+
+    @staticmethod
+    def _additional_profile_population_lookup_labels(
+        profile: dict[str, object],
+    ) -> list[str]:
+        labels: list[str] = []
+        raw_labels = profile.get("target_population_labels")
+        if isinstance(raw_labels, list):
+            labels.extend(str(label).strip() for label in raw_labels if str(label).strip())
+        if not labels:
+            name = str(profile.get("name") or profile.get("profile") or "").strip()
+            if name:
+                labels.append(name)
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for label in labels:
+            key = normalize(label)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(label)
+        return deduped
+
     @staticmethod
     def _profile_has_odds_ratio_below_one(profile: dict[str, object]) -> bool:
         candidates: list[object] = [profile]
@@ -6516,6 +7054,8 @@ is no clear match, return an empty matched_profiles array.
                 statistical_basis = str(item.get("statistical_basis") or "").strip()
                 source = str(item.get("source") or "").strip()
                 metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+                target_population_option_ids = item.get("target_population_option_ids")
+                target_population_labels = item.get("target_population_labels")
             else:
                 name = str(item).strip()
                 explanation = ""
@@ -6524,6 +7064,8 @@ is no clear match, return an empty matched_profiles array.
                 statistical_basis = ""
                 source = ""
                 metadata = {}
+                target_population_option_ids = []
+                target_population_labels = []
             key = normalize(name)
             if not name or key in seen:
                 continue
@@ -6538,6 +7080,16 @@ is no clear match, return an empty matched_profiles array.
                     "statistical_basis": statistical_basis,
                     "source": source,
                     "metadata": metadata,
+                    "target_population_option_ids": (
+                        list(target_population_option_ids)
+                        if isinstance(target_population_option_ids, list)
+                        else []
+                    ),
+                    "target_population_labels": (
+                        list(target_population_labels)
+                        if isinstance(target_population_labels, list)
+                        else []
+                    ),
                 }
             )
         return profiles
@@ -6740,6 +7292,7 @@ is no clear match, return an empty matched_profiles array.
         practical_headings = (
             "practical considerations",
             "practical policy recommendations",
+            "current policy implementation",
         )
         kept_lines: list[str] = []
         skipping_heading_level: int | None = None
@@ -6803,8 +7356,127 @@ is no clear match, return an empty matched_profiles array.
             hazards.append(row)
         return hazards
 
+    def _additional_hazards_for_context(self, session: ChatSession) -> list[str]:
+        if session.country_id is None or session.sector_id is None:
+            return []
+        rows = self.db.execute(
+            select(AdditionalHazard, AdditionalHazardProfile)
+            .outerjoin(
+                AdditionalHazardProfile,
+                AdditionalHazardProfile.additional_hazard_id == AdditionalHazard.id,
+            )
+            .where(
+                AdditionalHazard.country_id == session.country_id,
+                AdditionalHazard.sector_id == session.sector_id,
+            )
+            .order_by(
+                AdditionalHazard.csv_row_number,
+                AdditionalHazard.name,
+                AdditionalHazardProfile.csv_row_number,
+                AdditionalHazardProfile.profile,
+            )
+        ).all()
+        profile_ids = [
+            int(profile_row.id)
+            for _, profile_row in rows
+            if profile_row is not None and isinstance(profile_row.id, int)
+        ]
+        target_population_by_profile = (
+            self._additional_hazard_profile_target_population_map(profile_ids)
+            if profile_ids
+            else {}
+        )
+
+        existing_names = {
+            normalize(hazard)
+            for hazard in [
+                *(session.hazards or []),
+                *(session.custom_hazards or []),
+            ]
+        }
+        seen: set[str] = set()
+        hazards: list[str] = []
+        profiles_by_hazard: dict[str, list[dict[str, str]]] = {}
+        for hazard_row, profile_row in rows:
+            hazard = str(hazard_row.name or "").strip()
+            key = normalize(hazard)
+            if not hazard or key in existing_names:
+                continue
+            if key not in seen:
+                seen.add(key)
+                hazards.append(hazard)
+            if profile_row is None or not str(profile_row.profile or "").strip():
+                continue
+            mapped_targets = target_population_by_profile.get(int(profile_row.id), [])
+            profiles_by_hazard.setdefault(hazard, []).append(
+                {
+                    "name": str(profile_row.profile).strip(),
+                    "profile": str(profile_row.profile).strip(),
+                    "explanation": str(profile_row.evidence or "").strip(),
+                    "statistical_basis": str(profile_row.reference or "").strip(),
+                    "source": "d4_2_pdf",
+                    "target_population_option_ids": [
+                        int(item["option_id"]) for item in mapped_targets
+                    ],
+                    "target_population_labels": [
+                        str(item["label"]) for item in mapped_targets
+                    ],
+                }
+            )
+        if profiles_by_hazard:
+            session.hazard_profiles = {
+                **(session.hazard_profiles or {}),
+                **profiles_by_hazard,
+            }
+        return hazards
+
     def _is_saved_custom_hazard(self, session: ChatSession, hazard: str) -> bool:
         return any(normalize(hazard) == normalize(item) for item in (session.custom_hazards or []))
+
+    def _is_additional_hazard(self, session: ChatSession, hazard: str) -> bool:
+        return any(normalize(hazard) == normalize(item) for item in (session.additional_hazards or []))
+
+    def _additional_hazard_profile_target_population_map(
+        self, profile_ids: list[int]
+    ) -> dict[int, list[dict[str, object]]]:
+        if not profile_ids:
+            return {}
+        rows = self.db.execute(
+            select(
+                AdditionalHazardProfileTargetPopulation.additional_hazard_profile_id,
+                QuestionOption.id,
+                EvaluationQuestion.question,
+                QuestionOption.option,
+            )
+            .join(
+                QuestionOption,
+                QuestionOption.id
+                == AdditionalHazardProfileTargetPopulation.question_option_id,
+            )
+            .join(EvaluationQuestion, EvaluationQuestion.id == QuestionOption.question_id)
+            .where(
+                AdditionalHazardProfileTargetPopulation.additional_hazard_profile_id.in_(
+                    profile_ids
+                ),
+                EvaluationQuestion.active.is_(True),
+                EvaluationQuestion.category == "target_population",
+            )
+            .order_by(
+                AdditionalHazardProfileTargetPopulation.additional_hazard_profile_id,
+                EvaluationQuestion.sort_order,
+                QuestionOption.id,
+            )
+        ).all()
+        mapped: dict[int, list[dict[str, object]]] = {}
+        for row in rows:
+            profile_id = int(row.additional_hazard_profile_id)
+            mapped.setdefault(profile_id, []).append(
+                {
+                    "option_id": int(row.id),
+                    "label": f"{row.question}: {row.option}",
+                }
+            )
+        return mapped
 
     def _target_population_answers_for_saved_hazard(
         self, session: ChatSession, hazard: str
@@ -10896,44 +11568,9 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         return profile_ids
 
     def _matched_mitigation_measure_examples(
-        self, session: ChatSession, limit: int = 8
+        self, session: ChatSession, limit: int | None = None
     ) -> str:
-        if session.sector_id is None:
-            return ""
-
-        system_hazard_id = self._selected_system_hazard_id(session)
-        has_selected_profiles = bool(self._selected_hazard_profile_names(session))
-        profile_ids = self._selected_system_profile_ids(session, system_hazard_id)
-
-        filters = [
-            MitigationMeasureExample.sector_id == session.sector_id,
-            MitigationMeasureExample.source == "mm_csv",
-        ]
-        if system_hazard_id is not None:
-            filters.append(MitigationMeasureExample.system_hazard_id == system_hazard_id)
-        if profile_ids:
-            filters.append(
-                MitigationMeasureExample.system_hazard_socio_demographic_id.in_(profile_ids)
-            )
-
-        rows = self.db.scalars(
-            select(MitigationMeasureExample)
-            .where(*filters)
-            .order_by(MitigationMeasureExample.csv_row_number, MitigationMeasureExample.id)
-            .limit(limit)
-        ).all()
-
-        if not rows and system_hazard_id is not None and not has_selected_profiles:
-            rows = self.db.scalars(
-                select(MitigationMeasureExample)
-                .where(
-                    MitigationMeasureExample.sector_id == session.sector_id,
-                    MitigationMeasureExample.source == "mm_csv",
-                    MitigationMeasureExample.system_hazard_id == system_hazard_id,
-                )
-                .order_by(MitigationMeasureExample.csv_row_number, MitigationMeasureExample.id)
-                .limit(limit)
-            ).all()
+        rows = self._matched_mitigation_measure_example_rows(session, limit=limit)
 
         if not rows:
             return ""
@@ -10941,21 +11578,201 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         lines: list[str] = []
         for index, example in enumerate(rows, start=1):
             profile = str(example.profile_label or "Matched profile").strip()
-            summary = str(example.implementation_summary or "").strip()
+            summary = self._simplify_mitigation_implementation_summary(
+                str(example.implementation_summary or "")
+            )
             evidence = str(example.evidence or "").strip()
             country = str(example.country_city or "").strip()
             case_study = str(example.policy_case_study or "").strip()
+            reference_links = str(example.reference_links or "").strip()
             details: list[str] = [f"measure: {example.measure}"]
             if summary:
                 details.append(f"implementation: {summary}")
             if evidence:
                 details.append(f"evidence: {evidence}")
+            if country:
+                details.append(f"implemented country/city: {country}")
             if case_study or country:
                 details.append(
                     f"case: {case_study}{f' ({country})' if country else ''}"
                 )
+            if reference_links:
+                details.append(
+                    "reference links: "
+                    + self._format_mitigation_reference_links(reference_links)
+                )
             lines.append(f"{index}. Profile '{profile}' - " + " | ".join(details))
         return "\n".join(lines)
+
+    def _matched_mitigation_measure_example_rows(
+        self, session: ChatSession, limit: int | None = None
+    ) -> list[MitigationMeasureExample]:
+        if session.sector_id is None:
+            return []
+
+        system_hazard_id = self._selected_system_hazard_id(session)
+
+        filters = [
+            MitigationMeasureExample.sector_id == session.sector_id,
+            MitigationMeasureExample.source == "mm_csv",
+        ]
+        if system_hazard_id is not None:
+            filters.append(MitigationMeasureExample.system_hazard_id == system_hazard_id)
+
+        query = (
+            select(MitigationMeasureExample)
+            .where(*filters)
+            .order_by(MitigationMeasureExample.csv_row_number, MitigationMeasureExample.id)
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        rows = self.db.scalars(query).all()
+
+        if not rows and system_hazard_id is not None:
+            fallback_query = (
+                select(MitigationMeasureExample)
+                .where(
+                    MitigationMeasureExample.sector_id == session.sector_id,
+                    MitigationMeasureExample.source == "mm_csv",
+                )
+                .order_by(MitigationMeasureExample.csv_row_number, MitigationMeasureExample.id)
+            )
+            if limit is not None:
+                fallback_query = fallback_query.limit(limit)
+            rows = self.db.scalars(fallback_query).all()
+
+        return list(rows)
+
+    def _current_policy_implementations_section(
+        self, session: ChatSession, limit: int | None = None
+    ) -> str:
+        rows = self._matched_mitigation_measure_example_rows(session, limit=limit)
+        if not rows:
+            return (
+                "## Current Policy Implementations\n\n"
+                "No matching current policy implementations were found for this "
+                "sector, hazard, and profile set."
+            )
+
+        sections = ["## Current Policy Implementations"]
+        grouped_examples: dict[str, dict[str, object]] = {}
+        for example in rows:
+            measure = normalize_markdown_text(str(example.measure or "")).strip()
+            if not measure:
+                continue
+            measure_key = normalize_for_match(measure)
+            if not measure_key:
+                continue
+            group = grouped_examples.setdefault(
+                measure_key,
+                {
+                    "measure": measure,
+                    "countries": [],
+                    "summaries": [],
+                    "evidence": [],
+                    "reference_links": [],
+                },
+            )
+
+            country = normalize_markdown_text(str(example.country_city or "")).strip()
+            evidence = normalize_markdown_text(str(example.evidence or "")).strip()
+            reference_links = str(example.reference_links or "").strip()
+            summary = self._simplify_mitigation_implementation_summary(
+                str(example.implementation_summary or "")
+            )
+            case_study = normalize_markdown_text(str(example.policy_case_study or "")).strip()
+            summary_text = summary or case_study
+
+            self._append_unique_text(group["countries"], country)
+            self._append_unique_text(group["summaries"], summary_text)
+            self._append_unique_text(group["evidence"], evidence)
+            for link in self._mitigation_reference_link_values(reference_links):
+                self._append_unique_text(group["reference_links"], link)
+
+        for group in grouped_examples.values():
+            measure = str(group["measure"])
+            countries = group["countries"]
+            summaries = group["summaries"]
+            evidence_items = group["evidence"]
+            reference_links = group["reference_links"]
+
+            details: list[str] = []
+            if countries:
+                details.append(
+                    "- **Implemented in:** " + "; ".join(str(item) for item in countries)
+                )
+            if summaries:
+                details.append(
+                    "- **Summary:** " + " ".join(str(item) for item in summaries)
+                )
+            if evidence_items:
+                details.append(
+                    "- **Evidence:** " + " ".join(str(item) for item in evidence_items)
+                )
+            if reference_links:
+                details.append(
+                    "- **Reference links:** "
+                    + self._format_mitigation_reference_links("; ".join(str(item) for item in reference_links))
+                )
+
+            if not details:
+                details.append("- No implementation details were provided for this example.")
+
+            sections.append(f"### {measure}\n\n" + "\n".join(details))
+
+        return "\n\n".join(sections)
+
+    def _current_policy_mitigation_measure(self, session: ChatSession) -> str:
+        for example in self._matched_mitigation_measure_example_rows(session, limit=None):
+            measure = normalize_markdown_text(str(example.measure or "")).strip()
+            if measure:
+                return measure
+        return ""
+
+    @staticmethod
+    def _append_unique_text(items: object, value: str) -> None:
+        if not isinstance(items, list):
+            return
+        cleaned = re.sub(r"\s+", " ", str(value or "")).strip()
+        if not cleaned:
+            return
+        if normalize_for_match(cleaned) not in {normalize_for_match(str(item)) for item in items}:
+            items.append(cleaned)
+
+    @staticmethod
+    def _mitigation_reference_link_values(reference_links: str) -> list[str]:
+        links = re.findall(r"https?://[^\s;,]+", reference_links)
+        if links:
+            return links
+        cleaned = re.sub(r"\s+", " ", reference_links or "").strip()
+        return [cleaned] if cleaned else []
+
+    @staticmethod
+    def _simplify_mitigation_implementation_summary(summary: str) -> str:
+        cleaned = normalize_markdown_text(str(summary or "")).strip()
+        if not cleaned:
+            return ""
+        cleaned = re.sub(
+            r'(?i)^for\s+the\s+profile\s+["“][^"”]+["”]\s*,?\s*',
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(
+            r"(?i)^for\s+the\s+profile\s+[^,]+,\s*",
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if not cleaned:
+            return ""
+        return cleaned[:1].upper() + cleaned[1:]
+
+    @staticmethod
+    def _format_mitigation_reference_links(reference_links: str) -> str:
+        links = re.findall(r"https?://[^\s;,]+", reference_links)
+        if not links:
+            return reference_links.strip()
+        return "; ".join(f"[Reference {index}]({link})" for index, link in enumerate(links, start=1))
 
     def _local_mitigation_measure_error(self, mitigation_measure: str) -> str | None:
         if self._is_invalid_user_text(mitigation_measure):

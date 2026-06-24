@@ -1,0 +1,669 @@
+
+
+--- PAGE 43 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 43  
+ 
+4. Twin transition challenges identified in the labs 
+This chapter reports on the prioritised sectoral challenges identified during the first FITTER-EU in-presence 
+labs, in particular within ‘The systemic dimensions of challenges’ session part of the of the agenda of the 
+first lab —see section 2.3.1—. During this session, after individually identifying challenges affecting 
+vulnerable profiles — conducted through the guided brainstorming exercise with personas — lab 
+participants were guided to consider the most pressing negative effects of the twin tr ansition in each 
+sector. This served as the starting point for building the system maps and proposing mitigation measures, 
+whose aim was to address these challenges. 
+4.1. Energy sector 
+Across all six countries, participants identified affordability constraints and energy poverty as central 
+structural barriers to a fair energy transition. In Hungary, Spain, Portugal and Italy, energy poverty was 
+described as severe and multidimensional, p articularly where low income intersects with age, disability, 
+unemployment, precarious work, rural or peripheral residence, and single-person households. In Germany 
+and Ireland, affordability pressures were strongly linked to rising rents and energy costs,  which reduce 
+disposable income and limit the capacity to invest in renewable energy, energy -efficient appliances, or 
+sustainable mobility choices. In all contexts, participants highlighted that subsidy schemes for solar panels, 
+heat pumps or retrofitting require upfront investment, thereby structurally excluding low -income 
+households. In Spain and Italy, limited digital literacy and complex application procedures further restrict 
+access to bonuses and incentives. 
+A closely related cross -country issue concerns the landlord –tenant divide and housing insecurity, 
+particularly salient in Germany, Ireland and Portugal, and present to a lesser extent in Italy. Lab discussions 
+emphasised that tenants lack agency to retrofit dwellings or join energy communities, while homeowners 
+disproportionately benefit from incentives. In Germany, modernisation levies were reported to increase 
+rents and exacerbate social segregation, contributing to clustering by income and in some cases prompting 
+suburban displacement. This dynamic was linked to increased commuting distances and fossil fuel 
+dependency. German participants also raised the issue of “remanence” (under -occupation of oversi sed 
+dwellings) and criticised housing policy for following a predominantly market -oriented logic that neglects 
+systemic inefficiencies. In Ireland and Portugal, reduced decision -making autonomy and lack of tenure 
+security were highlighted as structural barriers. 
+All country labs pointed to policy design and governance gaps. A recurring concern was the mismatch 
+between ambitious climate targets and the socio -economic realities of vulnerable groups. Policies were 
+described as fragmented, technocratic, or overly focu sed on technological solutions without sufficient 
+attention to affordability, income constraints or social equity. In Italy, institutional fragmentation across 
+national, regional and local levels, uneven administrative capacity and bureaucratic complexity were 
+identified as major implementation barriers. In Hungary, participants stressed regulatory inconsistency, 
+frequent feed-in restrictions, and the influence of partisan political interests over energy policy decisions, 
+including preferential treatment of  certain investments and limited decentralisation. In Spain, a strong 
+policy–reality gap was discussed, including ineffective communication, non -transparent tariffs and 
+declining institutional trust. Irish participants highlighted the absence of a human -rights-based approach 
+and the limitations of one-size-fits-all policy design that does not sufficiently account for regional variation. 
+Portuguese discussions emphasised that existing measures are limited, fragmented and insufficiently 
+aligned with the real needs of financially fragile households. 
+
+
+--- PAGE 44 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 44  
+ 
+Market structure and price asymmetries emerged prominently in Hungary and Italy, and indirectly in 
+Germany and Spain. Italian participants described energy as being treated primarily as a market commodity 
+rather than a common good, with large operators ret aining most profits, energy sold to the grid poorly 
+remunerated, and purchased electricity remaining expensive. The proliferation of commercial offers was 
+seen as generating confusion and distrust. Hungarian labs highlighted state control of the grid, dist orted 
+market incentives, and reduced investor confidence. German discussions criticised the limited social 
+components in energy legislation (e.g. GEG), while Spanish participants referred to opaque tariffs and 
+service conditions. 
+Significant infrastructural and technological constraints were identified across Hungary, Ireland, Italy, 
+Germany and Portugal. These include insufficient grid capacity, weak local grids (particularly in small 
+municipalities), absence of smart -grid integra tion, widespread non -smart meters (Italy), and limited 
+storage infrastructure. Hungary and Ireland stressed challenges related to renewable intermittency and 
+limited economies of scale (e.g. district heating). Several countries reported shortages of qualified technical 
+professionals and insufficient investment in innovation targeting energy poverty reduction. In Germany, 
+limited mobility infrastructure and insufficient digitalisation were linked to suboptimal urban planning and 
+relocation pressures. 
+Environmental dimensions were discussed in connection with these structural constraints. Italy’s 
+dependence on fossil fuel imports was associated with geopolitical vulnerability and slow emissions 
+reduction. Hungary’s limited renewable integration contribu tes to continued pollution. Germany’s 
+emphasis on new construction over renovation was described as generating material waste and higher 
+energy consumption. Ireland and Portugal raised concerns about the environmental consequences of 
+limited retrofitting capacity and slow decarbonisation. 
+Finally, several country -specific elements emerged. German labs connected the housing crisis to risks of 
+social polarisation and democratic strain. Hungarian participants emphasised the geopolitical dimension of 
+energy policy and the overrid ing of environmental considerations by partisan or economic interests. 
+Spanish labs foregrounded digital exclusion and techno -ableism affecting older people and persons with 
+disabilities. Portuguese participants stressed demographic ageing, low levels of enga gement and l imited 
+organisational support. Italian participants underlined institutional fragmentation, highlighted regulatory 
+capacity constraints (e.g. ARERA, GSE), territorial disparities and the commodification of energy, while Irish 
+labs focused on tenure insecurity, time poverty and insufficient support for collective energy initiatives, as 
+well as limited skills within communities, and restrictions on commercial participation in energy 
+communities. 
+4.1.1. Germany 
+Sectoral challenges prioritised: High and rising rents 
+Key problems 
+• Tenancy / housing insecurity: 
+o High rents reduce tenants’ ability to invest in energy efficiency or renewable energy. 
+o The energy transition is increasingly perceived as a project of elites. 
+o Renting households cannot participate meaningfully in energy communities or self-
+generation (e.g., balcony modules have minimal impact due to long amortisation times). 
+o Modernisation levies and the consequent burden on tenants increase social inequality 
+and creates social divide and urban segregation connected to the clustering of people 
+with similar financial possibilities in neighbourhoods. 
+
+
+--- PAGE 45 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 45  
+ 
+o Rising rents leave less disposable income and it can lead to a movement out of overly 
+crowded cities into sub-urban and rural areas, changing working patterns, increasing the 
+mobility between place of work and of living. 
+o High individual mobility due to unaffordable housing often increases dependence on 
+fossil fuels for commuting. 
+• Policy gaps: 
+o Housing policy follows a neoliberal market logic, ignoring systemic issues like remanence 
+(tenants remaining in oversised apartments). 
+o Housing crisis (lack in available, decent and affordable housing) is turning into a threat to 
+democracy, since mostly the needs of the upper economic part of society are addressed 
+through policies (lack of social components in EEG-and GEG law). 
+o Political responses tend to treat symptoms, not underlying structural causes. 
+• Environmental challenges: 
+o Focus on new construction over renovation leads to higher energy consumption and 
+material waste. 
+o Tenants’ limited spending power reduces adoption of environmentally sustainable 
+behaviours ( e.g. renewable electricity choices, energy -efficient appliances or 
+environmentally friendly food or mobility choices). 
+• Technical and infrastructure constraints: 
+o Lack of mobility infrastructure prevents ideal urban planning (e.g., 15-min cities). 
+o Insufficient digitalisation and grid capacity, especially for those relocating to 
+suburban/rural areas. 
+4.1.2. Hungary 
+Sectoral challenges prioritised: 
+• Renewable energy sources also have environmental impacts, their production is fluctuating and 
+difficult to store, which poses a major challenge to the capacity of the electricity grid and requires 
+significant investment. 
+• Energy policy is closely intertwined with the struggle between different interest groups and 
+geopolitical forces, with continuous economic growth and consumerism pitted against 
+environmental constraints. 
+• Energy poverty is severe, the housing stock is energy inefficient, and energy prices are fixed by the 
+state. 
+Key problems 
+• Energy poverty 
+o Poorer households are excluded from using renewable energy. 
+o State policy sustains energy poverty instead of reducing it. 
+o Political polarisation hindering the effective management of energy poverty: party 
+sympathy determines attitudes towards energy poverty. 
+• Policy gaps 
+o State support for solar investments encourages development, but the system penalises 
+production fluctuations, feed-in restrictions are frequent and regulation lacks consistency. 
+o State control of the energy grid distorts the market and hinders innovation. 
+o Energy policy decisions are driven by partisan political logic. 
+
+
+--- PAGE 46 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 46  
+ 
+▪ State energy policy illegally favours certain investments (e.g. battery factories) 
+while lacking decentralisation. 
+▪ ‘Green’ policies are not enforced due to geopolitical interests. 
+▪ Economic rationality is overridden by partisan interests maintaining monopolies. 
+• Environmental negative effects: limited use of renewable energy sources causes pollution and 
+hampers the achievement of climate neutrality. 
+• Limited in infrastructure and technology 
+o Innovation and investments do not target technologies that reduce energy poverty. 
+o Due to shortcomings in education, research and technology, smart -grid integration is 
+absent. 
+• Distortions in the energy market reduce investment willingness and increase price fluctuations. 
+ 
+4.1.3. Ireland 
+Sectoral challenges prioritised: tenancy, access to finance. 
+Key problems 
+• Tenancy 
+o As tenants have no agency to retrofit, they are left further behind, widening divide 
+between homeowners and tenants. 
+• Access to finance 
+o Unavailability to afford upfront costs to retrofit. 
+o Increasing energy costs. 
+• Inadequate sectoral policies:  
+o Policies are targeted at individuals, but the transition policies are collective and do not take 
+a human rights approach. 
+o Policies do not enable security of tenure; targeted at those on middle to high income who 
+can advocate for themselves. 
+o Policy design following a one size fits all approach without considering local conditions into 
+account: policies should be targeted by regions/areas. 
+o Energy communities need to be incentivised but lack in skills, time poor, commercial 
+partners not allowed. 
+• Environmental challenges related to the limitations in retrofitting: increase of greenhouse 
+emissions. 
+• Technical and technological constraints to expand the energy transition: 
+o Limited supply of workers and technological development; limited grid capacity; increasing 
+energy costs. 
+o Not enabling economies of scale with regard to  the switch to renewable energy sources 
+e.g. district heating. 
+4.1.4. Italy 
+Sectoral challenges prioritised:  
+• Absence of a coherent and equitable framework for a just energy transition. 
+• Energy is not perceived as an essential common good. 
+
+
+--- PAGE 47 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 47  
+ 
+Key problems 
+• Policy gaps: 
+o Although a legal system, well articulated policies and financial instruments for the energy 
+transition exist, the implementation of policies is not homogenous throughout the 
+national territory and is dependent on the capacity of the local authorities. 
+o Fragmented governance and bureaucratic complexity: 
+▪ Institutional fragmentation across national, regional and local levels. 
+▪ Administrative capacity varies significantly between territories. 
+▪ High bureaucracy creating implementation delays that increase long -term social 
+and economic costs. 
+▪ Limited management capacity of regulation entities (ARERA, GSE). 
+o Limited benefits of energy policies 
+▪ Limited economic accessibility in policies: Incentives often benefit higher-income 
+households. 
+▪ Limitation in the implementation of energy communities: energy selling to the grid 
+produce limited benefits. 
+• Market concentration and price asymmetry: 
+o Energy is treated primarily as a market commodity rather than a common good. 
+o Large operators retain most profits. 
+o Energy sold to the grid is poorly remunerated; purchased energy remains expensive. 
+o Proliferation of commercial offers generates confusion and distrust. 
+• Energy poverty and territorial disparities: 
+o Higher vulnerability in rural and peripheral areas. 
+o Cognitive and digital barriers (limited digital literacy) limit access to support mechanisms 
+(bonus and energy communities). 
+o Negative narratives link transition policies to rising costs, weakening public consensus. 
+• Environmental challenges 
+o Dependence on fossil fuel imports that creates high exposure to geopolitical risks and 
+limited national renewable production capacity. 
+o Slow progress in emissions reduction. 
+• Technical and infrastructural constraints: 
+o Widespread presence of non-smart meters. 
+o Weak local grids, particularly in small municipalities. 
+o Shortage of qualified technical professionals. 
+o Infrastructural limitations hinder renewable energy communities. 
+4.1.5. Spain  
+Sectoral challenges prioritised: 
+• Public policies do not sufficiently target vulnerable groups. 
+• Digital devices and applications are not affordable or accessible. 
+• Energy tariffs and services are not transparent. 
+• Solar subsidies are not relevant for vulnerable households. 
+Key problems: 
+
+
+--- PAGE 48 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 48  
+ 
+• Energy poverty: Energy poverty is most severe where low income overlaps with age, disability, 
+unemployment, loneliness, and precarious work. Single-person households are particularly 
+exposed. 
+• Inaccessible subsidy design: Grants require upfront payments (e.g. solar panels, heat pumps), 
+excluding low-income households. 
+• Digital exclusion and techno-ableism: 
+o Digital innovation perpetuates ableism and ageism. Limited access to elderlies, low-
+educated people and people with disabilities. 
+o Not affordable to many people. 
+• Policy–reality gap: 
+o Strong mismatch between ambitious environmental targets and daily survival needs of 
+vulnerable households. 
+o Public discourse on green innovation feels disconnected from lived realities. 
+o Limited trust in institutions due to bureaucratic complexity and slow decision-making. 
+o Communication of policies is not effective: language not clear, complex offers of tariffs 
+and available reductions not effectively communicated. 
+4.1.6. Portugal 
+Central sectoral challenges prioritised: Financial / Economic; aging population; accessibility in terms of 
+finances and organisational support; low level of interest. 
+Key problems: 
+• Lack of financial stability, which pushes energy sector priorities—such as investing in energy 
+efficiency improvements—into the background. 
+o The income of the average household strongly influences the ability to install energy-
+efficient solutions at home and to pay energy bills, which often include a significant share 
+of renewable energy that tends to be more expensive. 
+o Limited access to renewable energy sources. 
+o Financial difficulties related to installing green energy solutions and accessing renewable 
+energy. 
+o Reduced decision-making autonomy for tenants due to dependence on landlords or 
+neighbours in rental housing. 
+• Insufficient investment in public infrastructure and modernisation, including the infrastructure 
+required for energy storage and transmission. 
+• Absence of transition policies that reflect real needs. 
+o In the energy sector, existing measures are limited, fragmented, or overly focused on 
+technological solutions, with insufficient attention to affordability, income constraints, 
+and tenant–landlord dynamics, preventing vulnerable households from benefiting in 
+practice. 
+o Limited accessibility in terms of financial support (e.g. incentive programmes) and 
+organisational support to implement twin transition policies. 
+• Ageing population: older people often have limited knowledge of recent technological 
+advancements, a situation exacerbated by the absence of policies targeting different age and 
+social groups. 
+• Low level of interest and engagement. 
+
+
+--- PAGE 49 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 49  
+ 
+4.2. Housing sector 
+Across all three countries —Germany, Ireland and Portugal—, the most consistent issue concerns unequal 
+access to housing and homeownership, closely linked to financial insecurity, labour market position and 
+social vulnerability. Homeownership is widely associated with income stability, creditworthiness and long-
+term employment security, structurally excluding lower-income households, younger people and those in 
+precarious work. Participants highlighted that sustainability and retrofitting schemes are largely designed 
+for homeowners, leaving tenants with limited access to benefits while continuing to bear high energy costs 
+in inefficient dwellings. In Germany and Ireland, this dynamic reinforces a divide between property 
+owners—who can access subsidies and as set appreciation—and tenants, who face rising costs without 
+corresponding support. In Portugal, restricted access to affordable and social housing was emphasised, 
+particularly affecting families with children, migrants facing restrictive eligibility criter ia, and individuals 
+experiencing addiction, mental health challenges or job loss. Across contexts, inefficient housing stock 
+increases energy expenditure, reduces disposable income and heightens exposure to energy poverty. 
+A second major area of convergence concerns the interaction between housing affordability and spatial 
+displacement, particularly pronounced in Ireland and Portugal and indirectly reflected in Germany. High 
+rental and ownership costs push households towards  peripheral or rural areas, resulting in longer 
+commuting distances, increased travel time and greater dependence on private vehicles. Irish participants 
+described uneven and insufficient public transport provision, especially outside Dublin, limited rural  
+connectivity, inadequate service timings (including after -hours services), and safety concerns limiting 
+cycling uptake. Car dependency was associated with additional economic burdens, including vehicle 
+purchase, fuel costs, expensive electric vehicles requiring subsidies, congestion-related public expenditure, 
+and financial strain on older people reliant on taxis. Portuguese discussions similarly emphasised 
+peripheralisation, insufficient reimbursement mechanisms for commuting costs, and limited public 
+transport services adapted to older adults and persons with special needs. In Germany, social and spatial 
+discrimination were highlighted as pushing disadvantaged groups out of well -serviced neighbourhoods, 
+contributing to socio-spatial segregation and unequal access to climate-friendly housing and infrastructure. 
+Policy and governance shortcomings were consistently identified across  all countries. In Germany, 
+modernisation levies were described as increasing rents and disproportionately benefiting homeowners, 
+while tenancy laws were considered to contribute to financial insecurity and, in some cases, discriminatory 
+outcomes. Frequent legal and funding changes create uncertainty and undermine equitable planning. In 
+Ireland, the absence of a minimum Building Energy Rating (BER) requirement for rental properties leaves  
+tenants exposed to inefficient housing conditions, and insufficient investment in public and active transport 
+exacerbates spatial inequalities. In Portugal, participants stressed underfunding, weak implementation, 
+mismanagement and lack of coordination ac ross housing policies, alongside restrictive eligibility criteria 
+that exclude vulnerable groups from support programmes. Across all contexts, a perceived mismatch 
+between policy frameworks and lived socio -economic realities was emphasised, particularly re garding 
+affordability, retrofitting obligations and access to social housing. 
+Social vulnerability and discrimination were particularly explicit in Germany and Portugal. German labs 
+identified financial insecurity and discriminatory practices —including those linked to religion or social 
+background—as restricting access to well -serviced neighbourhoods, with unequal housing access 
+potentially contributing to social polarisation and the strengthening of exclusionary political rhetoric. In 
+Portugal, private and family instability, including addiction -related challenges, was described as affecting 
+housing security. Migrants were reported to face additional barriers due to limited eligibility for support 
+schemes. 
+
+
+--- PAGE 50 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 50  
+ 
+Technological and informational barriers were also discussed. In Germany, misinformation regarding 
+infrastructural reforms (such as heating regulations) was described as limiting public understanding and 
+adoption. Smart home technologies were perceived as primarily designed for efficiency objectives rather 
+than accessibility, posing challenges for individuals with low digital literacy. Portuguese participants 
+additionally raised concerns about the potential long-term impact of artificial intelligence on employment 
+structures, noting that shifts in labour markets could undermine income stability and, consequently, 
+housing affordability. 
+Environmental implications were closely linked to these structural factors. Inefficient housing stock across 
+countries hinders progress towards sustainability targets, increases emissions and elevates household 
+costs. In Ireland, potential fines for failin g to meet climate targets were seen as ultimately affecting the 
+public, while transport-related tailpipe emissions generate negative health impacts. 
+Divergences emerged in the specific structural and political dimensions emphasised in each country. In 
+Germany, discussions focused strongly on social and spatial discrimination, including references to religious 
+discrimination, and on the role of modernisation levies and tenancy laws in increasing insecurity. Political 
+and legal uncertainty, frequent regulatory changes and public misinformation around heating reforms 
+were identified as exacerbating inequities. Furthermore, a specific link between housing i nequality and 
+right-wing populist rhetoric was asserted. Smart home technologies were also described as insufficiently 
+accessible for low digital literacy groups. In Ireland, the housing –transport nexus was particularly 
+pronounced, emphasising the car dependency as structural outcome of housing crisis. The ins ufficient 
+investment in public transport and the contribution of housing costs to labour mobility constraints and 
+emigration were central concerns. In Portugal, participants stressed restricted access to social housing for 
+migrants and other vulnerable groups due to eligibility criteria, emphasising individuals with addictions and 
+mental health challenges. Other aspects mentioned were private and family instability affecting housing 
+security, and emerging risks linked to labour market transformations, including the potential impact of 
+artificial intelligence on income stability and affordability. 
+4.2.1. Germany 
+Sectoral challenges prioritised: Financial insecurity, discrimination, and unjust distribution 
+Key problems: 
+• Unequal access to housing and homeownership: 
+o Home ownership is closely tied to financial security, age, creditworthiness, job stability, 
+and sometimes discrimination (including religion). 
+o Tenants and lower-income households face energy and transport poverty in inefficient 
+buildings. 
+o Social and spatial discrimination: 
+▪ Financial insecurity and discrimination push certain groups out of well-serviced 
+neighbourhoods, increasing social segregation. 
+▪ Access to climate-friendly housing is uneven, and DGs often live in energy-
+inefficient buildings. 
+▪ Right-wing rhetoric is fuelled by unequal access to housing and resources. 
+o Limited autonomy to adopt renewable energy or participate in sustainable energy 
+programmes. 
+• Policy gaps: 
+o Modernisation levies and funding programmes benefit homeowners, offering little relief 
+to tenants. 
+
+
+--- PAGE 51 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 51  
+ 
+o Tenancy laws contribute to financial insecurity and discrimination. 
+o Political and legal uncertainty (frequent changes to laws/funding) exacerbates inequities. 
+• Technological and informational barriers: 
+o Public misinformation about infrastructural updates (e.g., heating law) limits adoption. 
+o Smart home technologies are designed mainly for energy efficiency, not accessibility or 
+usability for low-tech literacy groups. 
+4.2.2. Ireland 
+Sectoral challenges prioritised: House ownership, transport needs 
+Key problems: 
+• House ownership and limited access to housing 
+o Housing policies for retrofitting are only accessible to homeowners. 
+o Inefficient housing is expensive and reduces disposable income. 
+o High housing costs affect labour mobility and regional balance. 
+o Housing costs are contributing to worker emigration. 
+• Transport needs linked to limited housing alternatives 
+o Spatial displacement and increased commuting demand: High housing costs and limited 
+alternatives require people to live further from employment centres, increasing 
+commuting distances. 
+o Insufficient and uneven transport provision 
+▪ Limited public transport options, particularly in rural areas, reinforce car 
+dependency. 
+▪ Transport infrastructure and investment are unevenly distributed and insufficient 
+▪ Service timings are inadequate (e.g. after hours). 
+o Economic and social impacts of car dependency 
+▪ Long-distance commuting forces car purchase and use 
+▪ Electric vehicles remain expensive and require subsidies. 
+▪ Seniors relying on taxis face high costs and reduced disposable income. 
+▪ Congestion generates public costs. 
+o Time and accessibility constraints 
+▪ Longer travel times reduce free time and affect quality of life. 
+▪ Safety concerns limit uptake of alternatives such as cycling. 
+• Inadequate sectoral policies 
+o Policies are only available to homeowners. 
+o No minimum Building Energy Ratio (BER) rating for rental properties. 
+o Insufficient investment in public and active transport. 
+o Uneven transport infrastructure development across regions —concentrated in Dublin. 
+• Environmental challenges related to housing and transport 
+o Housing stock remains energy inefficient and makes it difficult to reach sustainability 
+targets. 
+o Fines for not meeting targets would be borne by the public. 
+o Tailpipe emissions are significant in the transport sector producing negative health 
+impacts. 
+
+
+--- PAGE 52 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 52  
+ 
+4.2.3. Portugal 
+Sectoral challenges prioritised: lower income level; access to affordable housing; sustainability-related 
+costs; risks of Artificial Intelligence (AI) impacting sectoral structures, social dynamics, and employability. 
+Key problems: 
+• Financial difficulties, including challenges related to housing costs and overall living expenses. 
+o Lack of employability and its impact on housing stability. 
+o Financial pressures faced by families with children. 
+o Sustainability-related costs, including expenses linked to retrofitting and energy efficiency 
+requirements. 
+• Restricted access to affordable housing. 
+o Limited accessibility of social housing for lower -income families, especially those with 
+children. Other vulnerable groups affected by economic hardship include people with 
+addictions, mental health challenges, or those who have lost their jobs. For people with a 
+migrant background, existing support programmes and policies may be limited or entirely 
+unavailable. 
+o Limited access to housing support programmes and policies for migrants due to restrictive 
+eligibility criteria. 
+o Insufficient availability of social housing for DGs, including people facing addiction, mental 
+health issues, or similar challenges. 
+• Travel and transport burdens resulting from housing affordability constraints, whereby high 
+ownership or rental costs push households to peripheral areas, leading to longer commuting 
+distances, insufficient reimbursement mechanisms, and limited public transport services adapted 
+to people with special needs and older adults. 
+• Lack of home ownership and reliance on shared or insecure housing arrangements. 
+• Private and family instability affecting housing security (e.g. addiction-related problems). 
+• Perceived mismatch between existing policies and the real needs of the general population (e.g. 
+housing affordability, retrofitting, etc.). 
+o Policies are described as underfunded and poorly implemented, with limited availability of 
+affordable and social housing and eligibility criteria that exclude vulnerable groups. 
+Overall, there is a lack of sufficiently targeted, coordinated, and well -resourced policies 
+capable of addressing structural barriers. 
+o Mismanagement leading to inadequate allocation of resources and underfunding of the 
+population’s actual needs. 
+• Risk of AI impacting sectoral structures, social dynamics, and employability: concerns that the 
+further expansion of AI could alter the employment landscape, potentially affecting income 
+stability and, consequently, housing affordability. 
+4.3. Transport sector 
+Across the countries examined in the transport sector — Hungary, Italy and Spain — the co -creation 
+process identified a foundational structural tension between public and private transport models. This 
+dichotomy underpins many of the inequalities observed:  a car -centric development pathway has 
+progressively displaced investment and strategic prioritisation of public transport. Two interrelated divides 
+emerge. First, the imbalance between public and private transport investment reinforces car dependency 
+as the dominant mobility paradigm. Second, this imbalance generates differentiated access to mobility, 
+with those unable to rely on private vehicles disproportionately affected. 
+
+
+--- PAGE 53 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 53  
+ 
+Limitations in public transport were consistently identified as the primary source of accessibility problems. 
+These limitations extend beyond mobility in a narrow sense: public transport was framed — particularly in 
+Italy — as a mechanism for reducing territorial inequality and enabling access to employment, education, 
+healthcare and other essential services. Weak or underdeveloped networks therefore constrain not only 
+movement but also social and economic opportunity. Across countries, rural and peripheral  areas were 
+described as lacking adequate public transport coverage, with insufficient infrastructure density and 
+services misaligned with commuting patterns. These gaps reinforce territorial inequality between urban, 
+suburban and rural areas and increase reliance on private vehicles as a compensatory strategy. 
+Several cross -cutting governance and infrastructural shortcomings contribute to these public transport 
+deficiencies. Participants highlighted limited long -term planning, insufficient monitoring of service 
+provision, uneven quality standards and a perceived under-prioritisation of public transport relative to road 
+and automotive investments. In Italy, bureaucratic fragmentation, political instability and limited local 
+programming capacity were identified as obstacles to coherent transition planning, alongsid e concerns 
+regarding transparency in the allocation of transition funds and budget reallocations affecting resources 
+intended to address transport poverty. In Spain, limited institutional responsiveness was emphasised: 
+policies were described as well -intended but insufficiently targeted to reach disadvantaged groups, who 
+are rarely incorporated into technological innovation processes. In Hungary, local governments were 
+described as having restricted influence over industrial and infrastructural decisions, limiting their capacity 
+to rebalance investment priorities. 
+Accessibility and social inclusion concerns intersect strongly with these public transport gaps. Elderly 
+people, persons with disabilities and rural residents face structural barriers where infrastructure is not 
+adapted to accessibility needs. Italian labs placed particular emphasis on safety and discrimination within 
+mobility spaces, including harassment affecting women, LGBTQIA+ individuals and migrants. Digitalisation 
+introduces additional exclusionary dynamics: limited digital literacy among users and insufficient operator 
+capacity to design accessible digital services were reported in Italy and Spain. Hungarian discussions added 
+a broader social dimension, noting that public transport could function as a communal space facilitating 
+access to services and social interaction, yet current system design does not enable this role. 
+Within this context of public transport underdevelopment, the second structural component concerns the 
+reinforcement of a car -centric system. Participants across countries stressed that policy frameworks and 
+financial incentives tend to favour private vehi cle ownership, particularly through electric vehicle (EV) 
+strategies. EV subsidies were widely perceived as regressive in distributional terms: high upfront costs, 
+advance-payment models and limited accessible financing mechanisms (such as social leasing o r second-
+hand markets) mean that benefits accrue primarily to higher -income households and corporations. 
+Consequently, low-income households remain dependent on older combustion-engine vehicles, deepening 
+socio-economic divides. Electrification strategies were therefore questioned for reducing tailpipe 
+emissions without addressing the structural causes of car dependency or territorial exclusion. 
+Environmental and industrial contradictions further complicate this car -centred pathway. In Hungary, 
+battery factory production associated with the expansion of the EV industry was linked to local air, soil and 
+water pollution and high water use, raising tensions between environmental objectives, community health 
+and workers’ interests. Weak regulatory enforcement and monitoring were also reported. In Italy and 
+Spain, infrastructural constraints — including insufficient EV charging networks and limited vehi cle range 
+— hinder widespread adoption, while the continued dominance of fossil fuels limits progress towards 
+climate neutrality. Across contexts, participants stressed that without substantial reinvestment in public 
+and active transport modes (cycling, wa lking, micromobility), electrification alone cannot deliver an 
+equitable or sustainable transition. 
+
+
+--- PAGE 54 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 54  
+ 
+Divergences in emphasis nonetheless emerged. Hungary placed strong focus on industrial policy favouring 
+the automotive sector, environmental harms linked to battery production and tensions between labour —
+worker’s interests— and environmental objectives. I taly highlighted governance fragmentation, limited 
+administrative capacity, transparency deficits in fund allocation, and pronounced safety and discrimination 
+issues in mobility environments, alongside the strategic role of public transport in equalising a ccess to 
+services. Spain framed transport poverty as a structural barrier to opportunity, emphasising rural 
+vulnerability, inaccessible physical infrastructure for persons with reduced mobility and the gap between 
+policy intention and effective outreach to disadvantaged groups. 
+4.3.1. Hungary 
+Sectoral challenges prioritised:  
+• Green energy sources, such as battery factories, cause significant environmental pollution. 
+• The focus on (electric) cars perpetuates car dependency, increases income inequality, and hinders 
+the development of community and alternative forms of transport. 
+• Public transport is not given sufficient priority, and there is a lack of organisational, infrastructural, 
+and educational developments. Limited promotion of alternatives that promote active transport 
+modes (cycling, walking) and micromobility. 
+Key problems 
+• Policy gaps 
+o National policy prioritises the interests of the automotive industry over sustainability 
+considerations. 
+o Local governments have limited or no influence over industrial production, and their ability 
+to enforce environmental regulations is restricted. 
+o State-subsidised tax incentives for electric cars disproportionately benefit higher -income 
+households and large corporations. 
+o Transport infrastructure investments mainly support electric vehicles while neglecting the 
+development of public transport. 
+o Lack of regulatory enforcement and insufficient monitoring. 
+• Environmental effects 
+o Due to the dominant share of fossil fuels and limited penetration of electric vehicles, 
+climate neutrality and environmental protection are not ensured. 
+o Local air, soil and water pollution, high water use. 
+• Limitations associated to electric vehicles 
+o Reinforce the unsustainable nature of urban transport: reduce emissions but do not 
+eliminate their causes. 
+o Increase social inequalities and segregation, deepening the urban-rural divide. 
+• Social conflicts associated with the twin transition: tension between environmental and workers’ 
+interests, health and environmental justice. 
+• Accessibility problem: public transport is not only a means of travel but also a communal space 
+where people spend time and could access various services; however, currently is poorly suited for 
+this purpose. 
+
+
+--- PAGE 55 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 55  
+ 
+4.3.2. Italy 
+Sectoral challenges prioritised: Accessibility — ensuring equitable access to mobility, green technologies 
+and services. It implies access to transport services, reducing territorial inequalities between urban, 
+suburban and rural areas, increasing the opportunities of the population. 
+Key problems 
+• Territorial inequality in mobility access: 
+o Peripheral and rural areas lack adequate public transport networks, creating the need to 
+rely on private transport. 
+o Public transport schedules often fail to reflect commuting patterns. 
+o Insufficient long-term planning and monitoring of service providers. 
+• Policy gaps 
+o Bureaucracy and political instability that obstruct continuity in transition policies. 
+o Limited programming capacity of the local administrations to effectively respond to 
+territorial needs. 
+o Budget reallocations threaten funds intended for energy and transport poverty. 
+o Limited transparency in the allocation of transition funds. 
+• Infrastructural weaknesses 
+o Limited density and efficiency of transport networks. 
+o Inadequate EV charging infrastructure. 
+o Perceived low quality of public transport services. 
+• Affordability barriers to sustainable mobility: 
+o High cost of electric vehicles. 
+o Limited administrative capacity to use EU funds effectively. 
+o Insufficient development of social leasing or second-hand EV markets. 
+• Digital exclusion and service design gaps: 
+o Limited digital literacy among users. 
+o Transport operators lack capacity to design accessible digital services. 
+o Uneven infrastructure distribution exacerbates exclusion. 
+• Safety and social exclusion: 
+o Women, LGBTQIA+ people and migrants face bias, harassment and exclusion in mobility 
+spaces. 
+o Disability and low income intensify access barriers. 
+o Lack of awareness and prevention of violence in public transport environments. 
+4.3.3. Spain  
+Sectoral challenges prioritised: 
+• Transport should enable access to opportunities for DGs. 
+• Rural public transport networks are insufficient. 
+• Electric vehicle subsidies are not relevant for DGs. 
+Key problems 
+• Transport poverty among vulnerable groups: 
+o Elderly people and persons with disabilities face structural mobility barriers. 
+o Rural residence significantly increases transport vulnerability. 
+
+
+--- PAGE 56 ---
+D4.2 Methodology of the co-creation process and report on mitigation measures FITTER-EU 
+ 
+Page | 56  
+ 
+o Public transport infrastructure is not adapted to accessibility needs. 
+• Affordability gap in clean mobility: 
+o Low-income households rely on old combustion-engine vehicles. 
+o Electric vehicle subsidies are inaccessible due to high upfront costs. 
+o Advance-payment schemes exclude vulnerable households. 
+• Underdeveloped electric infrastructure: 
+o Insufficient public charging stations. 
+o Limited travel range of electric vehicles. 
+• Urban environment as barrier: 
+o Physical infrastructure remains inaccessible for people with reduced mobility. 
+o Vulnerability remains invisible in policy design. 
+• Low institutional responsiveness: 
+o Policies are well-intended but do not reach those most in need. 
+o DGs are rarely considered in technological innovation processes. 
+ 
+  

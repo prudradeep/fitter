@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+import re
 
 import bleach
 import markdown
@@ -76,10 +77,15 @@ def markdown_to_html(content: str) -> str:
         extensions=["extra", "sane_lists", "nl2br"],
         output_format="html5",
     )
-    return bleach.clean(
+    cleaned = bleach.clean(
         html,
         tags=ALLOWED_TAGS,
         attributes=ALLOWED_ATTRIBUTES,
         protocols=["http", "https", "mailto"],
         strip=True,
+    )
+    return re.sub(
+        r'<a\s+href="(https?://[^"]+)"',
+        r'<a href="\1" target="_blank" rel="noopener noreferrer"',
+        cleaned,
     )

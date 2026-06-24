@@ -8,7 +8,6 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
-from app.services.mitigation_examples import MITIGATION_MEASURE_EXAMPLES
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -23,6 +22,10 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schema.sql"
 MM_CSV_PATH = Path(__file__).resolve().parents[1] / "mm.csv"
+ADDITIONAL_HAZARDS_CSV_PATH = Path(__file__).resolve().parents[1] / "additionalHazards.csv"
+ADDITIONAL_HAZARD_PROFILES_CSV_PATH = (
+    Path(__file__).resolve().parents[1] / "additionalHazardProfiles.csv"
+)
 
 
 class Base(DeclarativeBase):
@@ -352,6 +355,7 @@ def ensure_runtime_schema() -> None:
                         text("ALTER TABLE knowledge_chunks ADD INDEX ix_knowledge_chunks_user_id (user_id)")
                     )
 
+        ensure_additional_hazards()
         ensure_mitigation_measure_examples()
 
         inspector = inspect(engine)
@@ -867,6 +871,413 @@ def _read_mm_csv_rows() -> list[dict[str, str]]:
         return list(csv.DictReader(csv_file))
 
 
+def _read_additional_hazards_csv_rows() -> list[dict[str, str]]:
+    if not ADDITIONAL_HAZARDS_CSV_PATH.exists():
+        return []
+
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            with ADDITIONAL_HAZARDS_CSV_PATH.open(encoding=encoding, newline="") as csv_file:
+                return list(csv.DictReader(csv_file))
+        except UnicodeDecodeError:
+            continue
+    with ADDITIONAL_HAZARDS_CSV_PATH.open(
+        encoding="utf-8", errors="replace", newline=""
+    ) as csv_file:
+        return list(csv.DictReader(csv_file))
+
+
+def _read_additional_hazard_profiles_csv_rows() -> list[dict[str, str]]:
+    if not ADDITIONAL_HAZARD_PROFILES_CSV_PATH.exists():
+        return []
+
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            with ADDITIONAL_HAZARD_PROFILES_CSV_PATH.open(
+                encoding=encoding, newline=""
+            ) as csv_file:
+                return list(csv.DictReader(csv_file))
+        except UnicodeDecodeError:
+            continue
+    with ADDITIONAL_HAZARD_PROFILES_CSV_PATH.open(
+        encoding="utf-8", errors="replace", newline=""
+    ) as csv_file:
+        return list(csv.DictReader(csv_file))
+
+
+def ensure_additional_hazards() -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS additional_hazards (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  country_id INT NOT NULL,
+                  sector_id INT NOT NULL,
+                  name VARCHAR(255) NOT NULL,
+                  source VARCHAR(40) NOT NULL DEFAULT 'csv',
+                  csv_row_number INT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  CONSTRAINT fk_additional_hazards_country
+                    FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE CASCADE,
+                  CONSTRAINT fk_additional_hazards_sector
+                    FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
+                  CONSTRAINT uq_additional_hazard_scope_name
+                    UNIQUE (country_id, sector_id, name),
+                  INDEX ix_additional_hazards_country_id (country_id),
+                  INDEX ix_additional_hazards_sector_id (sector_id),
+                  INDEX ix_additional_hazards_source (source)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        _seed_additional_hazards(connection)
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS additional_hazard_profiles (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  additional_hazard_id INT NOT NULL,
+                  profile VARCHAR(255) NOT NULL,
+                  evidence TEXT NULL,
+                  reference TEXT NULL,
+                  source VARCHAR(40) NOT NULL DEFAULT 'd4_2_pdf',
+                  csv_row_number INT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  CONSTRAINT fk_additional_hazard_profiles_hazard
+                    FOREIGN KEY (additional_hazard_id)
+                    REFERENCES additional_hazards(id) ON DELETE CASCADE,
+                  CONSTRAINT uq_additional_hazard_profile
+                    UNIQUE (additional_hazard_id, profile),
+                  INDEX ix_additional_hazard_profiles_hazard_id (additional_hazard_id),
+                  INDEX ix_additional_hazard_profiles_source (source)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        _seed_additional_hazard_profiles(connection)
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS additional_hazard_profile_target_populations (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  additional_hazard_profile_id INT NOT NULL,
+                  question_option_id INT NOT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  CONSTRAINT fk_additional_hazard_profile_target_profile
+                    FOREIGN KEY (additional_hazard_profile_id)
+                    REFERENCES additional_hazard_profiles(id) ON DELETE CASCADE,
+                  CONSTRAINT fk_additional_hazard_profile_target_option
+                    FOREIGN KEY (question_option_id)
+                    REFERENCES question_options(id) ON DELETE CASCADE,
+                  CONSTRAINT uq_additional_hazard_profile_target_option
+                    UNIQUE (additional_hazard_profile_id, question_option_id),
+                  INDEX ix_additional_hazard_profile_target_profile (additional_hazard_profile_id),
+                  INDEX ix_additional_hazard_profile_target_option (question_option_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        _seed_additional_hazard_profile_target_populations(connection)
+
+
+def _seed_additional_hazards(connection) -> None:
+    rows = _read_additional_hazards_csv_rows()
+    if not rows:
+        return
+
+    country_by_key = {
+        _normalize_mitigation_example_key(row["name"]): row["id"]
+        for row in connection.execute(text("SELECT id, name FROM countries")).mappings()
+    }
+    sector_by_key = {
+        _normalize_mitigation_example_key(row["name"]): row["id"]
+        for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
+    }
+
+    connection.execute(text("DELETE FROM additional_hazards WHERE source = 'csv'"))
+
+    inserted = 0
+    skipped = 0
+    seen: set[tuple[int, int, str]] = set()
+    for csv_index, row in enumerate(rows, start=2):
+        country_name = (row.get("country") or "").strip()
+        sector_name = (row.get("sector") or "").strip()
+        hazard_name = (row.get("hazard name") or "").strip()
+        country_id = country_by_key.get(_normalize_mitigation_example_key(country_name))
+        sector_id = sector_by_key.get(_normalize_mitigation_example_key(sector_name))
+        hazard_key = _normalize_mitigation_example_key(hazard_name)
+        if not country_id or not sector_id or not hazard_name:
+            skipped += 1
+            continue
+        scope_key = (int(country_id), int(sector_id), hazard_key)
+        if scope_key in seen:
+            skipped += 1
+            continue
+        seen.add(scope_key)
+        connection.execute(
+            text(
+                """
+                INSERT INTO additional_hazards (
+                    country_id,
+                    sector_id,
+                    name,
+                    source,
+                    csv_row_number
+                )
+                VALUES (
+                    :country_id,
+                    :sector_id,
+                    :name,
+                    'csv',
+                    :csv_row_number
+                )
+                """
+            ),
+            {
+                "country_id": country_id,
+                "sector_id": sector_id,
+                "name": hazard_name,
+                "csv_row_number": csv_index,
+            },
+        )
+        inserted += 1
+
+    logger.info(
+        "Loaded %s additional hazards from additionalHazards.csv; skipped %s rows",
+        inserted,
+        skipped,
+    )
+
+
+def _seed_additional_hazard_profiles(connection) -> None:
+    rows = _read_additional_hazard_profiles_csv_rows()
+    if not rows:
+        return
+
+    country_by_key = {
+        _normalize_mitigation_example_key(row["name"]): row["id"]
+        for row in connection.execute(text("SELECT id, name FROM countries")).mappings()
+    }
+    sector_by_key = {
+        _normalize_mitigation_example_key(row["name"]): row["id"]
+        for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
+    }
+    hazard_by_scope = {
+        (
+            int(row["country_id"]),
+            int(row["sector_id"]),
+            _normalize_mitigation_example_key(row["name"]),
+        ): int(row["id"])
+        for row in connection.execute(
+            text("SELECT id, country_id, sector_id, name FROM additional_hazards")
+        ).mappings()
+    }
+
+    connection.execute(
+        text("DELETE FROM additional_hazard_profiles WHERE source = 'd4_2_pdf'")
+    )
+
+    inserted = 0
+    skipped = 0
+    seen: set[tuple[int, str]] = set()
+    for csv_index, row in enumerate(rows, start=2):
+        country_id = country_by_key.get(
+            _normalize_mitigation_example_key((row.get("country") or "").strip())
+        )
+        sector_id = sector_by_key.get(
+            _normalize_mitigation_example_key((row.get("sector") or "").strip())
+        )
+        hazard_key = _normalize_mitigation_example_key(
+            (row.get("hazard name") or "").strip()
+        )
+        profile = (row.get("profile") or "").strip()
+        if not country_id or not sector_id or not hazard_key or not profile:
+            skipped += 1
+            continue
+        additional_hazard_id = hazard_by_scope.get((int(country_id), int(sector_id), hazard_key))
+        if additional_hazard_id is None:
+            skipped += 1
+            continue
+        scope_key = (additional_hazard_id, _normalize_mitigation_example_key(profile))
+        if scope_key in seen:
+            skipped += 1
+            continue
+        seen.add(scope_key)
+        connection.execute(
+            text(
+                """
+                INSERT INTO additional_hazard_profiles (
+                    additional_hazard_id,
+                    profile,
+                    evidence,
+                    reference,
+                    source,
+                    csv_row_number
+                )
+                VALUES (
+                    :additional_hazard_id,
+                    :profile,
+                    :evidence,
+                    :reference,
+                    'd4_2_pdf',
+                    :csv_row_number
+                )
+                """
+            ),
+            {
+                "additional_hazard_id": additional_hazard_id,
+                "profile": profile,
+                "evidence": (row.get("evidence") or "").strip() or None,
+                "reference": (row.get("reference") or "").strip() or None,
+                "csv_row_number": csv_index,
+            },
+        )
+        inserted += 1
+
+    logger.info(
+        "Loaded %s additional hazard profiles from additionalHazardProfiles.csv; skipped %s rows",
+        inserted,
+        skipped,
+    )
+
+
+def _seed_additional_hazard_profile_target_populations(connection) -> None:
+    option_by_key = {
+        (
+            _normalize_mitigation_example_key(row["question"]),
+            _normalize_mitigation_example_key(row["option"]),
+        ): int(row["id"])
+        for row in connection.execute(
+            text(
+                """
+                SELECT question_options.id, evaluation_questions.question, question_options.`option`
+                FROM question_options
+                JOIN evaluation_questions
+                  ON evaluation_questions.id = question_options.questionId
+                WHERE evaluation_questions.category = 'target_population'
+                  AND evaluation_questions.active = TRUE
+                """
+            )
+        ).mappings()
+    }
+    profile_rows = list(
+        connection.execute(
+            text("SELECT id, profile FROM additional_hazard_profiles")
+        ).mappings()
+    )
+    connection.execute(text("DELETE FROM additional_hazard_profile_target_populations"))
+
+    inserted = 0
+    for row in profile_rows:
+        option_ids: set[int] = set()
+        for question, option in _target_population_pairs_for_profile(str(row["profile"] or "")):
+            option_id = option_by_key.get(
+                (
+                    _normalize_mitigation_example_key(question),
+                    _normalize_mitigation_example_key(option),
+                )
+            )
+            if option_id is not None:
+                option_ids.add(option_id)
+        for option_id in sorted(option_ids):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO additional_hazard_profile_target_populations (
+                        additional_hazard_profile_id,
+                        question_option_id
+                    )
+                    VALUES (:profile_id, :option_id)
+                    """
+                ),
+                {"profile_id": int(row["id"]), "option_id": option_id},
+            )
+            inserted += 1
+
+    logger.info(
+        "Mapped %s additional hazard profile target-population option links",
+        inserted,
+    )
+
+
+def _target_population_pairs_for_profile(profile: str) -> list[tuple[str, str]]:
+    text_key = _normalize_profile_phrase(profile)
+    pairs: list[tuple[str, str]] = []
+
+    def add(question: str, option: str) -> None:
+        pair = (question, option)
+        if pair not in pairs:
+            pairs.append(pair)
+
+    if any(
+        term in text_key
+        for term in (
+            "low income",
+            "lower income",
+            "poorer",
+            "financially fragile",
+            "financial insecurity",
+            "financially vulnerable",
+            "energy poor",
+            "energy poverty",
+            "vulnerable households",
+            "disadvantaged groups",
+            "poverty",
+            "expensive electricity",
+            "price fluctuations",
+            "upfront retrofit costs",
+        )
+    ):
+        add("Level of income", "Low income")
+    if any(term in text_key for term in ("middle income", "middle to low")):
+        add("Level of income", "Medium income")
+    if any(term in text_key for term in ("higher income", "high income")):
+        add("Level of income", "High income")
+    if any(term in text_key for term in ("tenant", "renting", "rental", "renters")):
+        add("Tenancy status", "Tenant")
+    if any(term in text_key for term in ("homeowner", "home owner", "home ownership")):
+        add("Tenancy status", "Homeowner")
+    if "rural" in text_key or "peripheral" in text_key or "small municipalities" in text_key:
+        add("Location of residency", "Rural area")
+    if "suburban" in text_key:
+        add("Location of residency", "Suburban area")
+    if "urban" in text_key and "suburban" not in text_key:
+        add("Location of residency", "Urban area")
+    if any(term in text_key for term in ("older", "elderly", "seniors", "ageing", "aging")):
+        add("Age range", ">65")
+    if any(term in text_key for term in ("young", "younger")):
+        add("Age range", "25-35")
+    if any(term in text_key for term in ("disabil", "reduced mobility", "special needs")):
+        add("Disability of long-term condition", "Yes")
+    if "women" in text_key:
+        add("Gender", "Woman")
+    if any(term in text_key for term in ("unemployed", "lost jobs", "lost their jobs")):
+        add("Economic status", "Unemployed")
+    if any(term in text_key for term in ("workers", "worker", "commuters", "precarious work")):
+        add("Economic status", "Employed")
+    if any(term in text_key for term in ("car dependent", "car dependency", "commuters")):
+        add("Need of a car to perform daily activities", "Yes")
+    if "displaced far from employment" in text_key:
+        add("Need of a car to perform daily activities", "Yes")
+    if any(term in text_key for term in ("public transport users", "public transport dependent")):
+        add("Need of a car to perform daily activities", "No")
+    if any(term in text_key for term in ("low educated", "low education")):
+        add("Level of education", "Primary")
+    if any(term in text_key for term in ("limited digital literacy", "low digital literacy", "low tech literacy")):
+        add("Level of education", "Primary")
+    if any(term in text_key for term in ("migrant", "migrants", "non eu")):
+        add("EU citizenship", "No")
+    if any(term in text_key for term in ("inefficient homes", "inefficient housing", "inefficient buildings")):
+        add("Living in a house with low energy efficiency", "Yes")
+
+    return pairs
+
+
+def _normalize_profile_phrase(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value.casefold())).strip()
+
+
 def _resolve_mitigation_profile_id(
     profile_label: str,
     system_hazard_id: int | None,
@@ -1248,42 +1659,6 @@ def ensure_mitigation_measure_examples() -> None:
                 logger.warning(
                     "Could not add mitigation example profile foreign key; continuing",
                     exc_info=True,
-                )
-
-        for sector_name, measure in MITIGATION_MEASURE_EXAMPLES:
-            if "sector_name" in columns:
-                connection.execute(
-                    text(
-                        """
-                        INSERT IGNORE INTO mitigation_measure_examples
-                            (sector_id, sector_name, measure)
-                        SELECT sectors.id, :sector_name, :measure
-                        FROM sectors
-                        WHERE sectors.name = :sector_name
-                        """
-                    ),
-                    {"sector_name": sector_name, "measure": measure},
-                )
-            else:
-                connection.execute(
-                    text(
-                        """
-                        INSERT INTO mitigation_measure_examples
-                            (sector_id, measure, source)
-                        SELECT sectors.id, :measure
-                             , 'seed'
-                        FROM sectors
-                        WHERE sectors.name = :sector_name
-                          AND NOT EXISTS (
-                            SELECT 1
-                            FROM mitigation_measure_examples existing
-                            WHERE existing.sector_id = sectors.id
-                              AND existing.source = 'seed'
-                              AND existing.measure = :measure
-                          )
-                        """
-                    ),
-                    {"sector_name": sector_name, "measure": measure},
                 )
 
         _seed_mm_csv_mitigation_measure_examples(connection)

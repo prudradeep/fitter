@@ -74,7 +74,6 @@ app/
     hazard_ranking_service.py
     reach_service.py
     grounding_models.py
-    mitigation_examples.py
   grounding_servers/
     reranker.py
     nli.py
@@ -524,10 +523,11 @@ For full grounding:
 
 ```powershell
 uv sync --extra grounding
+uv run uvicorn app.main:app --reload --reload-dir app
 .\scripts\start_grounding_services.ps1
 ```
 
-The launcher starts the FastAPI app on port 8000, reranker on 8081, and NLI on 8082, writes PID/log files under `data/service-runtime`, and has a matching safe stop script.
+The current launcher starts the reranker on port 8081 and the NLI service on port 8082, writes PID/log files under `data/service-runtime`, and has a matching safe stop script. The FastAPI app is run separately on port 8000; `scripts/start_grounding_services.ps1` contains an app service block, but it is currently commented out.
 
 ## 16. Recreation acceptance checklist
 
