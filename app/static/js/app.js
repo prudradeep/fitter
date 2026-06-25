@@ -333,10 +333,17 @@ function updateStageVisual(step = "", session = {}, options = currentOptions) {
   renderSelectedHazardContext(session);
   const key = stageKeyForStep(step, inputMode);
   const visual = stageVisuals[key] || stageVisuals.country;
-  if (stageVisualTitle) stageVisualTitle.textContent = visual.title;
+  const showingPracticalConsiderations = shouldShowPracticalConsiderationsVisual(step, session);
+  if (stageVisualTitle) {
+    stageVisualTitle.textContent = showingPracticalConsiderations
+      ? "Practical considerations"
+      : visual.title;
+  }
   if (stageVisualText) {
-    stageVisualText.textContent =
-      key === "sector" ? sectorStageText(session, currentOptions) : visual.text;
+    stageVisualText.hidden = showingPracticalConsiderations;
+    stageVisualText.textContent = showingPracticalConsiderations
+      ? ""
+      : key === "sector" ? sectorStageText(session, currentOptions) : visual.text;
   }
   if (stageProgressFill) {
     const percent = (visual.index / Math.max(1, stageSteps.length - 1)) * 100;
@@ -765,6 +772,7 @@ function hazardSummaryItems(session = {}) {
 }
 
 function populationPercentage(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return "—";
   const percentage = Number(value);
   return Number.isFinite(percentage) ? `${percentage.toFixed(1)}%` : "—";
 }
@@ -783,6 +791,7 @@ function populationTrend(regionalValue, nationalValue) {
 
 function renderHazardPopulationTable(session = {}) {
   const hazards = Array.isArray(session.top_hazards) ? session.top_hazards.slice(0, 3) : [];
+  const additionalHazards = additionalHazardPopulationRows(session);
   const counts = [
     ["Hazards", session.hazard_count],
     ["Unique profiles", session.affected_profile_count],
@@ -809,20 +818,32 @@ function renderHazardPopulationTable(session = {}) {
       `,
     )
     .join("");
+  const additionalHazardsList = additionalHazards
+    .map(
+      (hazard, index) => `
+        <tr>
+          <td><span>${index + 1}</span>${escapeHtml(hazard.hazard || "Hazard")}</td>
+          <td>${populationPercentage(hazard.regional_population_pct)}${populationTrend(hazard.regional_population_pct, hazard.national_population_pct)}</td>
+          <td>${populationPercentage(hazard.national_population_pct)}</td>
+        </tr>
+      `,
+    )
+    .join("");
   stageIconGrid.innerHTML = `
     ${
       session.selected_hazard
         ? ""
         : `<div class="stage-hazard-summary" aria-label="Sector analysis totals">${countCards}</div>`
     }
-    <section class="stage-hazard-table" aria-label="Top three hazard population comparison">
-      <div class="stage-hazard-table-heading">
+    <details class="stage-hazard-table stage-collapsible-section" aria-label="Top three hazard population comparison" open>
+      <summary class="stage-hazard-table-heading">
         <div>
           <span>Population comparison</span>
           <h3>Top 3 hazards</h3>
         </div>
         <small>Average across mapped affected profiles</small>
-      </div>
+        <span class="stage-collapse-icon" aria-hidden="true"></span>
+      </summary>
       <div class="stage-hazard-table-scroll">
         <table>
           <thead>
@@ -835,13 +856,131 @@ function renderHazardPopulationTable(session = {}) {
           <tbody>${rows}</tbody>
         </table>
       </div>
+    </details>
+    ${
+      additionalHazards.length
+        ? `<details class="stage-additional-hazards stage-collapsible-section" aria-label="Hazards added by experts">
+            <summary class="stage-additional-hazards-heading">
+              <div>
+                <span>Additional hazards</span>
+                <h3>Hazards added by experts</h3>
+              </div>
+              <span class="stage-collapse-icon" aria-hidden="true"></span>
+            </summary>
+            <div class="stage-additional-hazards-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Hazard</th>
+                    <th scope="col">Regional</th>
+                    <th scope="col">National</th>
+                  </tr>
+                </thead>
+                <tbody>${additionalHazardsList}</tbody>
+              </table>
+            </div>
+          </details>`
+        : ""
+    }
+  `;
+}
+
+function additionalHazardPopulationRows(session = {}) {
+  if (Array.isArray(session.additional_hazard_population) && session.additional_hazard_population.length) {
+    return session.additional_hazard_population
+      .map((row) => ({
+        hazard: String(row?.hazard || "").trim(),
+        regional_population_pct: row?.regional_population_pct,
+        national_population_pct: row?.national_population_pct,
+      }))
+      .filter((row) => row.hazard);
+  }
+  return Array.isArray(session.additional_hazards)
+    ? session.additional_hazards
+        .map((hazard) => ({
+          hazard: String(hazard || "").trim(),
+          regional_population_pct: null,
+          national_population_pct: null,
+        }))
+        .filter((row) => row.hazard)
+    : [];
+}
+
+function shouldShowPracticalConsiderationsVisual(step = currentStep, session = currentSession) {
+  const targetPopulationIdentified =
+    Array.isArray(session?.benefited_profiles)
+    && session.benefited_profiles.some((profile) => String(profile || "").trim());
+  return (
+    !targetPopulationIdentified
+    && Array.isArray(session?.practical_considerations)
+    && session.practical_considerations.length > 0
+    && [
+      "reason_confirmation",
+      "mitigation_measure",
+      "mitigation_duplicate_suggestion",
+      "mitigation_duplicate_report",
+      "mitigation_reason",
+      "mitigation_clarity",
+      "mitigation_target_population",
+    ].includes(step)
+  );
+}
+
+function renderPracticalConsiderationsVisual(session = {}) {
+  const items = Array.isArray(session.practical_considerations)
+    ? session.practical_considerations
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+    : [];
+  if (!items.length) return;
+  const displayItems = items.map((item) => practicalConsiderationTitle(item));
+  stageIconGrid.innerHTML = `
+    <section class="practical-considerations-visual" aria-label="Practical considerations">
+      <div class="practical-visual-orbit" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="practical-visual-heading">
+        <span>Design checklist</span>
+        <h3>${items.length} practical ${items.length === 1 ? "consideration" : "considerations"}</h3>
+      </div>
+      <ol class="practical-consideration-list">
+        ${displayItems
+          .map(
+            (item, index) => `
+              <li style="--practical-index: ${index}" title="${escapeHtml(items[index] || item)}">
+                <span class="practical-step">${index + 1}</span>
+                <p>${escapeHtml(item)}</p>
+              </li>
+            `,
+          )
+          .join("")}
+      </ol>
     </section>
   `;
+}
+
+function practicalConsiderationTitle(value) {
+  let text = String(value || "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  const colonIndex = text.indexOf(":");
+  if (colonIndex > 6 && colonIndex <= 90) {
+    text = text.slice(0, colonIndex);
+  } else {
+    const sentenceMatch = text.match(/^(.{18,110}?[.!?])\s+/);
+    if (sentenceMatch) text = sentenceMatch[1].replace(/[.!?]+$/, "");
+  }
+  return text.replace(/^[\s\-–—:]+|[\s\-–—:.]+$/g, "") || "Practical consideration";
 }
 
 function renderStageIcons(key, session = {}, options = currentOptions, { keepMap = false } = {}) {
   if (!stageIconGrid) return;
   const hazardContextOnly = key === "hazards" && shouldShowHazardContextOnly();
+  const practicalVisible = shouldShowPracticalConsiderationsVisual(currentStep, session);
   if (key === "mitigation") {
     renderedStageCardsKey = `icons-${key}-hidden`;
     stageIconGrid.innerHTML = "";
@@ -853,11 +992,12 @@ function renderStageIcons(key, session = {}, options = currentOptions, { keepMap
   const topHazardKey = (session.top_hazards || [])
     .map((hazard) => `${hazard.hazard}:${hazard.regional_population_pct}:${hazard.national_population_pct}`)
     .join("|");
-  const visualKey = `icons-${key}-${hazardContextOnly ? "context-only" : "summary"}-${session.country || ""}-${session.selected_hazard || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${options.map((option) => option.label).join("|")}`;
+  const practicalKey = (session.practical_considerations || []).join("|");
+  const visualKey = `icons-${key}-${hazardContextOnly && !practicalVisible ? "context-only" : "summary"}-${currentStep}-${session.country || ""}-${session.selected_hazard || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${practicalKey}-${options.map((option) => option.label).join("|")}`;
   if (renderedStageCardsKey === visualKey) return;
   renderedStageCardsKey = visualKey;
   if (!keepMap) stageVisualRenderId += 1;
-  if (hazardContextOnly) {
+  if (hazardContextOnly && !practicalVisible) {
     stageIconGrid.innerHTML = "";
     stageIconGrid.hidden = true;
     if (!keepMap && stageMap) stageMap.hidden = true;
@@ -865,6 +1005,11 @@ function renderStageIcons(key, session = {}, options = currentOptions, { keepMap
     return;
   }
   showStageIcons({ keepMap });
+
+  if (practicalVisible) {
+    renderPracticalConsiderationsVisual(session);
+    return;
+  }
 
   if (key === "hazards" && Array.isArray(session.top_hazards) && session.top_hazards.length) {
     renderHazardPopulationTable(session);

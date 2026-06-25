@@ -34,12 +34,14 @@ class ChatSession:
     pending_mitigation_measure: str | None = None
     pending_mitigation_reason: str | None = None
     pending_mitigation_evidence: str | None = None
+    practical_considerations: list[str] | None = None
     pending_mitigation_clarity_dimension: str | None = None
     mitigation_clarity_turns: int = 0
     mitigation_clarification_history: list[dict[str, str]] | None = None
     mitigation_frozen_inputs: dict[str, str] | None = None
     suggested_mitigation_measure_id: int | None = None
     suggested_mitigation_measure_name: str | None = None
+    suggested_new_policy_proposal: str | None = None
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
     mitigation_target_population: list[str] | None = None
@@ -106,6 +108,13 @@ class ChatSession:
             affected_profiles=deduped_affected_profiles,
             affected_profile_details=deduped_affected_profile_details,
             mitigation_measure_count=1 if mitigation_measure else 0,
+            practical_considerations=list(self.practical_considerations or []),
+            additional_hazards=[
+                str(hazard).strip()
+                for hazard in (self.additional_hazards or [])
+                if str(hazard).strip()
+            ],
+            additional_hazard_population=self._additional_hazard_population_summary(),
         )
 
     def eligible_hazard_profile_count(self) -> int:
@@ -251,9 +260,78 @@ class ChatSession:
             )
         return rows
 
+    def _additional_hazard_population_summary(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for hazard in self.additional_hazards or []:
+            hazard_name = str(hazard or "").strip()
+            if not hazard_name:
+                continue
+            population = self._hazard_population_summary_row(hazard_name)
+            rows.append(population)
+        return rows
+
+    def _hazard_population_summary_row(self, hazard: str) -> dict[str, object]:
+        ranking = (self.hazard_rankings or {}).get(hazard)
+        profiles = ranking.get("profiles", []) if isinstance(ranking, dict) else []
+        regional_values: list[float] = []
+        national_values: list[float] = []
+        profile_sources: list[object] = []
+        if isinstance(profiles, list):
+            profile_sources.extend(profiles)
+
+        stored_profiles = (self.hazard_profiles or {}).get(hazard)
+        if stored_profiles is None:
+            hazard_key = str(hazard or "").strip().casefold()
+            stored_profiles = next(
+                (
+                    value
+                    for stored_hazard, value in (self.hazard_profiles or {}).items()
+                    if str(stored_hazard or "").strip().casefold() == hazard_key
+                ),
+                None,
+            )
+        if stored_profiles is not None:
+            profile_sources.extend(
+                [stored_profiles] if isinstance(stored_profiles, str) else list(stored_profiles or [])
+            )
+
+        for profile in profile_sources:
+            if not isinstance(profile, dict):
+                continue
+            self._append_percentage_value(
+                regional_values,
+                profile.get("regional_population_pct")
+                if profile.get("regional_population_pct") is not None
+                else profile.get("population_pct"),
+            )
+            self._append_percentage_value(national_values, profile.get("national_population_pct"))
+        return {
+            "hazard": hazard,
+            "regional_population_pct": (
+                ranking.get("regional_population_pct")
+                if isinstance(ranking, dict)
+                and ranking.get("regional_population_pct") is not None
+                else self._average_percentage(regional_values)
+            ),
+            "national_population_pct": (
+                ranking.get("national_population_pct")
+                if isinstance(ranking, dict)
+                and ranking.get("national_population_pct") is not None
+                else self._average_percentage(national_values)
+            ),
+        }
+
     @staticmethod
     def _average_percentage(values: list[float]) -> float | None:
         return round(sum(values) / len(values), 1) if values else None
+
+    @staticmethod
+    def _append_percentage_value(values: list[float], value: object) -> None:
+        try:
+            percentage = float(value)
+        except (TypeError, ValueError):
+            return
+        values.append(percentage)
 
     @staticmethod
     def _profile_lines(markdown_text: str) -> list[str]:

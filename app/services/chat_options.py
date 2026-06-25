@@ -38,7 +38,7 @@ MITIGATION_DUPLICATE_OPTIONS = [
 REASON_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No"),
-    Option(id=3, label="Continue with current mitigation measure"),
+    Option(id=3, label="Adopt mitigation proposal suggested above"),
 ]
 
 MITIGATION_REVIEW_OPTIONS = [
