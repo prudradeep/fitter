@@ -325,6 +325,104 @@ class MitigationMeasureExample(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class MitigationMeasurePolicy(Base):
+    __tablename__ = "mitigation_measure_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "policy_code",
+            "sector_id",
+            "source",
+            name="uq_mitigation_policy_code_sector_source",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    policy_code: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    policy_title: Mapped[str] = mapped_column(Text, nullable=False)
+    country_id: Mapped[int | None] = mapped_column(
+        ForeignKey("countries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    sector_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sectors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    policy_type: Mapped[str | None] = mapped_column(String(120))
+    short_description: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="xlsx", server_default="xlsx")
+    excel_row_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class MitigationMeasureTargetGroup(Base):
+    __tablename__ = "mitigation_measure_target_groups"
+    __table_args__ = (
+        UniqueConstraint(
+            "mitigation_measure_policy_id",
+            "question_option_id",
+            name="uq_mitigation_target_group_xlsx_cell",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    mitigation_measure_policy_id: Mapped[int] = mapped_column(
+        ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), index=True
+    )
+    question_option_id: Mapped[int] = mapped_column(
+        ForeignKey("question_options.id", ondelete="CASCADE"), index=True
+    )
+    match_value: Mapped[str | None] = mapped_column(String(40), index=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="xlsx", server_default="xlsx")
+    excel_column_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class MitigationMeasurePolicyAdditionalHazard(Base):
+    __tablename__ = "mitigation_measure_policy_additional_hazards"
+    __table_args__ = (
+        UniqueConstraint(
+            "mitigation_measure_policy_id",
+            "additional_hazard_id",
+            name="uq_mitigation_policy_additional_hazard",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    mitigation_measure_policy_id: Mapped[int] = mapped_column(
+        ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), index=True
+    )
+    additional_hazard_id: Mapped[int] = mapped_column(
+        ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
+    )
+    match_value: Mapped[str | None] = mapped_column(String(40), index=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="xlsx", server_default="xlsx")
+    excel_row_number: Mapped[int | None] = mapped_column(Integer)
+    excel_column_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class MitigationMeasurePolicySystemHazard(Base):
+    __tablename__ = "mitigation_measure_policy_system_hazards"
+    __table_args__ = (
+        UniqueConstraint(
+            "mitigation_measure_policy_id",
+            "system_hazard_id",
+            name="uq_mitigation_policy_system_hazard",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    mitigation_measure_policy_id: Mapped[int] = mapped_column(
+        ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), index=True
+    )
+    system_hazard_id: Mapped[int] = mapped_column(
+        ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
+    )
+    mitigation_effect: Mapped[str | None] = mapped_column(String(40), index=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="xlsx", server_default="xlsx")
+    excel_row_number: Mapped[int | None] = mapped_column(Integer)
+    excel_column_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class UserQuestionResponse(Base):
     __tablename__ = "user_question_responses"
 

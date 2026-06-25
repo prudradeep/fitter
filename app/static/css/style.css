@@ -2127,12 +2127,13 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .bubble-content {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .bubble.is-collapsible .bubble-content {
   position: relative;
   max-height: 11.5rem;
+  overflow: hidden;
 }
 
 .bubble.is-collapsible:not(.is-expanded) .bubble-content::after {
@@ -2156,6 +2157,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
 .bubble.is-collapsible.is-expanded .bubble-content {
   max-height: none;
+  overflow: visible;
 }
 
 .bubble-toggle {
@@ -2240,7 +2242,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
 .bubble .hazard-card {
   margin-bottom: 12px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid #dbe2ea;
   border-radius: 12px;
   background: #ffffff;
@@ -2284,10 +2286,15 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 .bubble .hazard-metrics > div {
   position: relative;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 8px;
   background: #f8fafc;
   padding: 8px 9px 11px;
+}
+
+.bubble .hazard-metrics > div:hover,
+.bubble .hazard-metrics > div:focus-within {
+  z-index: 50;
 }
 
 .bubble .hazard-metrics > div::after {
@@ -2303,14 +2310,87 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .bubble .hazard-metrics dt {
-  overflow: hidden;
   color: #64748b;
   font-size: 0.64rem;
   font-weight: 800;
   letter-spacing: 0.025em;
-  text-overflow: ellipsis;
   text-transform: uppercase;
-  white-space: nowrap;
+}
+
+.bubble .hazard-metrics .metric-label {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 4px;
+  white-space: normal;
+}
+
+.bubble .hazard-metrics .metric-info {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid #c4b5fd;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6d28d9;
+  cursor: help;
+  font-size: 0.58rem;
+  font-weight: 950;
+  line-height: 1;
+  text-transform: none;
+}
+
+.bubble .hazard-metrics .metric-info:focus-visible {
+  outline: 2px solid #8b5cf6;
+  outline-offset: 2px;
+}
+
+.bubble .hazard-metrics .metric-tooltip {
+  position: absolute;
+  z-index: 60;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  width: min(260px, 70vw);
+  transform: translateX(-50%) translateY(4px);
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+  background: #111827;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.2);
+  color: #f8fafc;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  line-height: 1.45;
+  opacity: 0;
+  padding: 9px 10px;
+  pointer-events: none;
+  text-align: left;
+  text-transform: none;
+  transition: opacity 150ms ease, transform 150ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.bubble .hazard-metrics .metric-tooltip::after {
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  transform: translateX(-50%) rotate(45deg);
+  background: #111827;
+  content: "";
+}
+
+.bubble .hazard-metrics .metric-info:hover .metric-tooltip,
+.bubble .hazard-metrics .metric-info:focus .metric-tooltip,
+.bubble .hazard-metrics .metric-info:focus-visible .metric-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  visibility: visible;
 }
 
 .bubble .hazard-metrics dd {

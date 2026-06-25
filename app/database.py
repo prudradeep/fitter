@@ -1,8 +1,10 @@
 import csv
 import logging
 import re
+import zipfile
 from collections.abc import Generator
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -22,6 +24,9 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schema.sql"
 MM_CSV_PATH = Path(__file__).resolve().parents[1] / "mm.csv"
+MM_TARGET_GROUP_XLSX_PATH = Path(__file__).resolve().parents[1] / "MM Target group.xlsx"
+SECTORAL_CHALLENGES_XLSX_PATH = Path(__file__).resolve().parents[1] / "sectoral_challenges.xlsx"
+HAZARDS_XLSX_PATH = Path(__file__).resolve().parents[1] / "hazards.xlsx"
 ADDITIONAL_HAZARDS_CSV_PATH = Path(__file__).resolve().parents[1] / "additionalHazards.csv"
 ADDITIONAL_HAZARD_PROFILES_CSV_PATH = (
     Path(__file__).resolve().parents[1] / "additionalHazardProfiles.csv"
@@ -68,6 +73,15 @@ def run_schema_sql() -> None:
         raise
 
 
+def seed_reference_data(*, apply_schema: bool = True) -> None:
+    """Apply the base schema and reload reference data from local CSV/XLSX files."""
+    if apply_schema:
+        run_schema_sql()
+    Base.metadata.create_all(bind=engine)
+    ensure_runtime_schema(seed_reference_data=True)
+    logger.info("Reference data seeded")
+
+
 def split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     current: list[str] = []
@@ -105,7 +119,7 @@ def split_sql_statements(sql: str) -> list[str]:
     return [statement for statement in statements if not statement.startswith("--")]
 
 
-def ensure_runtime_schema() -> None:
+def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
     try:
         with engine.begin() as connection:
             connection.execute(
@@ -355,8 +369,9 @@ def ensure_runtime_schema() -> None:
                         text("ALTER TABLE knowledge_chunks ADD INDEX ix_knowledge_chunks_user_id (user_id)")
                     )
 
-        ensure_additional_hazards()
-        ensure_mitigation_measure_examples()
+        if seed_reference_data:
+            ensure_additional_hazards()
+            ensure_mitigation_measure_examples()
 
         inspector = inspect(engine)
         if "user_mitigation_measures" in inspector.get_table_names():
@@ -869,6 +884,284 @@ def _read_mm_csv_rows() -> list[dict[str, str]]:
             continue
     with MM_CSV_PATH.open(encoding="utf-8", errors="replace", newline="") as csv_file:
         return list(csv.DictReader(csv_file))
+
+
+def _read_mm_target_group_xlsx_rows() -> list[dict[str, object]]:
+    if not MM_TARGET_GROUP_XLSX_PATH.exists():
+        return []
+
+    rows = _read_xlsx_first_sheet_rows(MM_TARGET_GROUP_XLSX_PATH)
+    if len(rows) < 3:
+        return []
+
+    category_row = rows[0]
+    header_row = rows[1]
+    category_by_column: dict[int, str] = {}
+    current_category = ""
+    for column_index, raw_category in enumerate(category_row):
+        category = str(raw_category or "").strip()
+        if category:
+            current_category = category
+        if column_index >= 5:
+            category_by_column[column_index] = current_category
+
+    parsed_rows: list[dict[str, object]] = []
+    for excel_row_number, row in enumerate(rows[2:], start=3):
+        policy_code = _xlsx_cell(row, 0)
+        policy_title = _xlsx_cell(row, 1)
+        sector_name = _xlsx_cell(row, 2)
+        if not policy_code and not policy_title:
+            continue
+        for column_index in range(5, len(header_row)):
+            target_group = _xlsx_cell(header_row, column_index)
+            if not target_group:
+                continue
+            parsed_rows.append(
+                {
+                    "policy_code": policy_code,
+                    "policy_title": policy_title,
+                    "sector_name": sector_name,
+                    "policy_type": _xlsx_cell(row, 3),
+                    "short_description": _xlsx_cell(row, 4),
+                    "target_group_category": category_by_column.get(column_index, ""),
+                    "target_group": target_group,
+                    "match_value": _xlsx_cell(row, column_index),
+                    "excel_row_number": excel_row_number,
+                    "excel_column_number": column_index + 1,
+                }
+            )
+    return parsed_rows
+
+
+def _read_xlsx_first_sheet_rows(path: Path) -> list[list[str]]:
+    namespace = {
+        "a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    }
+    with zipfile.ZipFile(path) as workbook_zip:
+        shared_strings = _xlsx_shared_strings(workbook_zip, namespace)
+        workbook = ET.fromstring(workbook_zip.read("xl/workbook.xml"))
+        relationships = ET.fromstring(workbook_zip.read("xl/_rels/workbook.xml.rels"))
+        relationship_targets = {
+            relationship.attrib["Id"]: relationship.attrib["Target"]
+            for relationship in relationships
+        }
+        first_sheet = workbook.find("a:sheets/a:sheet", namespace)
+        if first_sheet is None:
+            return []
+        relationship_id = first_sheet.attrib[
+            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        ]
+        sheet_target = relationship_targets[relationship_id]
+        sheet_path = (
+            sheet_target.lstrip("/")
+            if sheet_target.startswith("xl/")
+            else f"xl/{sheet_target.lstrip('/')}"
+        )
+        sheet = ET.fromstring(workbook_zip.read(sheet_path))
+        parsed_rows: list[list[str]] = []
+        for row in sheet.findall(".//a:sheetData/a:row", namespace):
+            values: list[str] = []
+            for cell in row.findall("a:c", namespace):
+                column_index = _xlsx_column_index(cell.attrib.get("r", ""))
+                while len(values) <= column_index:
+                    values.append("")
+                values[column_index] = _xlsx_cell_value(cell, shared_strings, namespace)
+            parsed_rows.append(values)
+        return parsed_rows
+
+
+def _xlsx_shared_strings(
+    workbook_zip: zipfile.ZipFile, namespace: dict[str, str]
+) -> list[str]:
+    try:
+        shared_root = ET.fromstring(workbook_zip.read("xl/sharedStrings.xml"))
+    except KeyError:
+        return []
+    return [
+        "".join(text.text or "" for text in item.findall(".//a:t", namespace))
+        for item in shared_root.findall("a:si", namespace)
+    ]
+
+
+def _xlsx_cell_value(
+    cell: ET.Element,
+    shared_strings: list[str],
+    namespace: dict[str, str],
+) -> str:
+    cell_type = cell.attrib.get("t")
+    if cell_type == "inlineStr":
+        return "".join(text.text or "" for text in cell.findall(".//a:t", namespace)).strip()
+    value_node = cell.find("a:v", namespace)
+    value = "" if value_node is None else str(value_node.text or "")
+    if cell_type == "s" and value:
+        try:
+            return shared_strings[int(value)].strip()
+        except (IndexError, ValueError):
+            return ""
+    return value.strip()
+
+
+def _xlsx_column_index(cell_reference: str) -> int:
+    match = re.match(r"([A-Z]+)", cell_reference.upper())
+    if not match:
+        return 0
+    index = 0
+    for char in match.group(1):
+        index = index * 26 + (ord(char) - ord("A") + 1)
+    return index - 1
+
+
+def _xlsx_cell(row: list[str], index: int) -> str:
+    return str(row[index] if index < len(row) else "").strip()
+
+
+def _read_sectoral_challenges_xlsx_rows() -> list[dict[str, object]]:
+    if not SECTORAL_CHALLENGES_XLSX_PATH.exists():
+        return []
+
+    rows = _read_xlsx_first_sheet_rows(SECTORAL_CHALLENGES_XLSX_PATH)
+    if len(rows) < 2:
+        return []
+
+    header_row = rows[0]
+    parsed_rows: list[dict[str, object]] = []
+    for excel_row_number, row in enumerate(rows[1:], start=2):
+        policy_code = _xlsx_cell(row, 0)
+        policy_title = _xlsx_cell(row, 1)
+        if not policy_code and not policy_title:
+            continue
+        for column_index in range(2, len(header_row)):
+            challenge = _xlsx_cell(header_row, column_index)
+            if not challenge:
+                continue
+            parsed_rows.append(
+                {
+                    "policy_code": policy_code,
+                    "policy_title": policy_title,
+                    "additional_hazard": challenge,
+                    "match_value": _xlsx_cell(row, column_index),
+                    "excel_row_number": excel_row_number,
+                    "excel_column_number": column_index + 1,
+                }
+            )
+    return parsed_rows
+
+
+def _read_hazards_xlsx_rows() -> list[dict[str, object]]:
+    if not HAZARDS_XLSX_PATH.exists():
+        return []
+
+    rows = _read_xlsx_first_sheet_rows(HAZARDS_XLSX_PATH)
+    if len(rows) < 3:
+        return []
+
+    sector_row = rows[0]
+    header_row = rows[1]
+    sector_by_column: dict[int, str] = {}
+    current_sector = ""
+    for column_index, raw_sector in enumerate(sector_row):
+        sector = _hazards_xlsx_sector_name(str(raw_sector or ""))
+        if sector:
+            current_sector = sector
+        if column_index >= 2:
+            sector_by_column[column_index] = current_sector
+
+    parsed_rows: list[dict[str, object]] = []
+    for excel_row_number, row in enumerate(rows[2:], start=3):
+        policy_code = _xlsx_cell(row, 0)
+        policy_title = _xlsx_cell(row, 1)
+        if not policy_code and not policy_title:
+            continue
+        for column_index in range(2, len(header_row)):
+            hazard_label = _hazards_xlsx_hazard_label(_xlsx_cell(header_row, column_index))
+            hazard_sector = sector_by_column.get(column_index, "")
+            if not hazard_label or not hazard_sector:
+                continue
+            parsed_rows.append(
+                {
+                    "policy_code": policy_code,
+                    "policy_title": policy_title,
+                    "hazard_sector": hazard_sector,
+                    "hazard_label": hazard_label,
+                    "mitigation_effect": _xlsx_cell(row, column_index),
+                    "excel_row_number": excel_row_number,
+                    "excel_column_number": column_index + 1,
+                }
+            )
+    return parsed_rows
+
+
+def _hazards_xlsx_sector_name(value: str) -> str:
+    normalized = value.casefold()
+    if "energy" in normalized:
+        return "Energy"
+    if "transport" in normalized:
+        return "Transport"
+    if "housing" in normalized:
+        return "Housing"
+    return ""
+
+
+def _hazards_xlsx_hazard_label(value: str) -> str:
+    cleaned = str(value or "").strip().strip("[]")
+    cleaned = re.sub(r"(?i)^hazard\s+\d+\s*\W+\s*", "", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _hazards_xlsx_system_hazard_lookup_key(
+    hazard_sector: str,
+    hazard_label: str,
+) -> tuple[str, str] | None:
+    sector_key = _normalize_mitigation_example_key(hazard_sector)
+    label_key = _normalize_mitigation_example_key(hazard_label)
+    aliases = {
+        ("energy", "higherelectricitybills"): "higherelectricitybills",
+        ("energy", "increasedheatingcosts"): "heatingandcoolingcostsincrease",
+        ("energy", "exposuretoenergypoverty"): "strugglingtopaybillseachmonth",
+        ("energy", "homelosesmarketvalue"): "housevaluedecreasenosolar",
+        ("energy", "loseincomeduetotheproductionofsolarenergy"): "missingoutonsolarsavings",
+        (
+            "energy",
+            "facingpressureorpenaltiesinthefutureifthehomedoesnotmeetnewenergyefficiencystandardsorregulations",
+        ): "newtaxesorfinesforinefficiency",
+        ("energy", "morefrequentpoweroutages"): "morefrequentpowercuts",
+        ("transport", "higherfuelandmaintenancecosts"): "higherfuelrepaircostsice",
+        ("transport", "losingresalevalue"): "carlosesresalevalue",
+        ("transport", "penaltiesassociatedtopetroldieselcar"): "newtaxesfinesforice",
+        (
+            "transport",
+            "drivingrestrictioninspecificemissionzones",
+        ): "restrictedfromtowncitycentreszezrestrictions",
+        ("transport", "reducedtravelefficiency"): "longerormorecomplexjourneys",
+        ("transport", "exposuretomorepollution"): "morepollutionexposure",
+        ("housing", "higherelectricitybills"): "higherelectricitybills",
+        ("housing", "increasedheatingcosts"): "heatingandcoolingcostsincrease",
+        ("housing", "exposuretoenergypoverty"): "strugglingtopaybillseachmonth",
+        ("housing", "homelosesmarketvalue"): "housevaluedecreasenosolar",
+        ("housing", "loseincomeduetotheproductionofsolarenergy"): "missingoutonsolarsavings",
+        ("housing", "higherhouseinsurancecosts"): "homeinsurancemoreexpensive",
+        (
+            "housing",
+            "facingpressureorpenaltiesinthefutureifthehomedoesnotmeetnewenergyefficiencystandardsorregulations",
+        ): "newtaxesorfinesforinefficiency",
+        (
+            "housing",
+            "lawsforbiddingsellingorrentinghouseswithnoretrofittingorrenovations",
+        ): "lawsforbidsellingrentingnonrenovated",
+        ("housing", "morefrequentpoweroutages"): "morefrequentpowercuts",
+        ("housing", "presenceofdampormold"): "homemoredampormould",
+        (
+            "housing",
+            "moreriskedperceivedbyinsurancecompaniesofthehousewithnorenovationorretrofitting",
+        ): "insurersclassifyhomeashighrisk",
+        ("housing", "strongereffectsofextremeweatherevents"): "increasedsevereweatherimpacts",
+        ("housing", "diseasesandhealthproblems"): "colddampleadstohealthproblems",
+    }
+    hazard_name_key = aliases.get((sector_key, label_key))
+    if not hazard_name_key:
+        return None
+    return sector_key, hazard_name_key
 
 
 def _read_additional_hazards_csv_rows() -> list[dict[str, str]]:
@@ -1435,7 +1728,521 @@ def _seed_mm_csv_mitigation_measure_examples(connection) -> None:
     )
 
 
+def _seed_mm_target_group_xlsx(connection) -> None:
+    rows = _read_mm_target_group_xlsx_rows()
+    if not rows:
+        return
+
+    _ensure_mm_target_group_question_options(connection)
+
+    sector_by_key = {
+        _normalize_mitigation_example_key(row["name"]): row["id"]
+        for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
+    }
+    country_by_map_code = {
+        str(row["map_code"] or "").casefold(): int(row["id"])
+        for row in connection.execute(
+            text("SELECT id, map_code FROM countries WHERE map_code IS NOT NULL")
+        ).mappings()
+    }
+    option_by_group = _mm_target_group_option_map(connection)
+
+    connection.execute(
+        text("DELETE FROM mitigation_measure_target_groups WHERE source = 'xlsx'")
+    )
+    connection.execute(
+        text("DELETE FROM mitigation_measure_policy_additional_hazards WHERE source = 'xlsx'")
+    )
+    connection.execute(
+        text("DELETE FROM mitigation_measure_policy_system_hazards WHERE source = 'xlsx'")
+    )
+    connection.execute(text("DELETE FROM mitigation_measure_policies WHERE source = 'xlsx'"))
+
+    policy_ids: dict[tuple[str, int | None], int] = {}
+    policy_rows: dict[tuple[str, int | None], dict[str, object]] = {}
+    for row in rows:
+        policy_code = str(row.get("policy_code") or "").strip()
+        if not policy_code:
+            continue
+        sector_name = str(row.get("sector_name") or "").strip()
+        for sector_id in _mm_target_group_sector_ids(sector_name, sector_by_key):
+            policy_key = (policy_code, sector_id)
+            if policy_key in policy_rows:
+                continue
+            policy_rows[policy_key] = {
+                "policy_code": policy_code,
+                "policy_title": str(row.get("policy_title") or "").strip(),
+                "country_id": _mm_policy_country_id(policy_code, country_by_map_code),
+                "sector_id": sector_id,
+                "policy_type": str(row.get("policy_type") or "").strip() or None,
+                "short_description": str(row.get("short_description") or "").strip() or None,
+                "source": "xlsx",
+                "excel_row_number": row.get("excel_row_number"),
+            }
+    for policy_row in policy_rows.values():
+        result = connection.execute(
+            text(
+                """
+                INSERT INTO mitigation_measure_policies (
+                    policy_code,
+                    policy_title,
+                    country_id,
+                    sector_id,
+                    policy_type,
+                    short_description,
+                    source,
+                    excel_row_number
+                )
+                VALUES (
+                    :policy_code,
+                    :policy_title,
+                    :country_id,
+                    :sector_id,
+                    :policy_type,
+                    :short_description,
+                    :source,
+                    :excel_row_number
+                )
+                """
+            ),
+            policy_row,
+        )
+        policy_ids[
+            (str(policy_row["policy_code"]), policy_row.get("sector_id"))
+        ] = int(result.lastrowid)
+
+    inserted = 0
+    skipped = 0
+    for row in rows:
+        policy_code = str(row.get("policy_code") or "").strip()
+        match_value = str(row.get("match_value") or "").strip()
+        if match_value.casefold() == "no":
+            skipped += 1
+            continue
+        question_option_id = option_by_group.get(
+            (
+                _normalize_mitigation_example_key(
+                    str(row.get("target_group_category") or "")
+                ),
+                _normalize_mitigation_example_key(str(row.get("target_group") or "")),
+            )
+        )
+        if question_option_id is None:
+            skipped += 1
+            continue
+        sector_name = str(row.get("sector_name") or "").strip()
+        for sector_id in _mm_target_group_sector_ids(sector_name, sector_by_key):
+            policy_id = policy_ids.get((policy_code, sector_id))
+            if policy_id is None:
+                skipped += 1
+                continue
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO mitigation_measure_target_groups (
+                        mitigation_measure_policy_id,
+                        question_option_id,
+                        match_value,
+                        source,
+                        excel_column_number
+                    )
+                    VALUES (
+                        :policy_id,
+                        :question_option_id,
+                        :match_value,
+                        'xlsx',
+                        :excel_column_number
+                    )
+                    """
+                ),
+                {
+                    "policy_id": policy_id,
+                    "question_option_id": question_option_id,
+                    "match_value": match_value or None,
+                    "excel_column_number": row.get("excel_column_number"),
+                },
+            )
+            inserted += 1
+
+    logger.info(
+        "Loaded %s mitigation policies and %s target-group mappings from "
+        "MM Target group.xlsx; skipped %s mappings",
+        len(policy_ids),
+        inserted,
+        skipped,
+    )
+    _seed_sectoral_challenge_policy_additional_hazards(connection)
+    _seed_hazards_xlsx_policy_system_hazards(connection)
+
+
+def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
+    rows = _read_sectoral_challenges_xlsx_rows()
+    if not rows:
+        return
+
+    policy_ids_by_code_country: dict[tuple[str, int], list[int]] = {}
+    for row in connection.execute(
+        text(
+            """
+            SELECT id, policy_code, country_id
+            FROM mitigation_measure_policies
+            WHERE source = 'xlsx'
+              AND country_id IS NOT NULL
+            """
+        )
+    ).mappings():
+        policy_ids_by_code_country.setdefault(
+            (str(row["policy_code"]), int(row["country_id"])),
+            [],
+        ).append(int(row["id"]))
+    hazard_by_country_name = {
+        (
+            int(row["country_id"]),
+            _normalize_mitigation_example_key(str(row["name"] or "")),
+        ): int(row["id"])
+        for row in connection.execute(
+            text(
+                """
+                SELECT id, country_id, name
+                FROM additional_hazards
+                """
+            )
+        ).mappings()
+    }
+    connection.execute(
+        text("DELETE FROM mitigation_measure_policy_additional_hazards WHERE source = 'xlsx'")
+    )
+
+    inserted = 0
+    skipped = 0
+    for row in rows:
+        policy_code = str(row.get("policy_code") or "").strip()
+        match_value = str(row.get("match_value") or "").strip()
+        if match_value.casefold() == "not addressed":
+            skipped += 1
+            continue
+        hazard_key = _normalize_mitigation_example_key(
+            str(row.get("additional_hazard") or "")
+        )
+        inserted_for_cell = False
+        for country_id in {
+            country_id
+            for stored_policy_code, country_id in policy_ids_by_code_country
+            if stored_policy_code == policy_code
+        }:
+            additional_hazard_id = hazard_by_country_name.get((country_id, hazard_key))
+            if additional_hazard_id is None:
+                continue
+            for policy_id in policy_ids_by_code_country.get((policy_code, country_id), []):
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO mitigation_measure_policy_additional_hazards (
+                            mitigation_measure_policy_id,
+                            additional_hazard_id,
+                            match_value,
+                            source,
+                            excel_row_number,
+                            excel_column_number
+                        )
+                        VALUES (
+                            :policy_id,
+                            :additional_hazard_id,
+                            :match_value,
+                            'xlsx',
+                            :excel_row_number,
+                            :excel_column_number
+                        )
+                        """
+                    ),
+                    {
+                        "policy_id": policy_id,
+                        "additional_hazard_id": additional_hazard_id,
+                        "match_value": match_value or None,
+                        "excel_row_number": row.get("excel_row_number"),
+                        "excel_column_number": row.get("excel_column_number"),
+                    },
+                )
+                inserted += 1
+                inserted_for_cell = True
+        if not inserted_for_cell:
+            skipped += 1
+
+    logger.info(
+        "Loaded %s mitigation-policy additional-hazard mappings from "
+        "sectoral_challenges.xlsx; skipped %s challenge cells",
+        inserted,
+        skipped,
+    )
+
+
+def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
+    rows = _read_hazards_xlsx_rows()
+    if not rows:
+        return
+
+    policy_ids_by_code_country: dict[tuple[str, int], list[int]] = {}
+    for row in connection.execute(
+        text(
+            """
+            SELECT id, policy_code, country_id
+            FROM mitigation_measure_policies
+            WHERE source = 'xlsx'
+              AND country_id IS NOT NULL
+            """
+        )
+    ).mappings():
+        policy_ids_by_code_country.setdefault(
+            (str(row["policy_code"]), int(row["country_id"])),
+            [],
+        ).append(int(row["id"]))
+
+    hazard_by_sector_name = {
+        (
+            _normalize_mitigation_example_key(str(row["sector_name"] or "")),
+            _normalize_mitigation_example_key(str(row["name"] or "")),
+        ): int(row["id"])
+        for row in connection.execute(
+            text(
+                """
+                SELECT system_hazards.id, sectors.name AS sector_name, system_hazards.name
+                FROM system_hazards
+                JOIN sectors ON sectors.id = system_hazards.sector_id
+                """
+            )
+        ).mappings()
+    }
+
+    connection.execute(
+        text("DELETE FROM mitigation_measure_policy_system_hazards WHERE source = 'xlsx'")
+    )
+
+    inserted = 0
+    skipped = 0
+    for row in rows:
+        mitigation_effect = str(row.get("mitigation_effect") or "").strip()
+        if not mitigation_effect or mitigation_effect.casefold() == "not applicable":
+            skipped += 1
+            continue
+
+        hazard_lookup_key = _hazards_xlsx_system_hazard_lookup_key(
+            str(row.get("hazard_sector") or ""),
+            str(row.get("hazard_label") or ""),
+        )
+        if hazard_lookup_key is None:
+            skipped += 1
+            continue
+
+        system_hazard_id = hazard_by_sector_name.get(hazard_lookup_key)
+        if system_hazard_id is None:
+            skipped += 1
+            continue
+
+        policy_code = str(row.get("policy_code") or "").strip()
+        inserted_for_cell = False
+        for country_id in {
+            country_id
+            for stored_policy_code, country_id in policy_ids_by_code_country
+            if stored_policy_code == policy_code
+        }:
+            for policy_id in policy_ids_by_code_country.get((policy_code, country_id), []):
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO mitigation_measure_policy_system_hazards (
+                            mitigation_measure_policy_id,
+                            system_hazard_id,
+                            mitigation_effect,
+                            source,
+                            excel_row_number,
+                            excel_column_number
+                        )
+                        VALUES (
+                            :policy_id,
+                            :system_hazard_id,
+                            :mitigation_effect,
+                            'xlsx',
+                            :excel_row_number,
+                            :excel_column_number
+                        )
+                        ON DUPLICATE KEY UPDATE
+                            mitigation_effect = VALUES(mitigation_effect),
+                            excel_row_number = VALUES(excel_row_number),
+                            excel_column_number = VALUES(excel_column_number)
+                        """
+                    ),
+                    {
+                        "policy_id": policy_id,
+                        "system_hazard_id": system_hazard_id,
+                        "mitigation_effect": mitigation_effect,
+                        "excel_row_number": row.get("excel_row_number"),
+                        "excel_column_number": row.get("excel_column_number"),
+                    },
+                )
+                inserted += 1
+                inserted_for_cell = True
+        if not inserted_for_cell:
+            skipped += 1
+
+    logger.info(
+        "Loaded %s mitigation-policy system-hazard effect mappings from "
+        "hazards.xlsx; skipped %s hazard cells",
+        inserted,
+        skipped,
+    )
+
+
+def _mm_target_group_sector_ids(
+    sector_name: str,
+    sector_by_key: dict[str, int],
+) -> list[int | None]:
+    exact_sector_id = sector_by_key.get(_normalize_mitigation_example_key(sector_name))
+    if exact_sector_id is not None:
+        return [int(exact_sector_id)]
+
+    normalized = _normalize_mitigation_example_key(sector_name)
+    sector_ids: list[int] = []
+    for sector_label, sector_id in sector_by_key.items():
+        if sector_label and sector_label in normalized:
+            sector_ids.append(int(sector_id))
+    if sector_ids:
+        return sorted(set(sector_ids))
+    return [None]
+
+
+def _mm_policy_country_id(
+    policy_code: str,
+    country_by_map_code: dict[str, int],
+) -> int | None:
+    prefix = str(policy_code or "").split("_", 1)[0].strip().casefold()
+    if prefix == "h":
+        prefix = "hu"
+    return country_by_map_code.get(prefix)
+
+
+def _ensure_mm_target_group_question_options(connection) -> None:
+    age_question_id = connection.execute(
+        text(
+            """
+            SELECT id
+            FROM evaluation_questions
+            WHERE category = 'target_population'
+              AND question = 'Age range'
+            LIMIT 1
+            """
+        )
+    ).scalar()
+    if age_question_id is None:
+        return
+    existing = connection.execute(
+        text(
+            """
+            SELECT id
+            FROM question_options
+            WHERE questionId = :question_id
+              AND `option` = '18-25'
+            LIMIT 1
+            """
+        ),
+        {"question_id": int(age_question_id)},
+    ).scalar()
+    if existing is None:
+        connection.execute(
+            text(
+                """
+                INSERT INTO question_options (questionId, `option`)
+                VALUES (:question_id, '18-25')
+                """
+            ),
+            {"question_id": int(age_question_id)},
+        )
+
+
+def _mm_target_group_option_map(connection) -> dict[tuple[str, str], int]:
+    rows = connection.execute(
+        text(
+            """
+            SELECT evaluation_questions.question, question_options.`option`, question_options.id
+            FROM question_options
+            JOIN evaluation_questions
+              ON evaluation_questions.id = question_options.questionId
+            WHERE evaluation_questions.category = 'target_population'
+              AND evaluation_questions.active = TRUE
+            """
+        )
+    ).mappings()
+    option_by_key = {
+        (
+            _normalize_mitigation_example_key(str(row["question"] or "")),
+            _normalize_mitigation_example_key(str(row["option"] or "")),
+        ): int(row["id"])
+        for row in rows
+    }
+    aliases: dict[tuple[str, str], tuple[str, str]] = {
+        ("livinginlowenergyefficiencyhome", "livesinlowefficiencyhome"): (
+            "livinginahousewithlowenergyefficiency",
+            "yes",
+        ),
+        ("livinginlowenergyefficiencyhome", "livesinefficienthome"): (
+            "livinginahousewithlowenergyefficiency",
+            "no",
+        ),
+        ("needsacarfordailyactivities", "cardependent"): (
+            "needofacartoperformdailyactivities",
+            "yes",
+        ),
+        ("needsacarfordailyactivities", "notcardependent"): (
+            "needofacartoperformdailyactivities",
+            "no",
+        ),
+        ("eucitizenship", "eucitizen"): ("eucitizenship", "yes"),
+        ("eucitizenship", "noneucitizen"): ("eucitizenship", "no"),
+        ("disabilityorlongtermcondition", "hasdisabilitycondition"): (
+            "disabilityoflongtermcondition",
+            "yes",
+        ),
+        ("disabilityorlongtermcondition", "nodisabilitycondition"): (
+            "disabilityoflongtermcondition",
+            "no",
+        ),
+        ("levelofincome", "low"): ("levelofincome", "lowincome"),
+        ("levelofincome", "medium"): ("levelofincome", "mediumincome"),
+        ("levelofincome", "high"): ("levelofincome", "highincome"),
+        ("levelofeducation", "furtherformaleducation"): (
+            "levelofeducation",
+            "furthernormaleducation",
+        ),
+        ("careresponsibilitymainactivity", "yesnonremunerated"): (
+            "careresponsibilityasthemainactivity",
+            "yesnonremunerated",
+        ),
+        ("careresponsibilitymainactivity", "yesremunerated"): (
+            "careresponsibilityasthemainactivity",
+            "yesremunerated",
+        ),
+        ("careresponsibilitymainactivity", "no"): (
+            "careresponsibilityasthemainactivity",
+            "no",
+        ),
+    }
+    mapped = dict(option_by_key)
+    for source_key, target_key in aliases.items():
+        if target_key in option_by_key:
+            mapped[source_key] = option_by_key[target_key]
+    return mapped
+
+
 def ensure_mitigation_measure_examples() -> None:
+    inspector = inspect(engine)
+    if "mitigation_measure_target_groups" in inspector.get_table_names():
+        target_group_columns = {
+            column["name"]
+            for column in inspector.get_columns("mitigation_measure_target_groups")
+        }
+        if "mitigation_measure_policy_id" not in target_group_columns:
+            with engine.begin() as connection:
+                connection.execute(text("DROP TABLE mitigation_measure_target_groups"))
+
     with engine.begin() as connection:
         connection.execute(
             text(
@@ -1470,6 +2277,190 @@ def ensure_mitigation_measure_examples() -> None:
                 """
             )
         )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS mitigation_measure_policies (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  policy_code VARCHAR(80) NOT NULL,
+                  policy_title TEXT NOT NULL,
+                  country_id INT NULL,
+                  sector_id INT NULL,
+                  policy_type VARCHAR(120) NULL,
+                  short_description TEXT NULL,
+                  source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+                  excel_row_number INT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  CONSTRAINT fk_mitigation_policies_sector
+                    FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
+                  CONSTRAINT fk_mitigation_policies_country
+                    FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
+                  CONSTRAINT uq_mitigation_policy_code_sector_source UNIQUE (policy_code, sector_id, source),
+                  INDEX ix_mitigation_policies_policy_code (policy_code),
+                  INDEX ix_mitigation_policies_country_id (country_id),
+                  INDEX ix_mitigation_policies_sector_id (sector_id),
+                  INDEX ix_mitigation_policies_source (source)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS mitigation_measure_target_groups (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  mitigation_measure_policy_id INT NOT NULL,
+                  question_option_id INT NOT NULL,
+                  match_value VARCHAR(40) NULL,
+                  source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+                  excel_column_number INT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  CONSTRAINT fk_mitigation_target_groups_policy
+                    FOREIGN KEY (mitigation_measure_policy_id)
+                    REFERENCES mitigation_measure_policies(id) ON DELETE CASCADE,
+                  CONSTRAINT fk_mitigation_target_groups_option
+                    FOREIGN KEY (question_option_id)
+                    REFERENCES question_options(id) ON DELETE CASCADE,
+                  CONSTRAINT uq_mitigation_target_group_xlsx_cell
+                    UNIQUE (mitigation_measure_policy_id, question_option_id),
+                  INDEX ix_mitigation_target_groups_policy_id (mitigation_measure_policy_id),
+                  INDEX ix_mitigation_target_groups_option_id (question_option_id),
+                  INDEX ix_mitigation_target_groups_match_value (match_value),
+                  INDEX ix_mitigation_target_groups_source (source)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS mitigation_measure_policy_additional_hazards (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  mitigation_measure_policy_id INT NOT NULL,
+                  additional_hazard_id INT NOT NULL,
+                  match_value VARCHAR(40) NULL,
+                  source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+                  excel_row_number INT NULL,
+                  excel_column_number INT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  CONSTRAINT fk_mitigation_policy_hazards_policy
+                    FOREIGN KEY (mitigation_measure_policy_id)
+                    REFERENCES mitigation_measure_policies(id) ON DELETE CASCADE,
+                  CONSTRAINT fk_mitigation_policy_hazards_additional_hazard
+                    FOREIGN KEY (additional_hazard_id)
+                    REFERENCES additional_hazards(id) ON DELETE CASCADE,
+                  CONSTRAINT uq_mitigation_policy_additional_hazard
+                    UNIQUE (mitigation_measure_policy_id, additional_hazard_id),
+                  INDEX ix_mitigation_policy_hazards_policy_id (mitigation_measure_policy_id),
+                  INDEX ix_mitigation_policy_hazards_additional_hazard_id (additional_hazard_id),
+                  INDEX ix_mitigation_policy_hazards_match_value (match_value),
+                  INDEX ix_mitigation_policy_hazards_source (source)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS mitigation_measure_policy_system_hazards (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  mitigation_measure_policy_id INT NOT NULL,
+                  system_hazard_id INT NOT NULL,
+                  mitigation_effect VARCHAR(40) NULL,
+                  source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+                  excel_row_number INT NULL,
+                  excel_column_number INT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  CONSTRAINT fk_mitigation_policy_system_hazards_policy
+                    FOREIGN KEY (mitigation_measure_policy_id)
+                    REFERENCES mitigation_measure_policies(id) ON DELETE CASCADE,
+                  CONSTRAINT fk_mitigation_policy_system_hazards_hazard
+                    FOREIGN KEY (system_hazard_id)
+                    REFERENCES system_hazards(id) ON DELETE CASCADE,
+                  CONSTRAINT uq_mitigation_policy_system_hazard
+                    UNIQUE (mitigation_measure_policy_id, system_hazard_id),
+                  INDEX ix_mitigation_policy_system_hazards_policy_id
+                    (mitigation_measure_policy_id),
+                  INDEX ix_mitigation_policy_system_hazards_hazard_id
+                    (system_hazard_id),
+                  INDEX ix_mitigation_policy_system_hazards_effect (mitigation_effect),
+                  INDEX ix_mitigation_policy_system_hazards_source (source)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+        )
+
+    inspector = inspect(engine)
+    policy_columns = {
+        column["name"]
+        for column in inspector.get_columns("mitigation_measure_policies")
+    } if "mitigation_measure_policies" in inspector.get_table_names() else set()
+    policy_indexes = {
+        index["name"]: index
+        for index in inspector.get_indexes("mitigation_measure_policies")
+    } if "mitigation_measure_policies" in inspector.get_table_names() else {}
+    policy_foreign_keys = {
+        fk["name"]
+        for fk in inspector.get_foreign_keys("mitigation_measure_policies")
+    } if "mitigation_measure_policies" in inspector.get_table_names() else set()
+    with engine.begin() as connection:
+        if "country_id" not in policy_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_policies "
+                    "ADD COLUMN country_id INT NULL AFTER policy_title"
+                )
+            )
+            policy_columns.add("country_id")
+        connection.execute(
+            text(
+                """
+                UPDATE mitigation_measure_policies policies
+                JOIN countries
+                  ON LOWER(countries.map_code) = LOWER(SUBSTRING_INDEX(policies.policy_code, '_', 1))
+                SET policies.country_id = countries.id
+                WHERE policies.country_id IS NULL
+                """
+            )
+        )
+        if "ix_mitigation_policies_country_id" not in policy_indexes:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_policies "
+                    "ADD INDEX ix_mitigation_policies_country_id (country_id)"
+                )
+            )
+            policy_indexes["ix_mitigation_policies_country_id"] = {}
+        if "fk_mitigation_policies_country" not in policy_foreign_keys:
+            try:
+                connection.execute(
+                    text(
+                        "ALTER TABLE mitigation_measure_policies "
+                        "ADD CONSTRAINT fk_mitigation_policies_country "
+                        "FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL"
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Could not add mitigation policy country foreign key; continuing",
+                    exc_info=True,
+                )
+        if "uq_mitigation_policy_code_source" in policy_indexes:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_policies "
+                    "DROP INDEX uq_mitigation_policy_code_source"
+                )
+            )
+            policy_indexes.pop("uq_mitigation_policy_code_source", None)
+        if "uq_mitigation_policy_code_sector_source" not in policy_indexes:
+            connection.execute(
+                text(
+                    "ALTER TABLE mitigation_measure_policies "
+                    "ADD CONSTRAINT uq_mitigation_policy_code_sector_source "
+                    "UNIQUE (policy_code, sector_id, source)"
+                )
+            )
 
     inspector = inspect(engine)
     columns = {
@@ -1662,3 +2653,4 @@ def ensure_mitigation_measure_examples() -> None:
                 )
 
         _seed_mm_csv_mitigation_measure_examples(connection)
+        _seed_mm_target_group_xlsx(connection)

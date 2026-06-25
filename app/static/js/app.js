@@ -285,7 +285,8 @@ const stageVisuals = {
   },
 };
 
-function stageKeyForStep(step = "") {
+function stageKeyForStep(step = "", mode = inputMode) {
+  if (mode === "mitigation_measure") return "hazards";
   if (["country", "national_scope"].includes(step)) return "country";
   if (["region"].includes(step)) return "region";
   if (["sector"].includes(step)) return "sector";
@@ -299,6 +300,11 @@ function stageKeyForStep(step = "") {
       "add_dgs",
       "stats_deep_dive",
       "target_population_question",
+      "mitigation_measure",
+      "mitigation_reason",
+      "mitigation_duplicate_suggestion",
+      "mitigation_duplicate_report",
+      "mitigation_clarity",
     ].includes(step)
   ) {
     return "hazards";
@@ -308,11 +314,24 @@ function stageKeyForStep(step = "") {
   return "country";
 }
 
+function shouldShowHazardContextOnly(step = currentStep, mode = inputMode) {
+  return (
+    mode === "mitigation_measure"
+    || [
+      "mitigation_measure",
+      "mitigation_reason",
+      "mitigation_duplicate_suggestion",
+      "mitigation_duplicate_report",
+      "mitigation_clarity",
+    ].includes(step)
+  );
+}
+
 function updateStageVisual(step = "", session = {}, options = currentOptions) {
   currentStep = step;
   currentOptions = options || [];
   renderSelectedHazardContext(session);
-  const key = stageKeyForStep(step);
+  const key = stageKeyForStep(step, inputMode);
   const visual = stageVisuals[key] || stageVisuals.country;
   if (stageVisualTitle) stageVisualTitle.textContent = visual.title;
   if (stageVisualText) {
@@ -822,6 +841,7 @@ function renderHazardPopulationTable(session = {}) {
 
 function renderStageIcons(key, session = {}, options = currentOptions, { keepMap = false } = {}) {
   if (!stageIconGrid) return;
+  const hazardContextOnly = key === "hazards" && shouldShowHazardContextOnly();
   if (key === "mitigation") {
     renderedStageCardsKey = `icons-${key}-hidden`;
     stageIconGrid.innerHTML = "";
@@ -833,10 +853,17 @@ function renderStageIcons(key, session = {}, options = currentOptions, { keepMap
   const topHazardKey = (session.top_hazards || [])
     .map((hazard) => `${hazard.hazard}:${hazard.regional_population_pct}:${hazard.national_population_pct}`)
     .join("|");
-  const visualKey = `icons-${key}-${session.country || ""}-${session.selected_hazard || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${options.map((option) => option.label).join("|")}`;
+  const visualKey = `icons-${key}-${hazardContextOnly ? "context-only" : "summary"}-${session.country || ""}-${session.selected_hazard || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${options.map((option) => option.label).join("|")}`;
   if (renderedStageCardsKey === visualKey) return;
   renderedStageCardsKey = visualKey;
   if (!keepMap) stageVisualRenderId += 1;
+  if (hazardContextOnly) {
+    stageIconGrid.innerHTML = "";
+    stageIconGrid.hidden = true;
+    if (!keepMap && stageMap) stageMap.hidden = true;
+    stageMap?.parentElement?.classList.toggle("has-map-summary", false);
+    return;
+  }
   showStageIcons({ keepMap });
 
   if (key === "hazards" && Array.isArray(session.top_hazards) && session.top_hazards.length) {
@@ -2133,14 +2160,19 @@ function updateNewSessionButton() {
 function renderSelectedHazardContext(session = {}) {
   if (!selectedHazardContext || !selectedHazardName || !affectedProfileList) return;
   const hasMitigationReview = session.mitigation_review && typeof session.mitigation_review === "object";
+  const mitigationContextSteps = new Set([
+    "mitigation_target_population",
+    "mitigation_target_population_review",
+    "mitigation_review",
+    "evaluation_question",
+    "evaluation_complete",
+  ]);
+  const mitigationMeasure = String(session.mitigation_measure || "").trim();
   const showMitigationReviewPanel =
-    currentStep === "mitigation_review"
-    || currentStep === "evaluation_question"
-    || currentStep === "evaluation_complete"
+    (mitigationContextSteps.has(currentStep) && mitigationMeasure)
     || (currentStep === "complete" && hasMitigationReview)
     || (currentStep === "mitigation" && hasMitigationReview);
   const hazard = String(session.selected_hazard || "").trim();
-  const mitigationMeasure = String(session.mitigation_measure || "").trim();
   const profileDetails = Array.isArray(session.affected_profile_details)
     ? session.affected_profile_details
         .map((profile) => ({
@@ -2160,7 +2192,7 @@ function renderSelectedHazardContext(session = {}) {
 
   selectedHazardContext.hidden = showMitigationReviewPanel ? !mitigationMeasure : !hazard;
   if (selectedContextLabel) {
-    selectedContextLabel.textContent = showMitigationReviewPanel ? "Mitigation Measure" : "Selected hazard";
+    selectedContextLabel.textContent = showMitigationReviewPanel ? "Proposed mitigation measure" : "Selected hazard";
   }
   selectedHazardName.textContent = showMitigationReviewPanel ? mitigationMeasure : hazard;
   if (affectedProfileContext) affectedProfileContext.hidden = showMitigationReviewPanel;
@@ -3234,8 +3266,8 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     typing.remove();
     currentStep = data.step;
     if (data.step === "stats_deep_dive_dialog") {
-      updateSessionCard(data.session);
       setInputMode(data.input_mode || "text", currentStep, data.options || []);
+      updateSessionCard(data.session);
       renderOptions(data.options || [], data.other_options || []);
       await openStatsDeepDiveDialog();
       loadSessions();
@@ -3245,8 +3277,8 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     speakServerMessage(data.bot_message);
     await typeServerMessage(botRow, data.bot_message);
     renderValidationDetails(botRow, data.validation_details);
-    updateSessionCard(data.session);
     setInputMode(data.input_mode || "text", data.step, data.options || []);
+    updateSessionCard(data.session);
     applyInputValues(data.input_values);
     renderOptions(data.options || [], data.other_options || []);
     loadSessions();

@@ -18,6 +18,9 @@ from app.models import (
     Country,
     EvaluationQuestion,
     MitigationMeasureExample,
+    MitigationMeasurePolicy,
+    MitigationMeasurePolicySystemHazard,
+    MitigationMeasureTargetGroup,
     QuestionOption,
     Region,
     Sector,
@@ -739,10 +742,17 @@ class ChatService:
     def _attach_other_options(self, response: ChatResponse, session: ChatSession) -> None:
         self._apply_country_profile_count(response, session)
         main_options = {normalize(option.label) for option in response.options}
-        response.other_options = [
+        response_specific_options = [
+            option
+            for option in (response.other_options or [])
+            if normalize(option) not in main_options
+        ]
+        existing_options = {normalize(option) for option in response_specific_options}
+        response.other_options = response_specific_options + [
             option
             for option in self._other_nav_options(session, response.step)
             if normalize(option) not in main_options
+            and normalize(option) not in existing_options
         ]
 
     def _apply_country_profile_count(self, response: ChatResponse, session: ChatSession) -> None:
@@ -1334,6 +1344,15 @@ class ChatService:
                 hazard,
                 profiles,
             )
+        for hazard in session.custom_hazards or []:
+            profiles = self._stored_hazard_profiles(session, hazard)
+            if not profiles:
+                continue
+            enriched_profiles[hazard] = await self._additional_profiles_with_population_context(
+                session,
+                hazard,
+                profiles,
+            )
         if enriched_profiles:
             session.hazard_profiles = {
                 **(session.hazard_profiles or {}),
@@ -1513,6 +1532,22 @@ class ChatService:
     async def _handle_hazard_profile_selection(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
+        action = normalize(message)
+        if action == normalize("Show additional hazards"):
+            return ChatResponse(
+                session_id=session_id,
+                step="hazard_profile_selection",
+                bot_message=(
+                    "Choose one of the additional hazards from the selected "
+                    "country-sector evidence."
+                ),
+                options=self._additional_hazard_selection_options(session),
+                session=session.summary(),
+                error=False,
+            )
+        if action == normalize("Show listed hazards"):
+            return self._hazard_profile_step(session_id, session)
+
         hazard = self._match_hazard(message, session)
         if hazard is None:
             fuzzy_hazard = self._fuzzy_hazard(message, session)
@@ -4379,7 +4414,8 @@ Use empty arrays when no valid target population group is found.
             session=session,
             purpose=(
                 "a reason and optional evidence explaining why the proposed hazard "
-                "is meaningful for the selected country, region, and sector"
+                "is a negative impact or risk created by twin-transition policies "
+                "for the selected country, region, and sector"
             ),
             fields=self._reason_evidence_quality_fields(reason, evidence),
         )
@@ -4466,7 +4502,7 @@ Use empty arrays when no valid target population group is found.
         if target_population_step is not None:
             return target_population_step
 
-        return self._custom_hazard_added_step(session_id, session)
+        return await self._custom_hazard_added_step(session_id, session)
 
     async def _stats_deep_dive(
         self,
@@ -4582,13 +4618,18 @@ Use empty arrays when no valid target population group is found.
     ) -> ChatResponse:
         profiles = self._stored_hazard_profiles(session, hazard)
         user_profiles = self._stored_user_hazard_profiles(session, hazard)
+        is_additional_hazard = self._is_additional_hazard(session, hazard)
         if not profiles:
             profiles = await self._get_hazard_profiles_from_llm(session, hazard)
             if profiles:
                 if session.hazard_profiles is None:
                     session.hazard_profiles = {}
                 session.hazard_profiles[hazard] = profiles
-        display_profiles = await self._profiles_with_population_context(session, hazard, profiles)
+        display_profiles = (
+            await self._additional_profiles_with_population_context(session, hazard, profiles)
+            if is_additional_hazard
+            else await self._profiles_with_population_context(session, hazard, profiles)
+        )
         display_user_profiles = await self._profiles_with_population_context(
             session,
             hazard,
@@ -4624,7 +4665,7 @@ Use empty arrays when no valid target population group is found.
                     statistical_basis=profile.get("statistical_basis"),
                     metadata=profile,
                 )
-        else:
+        elif not is_additional_hazard:
             system_hazard = self._ensure_system_hazard(session, hazard)
             if system_hazard is not None:
                 for profile in profiles:
@@ -4680,7 +4721,10 @@ Use empty arrays when no valid target population group is found.
                 "Matched mitigation-measure examples:\n"
                 f"{matched_examples or '- No matching examples were found for this sector, hazard, and profile set.'}\n\n"
                 "Answer in Markdown with one short section only: Practical "
-                "Considerations. Keep bullets concise and do not create a final "
+                "Considerations. Start the section with two concise sentences explaining "
+                "that it highlights implementation issues, design trade-offs, and "
+                "profile-specific concerns to consider before creating a mitigation "
+                "measure. Then keep bullets concise and do not create a final "
                 "mitigation measure yet. Do not include a Current Policy "
                 "Implementation section; it will be rendered separately from the "
                 "database examples."
@@ -4692,10 +4736,18 @@ Use empty arrays when no valid target population group is found.
             temperature=0.25,
             max_tokens=750,
         )
+        practical_considerations = self._ensure_practical_considerations_intro(
+            practical_considerations
+        )
         current_policy = self._current_policy_implementations_section(session)
+        new_policy_suggestions = await self._new_policy_suggestions_section(session)
         return "\n\n".join(
             section.strip()
-            for section in (practical_considerations, current_policy)
+            for section in (
+                practical_considerations,
+                current_policy,
+                new_policy_suggestions,
+            )
             if section and section.strip()
         )
 
@@ -5356,7 +5408,7 @@ Retrieved knowledge-base excerpts:
     ) -> ChatResponse:
         question = self._current_target_population_question(session)
         if question is None:
-            return self._custom_hazard_added_step(session_id, session)
+            return self._custom_hazard_added_step_sync(session_id, session)
 
         options = self._target_population_options(question)
         return ChatResponse(
@@ -5387,7 +5439,7 @@ Retrieved knowledge-base excerpts:
         question = self._current_target_population_question(session)
         if question is None:
             await self._synthesize_target_population_profile(session)
-            return self._custom_hazard_added_step(session_id, session)
+            return await self._custom_hazard_added_step(session_id, session)
 
         options = self._target_population_options(question)
         selected_labels = self._target_population_selected_labels(message, options)
@@ -5403,13 +5455,13 @@ Retrieved knowledge-base excerpts:
             session.target_population_index += 1
             session.target_population_index = len(session.target_population_questions or [])
             await self._synthesize_target_population_profile(session)
-            return self._custom_hazard_added_step(session_id, session)
+            return await self._custom_hazard_added_step(session_id, session)
 
         if any(normalize(label) == normalize("Skip") for label in selected_labels):
             session.target_population_index += 1
             if session.target_population_index >= len(session.target_population_questions or []):
                 await self._synthesize_target_population_profile(session)
-                return self._custom_hazard_added_step(session_id, session)
+                return await self._custom_hazard_added_step(session_id, session)
             return self._target_population_question_step(session_id, session)
 
         self._record_target_population_answer(session_id, session, question, selected_labels)
@@ -5417,7 +5469,7 @@ Retrieved knowledge-base excerpts:
 
         if session.target_population_index >= len(session.target_population_questions or []):
             await self._synthesize_target_population_profile(session)
-            return self._custom_hazard_added_step(session_id, session)
+            return await self._custom_hazard_added_step(session_id, session)
 
         return self._target_population_question_step(session_id, session)
 
@@ -5484,7 +5536,7 @@ Retrieved knowledge-base excerpts:
 
         session.target_population_index = len(session.target_population_questions or [])
         await self._synthesize_target_population_profile(session)
-        return self._custom_hazard_added_step(session_id, session)
+        return await self._custom_hazard_added_step(session_id, session)
 
     def _record_target_population_answer(
         self,
@@ -5543,7 +5595,7 @@ Retrieved knowledge-base excerpts:
             f"{question['question']} -> {answer_text}",
         )
 
-    def _custom_hazard_added_step(self, session_id: str, session: ChatSession) -> ChatResponse:
+    def _prepare_custom_hazard_added_profiles(self, session: ChatSession) -> str:
         session.phase = "hazards"
         self._set_custom_hazard_profiles_from_target_population(session)
         accepted_hazard = session.accepted_custom_hazard or "New hazard"
@@ -5567,6 +5619,40 @@ Retrieved knowledge-base excerpts:
                 statistical_basis=str(profile.get("statistical_basis") or "") or None,
                 metadata=profile,
             )
+        return accepted_hazard
+
+    def _custom_hazard_added_step_sync(self, session_id: str, session: ChatSession) -> ChatResponse:
+        accepted_hazard = self._prepare_custom_hazard_added_profiles(session)
+        return ChatResponse(
+            session_id=session_id,
+            step="hazards",
+            bot_message=render_message(
+                "hazard_added.md",
+                hazard=accepted_hazard,
+                reason=session.accepted_custom_hazard_reason or "Not provided",
+                evidence=session.accepted_custom_hazard_evidence or "Not provided",
+                target_population_answers=self._format_target_population_answers(session),
+                hazards=format_hazards(session),
+            ),
+            options=POST_SECTOR_OPTIONS,
+            session=session.summary(),
+            error=False,
+        )
+
+    async def _custom_hazard_added_step(
+        self, session_id: str, session: ChatSession
+    ) -> ChatResponse:
+        accepted_hazard = self._prepare_custom_hazard_added_profiles(session)
+        profiles = self._stored_hazard_profiles(session, accepted_hazard)
+        enriched_profiles = await self._additional_profiles_with_population_context(
+            session,
+            accepted_hazard,
+            profiles,
+        )
+        if enriched_profiles:
+            if session.hazard_profiles is None:
+                session.hazard_profiles = {}
+            session.hazard_profiles[accepted_hazard] = enriched_profiles
         return ChatResponse(
             session_id=session_id,
             step="hazards",
@@ -7056,6 +7142,13 @@ is no clear match, return an empty matched_profiles array.
                 metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
                 target_population_option_ids = item.get("target_population_option_ids")
                 target_population_labels = item.get("target_population_labels")
+                population_context = item.get("population_context")
+                population_lookup_labels = item.get("population_lookup_labels")
+                regional_population_pct = (
+                    item.get("regional_population_pct") or item.get("population_pct")
+                )
+                national_population_pct = item.get("national_population_pct")
+                population_source = item.get("population_source")
             else:
                 name = str(item).strip()
                 explanation = ""
@@ -7066,6 +7159,11 @@ is no clear match, return an empty matched_profiles array.
                 metadata = {}
                 target_population_option_ids = []
                 target_population_labels = []
+                population_context = []
+                population_lookup_labels = []
+                regional_population_pct = None
+                national_population_pct = None
+                population_source = None
             key = normalize(name)
             if not name or key in seen:
                 continue
@@ -7088,6 +7186,20 @@ is no clear match, return an empty matched_profiles array.
                     "target_population_labels": (
                         list(target_population_labels)
                         if isinstance(target_population_labels, list)
+                        else []
+                    ),
+                    "regional_population_pct": regional_population_pct,
+                    "population_pct": regional_population_pct,
+                    "national_population_pct": national_population_pct,
+                    "population_source": str(population_source or ""),
+                    "population_context": (
+                        list(population_context)
+                        if isinstance(population_context, list)
+                        else []
+                    ),
+                    "population_lookup_labels": (
+                        list(population_lookup_labels)
+                        if isinstance(population_lookup_labels, list)
                         else []
                     ),
                 }
@@ -7187,6 +7299,11 @@ is no clear match, return an empty matched_profiles array.
                     "statistical_basis": str(row.statistical_basis or ""),
                     "source": source,
                     "metadata": metadata,
+                    "target_population_labels": (
+                        metadata.get("target_population_labels")
+                        if isinstance(metadata.get("target_population_labels"), list)
+                        else ([name] if source == "target_population" else [])
+                    ),
                 }
             )
 
@@ -7209,6 +7326,7 @@ is no clear match, return an empty matched_profiles array.
                     "variable_type": self._profile_variable_type(question),
                     "statistical_basis": str(group.get("statistical_basis") or ""),
                     "source": str(group.get("source") or "user_validated"),
+                    "target_population_labels": labels,
                     "metadata": group.get("metadata") if isinstance(group.get("metadata"), dict) else {},
                 }
             )
@@ -7323,9 +7441,38 @@ is no clear match, return an empty matched_profiles array.
         return cleaned or markdown_text.strip()
 
     def _hazard_options(self, session: ChatSession) -> list[Option]:
-        return [
+        options = [
             Option(id=index, label=hazard)
-            for index, hazard in enumerate(hazard_names(session), start=1)
+            for index, hazard in enumerate(self._primary_hazard_names(session), start=1)
+        ]
+        if self._additional_hazard_options(session):
+            options.append(Option(id=len(options) + 1, label="Show additional hazards"))
+        return options
+
+    def _additional_hazard_selection_options(self, session: ChatSession) -> list[Option]:
+        labels = self._additional_hazard_options(session)
+        options = [
+            Option(id=index, label=hazard)
+            for index, hazard in enumerate(labels, start=1)
+        ]
+        options.append(Option(id=len(options) + 1, label="Show listed hazards"))
+        return options
+
+    @staticmethod
+    def _primary_hazard_names(session: ChatSession) -> list[str]:
+        additional_keys = {normalize(hazard) for hazard in (session.additional_hazards or [])}
+        return [
+            hazard
+            for hazard in hazard_names(session)
+            if normalize(hazard) not in additional_keys
+        ]
+
+    @staticmethod
+    def _additional_hazard_options(session: ChatSession) -> list[str]:
+        return [
+            hazard
+            for hazard in (session.additional_hazards or [])
+            if hazard and ChatService._stored_hazard_profiles(session, hazard)
         ]
 
     def _saved_custom_hazards_for_context(self, session: ChatSession) -> list[str]:
@@ -8971,6 +9118,25 @@ Current session:
             "matches the current selection."
         )
 
+    @staticmethod
+    def _twin_transition_hazard_scope_instruction() -> str:
+        return (
+            "Twin-transition hazard scope guard:\n"
+            "- A user-added hazard must be a negative social, economic, access, "
+            "affordability, health, safety, or distributional impact connected to "
+            "green-transition or digital-transition policies, regulations, incentives, "
+            "infrastructure changes, technology adoption, pricing, restrictions, or "
+            "market shifts.\n"
+            "- Accept hazards that describe unintended consequences of twin-transition "
+            "policies, even when locally specific or not already listed.\n"
+            "- Reject hazards that are general problems with no clear policy mechanism "
+            "from the twin transition, such as generic poverty, crime, illness, weather, "
+            "unemployment, or infrastructure failure unless the user links them to a "
+            "green/digital transition policy impact in the selected sector.\n"
+            "- When rejecting, explain that the hazard must be rewritten as a "
+            "twin-transition policy impact, with the mechanism or affected outcome."
+        )
+
     async def _build_deep_dive_messages(
         self, session: ChatSession, user_message: str
     ) -> tuple[str, list[dict[str, str]]]:
@@ -9753,6 +9919,8 @@ You are a practical validation assistant for Dr Transition.
 
 {self._scope_instruction(session)}
 
+{self._twin_transition_hazard_scope_instruction()}
+
 Use these retrieved sector-prompt excerpts as the authoritative statistical source:
 {sector_context}
 """.strip()
@@ -9760,9 +9928,10 @@ Use these retrieved sector-prompt excerpts as the authoritative statistical sour
             {
                 "role": "user",
                 "content": (
-                    "Validate whether the proposed new regional hazard is reasonable "
-                    "for the selected country and sector and does not contradict the sector "
-                    "statistics, survey findings, or prompt context.\n\n"
+                    "Validate whether the proposed new regional hazard is a reasonable "
+                    "negative impact or risk of twin-transition policies for the selected "
+                    "country and sector, and does not contradict the sector statistics, "
+                    "survey findings, or prompt context.\n\n"
                     f"Sector: {session.sector}\n"
                     f"Country: {session.country}\n"
                     f"Region: {session.region}\n"
@@ -9778,9 +9947,10 @@ Use these retrieved sector-prompt excerpts as the authoritative statistical sour
                     "Example invalid response:\n"
                     '{"valid": false, "reason": "The reason contradicts the sector context or is too vague to evaluate."}\n\n'
                     "Rules:\n"
-                    "- valid should be true when the hazard and reason are meaningful, "
-                    "country/sector-relevant, and compatible with the loaded context, even if "
-                    "the exact regional hazard is not explicitly named in the statistics.\n"
+                    "- valid should be true only when the hazard and reason are meaningful, "
+                    "country/sector-relevant, compatible with the loaded context, and clearly "
+                    "connected to twin-transition policy impacts, even if the exact regional "
+                    "hazard is not explicitly named in the statistics.\n"
                     "- User-added regional hazards may extend the system hazard list; "
                     "do not reject solely because the hazard is new or locally specific.\n"
                     "- If evidence content is supplied from a URL or file, use it as "
@@ -9790,6 +9960,7 @@ Use these retrieved sector-prompt excerpts as the authoritative statistical sour
                     "clearly contradicts the statistics, confuses predictors with hazards, "
                     "invents unsupported numbers as facts, is unrelated to the sector, "
                     "is unrelated to the selected country, "
+                    "is unrelated to twin-transition policies, "
                     "or is too vague/generic to evaluate.\n"
                     "- The reason field must be useful to the user and under 60 words."
                 ),
@@ -9902,6 +10073,8 @@ and then decide whether it is already clearly covered by existing sector or
 user-added hazards.
 
 {self._scope_instruction(session)}
+
+{self._twin_transition_hazard_scope_instruction()}
 """.strip()
         messages = [
             {
@@ -9912,18 +10085,26 @@ user-added hazards.
                     "Validation checks:\n"
                     "- Check for generic or ambiguous context.\n"
                     "- It should appear to be a recognizable word or phrase.\n"
-                    "- Valid and meaningful text should pass.\n"
+                    "- It must describe a negative impact, risk, burden, exclusion, "
+                    "or distributional harm caused or intensified by twin-transition "
+                    "policies in the selected sector.\n"
+                    "- Valid and meaningful text should pass only when it stays inside "
+                    "the twin-transition policy scope.\n"
                     "- Random characters, gibberish, keyboard mashing, or unrecognizable text should fail.\n"
                     "- Text that is too short to determine intent should be Ambiguous.\n\n"
                     "Classification rules:\n"
                     "- Invalid: random characters, keyboard mashing, gibberish, or no clear meaning.\n"
                     "- Ambiguous: too short, incomplete, only a very broad topic label, "
-                    "or not enough context to understand the intended hazard.\n"
+                    "or not enough context to understand the intended twin-transition "
+                    "policy hazard.\n"
                     "- Valid: a clear question, request, statement, recognizable phrase, "
-                    "or meaningful hazard-like phrase. It does not need perfect wording.\n\n"
+                    "or meaningful hazard-like phrase that is within twin-transition "
+                    "policy scope. It does not need perfect wording.\n\n"
                     "Be permissive for meaningful regional hazards. Accept concise phrases "
                     "when the risk or negative outcome is understandable, even if the "
-                    "affected group or place is not fully specified yet.\n\n"
+                    "affected group or place is not fully specified yet, but reject hazards "
+                    "that are general social problems, natural disasters, health issues, "
+                    "or market risks with no clear twin-transition policy mechanism.\n\n"
                     "if the topic is too broad or generic, ask for a rewrite with more specific mechanism or outcome. For example, if the user writes 'transport', you might say 'Please rewrite this with the affected outcome or mechanism, such as 'increased road traffic deaths' or 'disrupted public transit access'.\n\n"
                     "Compare against existing hazards for semantic similarity. Put any "
                     "existing hazards with the same meaning, a similar meaning, a close "
@@ -9943,6 +10124,7 @@ user-added hazards.
                     "Output rules:\n"
                     "- status must be exactly one of: Valid, Ambiguous, Invalid.\n"
                     "- valid must be true only when status is Valid and no existing hazard has the same or similar meaning.\n"
+                    "- valid must be false when the proposed hazard is outside twin-transition policy scope.\n"
                     "- suggestions must contain exact existing hazard names with the same meaning, similar meaning, close paraphrase, broader/narrower overlap, or substantially overlapping risk.\n"
                     "- If suggestions is not empty, status must be Invalid and valid must be false.\n"
                     "- If no existing hazards are relevant, suggestions must be an empty array.\n"
@@ -11647,14 +11829,16 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         self, session: ChatSession, limit: int | None = None
     ) -> str:
         rows = self._matched_mitigation_measure_example_rows(session, limit=limit)
+        intro = self._current_policy_implementations_intro()
         if not rows:
             return (
                 "## Current Policy Implementations\n\n"
+                f"{intro}\n\n"
                 "No matching current policy implementations were found for this "
                 "sector, hazard, and profile set."
             )
 
-        sections = ["## Current Policy Implementations"]
+        sections = ["## Current Policy Implementations\n\n" + intro]
         grouped_examples: dict[str, dict[str, object]] = {}
         for example in rows:
             measure = normalize_markdown_text(str(example.measure or "")).strip()
@@ -11721,6 +11905,473 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             sections.append(f"### {measure}\n\n" + "\n".join(details))
 
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _ensure_practical_considerations_intro(markdown: str) -> str:
+        intro = (
+            "This section translates the selected hazard and affected profiles into "
+            "practical design considerations for mitigation. It highlights issues to "
+            "check before choosing a measure, such as delivery barriers, targeting, "
+            "and implementation risks."
+        )
+        cleaned = str(markdown or "").strip()
+        if not cleaned:
+            return "## Practical Considerations\n\n" + intro
+        if re.search(r"(?i)implementation issues|design trade-offs|delivery barriers", cleaned):
+            return cleaned
+        if cleaned.casefold().lstrip().startswith("## practical considerations"):
+            return re.sub(
+                r"(?i)(##\s*Practical Considerations\s*)",
+                "\\1\n\n" + intro + "\n\n",
+                cleaned,
+                count=1,
+            )
+        return "## Practical Considerations\n\n" + intro + "\n\n" + cleaned
+
+    @staticmethod
+    def _current_policy_implementations_intro() -> str:
+        return (
+            "This section shows real policy implementations from the reference dataset "
+            "that are relevant to the selected sector, hazard, and socio-demographic "
+            "profiles. For each match, it summarizes where it has been implemented, "
+            "the available evidence, and any reference links that support the example."
+        )
+
+    @staticmethod
+    def _new_policy_proposals_intro() -> str:
+        return (
+            "This section proposes candidate policies from the policy database for the "
+            "same country and sector. The proposals are ranked using their hazard "
+            "mitigation effect and how well their target groups overlap with the "
+            "selected hazard profiles."
+        )
+
+    async def _new_policy_suggestions_section(
+        self,
+        session: ChatSession,
+        *,
+        limit: int = 3,
+    ) -> str:
+        candidates = self._ranked_new_policy_suggestions(session, limit=limit)
+        intro = self._new_policy_proposals_intro()
+        if not candidates:
+            return (
+                "## New policy proposals\n\n"
+                f"{intro}\n\n"
+                "No matching policy proposals were found for this country, sector, "
+                "and selected hazard context."
+            )
+
+        candidate_context = self._new_policy_suggestion_context(candidates)
+        context = """
+You write concise, evidence-conscious policy implementation suggestions for Dr Transition.
+Use only the provided candidate policy context. Do not invent external evidence,
+reference links, laws, budgets, or country examples. Preserve the supplied ranking.
+
+Scoring context:
+- Target-group values: treat "Yes" as full target-group coverage and "Partially"
+  as partial target-group coverage. Do not mention "New" or "PP" in target-group matches.
+- Hazard mitigation effects rank as High mitigation > Medium mitigation > Low mitigation.
+- Higher target-population overlap between selected system-hazard profiles and policy
+  target groups should be described as a stronger fit.
+""".strip()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Create the markdown body for a section named "
+                    "'New policy proposals'. Do not include the heading itself.\n\n"
+                    "Start with two concise sentences explaining that this section "
+                    "shows candidate policies from the database, ranked by hazard "
+                    "mitigation effect and target-group overlap. Then list the "
+                    "candidates.\n\n"
+                    "For each candidate, include:\n"
+                    "- the policy title as a level-3 heading,\n"
+                    "- Implemented in / country-sector context,\n"
+                    "- Implementation suggestion based on the policy type, description, "
+                    "target groups, matched system-hazard target populations, and "
+                    "hazard mitigation effect,\n"
+                    "- Score with a short reason.\n\n"
+                    "Keep it concise and show only the supplied candidates.\n\n"
+                    f"Selected country: {session.country or 'Not specified'}\n"
+                    f"Selected sector: {session.sector or 'Not specified'}\n"
+                    f"Selected hazard: {session.selected_hazard or session.accepted_custom_hazard or 'Not specified'}\n"
+                    f"Selected socio-demographic profiles:\n{format_all_dgs(session)}\n\n"
+                    f"Candidate policy context:\n{candidate_context}"
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=1000,
+        )
+        if response and not is_llm_unavailable_response(response):
+            cleaned = self._strip_new_policy_suggestions_heading(response)
+            if cleaned:
+                return "## New policy proposals\n\n" + self._ensure_new_policy_intro(cleaned)
+
+        return self._fallback_new_policy_suggestions_section(candidates)
+
+    @staticmethod
+    def _strip_new_policy_suggestions_heading(markdown: str) -> str:
+        lines = []
+        for line in str(markdown or "").strip().splitlines():
+            heading_text = re.sub(r"^\s*#{1,6}\s*", "", line).strip()
+            heading_text = heading_text.strip("*_:- ")
+            if normalize_for_match(heading_text) == "new policy proposals":
+                continue
+            lines.append(line)
+        return "\n".join(lines).strip()
+
+    def _ranked_new_policy_suggestions(
+        self,
+        session: ChatSession,
+        *,
+        limit: int = 3,
+    ) -> list[dict[str, object]]:
+        if session.country_id is None or session.sector_id is None:
+            return []
+
+        selected_system_hazard_id = self._selected_system_hazard_id(session)
+        hazard_target_option_ids = self._selected_system_hazard_target_option_ids(
+            session,
+            selected_system_hazard_id,
+        )
+
+        query = (
+            select(
+                MitigationMeasurePolicy.id,
+                MitigationMeasurePolicy.policy_code,
+                MitigationMeasurePolicy.policy_title,
+                MitigationMeasurePolicy.policy_type,
+                MitigationMeasurePolicy.short_description,
+                MitigationMeasurePolicySystemHazard.system_hazard_id,
+                MitigationMeasurePolicySystemHazard.mitigation_effect,
+                SystemHazard.name.label("hazard_name"),
+            )
+            .join(
+                MitigationMeasurePolicySystemHazard,
+                MitigationMeasurePolicySystemHazard.mitigation_measure_policy_id
+                == MitigationMeasurePolicy.id,
+            )
+            .join(
+                SystemHazard,
+                SystemHazard.id == MitigationMeasurePolicySystemHazard.system_hazard_id,
+            )
+            .where(
+                MitigationMeasurePolicy.country_id == session.country_id,
+                MitigationMeasurePolicy.sector_id == session.sector_id,
+                MitigationMeasurePolicy.source == "xlsx",
+            )
+        )
+        if selected_system_hazard_id is not None:
+            query = query.where(
+                MitigationMeasurePolicySystemHazard.system_hazard_id
+                == selected_system_hazard_id
+            )
+
+        policy_rows = self.db.execute(query).mappings().all()
+        if not policy_rows:
+            return []
+
+        policy_ids = [int(row["id"]) for row in policy_rows]
+        target_rows = self.db.execute(
+            select(
+                MitigationMeasureTargetGroup.mitigation_measure_policy_id.label("policy_id"),
+                MitigationMeasureTargetGroup.question_option_id,
+                MitigationMeasureTargetGroup.match_value,
+                EvaluationQuestion.question,
+                QuestionOption.option,
+            )
+            .join(
+                QuestionOption,
+                QuestionOption.id == MitigationMeasureTargetGroup.question_option_id,
+            )
+            .join(
+                EvaluationQuestion,
+                and_(
+                    EvaluationQuestion.id == QuestionOption.question_id,
+                    EvaluationQuestion.category == "target_population",
+                ),
+            )
+            .where(MitigationMeasureTargetGroup.mitigation_measure_policy_id.in_(policy_ids))
+            .order_by(
+                MitigationMeasureTargetGroup.mitigation_measure_policy_id,
+                EvaluationQuestion.question,
+                QuestionOption.option,
+            )
+        ).mappings().all()
+
+        targets_by_policy: dict[int, list[dict[str, object]]] = {}
+        for row in target_rows:
+            policy_id = int(row["policy_id"])
+            label = self._target_population_label(
+                str(row["question"] or ""),
+                str(row["option"] or ""),
+            )
+            targets_by_policy.setdefault(policy_id, []).append(
+                {
+                    "question_option_id": int(row["question_option_id"]),
+                    "label": label,
+                    "match_value": str(row["match_value"] or "").strip(),
+                }
+            )
+
+        candidates: list[dict[str, object]] = []
+        for row in policy_rows:
+            policy_id = int(row["id"])
+            target_groups = targets_by_policy.get(policy_id, [])
+            score_details = self._new_policy_suggestion_score(
+                mitigation_effect=str(row["mitigation_effect"] or ""),
+                target_groups=target_groups,
+                hazard_target_option_ids=hazard_target_option_ids,
+            )
+            if score_details["score"] <= 0:
+                continue
+            candidates.append(
+                {
+                    "policy_id": policy_id,
+                    "policy_code": str(row["policy_code"] or ""),
+                    "policy_title": normalize_markdown_text(str(row["policy_title"] or "")).strip(),
+                    "policy_type": normalize_markdown_text(str(row["policy_type"] or "")).strip(),
+                    "short_description": normalize_markdown_text(
+                        str(row["short_description"] or "")
+                    ).strip(),
+                    "hazard_name": normalize_markdown_text(str(row["hazard_name"] or "")).strip(),
+                    "mitigation_effect": str(row["mitigation_effect"] or "").strip(),
+                    "target_groups": target_groups,
+                    **score_details,
+                }
+            )
+
+        candidates.sort(
+            key=lambda candidate: (
+                float(candidate.get("score") or 0),
+                float(candidate.get("hazard_effect_score") or 0),
+                float(candidate.get("target_match_score") or 0),
+                str(candidate.get("policy_title") or ""),
+            ),
+            reverse=True,
+        )
+        return candidates[:limit]
+
+    def _selected_system_hazard_target_option_ids(
+        self,
+        session: ChatSession,
+        system_hazard_id: int | None,
+    ) -> set[int]:
+        if system_hazard_id is None:
+            return self._selected_target_population_option_ids(session)
+
+        profile_ids = self._selected_system_profile_ids(session, system_hazard_id)
+        if not profile_ids:
+            profile_ids = [
+                int(row_id)
+                for row_id in self.db.scalars(
+                    select(SystemHazardSocioDemographic.id).where(
+                        SystemHazardSocioDemographic.system_hazard_id
+                        == system_hazard_id
+                    )
+                ).all()
+            ]
+        if not profile_ids:
+            return self._selected_target_population_option_ids(session)
+
+        option_ids = {
+            int(option_id)
+            for option_id in self.db.scalars(
+                select(
+                    SystemHazardSocioDemographicTargetPopulation.question_option_id
+                ).where(
+                    SystemHazardSocioDemographicTargetPopulation.system_hazard_socio_demographic_id.in_(
+                        profile_ids
+                    )
+                )
+            ).all()
+        }
+        return option_ids or self._selected_target_population_option_ids(session)
+
+    def _selected_target_population_option_ids(self, session: ChatSession) -> set[int]:
+        answer_pairs: set[tuple[str, str]] = set()
+        for answer in session.target_population_answers or []:
+            question = normalize_for_match(str(answer.get("question") or ""))
+            selected = answer.get("selected")
+            labels = selected if isinstance(selected, list) else str(answer.get("answer") or "").split(",")
+            for label in labels:
+                option = normalize_for_match(str(label or ""))
+                if question and option:
+                    answer_pairs.add((question, option))
+        if not answer_pairs:
+            return set()
+
+        rows = self.db.execute(
+            select(
+                QuestionOption.id,
+                EvaluationQuestion.question,
+                QuestionOption.option,
+            )
+            .join(EvaluationQuestion, EvaluationQuestion.id == QuestionOption.question_id)
+            .where(EvaluationQuestion.category == "target_population")
+        ).all()
+        return {
+            int(row.id)
+            for row in rows
+            if (
+                normalize_for_match(str(row.question or "")),
+                normalize_for_match(str(row.option or "")),
+            )
+            in answer_pairs
+        }
+
+    @staticmethod
+    def _new_policy_suggestion_score(
+        *,
+        mitigation_effect: str,
+        target_groups: list[dict[str, object]],
+        hazard_target_option_ids: set[int],
+    ) -> dict[str, object]:
+        effect_key = normalize_for_match(mitigation_effect)
+        hazard_effect_score = {
+            "high mitigation": 60.0,
+            "medium mitigation": 35.0,
+            "low mitigation": 15.0,
+        }.get(effect_key, 0.0)
+
+        value_scores = {
+            "yes": 12.0,
+            "partially": 6.0,
+        }
+        matched_targets: list[dict[str, object]] = []
+        target_match_score = 0.0
+        if not hazard_target_option_ids:
+            return {
+                "score": round(hazard_effect_score, 2),
+                "hazard_effect_score": hazard_effect_score,
+                "target_match_score": 0.0,
+                "matched_target_groups": matched_targets,
+                "hazard_target_option_count": 0,
+            }
+        for group in target_groups:
+            option_id = int(group.get("question_option_id") or 0)
+            if option_id not in hazard_target_option_ids:
+                continue
+            value = str(group.get("match_value") or "").strip()
+            value_score = value_scores.get(value.casefold(), 0.0)
+            if value_score <= 0:
+                continue
+            matched_targets.append(group)
+            target_match_score += value_score
+
+        target_match_score = min(40.0, target_match_score)
+        return {
+            "score": round(hazard_effect_score + target_match_score, 2),
+            "hazard_effect_score": hazard_effect_score,
+            "target_match_score": round(target_match_score, 2),
+            "matched_target_groups": matched_targets,
+            "hazard_target_option_count": len(hazard_target_option_ids),
+        }
+
+    def _new_policy_suggestion_context(self, candidates: list[dict[str, object]]) -> str:
+        lines: list[str] = []
+        for index, candidate in enumerate(candidates, start=1):
+            matched_targets = candidate.get("matched_target_groups")
+            target_groups = candidate.get("target_groups")
+            matched_labels = self._policy_target_group_summary(
+                matched_targets if isinstance(matched_targets, list) else []
+            )
+            all_target_labels = self._policy_target_group_summary(
+                target_groups if isinstance(target_groups, list) else []
+            )
+            lines.append(
+                "\n".join(
+                    [
+                        f"{index}. Policy code: {candidate.get('policy_code')}",
+                        f"   Title: {candidate.get('policy_title')}",
+                        f"   Type: {candidate.get('policy_type') or 'Not specified'}",
+                        f"   Description: {candidate.get('short_description') or 'Not specified'}",
+                        f"   Related system hazard: {candidate.get('hazard_name')}",
+                        f"   Hazard mitigation effect: {candidate.get('mitigation_effect')}",
+                        f"   Matched target groups: {matched_labels or 'None'}",
+                        f"   All policy target groups: {all_target_labels or 'None'}",
+                        (
+                            f"   Score: {candidate.get('score')}/100 "
+                            f"(hazard effect {candidate.get('hazard_effect_score')}, "
+                            f"target match {candidate.get('target_match_score')})"
+                        ),
+                    ]
+                )
+            )
+        return "\n\n".join(lines)
+
+    def _fallback_new_policy_suggestions_section(
+        self,
+        candidates: list[dict[str, object]],
+    ) -> str:
+        sections = ["## New policy proposals\n\n" + self._new_policy_proposals_intro()]
+        for candidate in candidates:
+            matched_targets = candidate.get("matched_target_groups")
+            matched_labels = self._policy_target_group_summary(
+                matched_targets if isinstance(matched_targets, list) else []
+            )
+            details = [
+                f"- **Implemented in:** {candidate.get('policy_code')} "
+                f"({candidate.get('hazard_name')})",
+                (
+                    "- **Implementation suggestion:** Use this policy as a candidate "
+                    f"implementation for the selected hazard because it has "
+                    f"**{candidate.get('mitigation_effect')}** and overlaps with "
+                    f"the selected system-hazard target populations"
+                    f"{f': {matched_labels}' if matched_labels else '.'}"
+                ),
+                (
+                    f"- **Score:** {candidate.get('score')}/100 "
+                    f"(hazard effect {candidate.get('hazard_effect_score')}, "
+                    f"target match {candidate.get('target_match_score')})."
+                ),
+            ]
+            description = str(candidate.get("short_description") or "").strip()
+            if description:
+                details.insert(1, f"- **Policy context:** {description}")
+            sections.append(f"### {candidate.get('policy_title')}\n\n" + "\n".join(details))
+        return "\n\n".join(sections)
+
+    @staticmethod
+    def _ensure_new_policy_intro(markdown: str) -> str:
+        intro = ChatService._new_policy_proposals_intro()
+        cleaned = str(markdown or "").strip()
+        if not cleaned:
+            return intro
+        if re.search(r"(?i)candidate policies|hazard mitigation effect|target-group overlap", cleaned):
+            return cleaned
+        return intro + "\n\n" + cleaned
+
+    @staticmethod
+    def _policy_target_group_summary(target_groups: list[dict[str, object]]) -> str:
+        labels: list[str] = []
+        seen: set[str] = set()
+        for group in target_groups:
+            label = str(group.get("label") or "").strip()
+            value = str(group.get("match_value") or "").strip()
+            if value.casefold() == "pp":
+                continue
+            if not label:
+                continue
+            rendered = f"{label} ({value})" if value else label
+            key = normalize_for_match(rendered)
+            if key and key not in seen:
+                seen.add(key)
+                labels.append(rendered)
+        return "; ".join(labels)
+
+    @staticmethod
+    def _target_population_label(question: str, option: str) -> str:
+        question = str(question or "").strip()
+        option = str(option or "").strip()
+        if question and option:
+            return f"{question}: {option}"
+        return question or option
 
     def _current_policy_mitigation_measure(self, session: ChatSession) -> str:
         for example in self._matched_mitigation_measure_example_rows(session, limit=None):

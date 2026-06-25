@@ -82,13 +82,18 @@ class ChatSession:
                 seen_profiles.add(key)
                 deduped_affected_profiles.append(profile)
                 deduped_affected_profile_details.append(item)
-        benefited_profiles = self._target_population_profiles(self.target_population_answers or [])
+        benefited_profiles = list(self.mitigation_target_population or [])
+        mitigation_measure = (
+            self.mitigation_measure
+            or self.pending_mitigation_measure
+            or self.suggested_mitigation_measure_name
+        )
         return SessionSummary(
             country=self.country,
             region=self.region,
             sector=self.sector,
             selected_hazard=self.selected_hazard,
-            mitigation_measure=self.mitigation_measure,
+            mitigation_measure=mitigation_measure,
             benefited_profiles=benefited_profiles,
             mitigation_review=self._mitigation_review_summary(self.mitigation_validation),
             target_population_questions=self.target_population_questions or [],
@@ -100,7 +105,7 @@ class ChatSession:
             affected_profile_count=self.eligible_hazard_profile_count(),
             affected_profiles=deduped_affected_profiles,
             affected_profile_details=deduped_affected_profile_details,
-            mitigation_measure_count=1 if self.mitigation_measure else 0,
+            mitigation_measure_count=1 if mitigation_measure else 0,
         )
 
     def eligible_hazard_profile_count(self) -> int:

@@ -13,7 +13,6 @@ from app.database import (
     Base,
     engine,
     ensure_runtime_schema,
-    run_schema_sql,
     validate_database_connection,
 )
 from app.models import AppUser
@@ -48,7 +47,6 @@ app.include_router(api_router)
 @app.on_event("startup")
 async def startup() -> None:
     validate_database_connection()
-    run_schema_sql()
     Base.metadata.create_all(bind=engine)
     ensure_runtime_schema()
 

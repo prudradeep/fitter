@@ -296,6 +296,79 @@ CREATE TABLE IF NOT EXISTS mitigation_measure_examples (
   INDEX ix_mitigation_measure_examples_source (source)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS mitigation_measure_policies (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  policy_code VARCHAR(80) NOT NULL,
+  policy_title TEXT NOT NULL,
+  country_id INT NULL,
+  sector_id INT NULL,
+  policy_type VARCHAR(120) NULL,
+  short_description TEXT NULL,
+  source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+  excel_row_number INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_mitigation_policies_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
+  CONSTRAINT fk_mitigation_policies_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
+  CONSTRAINT uq_mitigation_policy_code_sector_source UNIQUE (policy_code, sector_id, source),
+  INDEX ix_mitigation_policies_policy_code (policy_code),
+  INDEX ix_mitigation_policies_country_id (country_id),
+  INDEX ix_mitigation_policies_sector_id (sector_id),
+  INDEX ix_mitigation_policies_source (source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS mitigation_measure_target_groups (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  mitigation_measure_policy_id INT NOT NULL,
+  question_option_id INT NOT NULL,
+  match_value VARCHAR(40) NULL,
+  source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+  excel_column_number INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_mitigation_target_groups_policy FOREIGN KEY (mitigation_measure_policy_id) REFERENCES mitigation_measure_policies(id) ON DELETE CASCADE,
+  CONSTRAINT fk_mitigation_target_groups_option FOREIGN KEY (question_option_id) REFERENCES question_options(id) ON DELETE CASCADE,
+  CONSTRAINT uq_mitigation_target_group_xlsx_cell UNIQUE (mitigation_measure_policy_id, question_option_id),
+  INDEX ix_mitigation_target_groups_policy_id (mitigation_measure_policy_id),
+  INDEX ix_mitigation_target_groups_option_id (question_option_id),
+  INDEX ix_mitigation_target_groups_match_value (match_value),
+  INDEX ix_mitigation_target_groups_source (source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS mitigation_measure_policy_additional_hazards (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  mitigation_measure_policy_id INT NOT NULL,
+  additional_hazard_id INT NOT NULL,
+  match_value VARCHAR(40) NULL,
+  source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+  excel_row_number INT NULL,
+  excel_column_number INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_mitigation_policy_hazards_policy FOREIGN KEY (mitigation_measure_policy_id) REFERENCES mitigation_measure_policies(id) ON DELETE CASCADE,
+  CONSTRAINT fk_mitigation_policy_hazards_additional_hazard FOREIGN KEY (additional_hazard_id) REFERENCES additional_hazards(id) ON DELETE CASCADE,
+  CONSTRAINT uq_mitigation_policy_additional_hazard UNIQUE (mitigation_measure_policy_id, additional_hazard_id),
+  INDEX ix_mitigation_policy_hazards_policy_id (mitigation_measure_policy_id),
+  INDEX ix_mitigation_policy_hazards_additional_hazard_id (additional_hazard_id),
+  INDEX ix_mitigation_policy_hazards_match_value (match_value),
+  INDEX ix_mitigation_policy_hazards_source (source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS mitigation_measure_policy_system_hazards (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  mitigation_measure_policy_id INT NOT NULL,
+  system_hazard_id INT NOT NULL,
+  mitigation_effect VARCHAR(40) NULL,
+  source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+  excel_row_number INT NULL,
+  excel_column_number INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_mitigation_policy_system_hazards_policy FOREIGN KEY (mitigation_measure_policy_id) REFERENCES mitigation_measure_policies(id) ON DELETE CASCADE,
+  CONSTRAINT fk_mitigation_policy_system_hazards_hazard FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE,
+  CONSTRAINT uq_mitigation_policy_system_hazard UNIQUE (mitigation_measure_policy_id, system_hazard_id),
+  INDEX ix_mitigation_policy_system_hazards_policy_id (mitigation_measure_policy_id),
+  INDEX ix_mitigation_policy_system_hazards_hazard_id (system_hazard_id),
+  INDEX ix_mitigation_policy_system_hazards_effect (mitigation_effect),
+  INDEX ix_mitigation_policy_system_hazards_source (source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_question_responses (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_session_id INT NOT NULL,
@@ -573,6 +646,7 @@ INSERT INTO question_options (questionId, `option`)
 SELECT q.id, option_label FROM evaluation_questions q
 JOIN (
   SELECT 'Age range' AS question_text, '<18' AS option_label
+  UNION ALL SELECT 'Age range', '18-25'
   UNION ALL SELECT 'Age range', '25-35'
   UNION ALL SELECT 'Age range', '35-65'
   UNION ALL SELECT 'Age range', '>65'

@@ -40,7 +40,7 @@ DATABASE_URL="mysql+pymysql://drtransition:drtransition_password@localhost:3306/
 
 ## MySQL Setup
 
-Create the database and seed the reference data using the SQL file:
+Create the database using the SQL file:
 
 ```bash
 mysql -u root -p < schema.sql
@@ -57,6 +57,36 @@ FLUSH PRIVILEGES;
 
 ```bash
 mysql -u drtransition -p drtransition < schema.sql
+```
+
+## Seed Reference Data
+
+The application no longer applies `schema.sql` or reloads CSV/XLSX reference data
+on every startup. Run the seed command only when setting up the database or after
+changing the source files such as `mm.csv`, `additionalHazards.csv`,
+`additionalHazardProfiles.csv`, `MM Target group.xlsx`, `sectoral_challenges.xlsx`,
+or `hazards.xlsx`.
+
+PowerShell:
+
+```powershell
+.\scripts\seed_database.ps1
+```
+
+Cross-platform:
+
+```bash
+uv run python -m app.seed_data
+```
+
+If the schema is already up to date and you only want to reload CSV/XLSX data:
+
+```powershell
+.\scripts\seed_database.ps1 -SkipSchema
+```
+
+```bash
+uv run python -m app.seed_data --skip-schema
 ```
 
 ## Ollama Setup

@@ -23,8 +23,8 @@ def format_hazards(session: ChatSession) -> str:
         sections.extend(
             [
                 "",
-                '<h3 class="hazard-group-heading">Additional hazards '
-                '<span>Added by experts</span></h3>',
+                '<h3 class="hazard-group-heading">Co-Created hazards '
+                '<span>By users</span></h3>',
                 format_custom_hazards(session),
             ]
         )
@@ -33,7 +33,7 @@ def format_hazards(session: ChatSession) -> str:
             [
                 "",
                 '<h3 class="hazard-group-heading">Additional hazards '
-                '<span>From country-sector evidence</span></h3>',
+                '<span>By experts</span></h3>',
                 format_additional_hazards(session),
             ]
         )
@@ -266,20 +266,64 @@ def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) 
     effect = _format_score(ranking.get("effect_size_score"))
     reach = _format_score(ranking.get("reach_score"))
     metrics = (
-        ("Relevance", relevance),
-        ("Salience", salience),
-        ("Effect size", effect),
-        ("Reach", reach),
+        (
+            "Relevance",
+            relevance,
+            "Overall ranking score used to order hazards. Calculation: Salience + "
+            "Effect size + Reach. Higher means the hazard combines stronger concern, "
+            "stronger profile association, and/or broader affected population reach.",
+        ),
+        (
+            "Salience",
+            salience,
+            "How prominent this hazard is in the country survey data. "
+            "Calculation: average concern score × percentage of respondents above "
+            "the high-concern threshold, divided by 100. Higher means more people "
+            "are strongly concerned and/or concern is more intense.",
+        ),
+        (
+            "Effect size",
+            effect,
+            "How strongly socio-demographic predictors are associated with this hazard. "
+            "Calculation: average absolute log odds ratio across confirmed positive "
+            "predictors for the hazard. Higher means the identified profiles are more "
+            "strongly associated with concern about this hazard.",
+        ),
+        (
+            "Reach",
+            reach,
+            "How much of the selected region may be represented by the affected target "
+            "profiles. Calculation: regional population share of matched target-population "
+            "profiles when available; otherwise Eurostat prevalence weighted by predictor "
+            "effect. Higher means the hazard may affect a larger share of people.",
+        ),
     )
     raw_values = [ranking.get(key) for key in (
         "relevance_score", "salience_score", "effect_size_score", "reach_score"
     )]
     metric_items = "".join(
         f'<div class="metric-tile" data-value="{escape(str(raw_value), quote=True)}">'
-        f"<dt>{label}</dt><dd>{value}</dd></div>"
-        for (label, value), raw_value in zip(metrics, raw_values)
+        f"<dt>{_metric_label_html(label, tooltip)}</dt><dd>{value}</dd></div>"
+        for (label, value, tooltip), raw_value in zip(metrics, raw_values)
     )
     lines.append(f'<dl class="hazard-metrics">{metric_items}</dl>')
+
+
+def _metric_label_html(label: str, tooltip: str) -> str:
+    label_text = escape(label)
+    if not tooltip:
+        return label_text
+    tooltip_text = escape(tooltip)
+    return (
+        '<span class="metric-label">'
+        f"{label_text}"
+        '<span class="metric-info" tabindex="0" role="button" '
+        f'aria-label="{tooltip_text}">'
+        "?"
+        f'<span class="metric-tooltip" role="tooltip">{tooltip_text}</span>'
+        "</span>"
+        "</span>"
+    )
 
 
 def _format_score(value: object, suffix: str = "") -> str:
