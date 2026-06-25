@@ -5,6 +5,44 @@ from html import escape
 from app.services.chat_session import ChatSession
 
 
+ADDITIONAL_HAZARDS_INFO_TOOLTIP = (
+    "The Experts primarily involved: Policy experts and policymakers; academic researchers "
+    "and universities; think tanks and research institutes; civil society organisations; "
+    "NGOs and advocacy organisations; trade unions and labour organisations; housing and "
+    "energy sector experts; social service and welfare organisations; environmental and "
+    "climate organisations; and community/intermediary organisations representing "
+    "disadvantaged groups. The project intentionally recruited intermediary organisations "
+    "and policy experts instead of individual disadvantaged citizens, because the workshops "
+    "required enough technical and policy expertise to analyse transition policies and "
+    "co-design mitigation measures. This also helped reduce power imbalances and represent "
+    "disadvantaged groups' interests more broadly."
+)
+
+
+def _additional_hazards_info_icon() -> str:
+    return (
+        '<span class="additional-hazards-info" tabindex="0" '
+        f'aria-label="{escape(ADDITIONAL_HAZARDS_INFO_TOOLTIP)}" '
+        f'title="{escape(ADDITIONAL_HAZARDS_INFO_TOOLTIP)}">'
+        '<span aria-hidden="true">i</span>'
+        '<span class="additional-hazards-tooltip" aria-hidden="true">'
+        "<strong>The Experts involved in</strong>"
+        "<span>The experts primarily involved: policy experts and policymakers, academic "
+        "researchers and universities, think tanks and research institutes, CSOs, NGOs "
+        "and advocacy organisations, trade unions and labour organisations, housing and "
+        "energy sector experts, social service and welfare organisations, environmental "
+        "and climate organisations, and community/intermediary organisations representing "
+        "disadvantaged groups.</span>"
+        "<span>The project intentionally recruited intermediary organisations and policy "
+        "experts instead of individual disadvantaged citizens because the workshops required "
+        "technical and policy expertise to analyse transition policies and co-design "
+        "mitigation measures. This also reduced power imbalances and supported broader "
+        "representation of disadvantaged groups' interests.</span>"
+        "</span>"
+        "</span>"
+    )
+
+
 def format_hazards(session: ChatSession) -> str:
     survey_hazards = [
         hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
@@ -32,8 +70,11 @@ def format_hazards(session: ChatSession) -> str:
         sections.extend(
             [
                 "",
-                '<h3 class="hazard-group-heading">Additional hazards '
-                '<span>By experts</span></h3>',
+                '<h3 class="hazard-group-heading hazard-group-heading--with-info">'
+                "Additional hazards "
+                "<span>By experts</span>"
+                f"{_additional_hazards_info_icon()}"
+                "</h3>",
                 format_additional_hazards(session),
             ]
         )
@@ -276,26 +317,25 @@ def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) 
         (
             "Salience",
             salience,
-            "How prominent this hazard is in the country survey data. "
-            "Calculation: average concern score × percentage of respondents above "
-            "the high-concern threshold, divided by 100. Higher means more people "
+            "How prominent this hazard is in the sectoral survey data. "
+            "Calculation: average concern score × ratio of respondents above "
+            "the high-concern threshold(>12). Higher means more people "
             "are strongly concerned and/or concern is more intense.",
         ),
         (
             "Effect size",
             effect,
-            "How strongly socio-demographic predictors are associated with this hazard. "
-            "Calculation: average absolute log odds ratio across confirmed positive "
-            "predictors for the hazard. Higher means the identified profiles are more "
-            "strongly associated with concern about this hazard.",
+            "Average absolute log odds ratio across confirmed positive "
+            "predictors for the hazard. Odds ratio is defined as the odds "
+            "of a person rating a hazard as severe given a set of affected "
+            "population groups.",
         ),
         (
             "Reach",
             reach,
-            "How much of the selected region may be represented by the affected target "
-            "profiles. Calculation: regional population share of matched target-population "
-            "profiles when available; otherwise Eurostat prevalence weighted by predictor "
-            "effect. Higher means the hazard may affect a larger share of people.",
+            "Average population percentage in the region across all the affected population groups, "
+            "Calculation: average of regional population share of per affected population "
+            "profile, as availbale on Eurostat.",
         ),
     )
     raw_values = [ranking.get(key) for key in (

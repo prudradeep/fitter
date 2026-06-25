@@ -1533,15 +1533,27 @@ class ChatService:
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         action = normalize(message)
-        if action == normalize("Show additional hazards"):
+        if action in {
+            normalize("Show additional hazards"),
+            normalize("Show hazards added by experts"),
+        }:
             return ChatResponse(
                 session_id=session_id,
                 step="hazard_profile_selection",
                 bot_message=(
-                    "Choose one of the additional hazards from the selected "
+                    "Choose one of the hazards added by experts from the selected "
                     "country-sector evidence."
                 ),
                 options=self._additional_hazard_selection_options(session),
+                session=session.summary(),
+                error=False,
+            )
+        if action == normalize("Show co-created hazards"):
+            return ChatResponse(
+                session_id=session_id,
+                step="hazard_profile_selection",
+                bot_message="Choose one of the co-created hazards added by users.",
+                options=self._custom_hazard_selection_options(session),
                 session=session.summary(),
                 error=False,
             )
@@ -7446,7 +7458,9 @@ is no clear match, return an empty matched_profiles array.
             for index, hazard in enumerate(self._primary_hazard_names(session), start=1)
         ]
         if self._additional_hazard_options(session):
-            options.append(Option(id=len(options) + 1, label="Show additional hazards"))
+            options.append(Option(id=len(options) + 1, label="Show hazards added by experts"))
+        if self._custom_hazard_options(session):
+            options.append(Option(id=len(options) + 1, label="Show co-created hazards"))
         return options
 
     def _additional_hazard_selection_options(self, session: ChatSession) -> list[Option]:
@@ -7458,13 +7472,24 @@ is no clear match, return an empty matched_profiles array.
         options.append(Option(id=len(options) + 1, label="Show listed hazards"))
         return options
 
+    def _custom_hazard_selection_options(self, session: ChatSession) -> list[Option]:
+        labels = self._custom_hazard_options(session)
+        options = [
+            Option(id=index, label=hazard)
+            for index, hazard in enumerate(labels, start=1)
+        ]
+        options.append(Option(id=len(options) + 1, label="Show listed hazards"))
+        return options
+
     @staticmethod
     def _primary_hazard_names(session: ChatSession) -> list[str]:
         additional_keys = {normalize(hazard) for hazard in (session.additional_hazards or [])}
+        custom_keys = {normalize(hazard) for hazard in (session.custom_hazards or [])}
         return [
             hazard
             for hazard in hazard_names(session)
             if normalize(hazard) not in additional_keys
+            and normalize(hazard) not in custom_keys
         ]
 
     @staticmethod
@@ -7472,6 +7497,14 @@ is no clear match, return an empty matched_profiles array.
         return [
             hazard
             for hazard in (session.additional_hazards or [])
+            if hazard and ChatService._stored_hazard_profiles(session, hazard)
+        ]
+
+    @staticmethod
+    def _custom_hazard_options(session: ChatSession) -> list[str]:
+        return [
+            hazard
+            for hazard in (session.custom_hazards or [])
             if hazard and ChatService._stored_hazard_profiles(session, hazard)
         ]
 
@@ -11829,16 +11862,18 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         self, session: ChatSession, limit: int | None = None
     ) -> str:
         rows = self._matched_mitigation_measure_example_rows(session, limit=limit)
-        intro = self._current_policy_implementations_intro()
+        heading = self._policy_section_heading(
+            "Current Policy Implementations",
+            self._current_policy_implementations_intro(),
+        )
         if not rows:
             return (
-                "## Current Policy Implementations\n\n"
-                f"{intro}\n\n"
+                f"{heading}\n\n"
                 "No matching current policy implementations were found for this "
                 "sector, hazard, and profile set."
             )
 
-        sections = ["## Current Policy Implementations\n\n" + intro]
+        sections = [heading]
         grouped_examples: dict[str, dict[str, object]] = {}
         for example in rows:
             measure = normalize_markdown_text(str(example.measure or "")).strip()
@@ -11914,25 +11949,37 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             "check before choosing a measure, such as delivery barriers, targeting, "
             "and implementation risks."
         )
+        heading = ChatService._policy_section_heading("Practical Considerations", intro)
         cleaned = str(markdown or "").strip()
         if not cleaned:
-            return "## Practical Considerations\n\n" + intro
-        if re.search(r"(?i)implementation issues|design trade-offs|delivery barriers", cleaned):
-            return cleaned
+            return heading
+        cleaned = ChatService._strip_policy_section_heading(
+            cleaned,
+            "Practical Considerations",
+        )
+        cleaned = ChatService._strip_section_intro_paragraph(
+            cleaned,
+            (
+                "practical design considerations",
+                "delivery barriers",
+                "implementation risks",
+                "design trade-offs",
+            ),
+        )
+        if not cleaned:
+            return heading
         if cleaned.casefold().lstrip().startswith("## practical considerations"):
-            return re.sub(
-                r"(?i)(##\s*Practical Considerations\s*)",
-                "\\1\n\n" + intro + "\n\n",
+            cleaned = ChatService._strip_policy_section_heading(
                 cleaned,
-                count=1,
+                "Practical Considerations",
             )
-        return "## Practical Considerations\n\n" + intro + "\n\n" + cleaned
+        return f"{heading}\n\n{cleaned}"
 
     @staticmethod
     def _current_policy_implementations_intro() -> str:
         return (
-            "This section shows real policy implementations from the reference dataset "
-            "that are relevant to the selected sector, hazard, and socio-demographic "
+            "This section shows real policy implementations mitigating similar twin transition "
+            "policy hazards, relevant to the selected sector and socio-demographic "
             "profiles. For each match, it summarizes where it has been implemented, "
             "the available evidence, and any reference links that support the example."
         )
@@ -11940,11 +11987,48 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
     @staticmethod
     def _new_policy_proposals_intro() -> str:
         return (
-            "This section proposes candidate policies from the policy database for the "
-            "same country and sector. The proposals are ranked using their hazard "
-            "mitigation effect and how well their target groups overlap with the "
-            "selected hazard profiles."
+            "New policy proposals created using the data collection from open labs. The open labs followed a structured co-creation process that began with identifying twin-transition challenges and mapping their systemic causes. Participants then envisioned a fair future transition, translated the required systemic changes into new or improved policy measures, and finally refined and evaluated each proposal for its impact, feasibility, and contribution to an inclusive twin transition."
         )
+
+    @staticmethod
+    def _new_policy_proposals_title() -> str:
+        return "New policy proposals (Inspiration for the regional mitigation plans)"
+
+    @staticmethod
+    def _policy_section_heading(title: str, tooltip: str) -> str:
+        safe_title = escape(str(title or "").strip())
+        safe_tooltip = escape(str(tooltip or "").strip())
+        return (
+            f'<h2 class="policy-section-heading">{safe_title} '
+            '<span class="policy-section-info" tabindex="0" '
+            f'aria-label="{safe_tooltip}" title="{safe_tooltip}">'
+            '<span aria-hidden="true">i</span>'
+            f'<span class="policy-section-tooltip" aria-hidden="true">{safe_tooltip}</span>'
+            "</span></h2>"
+        )
+
+    @staticmethod
+    def _strip_policy_section_heading(markdown: str, title: str) -> str:
+        title_key = normalize_for_match(title)
+        kept: list[str] = []
+        for line in str(markdown or "").splitlines():
+            heading_text = re.sub(r"^\s*#{1,6}\s*", "", line).strip().strip("*_:- ")
+            if normalize_for_match(heading_text) == title_key:
+                continue
+            kept.append(line)
+        return "\n".join(kept).strip()
+
+    @staticmethod
+    def _strip_section_intro_paragraph(markdown: str, markers: tuple[str, ...]) -> str:
+        cleaned = str(markdown or "").strip()
+        if not cleaned:
+            return ""
+        parts = re.split(r"\n\s*\n", cleaned, maxsplit=1)
+        first = parts[0].strip()
+        first_key = first.casefold()
+        if first and any(marker.casefold() in first_key for marker in markers):
+            return parts[1].strip() if len(parts) > 1 else ""
+        return cleaned
 
     async def _new_policy_suggestions_section(
         self,
@@ -11954,10 +12038,10 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
     ) -> str:
         candidates = self._ranked_new_policy_suggestions(session, limit=limit)
         intro = self._new_policy_proposals_intro()
+        heading = self._policy_section_heading(self._new_policy_proposals_title(), intro)
         if not candidates:
             return (
-                "## New policy proposals\n\n"
-                f"{intro}\n\n"
+                f"{heading}\n\n"
                 "No matching policy proposals were found for this country, sector, "
                 "and selected hazard context."
             )
@@ -11979,12 +12063,9 @@ Scoring context:
             {
                 "role": "user",
                 "content": (
-                    "Create the markdown body for a section named "
-                    "'New policy proposals'. Do not include the heading itself.\n\n"
-                    "Start with two concise sentences explaining that this section "
-                    "shows candidate policies from the database, ranked by hazard "
-                    "mitigation effect and target-group overlap. Then list the "
-                    "candidates.\n\n"
+                    "Create the markdown body for the policy proposal section. "
+                    "Do not include the section heading and do not include an "
+                    "introductory paragraph; start directly with the candidates.\n\n"
                     "For each candidate, include:\n"
                     "- the policy title as a level-3 heading,\n"
                     "- Implemented in / country-sector context,\n"
@@ -12010,17 +12091,21 @@ Scoring context:
         if response and not is_llm_unavailable_response(response):
             cleaned = self._strip_new_policy_suggestions_heading(response)
             if cleaned:
-                return "## New policy proposals\n\n" + self._ensure_new_policy_intro(cleaned)
+                return heading + "\n\n" + self._ensure_new_policy_intro(cleaned)
 
         return self._fallback_new_policy_suggestions_section(candidates)
 
     @staticmethod
     def _strip_new_policy_suggestions_heading(markdown: str) -> str:
         lines = []
+        heading_keys = {
+            normalize_for_match("new policy proposals"),
+            normalize_for_match(ChatService._new_policy_proposals_title()),
+        }
         for line in str(markdown or "").strip().splitlines():
             heading_text = re.sub(r"^\s*#{1,6}\s*", "", line).strip()
             heading_text = heading_text.strip("*_:- ")
-            if normalize_for_match(heading_text) == "new policy proposals":
+            if normalize_for_match(heading_text) in heading_keys:
                 continue
             lines.append(line)
         return "\n".join(lines).strip()
@@ -12309,7 +12394,12 @@ Scoring context:
         self,
         candidates: list[dict[str, object]],
     ) -> str:
-        sections = ["## New policy proposals\n\n" + self._new_policy_proposals_intro()]
+        sections = [
+            self._policy_section_heading(
+                self._new_policy_proposals_title(),
+                self._new_policy_proposals_intro(),
+            )
+        ]
         for candidate in candidates:
             matched_targets = candidate.get("matched_target_groups")
             matched_labels = self._policy_target_group_summary(
@@ -12339,13 +12429,19 @@ Scoring context:
 
     @staticmethod
     def _ensure_new_policy_intro(markdown: str) -> str:
-        intro = ChatService._new_policy_proposals_intro()
         cleaned = str(markdown or "").strip()
         if not cleaned:
-            return intro
-        if re.search(r"(?i)candidate policies|hazard mitigation effect|target-group overlap", cleaned):
-            return cleaned
-        return intro + "\n\n" + cleaned
+            return ""
+        cleaned = ChatService._strip_section_intro_paragraph(
+            cleaned,
+            (
+                "candidate policies",
+                "hazard mitigation effect",
+                "target-group overlap",
+                "policy database",
+            ),
+        )
+        return cleaned
 
     @staticmethod
     def _policy_target_group_summary(target_groups: list[dict[str, object]]) -> str:

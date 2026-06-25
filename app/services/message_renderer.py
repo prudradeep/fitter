@@ -49,8 +49,9 @@ ALLOWED_ATTRIBUTES = {
         "data-mitigation", "data-series", "data-value", "data-values", "role", "aria-label",
     ],
     "dl": ["class"],
+    "h2": ["class"],
     "h3": ["class"],
-    "span": ["class", "aria-hidden", "aria-label", "title"],
+    "span": ["class", "aria-hidden", "aria-label", "title", "tabindex"],
     "th": ["scope"],
 }
 

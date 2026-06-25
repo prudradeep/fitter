@@ -145,3 +145,11 @@ Hazards
  - Statistical/System
  - Added by expert
  - Additional 
+
+Create new proposals from the existing proposals MM policies. The proposal should be based on the following groups. Score should be high/Top 3. It should try to cover all the possible target groups. Also explain the mechanism by which each target group is mitigated. Keep the explaination short (150-200 words). Also give a title for the same. Present this information to the user as an insipiration to create the mitigation measure.
+
+On continue := Update the MM for the users selected country, sector and region.
+
+Continue => Adopt mitigation proposal suggested above
+
+Please provide reason and evidence
