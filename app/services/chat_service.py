@@ -12164,7 +12164,8 @@ Synthesis rule:
                     "proposal.\n\n"
                     "Output exactly one proposal, 150-200 words total, using this structure:\n"
                     "### [short proposal title]\n"
-                    "- **Proposal:** one clear, user-ready mitigation measure sentence.\n"
+                    "- **Proposal:** one clear, user-ready mitigation measure sentence "
+                    "tailored to the selected country and region where possible.\n"
                     "- **Top policy basis:** mention that it combines the strongest/top-scored "
                     "MM policy proposals; name only the most relevant policy codes/titles.\n"
                     "- **Target-group mechanisms:** short bullets explaining how each covered "
@@ -12175,6 +12176,7 @@ Synthesis rule:
                     "Keep it concise and make the proposal sound like a single coherent "
                     "regional mitigation measure that inspires the user to create their own.\n\n"
                     f"Selected country: {session.country or 'Not specified'}\n"
+                    f"Selected region: {session.region or 'Not specified'}\n"
                     f"Selected sector: {session.sector or 'Not specified'}\n"
                     f"Selected hazard: {session.selected_hazard or session.accepted_custom_hazard or 'Not specified'}\n"
                     f"Selected socio-demographic profiles:\n{format_all_dgs(session)}\n\n"
@@ -12184,20 +12186,37 @@ Synthesis rule:
                 ),
             }
         ]
-        response = await ask_llm_chat(
-            context=context,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=1000,
-        )
-        if response and not is_llm_unavailable_response(response):
-            cleaned = self._strip_new_policy_suggestions_heading(response)
-            if cleaned:
-                ensured = self._ensure_new_policy_intro(cleaned)
-                if ensured:
-                    return heading + "\n\n" + ensured
+        for attempt in range(2):
+            attempt_messages = messages
+            if attempt:
+                retry_instruction = {
+                    "role": "user",
+                    "content": (
+                        "Retry once. The previous response could not be used. "
+                        "Return only the requested markdown body with the exact "
+                        "proposal structure and no introductory paragraph."
+                    ),
+                }
+                attempt_messages = [*messages, retry_instruction]
+            response = await ask_llm_chat(
+                context=context,
+                messages=attempt_messages,
+                temperature=0.2,
+                max_tokens=1000,
+            )
+            if response and not is_llm_unavailable_response(response):
+                cleaned = self._strip_new_policy_suggestions_heading(response)
+                if cleaned:
+                    ensured = self._ensure_new_policy_intro(cleaned)
+                    if ensured:
+                        return heading + "\n\n" + self._format_new_policy_proposal_body(ensured)
 
-        return self._fallback_new_policy_suggestions_section(candidates)
+        return (
+            f"{heading}\n\n"
+            "I could not generate a reliable new policy proposal from the matched "
+            "policy basis after retrying. Please try again, or continue by writing "
+            "your own regional mitigation measure."
+        )
 
     @staticmethod
     def _strip_new_policy_suggestions_heading(markdown: str) -> str:
@@ -12496,6 +12515,7 @@ Synthesis rule:
 
     def _fallback_new_policy_suggestions_section(
         self,
+        session: ChatSession,
         candidates: list[dict[str, object]],
     ) -> str:
         sections = [
@@ -12537,14 +12557,15 @@ Synthesis rule:
             if action_parts
             else [f"Adapt the strongest scored policy actions to reduce {hazard_name.lower()}."]
         )
-        sections.append(
+        body = (
             "### Integrated Regional Mitigation Support Package\n\n"
-            f"- **Proposal:** Combine the top-scored MM policy proposals into a regional "
-            f"support package that reduces **{hazard_name}** through targeted assistance, "
-            "delivery guidance, and safeguards for affected groups.\n"
+            f"- **Proposal:** In {self._session_place_label_for_sentence(session)}, "
+            f"combine the top-scored MM policy proposals into a regional support package "
+            f"that reduces **{hazard_name}** through targeted assistance, delivery "
+            "guidance, and safeguards for affected groups.\n"
             f"- **Top policy basis:** {policy_basis or 'Top-ranked MM policy proposals'}.\n"
             "- **Target-group mechanisms:**\n"
-            + "\n".join(f"  - {item}" for item in target_mechanisms)
+            + "\n".join(f"    - {item}" for item in target_mechanisms)
             + "\n"
             f"- **Why this helps:** The proposal is a strong inspiration because its source "
             f"policies have **{effect_label}** mitigation relevance and combine complementary "
@@ -12552,7 +12573,16 @@ Synthesis rule:
             + "; ".join(action_summary[:2])
             + "."
         )
+        sections.append(self._format_new_policy_proposal_body(body))
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _session_place_label_for_sentence(session: ChatSession) -> str:
+        region = str(session.region or "").strip()
+        country = str(session.country or "").strip()
+        if region and country:
+            return f"{region}, {country}"
+        return region or country or "the selected region"
 
     def _fallback_target_group_mechanisms(
         self,
@@ -12597,8 +12627,94 @@ Synthesis rule:
         return cleaned
 
     @staticmethod
+    def _format_new_policy_proposal_body(markdown: str) -> str:
+        cleaned = ChatService._normalize_target_group_mechanism_indentation(markdown)
+        return ChatService._append_top_policy_basis_to_proposal(cleaned)
+
+    @staticmethod
+    def _normalize_target_group_mechanism_indentation(markdown: str) -> str:
+        lines: list[str] = []
+        in_target_group_block = False
+        for raw_line in str(markdown or "").splitlines():
+            line = raw_line.rstrip()
+            section_key = normalize_for_match(line)
+            if "target group mechanisms" in section_key:
+                in_target_group_block = True
+                lines.append(line)
+                continue
+            if in_target_group_block and re.match(r"^\s*[-*]\s+\*\*(?:why this helps|proposal|top policy basis)\s*:", line, flags=re.IGNORECASE):
+                in_target_group_block = False
+            if in_target_group_block and re.match(r"^\s{0,3}[-*]\s+", line):
+                lines.append("    " + line.lstrip())
+                continue
+            lines.append(line)
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _append_top_policy_basis_to_proposal(markdown: str) -> str:
+        text = str(markdown or "").strip()
+        basis_match = re.search(
+            r"(?im)^\s*[-*]\s*\*\*Top policy basis:\*\*\s*(?P<basis>.+?)\s*$",
+            text,
+        )
+        if not basis_match:
+            return text
+
+        basis = ChatService._clean_policy_basis_source(basis_match.group("basis"))
+        text_without_basis = (
+            text[: basis_match.start()] + text[basis_match.end() :]
+        ).strip()
+        if not basis:
+            return re.sub(r"\n{3,}", "\n\n", text_without_basis)
+
+        def append_source(match: re.Match[str]) -> str:
+            proposal = match.group("proposal").rstrip()
+            proposal = ChatService._strip_policy_source_reference(proposal)
+            safe_basis = escape(basis)
+            return (
+                f"{match.group('prefix')}{proposal} "
+                '<span class="policy-section-info proposal-source-info" '
+                f'tabindex="0" aria-label="{safe_basis}" title="{safe_basis}">'
+                '<span aria-hidden="true">i</span>'
+                f'<span class="policy-section-tooltip" aria-hidden="true">{safe_basis}</span>'
+                "</span>"
+            )
+
+        updated, count = re.subn(
+            r"(?im)^(?P<prefix>\s*[-*]\s*\*\*Proposal:\*\*\s*)(?P<proposal>.+?)\s*$",
+            append_source,
+            text_without_basis,
+            count=1,
+        )
+        return re.sub(r"\n{3,}", "\n\n", updated if count else text_without_basis).strip()
+
+    @staticmethod
+    def _clean_policy_basis_source(value: str) -> str:
+        cleaned = normalize_markdown_text(str(value or "")).strip()
+        cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+        cleaned = re.sub(r"\*(.*?)\*", r"\1", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" .;")
+        return cleaned
+
+    @staticmethod
+    def _strip_policy_source_reference(value: str) -> str:
+        return re.sub(
+            r"\s*\[(?:Source|Sources):\s*[^\]]+\]\s*$",
+            "",
+            str(value or "").strip(),
+            flags=re.IGNORECASE,
+        ).strip()
+
+    @staticmethod
     def _extract_suggested_policy_proposal(markdown: str) -> str:
         text = str(markdown or "")
+        title = ""
+        title_match = re.search(r"(?im)^\s*###\s+(.+?)\s*$", text)
+        if title_match:
+            title = normalize_markdown_text(title_match.group(1))
+            title = re.sub(r"\*\*(.*?)\*\*", r"\1", title)
+            title = re.sub(r"\*(.*?)\*", r"\1", title)
+            title = re.sub(r"\s+", " ", title).strip()
         match = re.search(
             r"(?im)^\s*[-*]\s*\*\*Proposal:\*\*\s*(.+?)\s*$",
             text,
@@ -12610,7 +12726,13 @@ Synthesis rule:
         proposal = normalize_markdown_text(match.group(1))
         proposal = re.sub(r"\*\*(.*?)\*\*", r"\1", proposal)
         proposal = re.sub(r"\*(.*?)\*", r"\1", proposal)
-        return re.sub(r"\s+", " ", proposal).strip()
+        proposal = ChatService._strip_policy_source_reference(proposal)
+        proposal = re.sub(r"\s+", " ", proposal).strip()
+        if title and proposal and not normalize_for_match(proposal).startswith(
+            normalize_for_match(title)
+        ):
+            return f"{title}: {proposal}"
+        return proposal
 
     @staticmethod
     def _policy_target_group_summary(target_groups: list[dict[str, object]]) -> str:

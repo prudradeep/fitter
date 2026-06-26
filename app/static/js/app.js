@@ -160,12 +160,19 @@ let renderedVisualKey = "";
 let renderedStageCardsKey = "";
 let stageVisualRenderId = 0;
 const mapTopologyCache = new Map();
+let optionTooltipElement = null;
+let optionTooltipTarget = null;
 
 const defaultPlaceholder = "Type a country, region, or sector...";
 const panelWidthKey = "dr_transition_visual_panel_width";
 const defaultVisualPanelPercent = 43;
 const visualPanelMinPercent = 30;
 const visualPanelMaxPercent = 62;
+const hazardOptionActionLabels = new Set([
+  "show hazards added by experts",
+  "show co-created hazards",
+  "show listed hazards",
+]);
 const coverageCountries = stageCoverageRows
   .filter((row) => row.code)
   .map((row) => ({
@@ -336,7 +343,7 @@ function updateStageVisual(step = "", session = {}, options = currentOptions) {
   const showingPracticalConsiderations = shouldShowPracticalConsiderationsVisual(step, session);
   if (stageVisualTitle) {
     stageVisualTitle.textContent = showingPracticalConsiderations
-      ? "Practical considerations"
+      ? ""
       : visual.title;
   }
   if (stageVisualText) {
@@ -2476,7 +2483,81 @@ function disableOldOptions() {
     button.disabled = true;
     button.dataset.used = "true";
   });
+  hideOptionTooltip();
 }
+
+function ensureOptionTooltip() {
+  if (optionTooltipElement) return optionTooltipElement;
+  optionTooltipElement = document.createElement("div");
+  optionTooltipElement.className = "option-tooltip";
+  optionTooltipElement.setAttribute("role", "tooltip");
+  optionTooltipElement.hidden = true;
+  document.body.appendChild(optionTooltipElement);
+  return optionTooltipElement;
+}
+
+function showOptionTooltip(target) {
+  const text = String(target?.dataset?.tooltip || "").trim();
+  if (!text || target.disabled) return;
+  const tooltip = ensureOptionTooltip();
+  optionTooltipTarget = target;
+  tooltip.textContent = text;
+  tooltip.hidden = false;
+  tooltip.classList.add("is-visible");
+  positionOptionTooltip();
+}
+
+function hideOptionTooltip() {
+  if (!optionTooltipElement) return;
+  optionTooltipElement.classList.remove("is-visible");
+  optionTooltipElement.hidden = true;
+  optionTooltipTarget = null;
+}
+
+function positionOptionTooltip() {
+  if (!optionTooltipElement || !optionTooltipTarget || optionTooltipElement.hidden) return;
+  const targetRect = optionTooltipTarget.getBoundingClientRect();
+  const tooltipRect = optionTooltipElement.getBoundingClientRect();
+  const viewportPadding = 12;
+  const gap = 9;
+  let top = targetRect.top - tooltipRect.height - gap;
+  if (top < viewportPadding) {
+    top = targetRect.bottom + gap;
+    optionTooltipElement.classList.add("is-below");
+  } else {
+    optionTooltipElement.classList.remove("is-below");
+  }
+  const centeredLeft = targetRect.left + targetRect.width / 2 - tooltipRect.width / 2;
+  const left = Math.min(
+    Math.max(centeredLeft, viewportPadding),
+    window.innerWidth - tooltipRect.width - viewportPadding,
+  );
+  optionTooltipElement.style.left = `${left}px`;
+  optionTooltipElement.style.top = `${top}px`;
+}
+
+optionTray?.addEventListener("pointerover", (event) => {
+  const target = event.target.closest("[data-tooltip]");
+  if (!target || !optionTray.contains(target)) return;
+  showOptionTooltip(target);
+});
+
+optionTray?.addEventListener("pointerout", (event) => {
+  const target = event.target.closest("[data-tooltip]");
+  if (!target || !optionTray.contains(target)) return;
+  if (event.relatedTarget && target.contains(event.relatedTarget)) return;
+  hideOptionTooltip();
+});
+
+optionTray?.addEventListener("focusin", (event) => {
+  const target = event.target.closest("[data-tooltip]");
+  if (target && optionTray.contains(target)) showOptionTooltip(target);
+});
+
+optionTray?.addEventListener("focusout", hideOptionTooltip);
+optionTray?.addEventListener("click", hideOptionTooltip);
+window.addEventListener("resize", positionOptionTooltip);
+document.addEventListener("scroll", positionOptionTooltip, true);
 
 function renderOptions(options, otherOptions = []) {
   currentOptions = options || [];
@@ -2488,9 +2569,52 @@ function renderOptions(options, otherOptions = []) {
     renderOtherOptionsMenu();
     return;
   }
-  options.forEach((option) => optionTray.appendChild(createOptionButton(option.label)));
+  if (shouldCollapseHazardOptions(options)) {
+    renderCollapsedHazardOptions(options);
+  } else {
+    options.forEach((option) => optionTray.appendChild(createOptionButton(option.label)));
+  }
   renderOtherOptionsMenu();
   updateOptionHighlight();
+}
+
+function shouldCollapseHazardOptions(options = []) {
+  if (currentStep !== "hazard_profile_selection") return false;
+  const hazardOptions = options.filter((option) => !hazardOptionActionLabels.has(normalizeForMatch(option.label)));
+  return hazardOptions.length > 3;
+}
+
+function renderCollapsedHazardOptions(options = []) {
+  const hazardOptions = options.filter((option) => !hazardOptionActionLabels.has(normalizeForMatch(option.label)));
+  const actionOptions = options.filter((option) => hazardOptionActionLabels.has(normalizeForMatch(option.label)));
+  const visibleHazards = hazardOptions.slice(0, 3);
+  const hiddenHazards = hazardOptions.slice(3);
+
+  visibleHazards.forEach((option) => optionTray.appendChild(createOptionButton(option.label)));
+
+  const showMore = document.createElement("button");
+  showMore.type = "button";
+  showMore.className = "option-pill show-more-options-toggle";
+  showMore.textContent = "Show More";
+  showMore.setAttribute("aria-label", "Show more hazards");
+  showMore.setAttribute("data-tooltip", "Show more hazards");
+  showMore.addEventListener("click", () => {
+    pauseSpeech();
+    showMore.remove();
+    hiddenHazards.forEach((option) => {
+      const button = createOptionButton(option.label);
+      button.classList.add("hazard-extra-option");
+      optionTray.insertBefore(button, optionTray.querySelector("[data-hazard-action='true']"));
+    });
+    updateOptionHighlight();
+  });
+  optionTray.appendChild(showMore);
+
+  actionOptions.forEach((option) => {
+    const button = createOptionButton(option.label);
+    button.dataset.hazardAction = "true";
+    optionTray.appendChild(button);
+  });
 }
 
 function renderTargetPopulationOptions(options = []) {
@@ -2516,6 +2640,7 @@ function renderTargetPopulationOptions(options = []) {
       checkbox.checked = previouslySelected.has(normalizeForMatch(option.label));
       const span = document.createElement("span");
       span.textContent = option.label;
+      label.setAttribute("data-tooltip", option.label);
       label.appendChild(checkbox);
       label.appendChild(span);
       group.appendChild(label);
@@ -2526,6 +2651,8 @@ function renderTargetPopulationOptions(options = []) {
     submit.type = "button";
     submit.className = "option-pill";
     submit.textContent = "Submit selected";
+    submit.setAttribute("aria-label", "Submit selected");
+    submit.setAttribute("data-tooltip", "Submit selected");
     submit.addEventListener("click", () => {
       const selected = Array.from(optionTray.querySelectorAll("[data-target-option='true']:checked"))
         .map((input) => input.value)
@@ -2553,6 +2680,8 @@ function createOptionButton(label, extraClass = "") {
   button.type = "button";
   button.className = ["option-pill", extraClass].filter(Boolean).join(" ");
   button.textContent = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("data-tooltip", label);
   button.addEventListener("click", () => {
     pauseSpeech();
     collapseExpandedMessages();
@@ -2579,7 +2708,8 @@ function renderOtherOptionsMenu() {
   toggle.className = "option-pill other-options-toggle";
   toggle.textContent = "Other Options";
   toggle.dataset.otherToggle = "true";
-
+  toggle.setAttribute("aria-label", "Other Options");
+  toggle.setAttribute("data-tooltip", "Other Options");
   toggle.addEventListener("click", () => {
     pauseSpeech();
     const existingButtons = Array.from(optionTray.querySelectorAll("[data-other-nav='true']"));
@@ -2592,6 +2722,7 @@ function renderOtherOptionsMenu() {
     navOptions.forEach((label) => {
       const button = createOptionButton(label, "other-option-pill");
       button.dataset.otherNav = "true";
+      button.setAttribute("data-tooltip", label);
       optionTray.insertBefore(button, insertAfter.nextSibling);
       insertAfter = button;
     });
@@ -2699,6 +2830,7 @@ function openTargetPopulationDialog() {
       checkbox.checked = previouslySelected.has(normalizeForMatch(option));
       const span = document.createElement("span");
       span.textContent = option;
+      label.setAttribute("data-tooltip", option);
       label.appendChild(checkbox);
       label.appendChild(span);
       optionGrid.appendChild(label);

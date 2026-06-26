@@ -17,7 +17,7 @@ Proposed mitigation measure:
 
 - **{{ mitigation_measure }}**
 
-Please provide the reason this measure should reduce the negative impact of this hazard for these socio-demographic profiles. Evidence is optional.
+For your region, How will this mitigation measure reduce the negative impact of this hazard for the affected profiles. If you provide the evidence for your explanation it will help me to validate your input better.
 {% else %}
 Please share the mitigation measure you would recommend for reducing the negative impact of this hazard for these socio-demographic profiles.
 {% endif %}

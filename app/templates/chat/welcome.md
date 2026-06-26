@@ -1,4 +1,4 @@
-👋 Welcome to **Dr Transition**, the FITTER-EU conversational digital coach for reasoning about the social and distributional effects of green-and-digital transition policies.
+👋 Welcome to **Dr Transition**, the FITTER-EU conversational digital coach for reasoning about the social and distributional effects of green-and-digital transition policies in Europe.
 
 This platform helps you work through a local policy context step by step. You will choose a country, region, and sector; identify relevant hazards and affected population groups; co-develop mitigation measures; check them against trusted evidence; and reflect on their feasibility and transformative impact.
 

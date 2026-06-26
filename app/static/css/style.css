@@ -2514,6 +2514,11 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   margin: 7px 0;
 }
 
+.bubble li > ul,
+.bubble li > ol {
+  margin: 7px 0 0 24px;
+}
+
 .bubble hr {
   border: 0;
   border-top: 1px solid #d7dde6;
@@ -2664,6 +2669,16 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   font-size: 0.68rem;
   font-weight: 950;
   line-height: 1;
+}
+
+.bubble .top-policy-basis-info {
+  margin-left: 4px;
+  vertical-align: text-bottom;
+}
+
+.bubble .proposal-source-info {
+  margin-left: 5px;
+  vertical-align: text-bottom;
 }
 
 .bubble .policy-section-info:focus-visible {
@@ -3332,6 +3347,51 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   overflow-wrap: anywhere;
 }
 
+.option-tooltip {
+  position: fixed;
+  z-index: 2000;
+  max-width: min(360px, calc(100vw - 24px));
+  border: 1px solid rgba(199, 210, 254, 0.2);
+  border-radius: 8px;
+  background: #111827;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.24);
+  color: #f8fafc;
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.42;
+  opacity: 0;
+  padding: 9px 11px;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(4px);
+  transition:
+    opacity 130ms ease,
+    transform 130ms ease;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.option-tooltip::after {
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  transform: translateX(-50%) rotate(45deg);
+  background: #111827;
+  content: "";
+}
+
+.option-tooltip.is-below::after {
+  top: -5px;
+  bottom: auto;
+}
+
+.option-tooltip.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .option-pill {
   position: relative;
   overflow: hidden;
@@ -3350,6 +3410,10 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
     box-shadow 180ms ease,
     color 180ms ease,
     transform 180ms ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 170px;
 }
 
 .option-pill::after {
@@ -3412,6 +3476,18 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   border-color: #94a3b8;
   color: #334155;
   box-shadow: 0 8px 18px rgba(51, 65, 85, 0.1);
+}
+
+.show-more-options-toggle {
+  border-color: #0f766e;
+  color: #115e59;
+  box-shadow: 0 8px 18px rgba(15, 118, 110, 0.11);
+}
+
+.show-more-options-toggle:hover:not(:disabled) {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #ffffff;
 }
 
 .other-options-toggle.is-open,
