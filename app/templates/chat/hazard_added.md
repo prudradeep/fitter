@@ -6,9 +6,9 @@ We have successfully recorded your responses. Now we have the following hazards 
 
 **Evidence:** {{ evidence }}
 
-## Target Population
+## Affected Population Groups
 
-{{ target_population_answers }}
+{{ affected_population_groups }}
 
 ## Updated Hazard List
 

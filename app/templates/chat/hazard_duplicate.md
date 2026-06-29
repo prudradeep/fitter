@@ -1,5 +1,13 @@
-This hazard already exists in the hazard list:
+## Possible Duplicate Hazard
+
+Proposed hazard:
 
 - **{{ hazard }}**
 
-Please choose what you want to do next.
+Suggested existing hazard:
+
+- **{{ suggested_hazard }}**
+
+{{ reason }}
+
+Would you like to continue with your hazard, or explore the suggested one?

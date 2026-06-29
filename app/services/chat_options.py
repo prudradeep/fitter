@@ -30,6 +30,16 @@ HAZARD_ENTRY_OPTIONS = [
     Option(id=1, label="Go back to list of hazards"),
 ]
 
+HAZARD_DUPLICATE_OPTIONS = [
+    Option(id=1, label="Continue with this hazard"),
+    Option(id=2, label="Explore suggested hazard"),
+    Option(id=3, label="Write hazard again"),
+]
+
+HAZARD_POPULATION_REVIEW_OPTIONS = [
+    Option(id=1, label="Continue"),
+]
+
 MITIGATION_DUPLICATE_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No"),

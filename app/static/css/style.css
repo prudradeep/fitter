@@ -2649,10 +2649,52 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
 .bubble .additional-hazards-info:hover .additional-hazards-tooltip,
 .bubble .additional-hazards-info:focus .additional-hazards-tooltip,
+.bubble .additional-hazards-info:focus-within .additional-hazards-tooltip,
 .bubble .additional-hazards-info:focus-visible .additional-hazards-tooltip {
   opacity: 1;
+  pointer-events: auto;
   transform: translateX(-50%) translateY(0);
   visibility: visible;
+}
+
+.bubble .additional-hazards-methodology {
+  margin-top: 2px;
+}
+
+.bubble .additional-hazards-methodology summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid rgba(199, 210, 254, 0.52);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+  list-style: none;
+  padding: 4px 10px;
+}
+
+.bubble .additional-hazards-methodology summary::-webkit-details-marker {
+  display: none;
+}
+
+.bubble .additional-hazards-methodology summary:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 2px;
+}
+
+.bubble .additional-hazards-methodology img {
+  display: block;
+  width: min(720px, 74vw);
+  max-width: 100%;
+  max-height: 62vh;
+  margin-top: 10px;
+  border: 1px solid rgba(226, 232, 240, 0.68);
+  border-radius: 8px;
+  background: #ffffff;
+  object-fit: contain;
 }
 
 .bubble .policy-section-heading {

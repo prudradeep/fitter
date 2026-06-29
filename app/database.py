@@ -380,13 +380,43 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
             ensure_additional_hazards()
             ensure_mitigation_measure_examples()
 
+        with engine.begin() as connection:
+            _ensure_hazards_xlsx_policy_system_hazards(connection)
+
         inspector = inspect(engine)
         if "user_mitigation_measures" in inspector.get_table_names():
             mitigation_columns = {
                 column["name"]
                 for column in inspector.get_columns("user_mitigation_measures")
             }
+            mitigation_indexes = {
+                index["name"] for index in inspector.get_indexes("user_mitigation_measures")
+            }
+            mitigation_foreign_keys = {
+                fk["name"] for fk in inspector.get_foreign_keys("user_mitigation_measures")
+            }
             with engine.begin() as connection:
+                if "user_session_id" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN user_session_id INT NULL AFTER id"
+                        )
+                    )
+                if "system_hazard_id" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN system_hazard_id INT NULL AFTER user_hazard_id"
+                        )
+                    )
+                if "additional_hazard_id" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN additional_hazard_id INT NULL AFTER system_hazard_id"
+                        )
+                    )
                 if "target_population" not in mitigation_columns:
                     connection.execute(
                         text(
@@ -408,6 +438,60 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD COLUMN target_groups_json TEXT NULL AFTER conclusion"
                         )
                     )
+                if "ix_user_mitigation_measures_system_hazard_id" not in mitigation_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD INDEX ix_user_mitigation_measures_system_hazard_id (system_hazard_id)"
+                        )
+                    )
+                if "ix_user_mitigation_measures_user_session_id" not in mitigation_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD INDEX ix_user_mitigation_measures_user_session_id (user_session_id)"
+                        )
+                    )
+                if "fk_user_mitigation_measures_session" not in mitigation_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD CONSTRAINT fk_user_mitigation_measures_session "
+                            "FOREIGN KEY (user_session_id) REFERENCES user_sessions(id) ON DELETE CASCADE"
+                        )
+                    )
+                if "ix_user_mitigation_measures_additional_hazard_id" not in mitigation_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD INDEX ix_user_mitigation_measures_additional_hazard_id (additional_hazard_id)"
+                        )
+                    )
+                if "fk_user_mitigation_measures_system_hazard" not in mitigation_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD CONSTRAINT fk_user_mitigation_measures_system_hazard "
+                            "FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE"
+                        )
+                    )
+                if (
+                    "fk_user_mitigation_measures_additional_hazard" not in mitigation_foreign_keys
+                    and "additional_hazards" in inspector.get_table_names()
+                ):
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD CONSTRAINT fk_user_mitigation_measures_additional_hazard "
+                            "FOREIGN KEY (additional_hazard_id) REFERENCES additional_hazards(id) ON DELETE CASCADE"
+                        )
+                    )
+                try:
+                    connection.execute(
+                        text("ALTER TABLE user_mitigation_measures MODIFY user_hazard_id INT NULL")
+                    )
+                except Exception:
+                    logger.exception("Failed to relax user_mitigation_measures.user_hazard_id")
 
         if "user_hazards" not in inspector.get_table_names():
             return
@@ -449,6 +533,66 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 )
 
         inspector = inspect(engine)
+        if "user_question_responses" in inspector.get_table_names():
+            response_columns = {
+                column["name"] for column in inspector.get_columns("user_question_responses")
+            }
+            response_indexes = {
+                index["name"] for index in inspector.get_indexes("user_question_responses")
+            }
+            response_foreign_keys = {
+                fk["name"] for fk in inspector.get_foreign_keys("user_question_responses")
+            }
+            with engine.begin() as connection:
+                if "system_hazard_id" not in response_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_question_responses "
+                            "ADD COLUMN system_hazard_id INT NULL AFTER user_hazard_id"
+                        )
+                    )
+                if "additional_hazard_id" not in response_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_question_responses "
+                            "ADD COLUMN additional_hazard_id INT NULL AFTER system_hazard_id"
+                        )
+                    )
+                if "ix_user_question_responses_system_hazard_id" not in response_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_question_responses "
+                            "ADD INDEX ix_user_question_responses_system_hazard_id (system_hazard_id)"
+                        )
+                    )
+                if "ix_user_question_responses_additional_hazard_id" not in response_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_question_responses "
+                            "ADD INDEX ix_user_question_responses_additional_hazard_id (additional_hazard_id)"
+                        )
+                    )
+                if "fk_user_question_responses_system_hazard" not in response_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_question_responses "
+                            "ADD CONSTRAINT fk_user_question_responses_system_hazard "
+                            "FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE SET NULL"
+                        )
+                    )
+                if (
+                    "fk_user_question_responses_additional_hazard" not in response_foreign_keys
+                    and "additional_hazards" in inspector.get_table_names()
+                ):
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_question_responses "
+                            "ADD CONSTRAINT fk_user_question_responses_additional_hazard "
+                            "FOREIGN KEY (additional_hazard_id) REFERENCES additional_hazards(id) ON DELETE SET NULL"
+                        )
+                    )
+
+        inspector = inspect(engine)
         if "user_hazard_socio_demographics" in inspector.get_table_names():
             dg_columns = {
                 column["name"]
@@ -463,6 +607,27 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 for fk in inspector.get_foreign_keys("user_hazard_socio_demographics")
             }
             with engine.begin() as connection:
+                if "user_session_id" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN user_session_id INT NULL AFTER id"
+                        )
+                    )
+                if "system_hazard_id" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN system_hazard_id INT NULL AFTER user_hazard_id"
+                        )
+                    )
+                if "additional_hazard_id" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN additional_hazard_id INT NULL AFTER system_hazard_id"
+                        )
+                    )
                 if "country_id" not in dg_columns:
                     connection.execute(
                         text(
@@ -533,6 +698,60 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD INDEX ix_user_hazard_socio_demographics_sector_id (sector_id)"
                         )
                     )
+                if "ix_user_hazard_socio_demographics_user_session_id" not in dg_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD INDEX ix_user_hazard_socio_demographics_user_session_id (user_session_id)"
+                        )
+                    )
+                if "ix_user_hazard_socio_demographics_system_hazard_id" not in dg_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD INDEX ix_user_hazard_socio_demographics_system_hazard_id (system_hazard_id)"
+                        )
+                    )
+                if "ix_user_hazard_socio_demographics_additional_hazard_id" not in dg_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD INDEX ix_user_hazard_socio_demographics_additional_hazard_id (additional_hazard_id)"
+                        )
+                    )
+                if "fk_user_hazard_dgs_session" not in dg_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD CONSTRAINT fk_user_hazard_dgs_session "
+                            "FOREIGN KEY (user_session_id) REFERENCES user_sessions(id) ON DELETE CASCADE"
+                        )
+                    )
+                if "fk_user_hazard_dgs_system_hazard" not in dg_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD CONSTRAINT fk_user_hazard_dgs_system_hazard "
+                            "FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE"
+                        )
+                    )
+                if (
+                    "fk_user_hazard_dgs_additional_hazard" not in dg_foreign_keys
+                    and "additional_hazards" in inspector.get_table_names()
+                ):
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD CONSTRAINT fk_user_hazard_dgs_additional_hazard "
+                            "FOREIGN KEY (additional_hazard_id) REFERENCES additional_hazards(id) ON DELETE CASCADE"
+                        )
+                    )
+                try:
+                    connection.execute(
+                        text("ALTER TABLE user_hazard_socio_demographics MODIFY user_hazard_id INT NULL")
+                    )
+                except Exception:
+                    logger.exception("Failed to relax user_hazard_socio_demographics.user_hazard_id")
                 if "fk_user_hazard_dgs_country" not in dg_foreign_keys:
                     connection.execute(
                         text(
@@ -1879,7 +2098,6 @@ def _seed_mm_target_group_xlsx(connection) -> None:
         skipped,
     )
     _seed_sectoral_challenge_policy_additional_hazards(connection)
-    _seed_hazards_xlsx_policy_system_hazards(connection)
 
 
 def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
@@ -2097,6 +2315,33 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
         inserted,
         skipped,
     )
+
+
+def _ensure_hazards_xlsx_policy_system_hazards(connection) -> None:
+    table_exists = connection.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'mitigation_measure_policy_system_hazards'
+            """
+        )
+    ).scalar()
+    if not table_exists:
+        return
+    existing = connection.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM mitigation_measure_policy_system_hazards
+            WHERE source = 'xlsx'
+            """
+        )
+    ).scalar()
+    if int(existing or 0) > 0:
+        return
+    _seed_hazards_xlsx_policy_system_hazards(connection)
 
 
 def _mm_target_group_sector_ids(
@@ -2661,3 +2906,4 @@ def ensure_mitigation_measure_examples() -> None:
 
         _seed_mm_csv_mitigation_measure_examples(connection)
         _seed_mm_target_group_xlsx(connection)
+        _seed_hazards_xlsx_policy_system_hazards(connection)

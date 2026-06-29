@@ -238,7 +238,16 @@ class UserHazardSocioDemographic(Base):
     __tablename__ = "user_hazard_socio_demographics"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_hazard_id: Mapped[int] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
+    user_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
+    )
+    user_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
+    system_hazard_id: Mapped[int | None] = mapped_column(
+        ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
+    )
+    additional_hazard_id: Mapped[int | None] = mapped_column(
+        ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
+    )
     country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
     region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
@@ -294,7 +303,16 @@ class UserMitigationMeasure(Base):
     __tablename__ = "user_mitigation_measures"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_hazard_id: Mapped[int] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
+    user_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
+    )
+    user_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
+    system_hazard_id: Mapped[int | None] = mapped_column(
+        ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
+    )
+    additional_hazard_id: Mapped[int | None] = mapped_column(
+        ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
+    )
     measure: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     target_population: Mapped[str | None] = mapped_column(Text)
@@ -430,6 +448,12 @@ class UserQuestionResponse(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_session_id: Mapped[int] = mapped_column(ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True)
     user_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("user_hazards.id", ondelete="SET NULL"), index=True)
+    system_hazard_id: Mapped[int | None] = mapped_column(
+        ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True
+    )
+    additional_hazard_id: Mapped[int | None] = mapped_column(
+        ForeignKey("additional_hazards.id", ondelete="SET NULL"), index=True
+    )
     mitigation_measure_id: Mapped[int | None] = mapped_column(
         ForeignKey("user_mitigation_measures.id", ondelete="SET NULL"),
         index=True,

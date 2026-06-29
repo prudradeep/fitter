@@ -1,6 +1,4 @@
-I need a valid, narrower, or clearer hazard before I can add it:
-
-- **{{ hazard }}**
+**{{ hazard }}**
 
 {{ reason }}
 

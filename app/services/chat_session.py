@@ -59,6 +59,13 @@ class ChatSession:
     accepted_custom_hazard_reason: str | None = None
     accepted_custom_hazard_evidence: str | None = None
     accepted_custom_hazard_record_id: int | None = None
+    pending_hazard_reason: str | None = None
+    pending_hazard_evidence: str | None = None
+    pending_hazard_clarification_question: str | None = None
+    pending_hazard_clarification_answer: str | None = None
+    suggested_duplicate_hazard: str | None = None
+    suggested_duplicate_hazard_record_id: int | None = None
+    pending_affected_population_profiles: list[dict[str, str]] | None = None
     pending_fuzzy_option: str | None = None
     stats_dialog_conversation: list[dict[str, str]] | None = None
 

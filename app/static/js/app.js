@@ -92,6 +92,7 @@ const targetPopulationDialogBody = document.querySelector("#targetPopulationDial
 const closeTargetPopulationButton = document.querySelector("#closeTargetPopulationButton");
 const cancelTargetPopulationButton = document.querySelector("#cancelTargetPopulationButton");
 const targetAllGeneralPopulationButton = document.querySelector("#targetAllGeneralPopulationButton");
+const resetTargetPopulationButton = document.querySelector("#resetTargetPopulationButton");
 const sessionEmpty = document.querySelector("#sessionEmpty");
 const selectedHazardContext = document.querySelector("#selectedHazardContext");
 const selectedContextLabel = document.querySelector("#selectedContextLabel");
@@ -1462,6 +1463,14 @@ function normalizeForMatch(value) {
     .trim();
 }
 
+function isQuickSelectPopulationLabel(label) {
+  return ["Quick Select Target Population", "Quick Select Affected Population Group"].includes(label);
+}
+
+function isTargetPopulationActionLabel(label) {
+  return ["Skip", "Skip all"].includes(label) || isQuickSelectPopulationLabel(label);
+}
+
 function compactForMatch(value) {
   return normalizeForMatch(value).replace(/\s+/g, "");
 }
@@ -2470,7 +2479,7 @@ function syncTargetPopulationQuestion(step, options = []) {
   const optionLabels = new Set(
     (options || [])
       .map((option) => option.label)
-      .filter((label) => !["Skip", "Skip all", "Quick Select Target Population"].includes(label)),
+      .filter((label) => !isTargetPopulationActionLabel(label)),
   );
   currentTargetPopulationQuestion =
     targetPopulationQuestions.find((question) =>
@@ -2621,10 +2630,10 @@ function renderTargetPopulationOptions(options = []) {
   const previouslySelected = selectedTargetPopulationLabels(currentTargetPopulationQuestion?.id);
   const normalOptions = options.filter(
     (option) =>
-      !["Skip", "Skip all", "Quick Select Target Population"].includes(option.label),
+      !isTargetPopulationActionLabel(option.label),
   );
   const actions = options.filter((option) =>
-    ["Skip", "Skip all", "Quick Select Target Population"].includes(option.label),
+    isTargetPopulationActionLabel(option.label),
   );
 
   if (normalOptions.length) {
@@ -2689,7 +2698,7 @@ function createOptionButton(label, extraClass = "") {
       openStatsDeepDiveDialog();
       return;
     }
-    if (label === "Quick Select Target Population") {
+    if (isQuickSelectPopulationLabel(label)) {
       openTargetPopulationDialog();
       return;
     }
@@ -2816,7 +2825,7 @@ function openTargetPopulationDialog() {
     section.className = "target-dialog-question";
     section.dataset.questionId = question.id;
     const legend = document.createElement("legend");
-    legend.textContent = question.question || "Target population question";
+    legend.textContent = question.question || "Affected population group question";
     section.appendChild(legend);
     const optionGrid = document.createElement("div");
     optionGrid.className = "target-dialog-options";
@@ -3914,6 +3923,13 @@ targetAllGeneralPopulationButton?.addEventListener("click", () => {
       input.checked = true;
     });
 });
+resetTargetPopulationButton?.addEventListener("click", () => {
+  targetPopulationDialogBody
+    ?.querySelectorAll("[data-quick-target-option='true']")
+    .forEach((input) => {
+      input.checked = false;
+    });
+});
 
 targetPopulationForm?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -3921,7 +3937,7 @@ targetPopulationForm?.addEventListener("submit", (event) => {
   if (!payload.length) return;
   closeTargetPopulationDialog();
   disableOldOptions();
-  addMessage("user", "Quick Select Target Population");
+  addMessage("user", "Quick Select Affected Population Group");
   sendMessage(`TARGET_POPULATION_BATCH: ${JSON.stringify(payload)}`, false);
 });
 

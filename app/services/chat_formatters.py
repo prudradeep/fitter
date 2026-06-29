@@ -44,6 +44,12 @@ def _additional_hazards_info_icon() -> str:
         "technical and policy expertise to analyse transition policies and co-design "
         "mitigation measures. This also reduced power imbalances and supported broader "
         "representation of disadvantaged groups' interests.</span>"
+        '<details class="additional-hazards-methodology">'
+        "<summary>Show more</summary>"
+        '<img src="/static/img/methodologies.png" '
+        'alt="Infographic describing the methodology behind expert-added hazards" '
+        'loading="lazy" />'
+        "</details>"
         "</span>"
         "</span>"
     )
@@ -185,7 +191,7 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
         for item in ranked_profiles
         if isinstance(item, dict)
     }
-    profile_rows: list[str] = []
+    profile_items: list[dict[str, object]] = []
     for profile in profile_list:
         if isinstance(profile, dict):
             name = str(profile.get("name") or profile.get("profile") or "").strip()
@@ -193,7 +199,9 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
             variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
             variable_type = str(profile.get("variable_type") or "").strip()
             statistical_basis = str(profile.get("statistical_basis") or "").strip()
+            source = str(profile.get("source") or "").strip()
             target_population_labels = profile.get("target_population_labels")
+            target_population_option_ids = profile.get("target_population_option_ids")
             population_lookup_labels = profile.get("population_lookup_labels")
         else:
             name = str(profile).strip()
@@ -201,45 +209,40 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
             variable_name = ""
             variable_type = ""
             statistical_basis = ""
+            source = ""
             target_population_labels = []
+            target_population_option_ids = []
             population_lookup_labels = []
         if not name:
+            continue
+        if (
+            source.casefold() == "custom_hazard_extraction"
+            and not target_population_labels
+            and not target_population_option_ids
+        ):
             continue
         population = population_by_profile.get(normalize_markdown_text(name).casefold(), {})
         regional, national = _profile_population_values(profile, population, explanation)
         explanation = _without_population_sentence(explanation)
-        description_parts = []
-        if explanation:
-            description_parts.append(escape(explanation))
-        if statistical_basis:
-            description_parts.append(f"Reference: {escape(statistical_basis)}")
-        if isinstance(target_population_labels, list) and target_population_labels:
-            description_parts.append(
-                "Mapped target population: "
-                + escape("; ".join(str(label) for label in target_population_labels if str(label).strip()))
-            )
-        if isinstance(population_lookup_labels, list) and population_lookup_labels:
-            description_parts.append(
-                "Eurostat population lookup: "
-                + escape("; ".join(str(label) for label in population_lookup_labels if str(label).strip()))
-            )
-        description = (
-            f"<small>{'<br>'.join(description_parts)}</small>"
-            if description_parts
-            else ""
+        profile_items.append(
+            {
+                "name": name,
+                "explanation": explanation,
+                "variable_name": variable_name,
+                "variable_type": variable_type,
+                "statistical_basis": statistical_basis,
+                "source": source,
+                "target_population_labels": (
+                    target_population_labels if isinstance(target_population_labels, list) else []
+                ),
+                "population_lookup_labels": (
+                    population_lookup_labels if isinstance(population_lookup_labels, list) else []
+                ),
+                "regional": regional,
+                "national": national,
+            }
         )
-        macro_label = (
-            '<span class="profile-type-label">macro</span>'
-            if _is_macro_profile(variable_name, variable_type)
-            else ""
-        )
-        profile_rows.append(
-            "<tr>"
-            f'<th scope="row"><strong>{escape(name)}</strong>{macro_label}{description}</th>'
-            f'<td>{_format_population(regional)}{_population_comparison(regional, national)}</td>'
-            f'<td>{_format_population(national)}</td>'
-            "</tr>"
-        )
+    profile_rows = [_render_profile_row(item) for item in profile_items]
     if not profile_rows:
         return
     count = len(profile_rows)
@@ -255,6 +258,205 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
         f"<tbody>{''.join(profile_rows)}</tbody></table></div>"
         "</details>"
     )
+
+
+def _group_hazard_profile_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, object]] = {}
+    ordered: list[dict[str, object]] = []
+    for item in items:
+        group_info = _target_population_group_info(item)
+        if group_info is None:
+            ordered.append(item)
+            continue
+        question, options = group_info
+        key = normalize_markdown_text(question).casefold()
+        group = grouped.get(key)
+        if group is None:
+            group = {
+                "name": _display_target_population_question(question),
+                "explanation": "",
+                "variable_name": question,
+                "variable_type": "",
+                "statistical_basis": "",
+                "source": "target_population_group",
+                "target_population_labels": [],
+                "population_lookup_labels": [],
+                "regional_values": [],
+                "national_values": [],
+                "options": [],
+                "is_grouped_target_population": True,
+            }
+            grouped[key] = group
+            ordered.append(group)
+        for option in options:
+            _append_unique(group["options"], option)
+        for label in item.get("target_population_labels", []):
+            _append_unique(group["target_population_labels"], str(label))
+        for label in item.get("population_lookup_labels", []):
+            _append_unique(group["population_lookup_labels"], str(label))
+        if item.get("statistical_basis") and not group.get("statistical_basis"):
+            group["statistical_basis"] = str(item.get("statistical_basis") or "")
+        regional = _numeric_population(item.get("regional"))
+        national = _numeric_population(item.get("national"))
+        if regional is not None:
+            group["regional_values"].append(regional)
+        if national is not None:
+            group["national_values"].append(national)
+
+    for item in ordered:
+        if item.get("is_grouped_target_population"):
+            item["regional"] = _average_population(item.get("regional_values"))
+            item["national"] = _average_population(item.get("national_values"))
+    return ordered
+
+
+def _target_population_group_info(item: dict[str, object]) -> tuple[str, list[str]] | None:
+    labels = [
+        str(label).strip()
+        for label in item.get("target_population_labels", [])
+        if str(label).strip()
+    ]
+    label_groups = [_split_target_population_label(label) for label in labels]
+    label_groups = [group for group in label_groups if group is not None]
+    if label_groups:
+        question = label_groups[0][0]
+        options = [option for group_question, option in label_groups if group_question == question]
+        return question, options or [str(item.get("name") or "").strip()]
+
+    source = str(item.get("source") or "").strip().casefold()
+    statistical_basis = str(item.get("statistical_basis") or "").strip().casefold()
+    question = str(item.get("variable_name") or "").strip()
+    name = str(item.get("name") or "").strip()
+    if (
+        question
+        and name
+        and (
+            source == "target_population"
+            or "user-selected socio-demographic question response" in statistical_basis
+        )
+    ):
+        return question, [_target_population_option_label(question, name)]
+    return None
+
+
+def _split_target_population_label(label: str) -> tuple[str, str] | None:
+    if ":" not in label:
+        return None
+    question, option = [part.strip() for part in label.split(":", 1)]
+    if not question or not option:
+        return None
+    return question, option
+
+
+def _target_population_option_label(question: str, profile_name: str) -> str:
+    question = question.strip().rstrip(".")
+    profile_name = profile_name.strip()
+    if not question:
+        return profile_name
+    if normalize_markdown_text(profile_name).casefold() == normalize_markdown_text(question).casefold():
+        return "Yes"
+    not_prefix = f"Not {question[:1].lower()}{question[1:]}"
+    if normalize_markdown_text(profile_name).casefold() == normalize_markdown_text(not_prefix).casefold():
+        return "No"
+    prefix = f"{question}:"
+    if normalize_markdown_text(profile_name).casefold().startswith(
+        normalize_markdown_text(prefix).casefold()
+    ):
+        return profile_name.split(":", 1)[1].strip()
+    if "age" in normalize_markdown_text(question).casefold() and profile_name.casefold().startswith("age "):
+        return profile_name[4:].strip()
+    return profile_name
+
+
+def _display_target_population_question(question: str) -> str:
+    cleaned = re.sub(r"\s+", " ", question.strip().rstrip("."))
+    normalized = normalize_markdown_text(cleaned).casefold()
+    aliases = {
+        "age range": "Age group",
+    }
+    return aliases.get(normalized, cleaned)
+
+
+def _append_unique(values: object, value: str) -> None:
+    if not isinstance(values, list):
+        return
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    if cleaned and cleaned.casefold() not in {str(item).casefold() for item in values}:
+        values.append(cleaned)
+
+
+def _render_profile_row(item: dict[str, object]) -> str:
+    name = str(item.get("name") or "").strip()
+    variable_name = str(item.get("variable_name") or "").strip()
+    variable_type = str(item.get("variable_type") or "").strip()
+    regional = item.get("regional")
+    national = item.get("national")
+    description_parts = []
+    if item.get("is_grouped_target_population"):
+        options = [
+            str(option).strip()
+            for option in item.get("options", [])
+            if str(option).strip()
+        ]
+        if options:
+            description_parts.append("Selected options: " + escape("; ".join(options)))
+    explanation = str(item.get("explanation") or "").strip()
+    if explanation:
+        description_parts.append(escape(explanation))
+    statistical_basis = str(item.get("statistical_basis") or "").strip()
+    if statistical_basis:
+        description_parts.append(f"Reference: {escape(statistical_basis)}")
+    target_population_labels = item.get("target_population_labels")
+    if (
+        not item.get("is_grouped_target_population")
+        and isinstance(target_population_labels, list)
+        and target_population_labels
+    ):
+        description_parts.append(
+            "Mapped target population: "
+            + escape("; ".join(str(label) for label in target_population_labels if str(label).strip()))
+        )
+    population_lookup_labels = item.get("population_lookup_labels")
+    if isinstance(population_lookup_labels, list) and population_lookup_labels:
+        description_parts.append(
+            "Eurostat population lookup: "
+            + escape("; ".join(str(label) for label in population_lookup_labels if str(label).strip()))
+        )
+    description = (
+        f"<small>{'<br>'.join(description_parts)}</small>"
+        if description_parts
+        else ""
+    )
+    macro_label = (
+        '<span class="profile-type-label">macro</span>'
+        if _is_macro_profile(variable_name, variable_type)
+        else ""
+    )
+    return (
+        "<tr>"
+        f'<th scope="row"><strong>{escape(name)}</strong>{macro_label}{description}</th>'
+        f'<td>{_format_population(regional)}{_population_comparison(regional, national)}</td>'
+        f'<td>{_format_population(national)}</td>'
+        "</tr>"
+    )
+
+
+def _numeric_population(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _average_population(values: object) -> float | None:
+    if not isinstance(values, list) or not values:
+        return None
+    numeric_values = [
+        value for value in (_numeric_population(item) for item in values) if value is not None
+    ]
+    if not numeric_values:
+        return None
+    return sum(numeric_values) / len(numeric_values)
 
 
 def _format_population(value: object) -> str:

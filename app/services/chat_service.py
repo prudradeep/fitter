@@ -53,6 +53,8 @@ from app.services.chat_options import (
     DG_REASON_EVIDENCE_OPTIONS,
     EVALUATION_CATEGORIES,
     HAZARD_ENTRY_OPTIONS,
+    HAZARD_DUPLICATE_OPTIONS,
+    HAZARD_POPULATION_REVIEW_OPTIONS,
     MITIGATION_DUPLICATE_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
     OTHER_NAV_OPTIONS,
@@ -326,11 +328,26 @@ class ChatService:
                 current_session_id, session, clean_message
             )
 
+        if session.phase == "add_hazard_clarification":
+            return await self._handle_custom_hazard_clarification(
+                current_session_id, session, clean_message
+            )
+
         if session.phase == "add_hazard_evidence":
             return await self._validate_custom_hazard(current_session_id, session, clean_message)
 
+        if session.phase == "hazard_duplicate_suggestion":
+            return await self._handle_hazard_duplicate_suggestion(
+                current_session_id, session, clean_message
+            )
+
         if session.phase == "target_population_question":
             return await self._handle_target_population_answer(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "custom_hazard_population_review":
+            return await self._handle_custom_hazard_population_review(
                 current_session_id, session, clean_message
             )
 
@@ -663,6 +680,10 @@ class ChatService:
         session.accepted_custom_hazard_reason = None
         session.accepted_custom_hazard_evidence = None
         session.accepted_custom_hazard_record_id = None
+        session.pending_hazard_reason = None
+        session.pending_hazard_evidence = None
+        session.pending_hazard_clarification_question = None
+        session.pending_hazard_clarification_answer = None
         session.pending_fuzzy_option = None
         session.stats_dialog_conversation = None
 
@@ -1361,6 +1382,7 @@ class ChatService:
             }
 
     def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
+        self._hydrate_custom_hazard_profiles(session)
         self._filter_session_hazards_without_profiles(session)
         session.phase = "hazards"
         return ChatResponse(
@@ -1550,6 +1572,7 @@ class ChatService:
                 error=False,
             )
         if action == normalize("Show co-created hazards"):
+            self._hydrate_custom_hazard_profiles(session)
             return ChatResponse(
                 session_id=session_id,
                 step="hazard_profile_selection",
@@ -1579,33 +1602,16 @@ class ChatService:
         session.selected_hazard = hazard
         is_saved_custom_hazard = self._is_saved_custom_hazard(session, hazard)
         is_additional_hazard = self._is_additional_hazard(session, hazard)
-        hazard_record = self._ensure_user_hazard(
-            session_id,
-            session,
-            hazard,
-            source=(
-                "custom"
-                if is_saved_custom_hazard
-                else "additional"
-                if is_additional_hazard
-                else "system"
-            ),
-        )
-        session.selected_hazard_record_id = hazard_record.id if hazard_record else None
         self._record_activity(session_id, session, "hazard_selected", hazard)
         session.phase = "socio_demographic_review"
 
         if is_saved_custom_hazard:
+            session.accepted_custom_hazard = hazard
             session.saved_target_population_answers = self._target_population_answers_for_saved_hazard(
                 session,
                 hazard,
             )
-            if not self._stored_hazard_profiles(session, hazard):
-                profiles = self._target_population_profiles_for_saved_hazard(session, hazard)
-                if profiles:
-                    if session.hazard_profiles is None:
-                        session.hazard_profiles = {}
-                    session.hazard_profiles[hazard] = profiles
+            self._hydrate_custom_hazard_profiles(session)
             return await self._hazard_profiles_response(session_id, session, hazard)
 
         return await self._hazard_profiles_response(session_id, session, hazard)
@@ -2135,7 +2141,7 @@ Return Markdown only.
                     reason=(
                         "The evidence could not be read as supporting content. Please provide "
                         "a readable published source, such as a DOI/URL with extractable text "
-                        "or a supported PDF/DOCX file."
+                        "or a supported file: PDF, DOCX, MD, or TXT."
                     ),
                 ),
                 options=[],
@@ -3408,19 +3414,15 @@ Return Markdown only.
     async def _finalize_validated_mitigation(
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
-        if session.selected_hazard_record_id is None and session.selected_hazard:
-            hazard_record = self._ensure_user_hazard(
-                session_id,
-                session,
-                session.selected_hazard,
-                source="system",
-            )
-            session.selected_hazard_record_id = hazard_record.id if hazard_record else None
+        hazard_reference = self._selected_hazard_reference(session_id, session)
         session.mitigation_record_id = self._store_mitigation_measure(
-            session.selected_hazard_record_id,
-            session.mitigation_measure or "",
-            session.mitigation_reason or "",
-            session.mitigation_target_population,
+            user_session_id=hazard_reference["user_session_id"],
+            user_hazard_id=hazard_reference["user_hazard_id"],
+            system_hazard_id=hazard_reference["system_hazard_id"],
+            additional_hazard_id=hazard_reference["additional_hazard_id"],
+            mitigation_measure=session.mitigation_measure or "",
+            reason=session.mitigation_reason or "",
+            target_population=session.mitigation_target_population,
         )
         self._record_activity(
             session_id,
@@ -4350,7 +4352,10 @@ Use empty arrays when no valid target population group is found.
     async def _capture_additional_dgs(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        if message.strip() == "Quick Select Target Population":
+        if message.strip() in {
+            "Quick Select Target Population",
+            "Quick Select Affected Population Group",
+        }:
             return self._additional_dg_question_step(session_id, session)
         if message.strip().startswith("TARGET_POPULATION_BATCH:"):
             return await self._handle_additional_dg_batch(session_id, session, message)
@@ -4395,9 +4400,48 @@ Use empty arrays when no valid target population group is found.
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
         skipped_reason_evidence = normalize(exact_label or message) == normalize("Skip")
         if skipped_reason_evidence:
-            message = ""
+            discarded = list(session.pending_additional_dgs or [])
+            session.pending_additional_dgs = None
+            session.additional_dg_answers = None
+            session.dg_reason = None
+            session.dg_evidence = None
+            session.phase = "socio_demographic_review"
+            self._record_activity(
+                session_id,
+                session,
+                "socio_demographics_skipped",
+                ", ".join(discarded) or "No pending socio-demographic profiles.",
+            )
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=markdown_to_html(
+                    "The pending affected population groups were skipped and were not saved.\n\n"
+                    "You can continue with the selected hazard options."
+                ),
+                options=SOCIO_DEMOGRAPHIC_OPTIONS,
+                session=session.summary(),
+                error=False,
+            )
 
         reason, evidence = parse_reason_evidence(message)
+        if not reason and not evidence:
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=render_message(
+                    "dg_validation_failed.md",
+                    sector=session.sector,
+                    reason=(
+                        "Please provide a reason or evidence to validate these affected "
+                        "population groups, or choose Skip to discard them without saving."
+                    ),
+                ),
+                options=DG_REASON_EVIDENCE_OPTIONS,
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
         if reason or evidence:
             input_review = await self._validate_input_quality(
                 session=session,
@@ -4468,6 +4512,7 @@ Use empty arrays when no valid target population group is found.
         session.dg_evidence = evidence
         pending_dgs = session.pending_additional_dgs or []
         if pending_dgs:
+            hazard_reference = self._selected_hazard_reference(session_id, session)
             pending_profile_details = {
                 normalize(str(profile.get("name") or "")): profile
                 for profile in self._target_population_profiles_from_answers(
@@ -4483,8 +4528,10 @@ Use empty arrays when no valid target population group is found.
                 profile_detail = pending_profile_details.get(normalize(dg), {})
                 self._store_socio_demographic(
                     session,
-                    session.selected_hazard_record_id,
                     dg,
+                    user_hazard_id=hazard_reference["user_hazard_id"],
+                    system_hazard_id=hazard_reference["system_hazard_id"],
+                    additional_hazard_id=hazard_reference["additional_hazard_id"],
                     source="user_validated",
                     variable_name=str(profile_detail.get("variable_name") or "") or None,
                     explanation=str(profile_detail.get("explanation") or "") or None,
@@ -4500,21 +4547,6 @@ Use empty arrays when no valid target population group is found.
             "socio_demographics_validated",
             reason or "Validated without user-provided reason.",
         )
-        if skipped_reason_evidence:
-            session.phase = "socio_demographic_review"
-            return ChatResponse(
-                session_id=session_id,
-                step="socio_demographic_review",
-                bot_message=markdown_to_html(
-                    "The selected socio-demographic profiles were validated and added.\n\n"
-                    f"### Complete socio-demographic profile summary for {session.selected_hazard or 'the selected hazard'}\n\n"
-                    f"{format_all_dgs(session)}\n\n"
-                    "You can continue with the selected hazard options."
-                ),
-                options=SOCIO_DEMOGRAPHIC_OPTIONS,
-                session=session.summary(),
-                error=False,
-            )
         session.phase = "mitigation_measure"
         session.pending_mitigation_measure = None
         self._clear_mitigation_clarity_state(session)
@@ -4557,8 +4589,11 @@ Use empty arrays when no valid target population group is found.
                 error=True,
             )
 
-        existing_hazard = self._match_hazard(hazard, session)
-        if existing_hazard is not None:
+        plain_rejection_reason = self._plain_custom_hazard_rejection_reason(
+            session,
+            hazard,
+        )
+        if plain_rejection_reason:
             session.pending_hazard = None
             return ChatResponse(
                 session_id=session_id,
@@ -4566,15 +4601,221 @@ Use empty arrays when no valid target population group is found.
                 bot_message=render_message(
                     "hazard_rewrite_required.md",
                     hazard=hazard,
-                    reason="This appears to already be covered by an existing hazard.",
-                    suggestions=f"- **{existing_hazard}**",
-                    has_suggestions=True,
+                    reason=plain_rejection_reason,
+                    suggestions="",
+                    has_suggestions=False,
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
                 error=True,
             )
 
+        hazard_review = await self._review_custom_hazard_input(session, hazard)
+        if hazard_review is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=(
+                    "I could not review this hazard for clarity and policy fit because "
+                    "the local LLM is unavailable. Please try again."
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+
+        if not hazard_review["valid"]:
+            session.pending_hazard = None
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message(
+                    "hazard_rewrite_required.md",
+                    hazard=hazard,
+                    reason=hazard_review["reason"],
+                    suggestions="",
+                    has_suggestions=False,
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+
+        return await self._continue_valid_custom_hazard(
+            session_id,
+            session,
+            hazard,
+        )
+
+    async def _handle_custom_hazard_clarification(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, HAZARD_ENTRY_OPTIONS)
+        if exact_label is None:
+            fuzzy_label = match_option_label(message, HAZARD_ENTRY_OPTIONS)
+            if fuzzy_label is not None:
+                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
+        if normalize(exact_label or message) == normalize("Go back to list of hazards"):
+            session.pending_hazard = None
+            session.pending_hazard_reason = None
+            session.pending_hazard_evidence = None
+            session.pending_hazard_clarification_question = None
+            session.pending_hazard_clarification_answer = None
+            session.phase = "hazards"
+            return self._hazards_step(session_id, session)
+
+        answer = message.strip()
+        hazard = session.pending_hazard or ""
+        if not hazard:
+            session.phase = "add_hazard"
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message("add_hazard.md", sector=session.sector),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                error=False,
+            )
+        if not answer:
+            return self._hazard_clarification_step(
+                session_id,
+                session,
+                hazard,
+                session.pending_hazard_clarification_question
+                or "Could you clarify how this hazard relates to the selected transition policy context?",
+            )
+
+        pending_reason = session.pending_hazard_reason
+        if pending_reason:
+            reason = pending_reason
+            evidence = session.pending_hazard_evidence or ""
+            context_review = await self._review_custom_hazard_context(
+                session,
+                hazard,
+                reason,
+                evidence,
+                clarification=answer,
+            )
+            if context_review is None:
+                return ChatResponse(
+                    session_id=session_id,
+                    step="hazards",
+                    bot_message=render_message("hazard_validation_unavailable.md"),
+                    options=HAZARD_ENTRY_OPTIONS,
+                    session=session.summary(),
+                    input_mode="textarea",
+                    error=True,
+                )
+            if context_review["status"] == "clarification":
+                return self._hazard_clarification_step(
+                    session_id,
+                    session,
+                    hazard,
+                    str(context_review["question"]),
+                )
+            if not context_review["valid"]:
+                session.pending_hazard_reason = None
+                session.pending_hazard_evidence = None
+                session.pending_hazard_clarification_question = None
+                session.pending_hazard_clarification_answer = None
+                session.phase = "add_hazard_evidence"
+                return ChatResponse(
+                    session_id=session_id,
+                    step="hazards",
+                    bot_message=render_message(
+                        "hazard_validation_failed.md",
+                        sector=session.sector,
+                        reason=str(context_review["reason"]),
+                    ),
+                    options=HAZARD_ENTRY_OPTIONS,
+                    session=session.summary(),
+                    input_mode="reason_evidence",
+                    error=True,
+                )
+            session.pending_hazard_clarification_answer = answer
+            return await self._finalize_valid_custom_hazard(
+                session_id,
+                session,
+                hazard,
+                reason,
+                evidence,
+                clarification=answer,
+            )
+
+        clarified_hazard = self._clarified_hazard_text(session, hazard, answer)
+        plain_rejection_reason = self._plain_custom_hazard_rejection_reason(
+            session,
+            clarified_hazard,
+        )
+        if plain_rejection_reason:
+            return self._hazard_clarification_step(
+                session_id,
+                session,
+                hazard,
+                plain_rejection_reason,
+            )
+
+        hazard_review = await self._review_custom_hazard_input(session, clarified_hazard)
+        if hazard_review is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=(
+                    "I could not review this clarification because the local LLM is "
+                    "unavailable. Please try again."
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                error=False,
+            )
+        if not hazard_review["valid"]:
+            return self._hazard_clarification_step(
+                session_id,
+                session,
+                hazard,
+                str(hazard_review["reason"]),
+            )
+
+        session.pending_hazard_clarification_answer = answer
+        return await self._continue_valid_custom_hazard(
+            session_id,
+            session,
+            hazard,
+            clarification=answer,
+        )
+
+    def _hazard_clarification_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        hazard: str,
+        question: str,
+    ) -> ChatResponse:
+        session.pending_hazard = hazard
+        session.pending_hazard_clarification_question = question
+        session.phase = "add_hazard_clarification"
+        return ChatResponse(
+            session_id=session_id,
+            step="hazards",
+            bot_message=render_message(
+                "hazard_clarification.md",
+                hazard=hazard,
+                question=question,
+            ),
+            options=HAZARD_ENTRY_OPTIONS,
+            session=session.summary(),
+            input_mode="textarea",
+            error=False,
+        )
+
+    async def _continue_valid_custom_hazard(
+        self,
+        session_id: str,
+        session: ChatSession,
+        hazard: str,
+        *,
+        clarification: str | None = None,
+    ) -> ChatResponse:
         sector_mismatch_reason = self._custom_hazard_sector_mismatch_reason(
             session,
             hazard,
@@ -4596,52 +4837,160 @@ Use empty arrays when no valid target population group is found.
                 error=True,
             )
 
-        hazard_review = await self._review_custom_hazard_input(session, hazard)
-        if hazard_review is None:
+        existing_hazard = self._match_hazard(hazard, session)
+        if existing_hazard is not None:
+            return self._hazard_duplicate_suggestion_step(
+                session_id,
+                session,
+                hazard,
+                existing_hazard,
+                "This appears to already be covered by an existing hazard.",
+            )
+
+        local_matches = self._local_similar_hazards(hazard, hazard_names(session))
+        if local_matches:
+            return self._hazard_duplicate_suggestion_step(
+                session_id,
+                session,
+                hazard,
+                local_matches[0],
+                "This appears to have the same or similar meaning as an existing hazard.",
+            )
+
+        duplicate_check = await self._semantic_hazard_duplicate_check(session, hazard)
+        if duplicate_check is None:
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
                 bot_message=(
-                    "I could not review this hazard for clarity and overlap because "
+                    "I could not check whether this hazard is already covered because "
                     "the local LLM is unavailable. Please try again."
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
                 error=True,
             )
-
-        if not hazard_review["valid"]:
-            session.pending_hazard = None
-            return ChatResponse(
-                session_id=session_id,
-                step="hazards",
-                bot_message=render_message(
-                    "hazard_rewrite_required.md",
-                    hazard=hazard,
-                    reason=hazard_review["reason"],
-                    suggestions=self._format_hazard_suggestions(hazard_review),
-                    has_suggestions=self._has_hazard_suggestions(hazard_review),
-                ),
-                options=HAZARD_ENTRY_OPTIONS,
-                session=session.summary(),
-                error=True,
+        if duplicate_check.get("duplicate"):
+            return self._hazard_duplicate_suggestion_step(
+                session_id,
+                session,
+                hazard,
+                str(duplicate_check.get("match") or ""),
+                str(duplicate_check.get("reason") or ""),
             )
 
+        return self._hazard_reason_evidence_step(session_id, session, hazard)
+
+    def _hazard_reason_evidence_step(
+        self, session_id: str, session: ChatSession, hazard: str
+    ) -> ChatResponse:
         session.pending_hazard = hazard
         session.phase = "add_hazard_evidence"
+        session.suggested_duplicate_hazard = None
+        session.suggested_duplicate_hazard_record_id = None
+        session.pending_hazard_clarification_question = None
+        session.pending_hazard_clarification_answer = None
         return ChatResponse(
             session_id=session_id,
             step="hazards",
             bot_message=render_message(
                 "hazard_reason_evidence.md",
                 hazard=hazard,
-                matching_hazards=self._format_hazard_suggestions(hazard_review),
-                has_matching_hazards=self._has_hazard_suggestions(hazard_review),
+                matching_hazards="",
+                has_matching_hazards=False,
             ),
             options=HAZARD_ENTRY_OPTIONS,
             session=session.summary(),
             input_mode="reason_evidence",
             error=False,
+        )
+
+    def _hazard_duplicate_suggestion_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        hazard: str,
+        suggested_hazard: str,
+        reason: str,
+    ) -> ChatResponse:
+        session.pending_hazard = hazard
+        session.suggested_duplicate_hazard = suggested_hazard.strip() or None
+        session.phase = "hazard_duplicate_suggestion"
+        return ChatResponse(
+            session_id=session_id,
+            step="hazards",
+            bot_message=render_message(
+                "hazard_duplicate.md",
+                hazard=hazard,
+                suggested_hazard=suggested_hazard or "the suggested existing hazard",
+                reason=reason or "The proposed hazard appears similar to an existing hazard.",
+            ),
+            options=HAZARD_DUPLICATE_OPTIONS,
+            session=session.summary(),
+            error=False,
+        )
+
+    async def _handle_hazard_duplicate_suggestion(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, HAZARD_DUPLICATE_OPTIONS)
+        if exact_label is None:
+            fuzzy_label = match_option_label(message, HAZARD_DUPLICATE_OPTIONS)
+            if fuzzy_label is not None:
+                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
+        action = normalize(exact_label or message)
+
+        if action == normalize("Continue with this hazard"):
+            hazard = session.pending_hazard or ""
+            if not hazard:
+                session.phase = "add_hazard"
+                return ChatResponse(
+                    session_id=session_id,
+                    step="hazards",
+                    bot_message=render_message("add_hazard.md", sector=session.sector),
+                    options=HAZARD_ENTRY_OPTIONS,
+                    session=session.summary(),
+                    error=True,
+                )
+            return self._hazard_reason_evidence_step(session_id, session, hazard)
+
+        if action == normalize("Explore suggested hazard"):
+            suggested_hazard = session.suggested_duplicate_hazard or ""
+            hazard = self._match_hazard(suggested_hazard, session) or self._fuzzy_hazard(
+                suggested_hazard,
+                session,
+            )
+            if hazard is None:
+                session.phase = "hazards"
+                return self._hazards_step(session_id, session)
+            self._clear_selected_hazard_context(session)
+            session.pending_hazard = None
+            session.suggested_duplicate_hazard = None
+            session.selected_hazard = hazard
+            session.phase = "socio_demographic_review"
+            self._record_activity(session_id, session, "hazard_selected", hazard)
+            return await self._hazard_profiles_response(session_id, session, hazard)
+
+        if action == normalize("Write hazard again"):
+            session.pending_hazard = None
+            session.suggested_duplicate_hazard = None
+            session.phase = "add_hazard"
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message("add_hazard.md", sector=session.sector),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                error=False,
+            )
+
+        return ChatResponse(
+            session_id=session_id,
+            step="hazards",
+            bot_message=self.invalid_message,
+            options=HAZARD_DUPLICATE_OPTIONS,
+            session=session.summary(),
+            error=True,
         )
 
     async def _validate_custom_hazard(
@@ -4707,6 +5056,27 @@ Use empty arrays when no valid target population group is found.
                 error=True,
             )
 
+        plain_rejection_reason = self._plain_custom_hazard_rejection_reason(
+            session,
+            session.pending_hazard or "",
+            reason,
+            evidence or "",
+        )
+        if plain_rejection_reason:
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message(
+                    "hazard_validation_failed.md",
+                    sector=session.sector,
+                    reason=plain_rejection_reason,
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
         sector_mismatch_reason = self._custom_hazard_sector_mismatch_reason(
             session,
             session.pending_hazard or "",
@@ -4762,26 +5132,90 @@ Use empty arrays when no valid target population group is found.
                 error=True,
             )
 
+        hazard = session.pending_hazard or "New hazard"
+        context_review = await self._review_custom_hazard_context(
+            session,
+            hazard,
+            reason,
+            evidence or "",
+        )
+        if context_review is None:
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message("hazard_validation_unavailable.md"),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+        if context_review["status"] == "clarification":
+            session.pending_hazard_reason = reason
+            session.pending_hazard_evidence = evidence or ""
+            return self._hazard_clarification_step(
+                session_id,
+                session,
+                hazard,
+                str(context_review["question"]),
+            )
+        if not context_review["valid"]:
+            self._discard_temporary_evidence(session, evidence)
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message(
+                    "hazard_validation_failed.md",
+                    sector=session.sector,
+                    reason=str(context_review["reason"]),
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
+        return await self._finalize_valid_custom_hazard(
+            session_id,
+            session,
+            hazard,
+            reason,
+            evidence or "",
+        )
+
+    async def _finalize_valid_custom_hazard(
+        self,
+        session_id: str,
+        session: ChatSession,
+        hazard: str,
+        reason: str,
+        evidence: str,
+        *,
+        clarification: str | None = None,
+    ) -> ChatResponse:
         if session.custom_hazards is None:
             session.custom_hazards = []
-        if session.pending_hazard:
-            session.custom_hazards.append(session.pending_hazard)
-        accepted_hazard = session.pending_hazard or "New hazard"
+        if hazard and not any(normalize(item) == normalize(hazard) for item in session.custom_hazards):
+            session.custom_hazards.append(hazard)
+
         session.pending_hazard = None
-        session.accepted_custom_hazard = accepted_hazard
+        session.pending_hazard_reason = None
+        session.pending_hazard_evidence = None
+        session.pending_hazard_clarification_question = None
+        session.pending_hazard_clarification_answer = clarification
+        session.accepted_custom_hazard = hazard
         session.accepted_custom_hazard_reason = reason
         session.accepted_custom_hazard_evidence = evidence or "Not provided"
         hazard_record = self._ensure_user_hazard(
             session_id,
             session,
-            accepted_hazard,
+            hazard,
             source="custom",
             reason=reason,
             evidence=evidence or None,
         )
         session.accepted_custom_hazard_record_id = hazard_record.id if hazard_record else None
         session.selected_hazard_record_id = session.accepted_custom_hazard_record_id
-        self._record_activity(session_id, session, "custom_hazard_added", accepted_hazard)
+        self._record_activity(session_id, session, "custom_hazard_added", hazard)
         if evidence:
             self._promote_temporary_evidence(
                 session,
@@ -4789,11 +5223,24 @@ Use empty arrays when no valid target population group is found.
                 provenance="validated_user_evidence",
             )
 
-        target_population_step = self._start_target_population_questions(session_id, session)
-        if target_population_step is not None:
-            return target_population_step
-
-        return await self._custom_hazard_added_step(session_id, session)
+        profiles = await self._extract_custom_hazard_affected_population_profiles(
+            session,
+            hazard,
+            reason,
+            evidence,
+            clarification=clarification,
+        )
+        if not profiles:
+            profiles = self._additional_hazard_profiles_for_custom_hazard(session, hazard)
+        if session.hazard_profiles is None:
+            session.hazard_profiles = {}
+        session.hazard_profiles[hazard] = profiles
+        session.socio_demographic_profiles = [
+            str(profile.get("name") or profile.get("profile") or "").strip()
+            for profile in profiles
+            if str(profile.get("name") or profile.get("profile") or "").strip()
+        ]
+        return self._custom_hazard_population_review_step(session_id, session)
 
     async def _stats_deep_dive(
         self,
@@ -4875,11 +5322,14 @@ Use empty arrays when no valid target population group is found.
             session.accepted_custom_hazard or ""
         )
         if is_custom_hazard:
+            hazard_reference = self._selected_hazard_reference(session_id, session)
             for profile in profiles_to_store:
                 self._store_socio_demographic(
                     session,
-                    session.selected_hazard_record_id,
                     str(profile.get("name") or ""),
+                    user_hazard_id=hazard_reference["user_hazard_id"],
+                    system_hazard_id=hazard_reference["system_hazard_id"],
+                    additional_hazard_id=hazard_reference["additional_hazard_id"],
                     source="llm",
                     metadata=profile,
                 )
@@ -4910,22 +5360,40 @@ Use empty arrays when no valid target population group is found.
         profiles = self._stored_hazard_profiles(session, hazard)
         user_profiles = self._stored_user_hazard_profiles(session, hazard)
         is_additional_hazard = self._is_additional_hazard(session, hazard)
+        is_custom_hazard = self._is_saved_custom_hazard(session, hazard) or (
+            normalize(hazard) == normalize(session.accepted_custom_hazard or "")
+        )
+        if not profiles and is_custom_hazard:
+            profiles = self._additional_hazard_profiles_for_custom_hazard(session, hazard)
+            if profiles:
+                if session.hazard_profiles is None:
+                    session.hazard_profiles = {}
+                session.hazard_profiles[hazard] = profiles
         if not profiles:
             profiles = await self._get_hazard_profiles_from_llm(session, hazard)
             if profiles:
                 if session.hazard_profiles is None:
                     session.hazard_profiles = {}
                 session.hazard_profiles[hazard] = profiles
+        if is_custom_hazard and user_profiles:
+            profiles = self._merge_hazard_profile_lists(profiles, user_profiles)
+            if session.hazard_profiles is None:
+                session.hazard_profiles = {}
+            session.hazard_profiles[hazard] = profiles
         display_profiles = (
             await self._additional_profiles_with_population_context(session, hazard, profiles)
-            if is_additional_hazard
+            if is_additional_hazard or is_custom_hazard
             else await self._profiles_with_population_context(session, hazard, profiles)
         )
+        if is_custom_hazard and profiles and not display_profiles:
+            display_profiles = profiles
         display_user_profiles = await self._profiles_with_population_context(
             session,
             hazard,
             user_profiles,
         )
+        if is_custom_hazard:
+            display_user_profiles = []
         answer = self._format_hazard_profiles_markdown(
             hazard,
             display_profiles,
@@ -4941,15 +5409,13 @@ Use empty arrays when no valid target population group is found.
         session.additional_dgs = [
             profile["name"] for profile in user_profiles if profile.get("name")
         ] or None
-        is_custom_hazard = self._is_saved_custom_hazard(session, hazard) or (
-            normalize(hazard) == normalize(session.accepted_custom_hazard or "")
-        )
         if is_custom_hazard:
+            hazard_reference = self._selected_hazard_reference(session_id, session, hazard)
             for profile in profiles:
                 self._store_socio_demographic(
                     session,
-                    session.selected_hazard_record_id,
                     profile["name"],
+                    user_hazard_id=hazard_reference["user_hazard_id"],
                     source="llm",
                     variable_name=profile.get("variable_name"),
                     explanation=profile.get("explanation"),
@@ -5730,7 +6196,10 @@ Retrieved knowledge-base excerpts:
     async def _handle_target_population_answer(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        if message.strip() == "Quick Select Target Population":
+        if message.strip() in {
+            "Quick Select Target Population",
+            "Quick Select Affected Population Group",
+        }:
             return self._target_population_question_step(session_id, session)
         if message.strip().startswith("TARGET_POPULATION_BATCH:"):
             return await self._handle_target_population_batch(session_id, session, message)
@@ -5738,7 +6207,7 @@ Retrieved knowledge-base excerpts:
         question = self._current_target_population_question(session)
         if question is None:
             await self._synthesize_target_population_profile(session)
-            return await self._custom_hazard_added_step(session_id, session)
+            return self._custom_hazard_population_review_step(session_id, session)
 
         options = self._target_population_options(question)
         selected_labels = self._target_population_selected_labels(message, options)
@@ -5747,20 +6216,20 @@ Retrieved knowledge-base excerpts:
             return self._target_population_question_step(
                 session_id,
                 session,
-                error_reason="Please choose one or more listed target population options.",
+                error_reason="Please choose one or more listed affected population group options.",
             )
 
         if any(normalize(label) == normalize("Skip all") for label in selected_labels):
             session.target_population_index += 1
             session.target_population_index = len(session.target_population_questions or [])
             await self._synthesize_target_population_profile(session)
-            return await self._custom_hazard_added_step(session_id, session)
+            return self._custom_hazard_population_review_step(session_id, session)
 
         if any(normalize(label) == normalize("Skip") for label in selected_labels):
             session.target_population_index += 1
             if session.target_population_index >= len(session.target_population_questions or []):
                 await self._synthesize_target_population_profile(session)
-                return await self._custom_hazard_added_step(session_id, session)
+                return self._custom_hazard_population_review_step(session_id, session)
             return self._target_population_question_step(session_id, session)
 
         self._record_target_population_answer(session_id, session, question, selected_labels)
@@ -5768,7 +6237,7 @@ Retrieved knowledge-base excerpts:
 
         if session.target_population_index >= len(session.target_population_questions or []):
             await self._synthesize_target_population_profile(session)
-            return await self._custom_hazard_added_step(session_id, session)
+            return self._custom_hazard_population_review_step(session_id, session)
 
         return self._target_population_question_step(session_id, session)
 
@@ -5782,14 +6251,14 @@ Retrieved knowledge-base excerpts:
             return self._target_population_question_step(
                 session_id,
                 session,
-                error_reason="Please submit valid target population selections.",
+                error_reason="Please submit valid affected population group selections.",
             )
 
         if not isinstance(payload, list):
             return self._target_population_question_step(
                 session_id,
                 session,
-                error_reason="Please submit valid target population selections.",
+                error_reason="Please submit valid affected population group selections.",
             )
 
         questions_by_id = {
@@ -5830,12 +6299,211 @@ Retrieved knowledge-base excerpts:
             return self._target_population_question_step(
                 session_id,
                 session,
-                error_reason="Please select at least one target population option.",
+                error_reason="Please select at least one affected population group option.",
             )
 
         session.target_population_index = len(session.target_population_questions or [])
         await self._synthesize_target_population_profile(session)
-        return await self._custom_hazard_added_step(session_id, session)
+        return self._custom_hazard_population_review_step(session_id, session)
+
+    def _custom_hazard_population_review_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        error_reason: str | None = None,
+    ) -> ChatResponse:
+        hazard = session.accepted_custom_hazard or "the new hazard"
+        profiles = self._stored_hazard_profiles(session, hazard)
+        session.pending_affected_population_profiles = [dict(profile) for profile in profiles]
+        session.phase = "custom_hazard_population_review"
+        return ChatResponse(
+            session_id=session_id,
+            step="custom_hazard_population_review",
+            bot_message=render_message(
+                "hazard_population_review.md",
+                hazard=hazard,
+                profiles=self._format_population_profiles_for_review(profiles),
+                error_reason=error_reason or "",
+            ),
+            options=HAZARD_POPULATION_REVIEW_OPTIONS,
+            session=session.summary(),
+            error=bool(error_reason),
+        )
+
+    async def _handle_custom_hazard_population_review(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, HAZARD_POPULATION_REVIEW_OPTIONS)
+        action = normalize(exact_label or message)
+        if action in {normalize("Continue"), normalize("Looks good"), normalize("Done")}:
+            return await self._custom_hazard_added_step(session_id, session)
+
+        edits = await self._extract_affected_population_edits(session, message)
+        remove_items = edits.get("remove", [])
+        add_items = edits.get("add", [])
+        if not remove_items and not add_items:
+            return self._custom_hazard_population_review_step(
+                session_id,
+                session,
+                error_reason=(
+                    "Tell me which affected groups to add or remove, or choose Continue."
+                ),
+            )
+
+        hazard = session.accepted_custom_hazard or "New hazard"
+        profiles = [dict(profile) for profile in self._stored_hazard_profiles(session, hazard)]
+        if remove_items:
+            profiles = [
+                profile
+                for profile in profiles
+                if not any(
+                    self._profiles_are_similar(
+                        str(profile.get("name") or profile.get("profile") or ""),
+                        item,
+                    )
+                    for item in remove_items
+                )
+            ]
+        for item in add_items:
+            label = re.sub(r"\s+", " ", normalize_markdown_text(item)).strip("`*_ #.-")
+            if not label:
+                continue
+            if any(
+                self._profiles_are_similar(
+                    label,
+                    str(profile.get("name") or profile.get("profile") or ""),
+                )
+                for profile in profiles
+            ):
+                continue
+            profiles.append(
+                {
+                    "name": label[:120],
+                    "profile": label[:120],
+                    "variable_name": "user_review_affected_population",
+                    "explanation": "Affected population group added during user review.",
+                    "statistical_basis": "User-entered affected population review.",
+                    "source": "user_review",
+                }
+            )
+
+        if not profiles:
+            return self._custom_hazard_population_review_step(
+                session_id,
+                session,
+                error_reason="At least one affected population group is required.",
+            )
+
+        if session.hazard_profiles is None:
+            session.hazard_profiles = {}
+        profiles = self._attach_target_population_matches_to_profiles(profiles)
+        session.hazard_profiles[hazard] = profiles
+        session.socio_demographic_profiles = [
+            str(profile.get("name") or profile.get("profile") or "").strip()
+            for profile in profiles
+            if str(profile.get("name") or profile.get("profile") or "").strip()
+        ]
+        self._record_activity(
+            session_id,
+            session,
+            "affected_population_profiles_reviewed",
+            message,
+        )
+        return self._custom_hazard_population_review_step(session_id, session)
+
+    async def _extract_affected_population_edits(
+        self, session: ChatSession, message: str
+    ) -> dict[str, list[str]]:
+        current = [
+            str(profile.get("name") or profile.get("profile") or "").strip()
+            for profile in self._stored_hazard_profiles(
+                session,
+                session.accepted_custom_hazard or "New hazard",
+            )
+            if str(profile.get("name") or profile.get("profile") or "").strip()
+        ]
+        context = """
+Extract affected-population edits from a user's review message.
+Return only JSON with two arrays: `add` and `remove`.
+Items must be concise affected population group labels.
+Ignore filler text and confirmation-only wording.
+""".strip()
+        response = await ask_llm_chat(
+            context=context,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Current affected population groups:\n"
+                        + "\n".join(f"- {item}" for item in current)
+                        + "\n\n"
+                        f"User message: {message}\n\n"
+                        'Return JSON like {"add": ["Low-income renters"], "remove": ["General Population"]}.'
+                    ),
+                }
+            ],
+            temperature=0,
+            max_tokens=220,
+        )
+        if not is_llm_unavailable_response(response):
+            try:
+                parsed = json.loads(self._extract_json_object(response))
+            except json.JSONDecodeError:
+                parsed = {}
+            if isinstance(parsed, dict):
+                add = self._clean_population_edit_items(parsed.get("add"))
+                remove = self._clean_population_edit_items(parsed.get("remove"))
+                if add or remove:
+                    return {"add": add, "remove": remove}
+        return self._fallback_population_edits(message)
+
+    @staticmethod
+    def _clean_population_edit_items(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        cleaned: list[str] = []
+        for item in value:
+            label = re.sub(r"\s+", " ", normalize_markdown_text(str(item))).strip("`*_ #.-")
+            if label and normalize(label) not in {normalize("none"), normalize("n/a")}:
+                cleaned.append(label[:120])
+        return list(dict.fromkeys(cleaned))
+
+    @staticmethod
+    def _fallback_population_edits(message: str) -> dict[str, list[str]]:
+        edits = {"add": [], "remove": []}
+        for key, pattern in {
+            "add": r"\b(?:add|include)\b\s*:?\s*(.+)",
+            "remove": r"\b(?:remove|delete|exclude)\b\s*:?\s*(.+)",
+        }.items():
+            match = re.search(pattern, message, flags=re.IGNORECASE)
+            if not match:
+                continue
+            segment = re.split(
+                r"\b(?:add|include|remove|delete|exclude)\b\s*:?",
+                match.group(1),
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0]
+            edits[key] = [
+                item.strip(" `*_#.-")
+                for item in re.split(r",|;|\band\b", segment)
+                if item.strip(" `*_#.-")
+            ]
+        return edits
+
+    @staticmethod
+    def _format_population_profiles_for_review(profiles: list[dict[str, str]]) -> str:
+        lines: list[str] = []
+        for profile in profiles:
+            name = str(profile.get("name") or profile.get("profile") or "").strip()
+            explanation = str(profile.get("explanation") or "").strip()
+            if not name:
+                continue
+            line = f"- **{name}**"
+            if explanation:
+                line += f": {explanation}"
+            lines.append(line)
+        return "\n".join(lines) or "- No affected population groups identified yet."
 
     def _record_target_population_answer(
         self,
@@ -5896,8 +6564,9 @@ Retrieved knowledge-base excerpts:
 
     def _prepare_custom_hazard_added_profiles(self, session: ChatSession) -> str:
         session.phase = "hazards"
-        self._set_custom_hazard_profiles_from_target_population(session)
         accepted_hazard = session.accepted_custom_hazard or "New hazard"
+        if not self._stored_hazard_profiles(session, accepted_hazard):
+            self._set_custom_hazard_profiles_from_target_population(session)
         stored_profiles = self._stored_hazard_profiles(session, accepted_hazard)
         profile_items = stored_profiles or [
             {"name": profile, "profile": profile}
@@ -5908,11 +6577,12 @@ Retrieved knowledge-base excerpts:
         )
         self._clear_target_population_profiles(hazard_record_id)
         for profile in profile_items:
+            profile_source = str(profile.get("source") or "custom_hazard_extraction").strip()
             self._store_socio_demographic(
                 session,
-                hazard_record_id,
                 str(profile.get("name") or profile.get("profile") or ""),
-                source="target_population",
+                user_hazard_id=hazard_record_id,
+                source=profile_source[:40] or "custom_hazard_extraction",
                 variable_name=str(profile.get("variable_name") or "") or None,
                 explanation=str(profile.get("explanation") or "") or None,
                 statistical_basis=str(profile.get("statistical_basis") or "") or None,
@@ -5930,7 +6600,9 @@ Retrieved knowledge-base excerpts:
                 hazard=accepted_hazard,
                 reason=session.accepted_custom_hazard_reason or "Not provided",
                 evidence=session.accepted_custom_hazard_evidence or "Not provided",
-                target_population_answers=self._format_target_population_answers(session),
+                affected_population_groups=self._format_population_profiles_for_review(
+                    self._stored_hazard_profiles(session, accepted_hazard)
+                ),
                 hazards=format_hazards(session),
             ),
             options=POST_SECTOR_OPTIONS,
@@ -5960,7 +6632,9 @@ Retrieved knowledge-base excerpts:
                 hazard=accepted_hazard,
                 reason=session.accepted_custom_hazard_reason or "Not provided",
                 evidence=session.accepted_custom_hazard_evidence or "Not provided",
-                target_population_answers=self._format_target_population_answers(session),
+                affected_population_groups=self._format_population_profiles_for_review(
+                    self._stored_hazard_profiles(session, accepted_hazard)
+                ),
                 hazards=format_hazards(session),
             ),
             options=POST_SECTOR_OPTIONS,
@@ -5997,7 +6671,7 @@ Retrieved knowledge-base excerpts:
             *options,
             Option(id=len(options) + 1, label="Skip"),
             Option(id=len(options) + 2, label="Skip all"),
-            Option(id=len(options) + 3, label="Quick Select Target Population"),
+            Option(id=len(options) + 3, label="Quick Select Affected Population Group"),
         ]
 
     @staticmethod
@@ -6201,20 +6875,48 @@ Do not invent characteristics that were not selected.
 
     def _hydrate_custom_hazard_profiles(self, session: ChatSession) -> None:
         for hazard in session.custom_hazards or []:
-            if self._stored_hazard_profiles(session, hazard):
-                continue
+            existing_profiles = self._stored_hazard_profiles(session, hazard)
             stored_profiles = self._stored_user_hazard_profiles(session, hazard)
             if stored_profiles:
                 if session.hazard_profiles is None:
                     session.hazard_profiles = {}
-                session.hazard_profiles[hazard] = stored_profiles
+                session.hazard_profiles[hazard] = self._merge_hazard_profile_lists(
+                    existing_profiles,
+                    stored_profiles,
+                )
                 continue
             profiles = self._target_population_profiles_for_saved_hazard(session, hazard)
             if not profiles:
+                if existing_profiles and session.hazard_profiles is not None:
+                    session.hazard_profiles[hazard] = existing_profiles
                 continue
             if session.hazard_profiles is None:
                 session.hazard_profiles = {}
-            session.hazard_profiles[hazard] = profiles
+            session.hazard_profiles[hazard] = self._merge_hazard_profile_lists(
+                existing_profiles,
+                profiles,
+            )
+
+    @staticmethod
+    def _merge_hazard_profile_lists(
+        *profile_groups: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        merged: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for profiles in profile_groups:
+            for profile in profiles:
+                if not isinstance(profile, dict):
+                    continue
+                name = str(profile.get("name") or profile.get("profile") or "").strip()
+                if not name:
+                    continue
+                source = str(profile.get("source") or "").strip()
+                key = normalize(f"{name}|{source}")
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(profile)
+        return merged
 
     @staticmethod
     def _filter_session_hazards_without_profiles(session: ChatSession) -> None:
@@ -7290,11 +7992,24 @@ is no clear match, return an empty matched_profiles array.
                 continue
             variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
             variable_type = str(profile.get("variable_type") or "").strip()
+            target_population_labels = profile.get("target_population_labels")
+            population_lookup_labels = profile.get("population_lookup_labels")
             rows.append(
                 {
                     "name": name,
                     "explanation": cls._clean_profile_explanation(
                         str(profile.get("explanation") or "").strip()
+                    ),
+                    "statistical_basis": str(profile.get("statistical_basis") or "").strip(),
+                    "target_population_labels": (
+                        list(target_population_labels)
+                        if isinstance(target_population_labels, list)
+                        else []
+                    ),
+                    "population_lookup_labels": (
+                        list(population_lookup_labels)
+                        if isinstance(population_lookup_labels, list)
+                        else []
                     ),
                     "regional": profile.get("regional_population_pct")
                     or profile.get("population_pct"),
@@ -7303,6 +8018,122 @@ is no clear match, return an empty matched_profiles array.
                 }
             )
         return rows
+
+    @classmethod
+    def _group_selected_hazard_profile_rows(
+        cls, rows: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        grouped: dict[str, dict[str, object]] = {}
+        ordered: list[dict[str, object]] = []
+        for row in rows:
+            label_groups = [
+                group
+                for label in row.get("target_population_labels", [])
+                if (group := cls._split_target_population_label(str(label)))
+            ]
+            if not label_groups:
+                ordered.append(row)
+                continue
+
+            question = label_groups[0][0]
+            key = normalize_for_match(question)
+            group = grouped.get(key)
+            if group is None:
+                group = {
+                    "name": cls._display_target_population_question(question),
+                    "explanation": "",
+                    "statistical_basis": "",
+                    "target_population_labels": [],
+                    "population_lookup_labels": [],
+                    "options": [],
+                    "regional_values": [],
+                    "national_values": [],
+                    "regional": None,
+                    "national": None,
+                    "is_macro": False,
+                    "is_grouped_target_population": True,
+                }
+                grouped[key] = group
+                ordered.append(group)
+            for group_question, option in label_groups:
+                if normalize_for_match(group_question) == key:
+                    cls._append_unique_value(group["options"], option)
+            for label in row.get("target_population_labels", []):
+                cls._append_unique_value(group["target_population_labels"], str(label))
+            for label in row.get("population_lookup_labels", []):
+                cls._append_unique_value(group["population_lookup_labels"], str(label))
+            if row.get("statistical_basis") and not group.get("statistical_basis"):
+                group["statistical_basis"] = str(row.get("statistical_basis") or "")
+            cls._append_numeric_value(group["regional_values"], row.get("regional"))
+            cls._append_numeric_value(group["national_values"], row.get("national"))
+
+        for row in ordered:
+            if row.get("is_grouped_target_population"):
+                row["regional"] = cls._average_numeric_values(row.get("regional_values"))
+                row["national"] = cls._average_numeric_values(row.get("national_values"))
+                options = [
+                    str(option).strip()
+                    for option in row.get("options", [])
+                    if str(option).strip()
+                ]
+                description_parts: list[str] = []
+                if options:
+                    description_parts.append("Selected options: " + "; ".join(options))
+                if row.get("statistical_basis"):
+                    description_parts.append(
+                        "Reference: " + str(row.get("statistical_basis") or "")
+                    )
+                lookup_labels = [
+                    str(label).strip()
+                    for label in row.get("population_lookup_labels", [])
+                    if str(label).strip()
+                ]
+                if lookup_labels:
+                    description_parts.append(
+                        "Eurostat population lookup: " + "; ".join(lookup_labels)
+                    )
+                row["explanation"] = "\n".join(description_parts)
+        return ordered
+
+    @staticmethod
+    def _split_target_population_label(label: str) -> tuple[str, str] | None:
+        if ":" not in label:
+            return None
+        question, option = [part.strip() for part in label.split(":", 1)]
+        if not question or not option:
+            return None
+        return question, option
+
+    @staticmethod
+    def _display_target_population_question(question: str) -> str:
+        cleaned = re.sub(r"\s+", " ", question.strip().rstrip("."))
+        aliases = {
+            "age range": "Age group",
+        }
+        return aliases.get(normalize_for_match(cleaned), cleaned)
+
+    @staticmethod
+    def _append_unique_value(values: object, value: str) -> None:
+        if not isinstance(values, list):
+            return
+        cleaned = re.sub(r"\s+", " ", value).strip()
+        if cleaned and cleaned.casefold() not in {str(item).casefold() for item in values}:
+            values.append(cleaned)
+
+    @staticmethod
+    def _append_numeric_value(values: object, value: object) -> None:
+        if not isinstance(values, list):
+            return
+        try:
+            values.append(float(value))
+        except (TypeError, ValueError):
+            pass
+
+    @staticmethod
+    def _average_numeric_values(values: object) -> float | None:
+        if not isinstance(values, list) or not values:
+            return None
+        return round(sum(values) / len(values), 1)
 
     @classmethod
     def _hazard_profile_table_html(cls, rows: list[dict[str, object]]) -> str:
@@ -7315,12 +8146,46 @@ is no clear match, return an empty matched_profiles array.
             )
             regional = row.get("regional")
             national = row.get("national")
-            description = str(row.get("explanation") or "").strip()
+            description_parts: list[str] = []
+            explanation = str(row.get("explanation") or "").strip()
+            if explanation:
+                description_parts.append(explanation)
+            statistical_basis = str(row.get("statistical_basis") or "").strip()
+            if statistical_basis:
+                description_parts.append(f"Reference: {statistical_basis}")
+            target_population_labels = row.get("target_population_labels")
+            if isinstance(target_population_labels, list) and target_population_labels:
+                mapped_labels = [
+                    str(label).strip()
+                    for label in target_population_labels
+                    if str(label).strip()
+                ]
+                if mapped_labels:
+                    description_parts.append(
+                        "Mapped target population: " + "; ".join(mapped_labels)
+                    )
+            population_lookup_labels = row.get("population_lookup_labels")
+            if isinstance(population_lookup_labels, list) and population_lookup_labels:
+                lookup_labels = [
+                    str(label).strip()
+                    for label in population_lookup_labels
+                    if str(label).strip()
+                ]
+                if lookup_labels:
+                    description_parts.append(
+                        "Eurostat population lookup: " + "; ".join(lookup_labels)
+                    )
+            description = "\n".join(description_parts)
+            description_html = "<br>".join(
+                escape(part.strip())
+                for part in description.splitlines()
+                if part.strip()
+            )
             body_rows.append(
                 "<tr>"
                 '<th scope="row">'
                 f'<strong>{escape(str(row.get("name") or ""))}</strong>{macro_label}'
-                f'{f"<small>{escape(description)}</small>" if description else ""}'
+                f'{f"<small>{description_html}</small>" if description_html else ""}'
                 "</th>"
                 f'<td><span class="population-value">{cls._format_profile_population(regional)}</span>'
                 f"{cls._profile_population_comparison(regional, national)}</td>"
@@ -7519,28 +8384,62 @@ is no clear match, return an empty matched_profiles array.
         if session.country_id is None or session.sector_id is None:
             return []
         try:
-            query = (
-                select(UserHazardSocioDemographic)
-                .join(UserHazard, UserHazard.id == UserHazardSocioDemographic.user_hazard_id)
-                .join(UserSession, UserSession.id == UserHazard.user_session_id)
-                .where(
-                    func.lower(UserHazard.name) == hazard.casefold(),
-                    UserSession.country_id == session.country_id,
-                    UserHazard.sector_id == session.sector_id,
-                    UserHazard.region_id.is_(None)
-                    if session.region_id is None
-                    else UserHazard.region_id == session.region_id,
-                    UserHazardSocioDemographic.country_id == session.country_id,
-                    UserHazardSocioDemographic.region_id.is_(None)
-                    if session.region_id is None
-                    else UserHazardSocioDemographic.region_id == session.region_id,
-                    UserHazardSocioDemographic.sector_id == session.sector_id,
-                    UserHazardSocioDemographic.source.in_(
-                        ["user_validated", "target_population"]
-                    ),
+            allowed_sources = [
+                "user_validated",
+                "target_population",
+                "custom_hazard_extraction",
+                "user_review",
+                "d4_2_pdf",
+                "llm",
+            ]
+            base_filters = [
+                UserSession.country_id == session.country_id,
+                UserHazardSocioDemographic.country_id == session.country_id,
+                UserHazardSocioDemographic.region_id.is_(None)
+                if session.region_id is None
+                else UserHazardSocioDemographic.region_id == session.region_id,
+                UserHazardSocioDemographic.sector_id == session.sector_id,
+                UserHazardSocioDemographic.source.in_(allowed_sources),
+            ]
+            if self._is_saved_custom_hazard(session, hazard):
+                query = (
+                    select(UserHazardSocioDemographic)
+                    .join(UserHazard, UserHazard.id == UserHazardSocioDemographic.user_hazard_id)
+                    .join(UserSession, UserSession.id == UserHazard.user_session_id)
+                    .where(
+                        func.lower(UserHazard.name) == hazard.casefold(),
+                        UserHazard.sector_id == session.sector_id,
+                        UserHazard.region_id.is_(None)
+                        if session.region_id is None
+                        else UserHazard.region_id == session.region_id,
+                        *base_filters,
+                    )
+                    .order_by(UserHazardSocioDemographic.id)
                 )
-                .order_by(UserHazardSocioDemographic.id)
-            )
+            else:
+                system_hazard_id = None
+                additional_hazard_id = None
+                if self._is_additional_hazard(session, hazard):
+                    additional_hazard_id = self._selected_additional_hazard_id(session, hazard)
+                else:
+                    system_hazard_id = self.db.scalar(
+                        select(SystemHazard.id).where(
+                            SystemHazard.sector_id == session.sector_id,
+                            func.lower(SystemHazard.name) == hazard.casefold(),
+                        )
+                    )
+                if system_hazard_id is None and additional_hazard_id is None:
+                    return []
+                query = (
+                    select(UserHazardSocioDemographic)
+                    .join(UserSession, UserSession.id == UserHazardSocioDemographic.user_session_id)
+                    .where(
+                        UserHazardSocioDemographic.system_hazard_id == system_hazard_id,
+                        UserHazardSocioDemographic.additional_hazard_id == additional_hazard_id,
+                        *base_filters,
+                    )
+                    .order_by(UserHazardSocioDemographic.id)
+                )
             if self.user_id is not None:
                 query = query.where(UserSession.user_id == self.user_id)
             rows = self.db.scalars(query).all()
@@ -7565,7 +8464,7 @@ is no clear match, return an empty matched_profiles array.
             if not variable_name:
                 variable_name = self._infer_target_population_question(name, target_questions)
             source = str(row.source or "user_validated")
-            if variable_name:
+            if variable_name and source == "target_population":
                 group = grouped.setdefault(
                     normalize(variable_name),
                     {
@@ -7588,6 +8487,16 @@ is no clear match, return an empty matched_profiles array.
             key = normalize(name)
             if key in {normalize(profile["name"]) for profile in ungrouped}:
                 continue
+            target_population_option_ids = (
+                metadata.get("target_population_option_ids")
+                if isinstance(metadata.get("target_population_option_ids"), list)
+                else []
+            )
+            target_population_labels = (
+                metadata.get("target_population_labels")
+                if isinstance(metadata.get("target_population_labels"), list)
+                else ([name] if source == "target_population" else [])
+            )
             ungrouped.append(
                 {
                     "name": name,
@@ -7598,11 +8507,8 @@ is no clear match, return an empty matched_profiles array.
                     "statistical_basis": str(row.statistical_basis or ""),
                     "source": source,
                     "metadata": metadata,
-                    "target_population_labels": (
-                        metadata.get("target_population_labels")
-                        if isinstance(metadata.get("target_population_labels"), list)
-                        else ([name] if source == "target_population" else [])
-                    ),
+                    "target_population_option_ids": target_population_option_ids,
+                    "target_population_labels": target_population_labels,
                 }
             )
 
@@ -7898,6 +8804,72 @@ is no clear match, return an empty matched_profiles array.
             }
         return hazards
 
+    def _additional_hazard_profiles_for_custom_hazard(
+        self, session: ChatSession, hazard: str
+    ) -> list[dict[str, str]]:
+        if session.country_id is None or session.sector_id is None:
+            return []
+        hazard_rows = self.db.execute(
+            select(AdditionalHazard.id, AdditionalHazard.name)
+            .where(
+                AdditionalHazard.country_id == session.country_id,
+                AdditionalHazard.sector_id == session.sector_id,
+            )
+            .order_by(AdditionalHazard.csv_row_number, AdditionalHazard.name)
+        ).all()
+        matched_names = {
+            normalize(name)
+            for name in self._local_similar_hazards(
+                hazard,
+                [str(row.name or "").strip() for row in hazard_rows],
+            )
+        }
+        matched_hazard_ids = [
+            int(row.id)
+            for row in hazard_rows
+            if normalize(str(row.name or "").strip()) in matched_names
+        ]
+        if not matched_hazard_ids:
+            return []
+
+        profile_rows = self.db.scalars(
+            select(AdditionalHazardProfile)
+            .where(AdditionalHazardProfile.additional_hazard_id.in_(matched_hazard_ids))
+            .order_by(
+                AdditionalHazardProfile.csv_row_number,
+                AdditionalHazardProfile.profile,
+            )
+        ).all()
+        profile_ids = [int(row.id) for row in profile_rows if isinstance(row.id, int)]
+        target_population_by_profile = self._additional_hazard_profile_target_population_map(
+            profile_ids
+        )
+        profiles: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for row in profile_rows:
+            name = str(row.profile or "").strip()
+            key = normalize(name)
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            mapped_targets = target_population_by_profile.get(int(row.id), [])
+            profiles.append(
+                {
+                    "name": name,
+                    "profile": name,
+                    "explanation": str(row.evidence or "").strip(),
+                    "statistical_basis": str(row.reference or "").strip(),
+                    "source": "d4_2_pdf",
+                    "target_population_option_ids": [
+                        int(item["option_id"]) for item in mapped_targets
+                    ],
+                    "target_population_labels": [
+                        str(item["label"]) for item in mapped_targets
+                    ],
+                }
+            )
+        return profiles
+
     def _is_saved_custom_hazard(self, session: ChatSession, hazard: str) -> bool:
         return any(normalize(hazard) == normalize(item) for item in (session.custom_hazards or []))
 
@@ -8081,7 +9053,7 @@ is no clear match, return an empty matched_profiles array.
     @staticmethod
     def _chat_message_display_content(content: str) -> str:
         if content.strip().startswith("TARGET_POPULATION_BATCH:"):
-            return "Quick Select Target Population"
+            return "Quick Select Affected Population Group"
         return content
 
     def _recent_chat_messages_for_auto_user(
@@ -8911,12 +9883,81 @@ Current session:
             logger.exception("Failed to persist hazard")
             return None
 
+    def _selected_hazard_reference(
+        self,
+        session_id: str,
+        session: ChatSession,
+        hazard_name: str | None = None,
+    ) -> dict[str, int | None]:
+        hazard = (hazard_name or session.selected_hazard or session.accepted_custom_hazard or "").strip()
+        reference = {
+            "user_session_id": None,
+            "user_hazard_id": None,
+            "system_hazard_id": None,
+            "additional_hazard_id": None,
+        }
+        user_session = self._ensure_user_session(session_id, session)
+        if user_session is not None:
+            reference["user_session_id"] = user_session.id
+        if not hazard:
+            return reference
+        source = self._selected_user_hazard_source(session, hazard)
+        if source == "system":
+            system_hazard = self._ensure_system_hazard(session, hazard)
+            reference["system_hazard_id"] = system_hazard.id if system_hazard else None
+            return reference
+        if source == "additional":
+            reference["additional_hazard_id"] = self._selected_additional_hazard_id(session, hazard)
+            return reference
+
+        if session.selected_hazard_record_id is not None:
+            existing = self.db.get(UserHazard, session.selected_hazard_record_id)
+            if existing is not None:
+                reference["user_hazard_id"] = existing.id
+                return reference
+        record = self._ensure_user_hazard(
+            session_id,
+            session,
+            hazard,
+            source=source,
+        )
+        if record is None:
+            return reference
+        session.selected_hazard_record_id = record.id
+        session.accepted_custom_hazard = hazard
+        session.accepted_custom_hazard_record_id = record.id
+        reference["user_hazard_id"] = record.id
+        return reference
+
+    def _selected_user_hazard_source(self, session: ChatSession, hazard: str) -> str:
+        if self._is_saved_custom_hazard(session, hazard) or normalize(hazard) == normalize(
+            session.accepted_custom_hazard or ""
+        ):
+            return "custom"
+        if self._is_additional_hazard(session, hazard):
+            return "additional"
+        return "system"
+
+    def _selected_additional_hazard_id(self, session: ChatSession, hazard: str) -> int | None:
+        if session.country_id is None or session.sector_id is None:
+            return None
+        hazard_id = self.db.scalar(
+            select(AdditionalHazard.id).where(
+                AdditionalHazard.country_id == session.country_id,
+                AdditionalHazard.sector_id == session.sector_id,
+                func.lower(AdditionalHazard.name) == hazard.casefold(),
+            )
+        )
+        return int(hazard_id) if isinstance(hazard_id, int) else None
+
     def _store_socio_demographic(
         self,
         session: ChatSession,
-        hazard_id: int | None,
         profile: str,
         *,
+        user_hazard_id: int | None = None,
+        system_hazard_id: int | None = None,
+        additional_hazard_id: int | None = None,
         source: str,
         variable_name: str | None = None,
         explanation: str | None = None,
@@ -8925,50 +9966,46 @@ Current session:
         reason: str | None = None,
         evidence: str | None = None,
     ) -> None:
-        if hazard_id is None or not profile.strip():
+        if (
+            user_hazard_id is None
+            and system_hazard_id is None
+            and additional_hazard_id is None
+        ) or not profile.strip():
             return
         try:
+            user_session = self._ensure_user_session(session.session_key, session)
+            if user_session is None:
+                return
             clean_profile = profile.strip()
             hazard_name = session.selected_hazard or session.accepted_custom_hazard
             context_query = (
                 select(UserHazardSocioDemographic)
-                .join(
-                    UserHazard,
-                    UserHazard.id == UserHazardSocioDemographic.user_hazard_id,
-                )
-                .join(UserSession, UserSession.id == UserHazard.user_session_id)
                 .where(
                     func.lower(UserHazardSocioDemographic.profile) == clean_profile.casefold(),
+                    UserHazardSocioDemographic.user_session_id == user_session.id,
+                    UserHazardSocioDemographic.user_hazard_id == user_hazard_id,
+                    UserHazardSocioDemographic.system_hazard_id == system_hazard_id,
+                    UserHazardSocioDemographic.additional_hazard_id == additional_hazard_id,
                     UserHazardSocioDemographic.country_id == session.country_id,
                     UserHazardSocioDemographic.region_id == session.region_id,
                     UserHazardSocioDemographic.sector_id == session.sector_id,
                 )
             )
-            if hazard_name:
-                context_query = context_query.where(func.lower(UserHazard.name) == hazard_name.casefold())
-            if self.user_id is not None:
-                context_query = context_query.where(UserSession.user_id == self.user_id)
-
             row = self.db.scalar(context_query.limit(1))
-            if row is not None and row.user_hazard_id != hazard_id:
-                return
-            if row is None:
-                row = self.db.scalar(
-                    select(UserHazardSocioDemographic).where(
-                    UserHazardSocioDemographic.user_hazard_id == hazard_id,
-                    func.lower(UserHazardSocioDemographic.profile) == clean_profile.casefold(),
-                    UserHazardSocioDemographic.country_id == session.country_id,
-                    UserHazardSocioDemographic.region_id == session.region_id,
-                    UserHazardSocioDemographic.sector_id == session.sector_id,
-                    )
-                )
             if row is None:
                 row = UserHazardSocioDemographic(
-                    user_hazard_id=hazard_id,
+                    user_session_id=user_session.id,
+                    user_hazard_id=user_hazard_id,
+                    system_hazard_id=system_hazard_id,
+                    additional_hazard_id=additional_hazard_id,
                     profile=clean_profile,
                     source=source,
                 )
                 self.db.add(row)
+            row.user_session_id = user_session.id
+            row.user_hazard_id = user_hazard_id
+            row.system_hazard_id = system_hazard_id
+            row.additional_hazard_id = additional_hazard_id
             row.country_id = session.country_id
             row.region_id = session.region_id
             row.sector_id = session.sector_id
@@ -9239,16 +10276,23 @@ Current session:
 
     def _store_mitigation_measure(
         self,
-        hazard_id: int | None,
+        *,
+        user_session_id: int | None,
+        user_hazard_id: int | None,
+        system_hazard_id: int | None,
+        additional_hazard_id: int | None,
         mitigation_measure: str,
         reason: str,
         target_population: list[str] | None = None,
     ) -> int | None:
-        if hazard_id is None:
+        if user_hazard_id is None and system_hazard_id is None and additional_hazard_id is None:
             return None
         try:
             row = UserMitigationMeasure(
-                user_hazard_id=hazard_id,
+                user_session_id=user_session_id,
+                user_hazard_id=user_hazard_id,
+                system_hazard_id=system_hazard_id,
+                additional_hazard_id=additional_hazard_id,
                 measure=mitigation_measure,
                 reason=reason,
                 target_population=(
@@ -9385,16 +10429,25 @@ Current session:
         reason: str | None = None,
         evidence: str | None = None,
         hazard_id: int | None = None,
+        system_hazard_id: int | None = None,
+        additional_hazard_id: int | None = None,
         mitigation_measure_id: int | None = None,
     ) -> None:
         try:
             user_session = self._ensure_user_session(session_id, session)
             if user_session is None:
                 return
+            if hazard_id is None and system_hazard_id is None and additional_hazard_id is None:
+                hazard_reference = self._selected_hazard_reference(session_id, session)
+                hazard_id = hazard_reference["user_hazard_id"]
+                system_hazard_id = hazard_reference["system_hazard_id"]
+                additional_hazard_id = hazard_reference["additional_hazard_id"]
             self.db.add(
                 UserQuestionResponse(
                     user_session_id=user_session.id,
-                    user_hazard_id=hazard_id or session.selected_hazard_record_id,
+                    user_hazard_id=hazard_id,
+                    system_hazard_id=system_hazard_id,
+                    additional_hazard_id=additional_hazard_id,
                     mitigation_measure_id=mitigation_measure_id or session.mitigation_record_id,
                     question_id=question_id,
                     question_option_id=question_option_id,
@@ -10288,6 +11341,10 @@ Use these retrieved user evidence excerpts as optional additional support when s
                     "is unrelated to the selected country, "
                     "is unrelated to twin-transition policies, "
                     "or is too vague/generic to evaluate.\n"
+                    "- General household safety risks, such as carbon monoxide "
+                    "poisoning from domestic heating or cooking, are not valid "
+                    "unless the hazard/reason clearly explains which green or "
+                    "digital transition policy creates or increases that risk.\n"
                     "- Treat the selected sector as a hard boundary. If the hazard "
                     "or reason mainly belongs to Transport while the selected sector "
                     "is Energy or Housing, return valid false. If it mainly belongs "
@@ -10361,10 +11418,6 @@ hazard, even when the wording, grammar, or language differs.
         parsed = parse_duplicate_check_response(response)
         if parsed.get("error"):
             return None
-        match_record = self._mitigation_record_for_match(session, str(parsed.get("match") or ""))
-        if match_record is not None:
-            parsed["match_id"] = match_record.id
-            parsed["match"] = match_record.measure
         return parsed
 
     def _mitigation_record_for_match(
@@ -10433,6 +11486,86 @@ hazard, even when the wording, grammar, or language differs.
             "Please rewrite it so the hazard clearly belongs to the selected sector, "
             "or choose the matching sector before adding it."
         )
+
+    @classmethod
+    def _plain_custom_hazard_rejection_reason(
+        cls,
+        session: ChatSession,
+        hazard: str,
+        reason: str = "",
+        evidence: str = "",
+    ) -> str | None:
+        text = " ".join(
+            part.strip()
+            for part in (hazard, reason, evidence)
+            if isinstance(part, str) and part.strip()
+        )
+        normalized = normalize_for_match(text)
+        if not normalized:
+            return None
+
+        has_transition_mechanism = any(
+            phrase in normalized
+            for phrase in (
+                "green transition",
+                "digital transition",
+                "twin transition",
+                "transition policy",
+                "climate policy",
+                "decarbonisation",
+                "decarbonization",
+                "net zero",
+                "renewable",
+                "electrification",
+                "retrofit",
+                "renovation policy",
+                "heating replacement",
+                "heat pump",
+                "gas boiler ban",
+                "gas phase out",
+                "fossil fuel phase out",
+                "energy efficiency",
+                "carbon price",
+                "carbon tax",
+                "smart meter",
+                "digitalisation",
+                "digitalization",
+            )
+        )
+        if has_transition_mechanism:
+            return None
+
+        household_safety_signals = (
+            "carbon monoxide",
+            "co poisoning",
+            "gas leak",
+            "fire hazard",
+            "burn injury",
+        )
+        domestic_source_signals = (
+            "domestic heating",
+            "home heating",
+            "household heating",
+            "cooking",
+            "stove",
+            "boiler",
+            "heater",
+            "oven",
+            "gas appliance",
+        )
+        if any(signal in normalized for signal in household_safety_signals) and any(
+            signal in normalized for signal in domestic_source_signals
+        ):
+            sector_text = f" in the {session.sector} sector" if session.sector else ""
+            return (
+                "Carbon monoxide poisoning from domestic heating or cooking is a "
+                f"general household safety risk{sector_text}. To add it as a hazard, "
+                "please rewrite it to show the green or digital transition policy "
+                "that creates or increases the risk, such as a heating-replacement, "
+                "retrofit, electrification, or energy-efficiency policy."
+            )
+
+        return None
 
     @staticmethod
     def _sector_family(sector: str | None) -> str:
@@ -10555,15 +11688,6 @@ hazard, even when the wording, grammar, or language differs.
     async def _review_custom_hazard_input(
         self, session: ChatSession, hazard: str
     ) -> dict[str, object] | None:
-        existing_hazards = hazard_names(session)
-        local_matches = self._local_similar_hazards(hazard, existing_hazards)
-        if local_matches:
-            return {
-                "status": "Invalid",
-                "valid": False,
-                "reason": "This appears to have the same or similar meaning as an existing hazard.",
-                "suggestions": local_matches,
-            }
         context = f"""
 You are a classifier and evaluator for user inputs.
 
@@ -10572,6 +11696,21 @@ about a hazard arising from the Green and Digital Transition policies in Europe
 for the selected sector only.
 
 Selected sector: {session.sector or "Not selected"}
+Selected country: {session.country or "Not selected"}
+Selected region: {session.region or "Not selected"}
+
+Decision order
+
+1. Reject ambiguous, gibberish, random, incoherent, or meaningless text.
+2. Check whether the input is a hazard from green transition, digital
+   transition, or twin-transition policy.
+3. Check whether the input has an obvious fit with the selected sector.
+4. Check whether the input can reasonably apply to the selected country and
+   region. Do not require the country or region name to be repeated; accept
+   locally applicable hazards. Reject only when the input clearly belongs to a
+   different country/region or cannot be evaluated for the selected place.
+5. If the selected-sector fit is unclear, reject it with a plain reason asking
+   the user to rewrite the hazard with the missing transition-policy link.
 
 Scope
 
@@ -10633,6 +11772,9 @@ Reject examples include:
 - General political opinions unrelated to the transition
 - Climate change in general without reference to transition policies
 - Renewable technologies without discussing hazards
+- General household safety hazards, such as carbon monoxide poisoning from
+  domestic heating or cooking, unless the user clearly links the risk to a
+  green/digital transition policy mechanism
 - Pure economic questions unrelated to transition risks
 - General AI questions unrelated to Europe's digital transition
 - Personal advice
@@ -10641,8 +11783,11 @@ Reject examples include:
 
 If the user's input is ambiguous or lacks enough context to determine whether it
 concerns a hazard of the European Green and Digital Transition, do not guess.
-Instead, ask a concise clarification question that will allow you to determine
-whether the input is in scope.
+Reject it and explain what the user needs to add or rewrite.
+
+If the input is understandable and twin-transition related, but it is unclear
+how it fits the selected sector, reject it and ask the user to rewrite it with
+the selected-sector mechanism.
 
 Output exactly one of the following:
 
@@ -10650,14 +11795,12 @@ ACCEPT
 if the input is clearly within scope.
 
 REJECT
-if the input is clearly outside scope.
+followed by one short, plain-language reason if the input is clearly outside
+scope. The reason should explain what is missing in words a non-technical user
+can understand.
 
-CLARIFICATION
-followed by a single clarification question if additional information is needed
-to determine whether the input is within scope.
-
-Do not provide explanations, analysis, or additional commentary beyond the
-required output.
+Do not return CLARIFICATION. Do not provide explanations, analysis, or
+additional commentary beyond the required output.
 """.strip()
         messages = [
             {
@@ -10665,8 +11808,7 @@ required output.
                 "content": (
                     f"Selected sector: {session.sector or 'Not selected'}\n"
                     f"User input: {hazard}\n\n"
-                    "Return exactly ACCEPT, REJECT, or CLARIFICATION followed by "
-                    "one concise clarification question."
+                    "Return exactly ACCEPT, or REJECT followed by one concise reason."
                 ),
             }
         ]
@@ -10681,13 +11823,342 @@ required output.
 
         return self._parse_custom_hazard_classifier_response(response)
 
+    async def _review_custom_hazard_context(
+        self,
+        session: ChatSession,
+        hazard: str,
+        reason: str,
+        evidence: str,
+        *,
+        clarification: str | None = None,
+    ) -> dict[str, object] | None:
+        context = f"""
+You validate the complete custom-hazard submission for Dr Transition.
+
+{self._scope_instruction(session)}
+
+Decide whether the hazard, reason, optional evidence, and optional clarification
+together are clear enough to save as a custom hazard for the selected context.
+
+Selected context:
+- Country: {session.country or "Not selected"}
+- Region: {session.region or "Not selected"}
+- Sector: {session.sector or "Not selected"}
+
+Return ONLY valid JSON with this exact shape:
+{{"status": "accept", "valid": true, "reason": "clear enough", "question": ""}}
+
+Rules:
+- Use "accept" when the full submission is a clear green/digital transition hazard
+  for the selected sector and place.
+- Use "clarification" only when the submission is plausibly in scope but one
+  specific detail is needed before affected population groups can be extracted.
+- Use "reject" when the submission is outside scope, incoherent, or belongs to a
+  different sector.
+- For clarification, ask one concise question in `question`.
+- Do not ask for citations or evidence URLs.
+""".strip()
+        user_content = (
+            f"Hazard: {hazard}\n"
+            f"Reason: {reason}\n"
+            f"Evidence: {evidence or 'Not provided'}\n"
+            f"Clarification: {clarification or 'Not provided'}"
+        )
+        response = await ask_llm_chat(
+            context=context,
+            messages=[{"role": "user", "content": user_content}],
+            temperature=0,
+            max_tokens=280,
+        )
+        if is_llm_unavailable_response(response):
+            return None
+        try:
+            parsed = json.loads(self._extract_json_object(response))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        status = normalize(str(parsed.get("status") or ""))
+        valid = bool(parsed.get("valid"))
+        reason_text = re.sub(
+            r"\s+",
+            " ",
+            normalize_markdown_text(str(parsed.get("reason") or "")),
+        ).strip("`*_ ")
+        question = re.sub(
+            r"\s+",
+            " ",
+            normalize_markdown_text(str(parsed.get("question") or "")),
+        ).strip("`*_ ")
+        if status == normalize("clarification"):
+            return {
+                "status": "clarification",
+                "valid": False,
+                "reason": reason_text or "Clarification is needed.",
+                "question": question
+                or "Could you clarify which people or households are affected by this hazard?",
+            }
+        if status == normalize("reject") or not valid:
+            return {
+                "status": "reject",
+                "valid": False,
+                "reason": reason_text
+                or "The hazard and reason are not clear enough to save for this context.",
+                "question": "",
+            }
+        return {
+            "status": "accept",
+            "valid": True,
+            "reason": reason_text or "The custom hazard is clear enough.",
+            "question": "",
+        }
+
+    async def _extract_custom_hazard_affected_population_profiles(
+        self,
+        session: ChatSession,
+        hazard: str,
+        reason: str,
+        evidence: str,
+        *,
+        clarification: str | None = None,
+    ) -> list[dict[str, str]]:
+        option_rows = self._target_population_option_rows()
+        option_catalogue = "\n".join(
+            f"- {int(row.id)} | {row.question}: {row.option}" for row in option_rows
+        )
+        context = f"""
+You extract affected population groups for a validated custom hazard.
+
+{self._scope_instruction(session)}
+
+Return ONLY valid JSON: an array of profile objects with this shape:
+[{{"variable_name": "short source cue", "profile": "affected group", "name": "affected group", "explanation": "short reason", "statistical_basis": "user hazard/reason/clarification", "source": "custom_hazard_extraction", "target_population_option_ids": [1, 2]}}]
+
+Rules:
+- Return affected population groups only when they match or strongly imply one
+  or more saved target population options.
+- Include the matching saved target population option IDs in
+  target_population_option_ids.
+- Do not return arbitrary free-text groups that are absent from the saved target
+  population options.
+- Keep names concise and human-readable.
+- Do not invent unsupported groups such as occupational or regional labels when
+  they do not correspond to saved target population options.
+- If no saved target population option is supported, return [].
+- Explanations must be under 24 words.
+- Do not include Markdown or text outside JSON.
+""".strip()
+        response = await ask_llm_chat(
+            context=context,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Country: {session.country or 'Not selected'}\n"
+                        f"Region: {session.region or 'Not selected'}\n"
+                        f"Sector: {session.sector or 'Not selected'}\n"
+                        f"Hazard: {hazard}\n"
+                        f"Reason: {reason}\n"
+                        f"Evidence: {evidence or 'Not provided'}\n"
+                        f"Clarification: {clarification or 'Not provided'}\n\n"
+                        "Saved target population options:\n"
+                        f"{option_catalogue or '- No saved target population options found.'}"
+                    ),
+                }
+            ],
+            temperature=0,
+            max_tokens=700,
+        )
+        profiles = self._parse_hazard_profile_items(response)
+        cleaned: list[dict[str, str]] = []
+        for profile in profiles:
+            name = str(profile.get("name") or profile.get("profile") or "").strip()
+            if not name:
+                continue
+            cleaned.append(
+                {
+                    **profile,
+                    "name": name,
+                    "profile": name,
+                    "source": "custom_hazard_extraction",
+                    "statistical_basis": str(
+                        profile.get("statistical_basis")
+                        or "Extracted from the validated custom hazard and reason."
+                    )[:600],
+                }
+            )
+        matched_profiles = self._attach_target_population_matches_to_profiles(
+            cleaned,
+            option_rows,
+            trust_option_ids=True,
+        )
+        visible_profiles = [
+            profile
+            for profile in matched_profiles
+            if profile.get("target_population_option_ids")
+        ]
+        if visible_profiles:
+            return visible_profiles
+        return self._profiles_from_target_population_option_ids(
+            self._selected_target_population_option_ids(session),
+            option_rows,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _profiles_from_target_population_option_ids(
+        option_ids: set[int],
+        option_rows: list[object],
+        *,
+        reason: str,
+    ) -> list[dict[str, str]]:
+        if not option_ids:
+            return []
+        rows_by_id = {int(row.id): row for row in option_rows}
+        profiles: list[dict[str, str]] = []
+        for option_id in sorted(option_ids):
+            row = rows_by_id.get(option_id)
+            if row is None:
+                continue
+            question = str(row.question or "").strip()
+            option = str(row.option or "").strip()
+            name = f"{question}: {option}" if question and option else option or question
+            if not name:
+                continue
+            profiles.append(
+                {
+                    "name": name,
+                    "profile": name,
+                    "variable_name": question,
+                    "explanation": "Matched to a saved affected population group.",
+                    "statistical_basis": reason[:600],
+                    "source": "custom_hazard_extraction",
+                    "target_population_option_ids": [option_id],
+                    "target_population_labels": [name],
+                }
+            )
+        return profiles
+
+    def _target_population_option_rows(self) -> list[object]:
+        return list(
+            self.db.execute(
+                select(
+                    QuestionOption.id,
+                    EvaluationQuestion.question,
+                    QuestionOption.option,
+                )
+                .join(EvaluationQuestion, EvaluationQuestion.id == QuestionOption.question_id)
+                .where(
+                    EvaluationQuestion.active.is_(True),
+                    EvaluationQuestion.category == "target_population",
+                )
+                .order_by(EvaluationQuestion.sort_order, QuestionOption.id)
+            ).all()
+        )
+
+    def _attach_target_population_matches_to_profiles(
+        self,
+        profiles: list[dict[str, str]],
+        option_rows: list[object] | None = None,
+        *,
+        trust_option_ids: bool = False,
+    ) -> list[dict[str, str]]:
+        rows = option_rows if option_rows is not None else self._target_population_option_rows()
+        if not rows:
+            return profiles
+        rows_by_id = {int(row.id): row for row in rows}
+        allowed_ids = set(rows_by_id)
+        for profile in profiles:
+            support_text = " ".join(
+                str(profile.get(field) or "")
+                for field in (
+                    "name",
+                    "profile",
+                    "variable_name",
+                    "explanation",
+                    "statistical_basis",
+                )
+            )
+            matched_ids = self._coerce_target_population_option_ids(
+                profile.get("target_population_option_ids"),
+                allowed_ids,
+                rows_by_id,
+                support_text,
+                trust_ids=trust_option_ids,
+            )
+            metadata = profile.get("metadata")
+            if isinstance(metadata, dict):
+                matched_ids.update(
+                    self._coerce_target_population_option_ids(
+                        metadata.get("target_population_option_ids"),
+                        allowed_ids,
+                        rows_by_id,
+                        support_text,
+                        trust_ids=trust_option_ids,
+                    )
+                )
+            matched_ids.update(
+                self._deterministic_target_population_option_ids(profile, rows)
+            )
+            ordered_ids = [
+                int(row.id)
+                for row in rows
+                if int(row.id) in matched_ids
+            ]
+            if not ordered_ids:
+                profile["target_population_option_ids"] = []
+                profile["target_population_labels"] = []
+                continue
+            profile["target_population_option_ids"] = ordered_ids
+            profile["target_population_labels"] = [
+                f"{rows_by_id[option_id].question}: {rows_by_id[option_id].option}"
+                for option_id in ordered_ids
+                if option_id in rows_by_id
+            ]
+            metadata = profile.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["target_population_option_ids"] = ordered_ids
+            metadata["target_population_labels"] = list(profile["target_population_labels"])
+            profile["metadata"] = metadata
+        return profiles
+
+    @classmethod
+    def _coerce_target_population_option_ids(
+        cls,
+        value: object,
+        allowed_ids: set[int],
+        rows_by_id: dict[int, object],
+        support_text: str,
+        *,
+        trust_ids: bool = False,
+    ) -> set[int]:
+        if not isinstance(value, list):
+            return set()
+        ids: set[int] = set()
+        for raw_id in value:
+            try:
+                option_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if option_id not in allowed_ids or option_id not in rows_by_id:
+                continue
+            if trust_ids or cls._target_population_option_is_supported_by_text(
+                support_text,
+                rows_by_id[option_id],
+            ):
+                ids.add(option_id)
+        return ids
+
     @staticmethod
     def _parse_custom_hazard_classifier_response(response: str) -> dict[str, object] | None:
         cleaned = str(response or "").strip()
         if not cleaned:
             return None
         first_line, _, rest = cleaned.partition("\n")
-        label = first_line.strip().strip(":").casefold()
+        label_match = re.match(r"^\s*(ACCEPT|REJECT|CLARIFICATION)\b\s*:?\s*(.*)$", first_line, re.IGNORECASE)
+        label = label_match.group(1).casefold() if label_match else first_line.strip().strip(":").casefold()
+        inline_detail = label_match.group(2).strip() if label_match else ""
         if label == "accept":
             return {
                 "status": "Valid",
@@ -10696,10 +12167,15 @@ required output.
                 "suggestions": [],
             }
         if label == "reject":
+            reason = inline_detail
+            if not reason:
+                reason = rest.strip()
+            reason = re.sub(r"\s+", " ", normalize_markdown_text(reason)).strip("`*_ ")
             return {
                 "status": "Invalid",
                 "valid": False,
-                "reason": (
+                "reason": reason
+                or (
                     "Please enter a hazard, risk, vulnerability, unintended consequence, "
                     "or negative impact related to Europe's Green or Digital Transition "
                     "policies in the selected sector."
@@ -10707,7 +12183,7 @@ required output.
                 "suggestions": [],
             }
         if label.startswith("clarification"):
-            question = first_line[len("CLARIFICATION") :].strip(" :-")
+            question = inline_detail
             if not question:
                 question = rest.strip()
             if not question:
@@ -11007,9 +12483,8 @@ Use these retrieved sector-prompt excerpts as the authoritative statistical sour
                     "- Validate the pending socio-demographic profiles before they are added.\n"
                     "- Use already confirmed profiles only as context; do not treat pending "
                     "profiles as accepted until the reason/evidence supports them.\n"
-                    "- Reason is optional for user-added DGs. If no reason is provided, "
-                    "validate whether the pending profiles are supported or plausible "
-                    "from the sector statistical context and selected hazard alone.\n"
+                    "- Reason or evidence is required for user-added affected population "
+                    "groups. Do not validate pending groups without user-provided support.\n"
                     "- The reason field must be useful to the user and under 60 words."
                 ),
             }
@@ -12322,14 +13797,6 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
     def _selected_system_hazard_id(self, session: ChatSession) -> int | None:
         if session.sector_id is None or not session.selected_hazard:
             return None
-        if isinstance(session.selected_hazard_record_id, int):
-            linked_hazard_id = self.db.scalar(
-                select(UserHazard.system_hazard_id).where(
-                    UserHazard.id == session.selected_hazard_record_id
-                )
-            )
-            if isinstance(linked_hazard_id, int):
-                return linked_hazard_id
         hazard_id = self.db.scalar(
             select(SystemHazard.id).where(
                 SystemHazard.sector_id == session.sector_id,
@@ -13543,20 +15010,51 @@ Synthesis rule:
         if not hazard_name:
             return []
         try:
-            query = (
-                select(UserMitigationMeasure)
-                .join(UserHazard, UserHazard.id == UserMitigationMeasure.user_hazard_id)
-                .join(UserSession, UserSession.id == UserHazard.user_session_id)
-                .where(
-                    UserHazard.name == hazard_name,
-                    UserHazard.sector_id == session.sector_id,
-                    UserSession.country_id == session.country_id,
-                    UserHazard.region_id.is_(None)
-                    if session.region_id is None
-                    else UserHazard.region_id == session.region_id,
+            if self._is_saved_custom_hazard(session, hazard_name):
+                query = (
+                    select(UserMitigationMeasure)
+                    .join(UserHazard, UserHazard.id == UserMitigationMeasure.user_hazard_id)
+                    .join(UserSession, UserSession.id == UserHazard.user_session_id)
+                    .where(
+                        UserHazard.name == hazard_name,
+                        UserHazard.sector_id == session.sector_id,
+                        UserSession.country_id == session.country_id,
+                        UserHazard.region_id.is_(None)
+                        if session.region_id is None
+                        else UserHazard.region_id == session.region_id,
+                    )
+                    .order_by(UserMitigationMeasure.id)
                 )
-                .order_by(UserMitigationMeasure.id)
-            )
+            else:
+                system_hazard_id = None
+                additional_hazard_id = None
+                if self._is_additional_hazard(session, hazard_name):
+                    additional_hazard_id = self._selected_additional_hazard_id(
+                        session, hazard_name
+                    )
+                else:
+                    system_hazard_id = self.db.scalar(
+                        select(SystemHazard.id).where(
+                            SystemHazard.sector_id == session.sector_id,
+                            func.lower(SystemHazard.name) == hazard_name.casefold(),
+                        )
+                    )
+                if system_hazard_id is None and additional_hazard_id is None:
+                    return []
+                query = (
+                    select(UserMitigationMeasure)
+                    .join(UserSession, UserSession.id == UserMitigationMeasure.user_session_id)
+                    .where(
+                        UserSession.country_id == session.country_id,
+                        UserSession.region_id.is_(None)
+                        if session.region_id is None
+                        else UserSession.region_id == session.region_id,
+                        UserSession.sector_id == session.sector_id,
+                        UserMitigationMeasure.system_hazard_id == system_hazard_id,
+                        UserMitigationMeasure.additional_hazard_id == additional_hazard_id,
+                    )
+                    .order_by(UserMitigationMeasure.id)
+                )
             if self.user_id is not None:
                 query = query.where(UserSession.user_id == self.user_id)
             rows = self.db.scalars(query).all()

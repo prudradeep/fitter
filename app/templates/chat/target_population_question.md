@@ -2,7 +2,7 @@
 **{{ error_reason }}**
 
 {% endif %}
-## Target Population
+## Affected Population Group
 
 New hazard:
 
