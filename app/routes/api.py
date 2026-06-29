@@ -28,9 +28,6 @@ from app.services.sector_prompt_rag import SectorPromptRagService
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
-MAX_EVIDENCE_CHARS = 5000
-
-
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: Request,
@@ -421,9 +418,21 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
     evidence_url = str(form.get("evidence_url") or "").strip()
     if evidence_url:
         evidence_parts.append(f"Evidence URL: {evidence_url}")
-        url_text = await _extract_url_text(evidence_url)
-        if url_text:
-            evidence_parts.append(f"Evidence content: {url_text}")
+        if session_id:
+            temporary_service = KnowledgeBaseService(
+                db,
+                user_id,
+                scope="temporary",
+                session_key=session_id,
+            )
+            try:
+                await temporary_service.ingest_url(
+                    evidence_url,
+                    evidence_url,
+                    allow_lexical_only=True,
+                )
+            except (httpx.HTTPError, ValueError):
+                pass
 
     evidence_file = form.get("evidence_file")
     filename = getattr(evidence_file, "filename", "")
@@ -432,7 +441,7 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
         if _allowed_evidence_file(filename) and hasattr(evidence_file, "read"):
             evidence_parts.append(f"Evidence file: {filename}")
             file_bytes = await evidence_file.read()
-            if filename.casefold().endswith(".pdf") and session_id:
+            if session_id:
                 temporary_service = KnowledgeBaseService(
                     db,
                     user_id,
@@ -440,23 +449,13 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
                     session_key=session_id,
                 )
                 try:
-                    temporary_result = await temporary_service.ingest_file(filename, file_bytes)
-                except (httpx.HTTPError, ValueError) as exc:
-                    evidence_parts.append(f"Temporary evidence indexing failed: {exc}")
-                else:
-                    if temporary_result.get("error"):
-                        evidence_parts.append(
-                            "Temporary evidence indexing failed: "
-                            + str(temporary_result.get("detail") or "No readable PDF text found.")
-                        )
-                    else:
-                        evidence_parts.append(
-                            "Temporary evidence document ID: "
-                            + str(temporary_result["document_id"])
-                        )
-            file_text = _extract_file_text(filename, file_bytes)
-            if file_text:
-                evidence_parts.append(f"Evidence content: {file_text}")
+                    await temporary_service.ingest_file(
+                        filename,
+                        file_bytes,
+                        allow_lexical_only=True,
+                    )
+                except (httpx.HTTPError, ValueError):
+                    pass
 
     if evidence_parts:
         message = "\n".join([message.strip(), *evidence_parts]).strip()
@@ -494,7 +493,7 @@ def _knowledge_ingest_detail(
 
 
 def _allowed_evidence_file(filename: str) -> bool:
-    return filename.casefold().endswith((".pdf", ".docx"))
+    return filename.casefold().endswith((".pdf", ".docx", ".md", ".txt"))
 
 
 async def _extract_url_text(url: str) -> str:
@@ -531,12 +530,14 @@ def _extract_file_text(filename: str, content: bytes) -> str:
         return _extract_pdf_text(content) or "Unable to extract readable text from uploaded PDF."
     if lowered.endswith(".docx"):
         return _extract_docx_text(content) or "Unable to extract readable text from uploaded DOCX."
-    return "Unable to extract evidence: only PDF and DOCX files are supported."
+    if lowered.endswith((".md", ".txt")):
+        return _compact_text(content.decode("utf-8", errors="ignore"))
+    return "Unable to extract evidence: only PDF, DOCX, MD, and TXT files are supported."
 
 
 def _extract_pdf_text(content: bytes) -> str:
     try:
-        text = "\n".join(extract_pdf_page_texts(content, max_pages=15))
+        text = "\n".join(extract_pdf_page_texts(content))
     except Exception as exc:
         return f"Unable to extract evidence from PDF: {exc}."
     return _compact_text(text)
@@ -553,4 +554,4 @@ def _extract_docx_text(content: bytes) -> str:
 
 
 def _compact_text(text: str) -> str:
-    return compact_text(text, max_chars=MAX_EVIDENCE_CHARS)
+    return compact_text(text)

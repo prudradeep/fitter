@@ -21,6 +21,8 @@ from app.models import (
     MitigationMeasurePolicy,
     MitigationMeasurePolicySystemHazard,
     MitigationMeasureTargetGroup,
+    KnowledgeChunk,
+    KnowledgeDocument,
     QuestionOption,
     Region,
     Sector,
@@ -4745,6 +4747,7 @@ Use empty arrays when no valid target population group is found.
             )
 
         if not validation["valid"]:
+            self._discard_temporary_evidence(session, evidence)
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
@@ -4779,6 +4782,12 @@ Use empty arrays when no valid target population group is found.
         session.accepted_custom_hazard_record_id = hazard_record.id if hazard_record else None
         session.selected_hazard_record_id = session.accepted_custom_hazard_record_id
         self._record_activity(session_id, session, "custom_hazard_added", accepted_hazard)
+        if evidence:
+            self._promote_temporary_evidence(
+                session,
+                target_scope="quarantined",
+                provenance="validated_user_evidence",
+            )
 
         target_population_step = self._start_target_population_questions(session_id, session)
         if target_population_step is not None:
@@ -6554,7 +6563,7 @@ Do not invent characteristics that were not selected.
 
     def _discard_temporary_evidence(self, session: ChatSession, evidence: str | None) -> None:
         document_ids = self._temporary_evidence_document_ids(evidence)
-        if not document_ids or not session.session_key:
+        if not session.session_key or not self._has_user_supplied_evidence(evidence):
             return
         try:
             KnowledgeBaseService(
@@ -10227,6 +10236,7 @@ Use only this predictor entry:
             session,
             f"{hazard} {reason} {evidence} {existing_hazards}",
         )
+        user_evidence_context = await self._temporary_evidence_context(session)
         context = f"""
 You are a practical validation assistant for Dr Transition.
 
@@ -10236,6 +10246,9 @@ You are a practical validation assistant for Dr Transition.
 
 Use these retrieved sector-prompt excerpts as the authoritative statistical source:
 {sector_context}
+
+Use these retrieved user evidence excerpts as optional additional support when supplied:
+{user_evidence_context or "- No readable user evidence excerpts were indexed for this session."}
 """.strip()
         messages = [
             {
@@ -10266,9 +10279,9 @@ Use these retrieved sector-prompt excerpts as the authoritative statistical sour
                     "hazard is not explicitly named in the statistics.\n"
                     "- User-added regional hazards may extend the system hazard list; "
                     "do not reject solely because the hazard is new or locally specific.\n"
-                    "- If evidence content is supplied from a URL or file, use it as "
-                    "additional support, but do not require optional evidence when the "
-                    "reason itself is clear and plausible.\n"
+                    "- If URL/file evidence excerpts are retrieved for this session, "
+                    "use them as additional support, but do not require optional "
+                    "evidence when the reason itself is clear and plausible.\n"
                     "- valid must be false only when the reason or supplied evidence "
                     "clearly contradicts the statistics, confuses predictors with hazards, "
                     "invents unsupported numbers as facts, is unrelated to the sector, "
@@ -12070,19 +12083,7 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         reason: str,
         evidence: str,
     ) -> str:
-        query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
-        temporary_results: list[dict[str, object]] = []
-        if session.session_key:
-            try:
-                temporary_results = await KnowledgeBaseService(
-                    self.db,
-                    self.user_id,
-                    scope="temporary",
-                    session_key=session.session_key,
-                ).search(query, limit=4)
-            except Exception:
-                logger.exception("Temporary evidence lookup failed during mitigation validation")
-
+        temporary_context = await self._temporary_evidence_context(session)
         inline_evidence = self._inline_evidence_content(evidence)
         inline_results: list[dict[str, object]] = []
         if inline_evidence:
@@ -12094,10 +12095,11 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
                     "content": inline_evidence,
                 }
             )
-        results = [*temporary_results, *inline_results]
         if inline_results:
-            results = await self.grounding_models.ground_results(query, results)
-        return self._format_knowledge_results(results)
+            query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
+            inline_results = await self.grounding_models.ground_results(query, inline_results)
+        inline_context = self._format_full_knowledge_results(inline_results)
+        return "\n".join(part for part in (temporary_context, inline_context) if part).strip()
 
     async def _sector_prompt_rag_context(
         self,
@@ -12164,6 +12166,51 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             f"{session.country or ''} {session.sector or ''} {session.region or ''}"
         )
 
+    async def _temporary_evidence_context(self, session: ChatSession) -> str:
+        if not session.session_key:
+            return ""
+        try:
+            rows = self.db.execute(
+                select(KnowledgeChunk, KnowledgeDocument)
+                .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+                .where(
+                    KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == "temporary",
+                    KnowledgeDocument.session_key == session.session_key,
+                )
+                .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+            ).all()
+        except Exception:
+            logger.exception("Temporary evidence lookup failed during validation")
+            return ""
+        results = [
+            {
+                "document_id": document.id,
+                "title": document.title,
+                "source_type": chunk.source_type,
+                "source_uri": chunk.source_uri,
+                "page_number": chunk.page_number,
+                "score": None,
+                "content": chunk.content,
+            }
+            for chunk, document in rows
+        ]
+        return self._format_full_knowledge_results(results)
+
+    @staticmethod
+    def _format_full_knowledge_results(results: list[dict[str, object]]) -> str:
+        lines: list[str] = []
+        for index, result in enumerate(results, start=1):
+            title = str(result.get("title") or "Knowledge source")
+            page = result.get("page_number")
+            page_label = f", page {page}" if page else ""
+            source_uri = str(result.get("source_uri") or "").strip()
+            source_label = f", source {source_uri}" if source_uri else ""
+            content = str(result.get("content") or "").strip()
+            if content:
+                lines.append(f"- [S{index}] {title}{page_label}{source_label}: {content}")
+        return "\n".join(lines)
+
     @staticmethod
     def _format_knowledge_results(results: list[dict[str, object]]) -> str:
         lines: list[str] = []
@@ -12206,7 +12253,15 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         lowered = evidence.casefold()
         if "unable to extract evidence" in lowered:
             return False
-        if "evidence url:" in lowered or "evidence file:" in lowered:
+        if "evidence url:" in lowered:
+            return True
+        if re.search(
+            r"^Evidence file:\s*.+\.(pdf|docx|md|txt)\b",
+            evidence,
+            flags=re.IGNORECASE | re.MULTILINE,
+        ):
+            return True
+        if "evidence file:" in lowered:
             return False
         return True
 

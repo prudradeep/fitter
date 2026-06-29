@@ -7,9 +7,10 @@ from xml.etree import ElementTree
 from pypdf import PdfReader
 
 
-def extract_pdf_page_texts(content: bytes, max_pages: int) -> list[str]:
+def extract_pdf_page_texts(content: bytes, max_pages: int | None = None) -> list[str]:
     reader = PdfReader(io.BytesIO(content))
-    return [page.extract_text() or "" for page in reader.pages[:max_pages]]
+    pages = reader.pages if max_pages is None else reader.pages[:max_pages]
+    return [page.extract_text() or "" for page in pages]
 
 
 def extract_docx_text(content: bytes) -> str:

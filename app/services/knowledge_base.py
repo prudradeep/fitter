@@ -62,13 +62,37 @@ class KnowledgeBaseService:
         self.settings = get_settings()
         self.grounding_models = GroundingModelService()
 
-    async def ingest_url(self, url: str, title: str | None = None) -> dict[str, object]:
+    async def ingest_url(
+        self,
+        url: str,
+        title: str | None = None,
+        *,
+        allow_lexical_only: bool = False,
+    ) -> dict[str, object]:
         drafts = await extract_url_chunks(url)
-        return await self.ingest_chunks(drafts, title or url, "url", url)
+        return await self.ingest_chunks(
+            drafts,
+            title or url,
+            "url",
+            url,
+            allow_lexical_only=allow_lexical_only,
+        )
 
-    async def ingest_file(self, filename: str, content: bytes) -> dict[str, object]:
+    async def ingest_file(
+        self,
+        filename: str,
+        content: bytes,
+        *,
+        allow_lexical_only: bool = False,
+    ) -> dict[str, object]:
         drafts = extract_file_chunks(filename, content)
-        return await self.ingest_chunks(drafts, filename, file_source_type(filename), filename)
+        return await self.ingest_chunks(
+            drafts,
+            filename,
+            file_source_type(filename),
+            filename,
+            allow_lexical_only=allow_lexical_only,
+        )
 
     async def ingest_text(
         self, text: str, title: str, source_type: str, source_uri: str | None = None
@@ -674,7 +698,7 @@ async def extract_url_chunks(url: str) -> list[ChunkDraft]:
 
 def extract_pdf_chunks(content: bytes) -> list[ChunkDraft]:
     chunks: list[ChunkDraft] = []
-    for index, raw_text in enumerate(extract_pdf_page_texts(content, max_pages=30), start=1):
+    for index, raw_text in enumerate(extract_pdf_page_texts(content), start=1):
         if is_index_page_text(raw_text):
             continue
         page_text = compact_text(raw_text)
