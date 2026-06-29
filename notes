@@ -167,4 +167,53 @@ Information of source in tooltip (Top policy basis)
 
 Test cases:
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Hazard (Wrong):
+- Carbon monoxide poisoning (domestic heating/cooking)
+- ⁠Structural housing hazards (missing smoke detectors, window guards)
 
+Hazard (Housing)
+- Renovation cost burden and "renoviction" (Housing sector)
+Reason: Mechanically, the standards force renovation of the worst-performing assets and tighten rules on what happens during major works — the very buildings disproportionately occupied by lower-income households
+
+hazard (Energy)
+Regional employment shock and "left-behind" energy regions.
+Reason: Within the energy sector specifically, decarbonization concentrates job and tax-base losses in fossil-dependent regions. A Nature Communications study records that the decline of the German coal sector since 1960 affected 600,000 jobs, mostly concentrated in the Ruhr region, and warns benefits of the low-carbon electricity build-out tend to flow to already-affluent regions, sustaining inequality
+
+
+
+Housing
+Smart building management systems (IoT sensors, automation, digital twins)
+https://cris.vtt.fi/ws/portalfiles/portal/98296365/1-s2.0-S221067072300481X-main.pdf
+Continuously optimises heating, cooling and ventilation, reducing energy demand while improving building performance.
+
+Energy
+Energy communities and local renewable energy generation
+https://netzerocities.app/_content/files/knowledge/4814/icc_renovation_wave_in_practice_ver_8.pdf
+Allows citizens to collectively generate and share renewable electricity, reducing energy costs and improving resilience.
+
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+Ask for clarification for sector, How hazard fits in the selected sector
+    twin transition policy
+    selected sector
+    country, region fit
+    duplicacy check: suggest no error, would you still continue if found
+    find affected population groups from the text
+    review affected groups to confirm or add new / remove
+
+Mitigation measure: open conversation
+
+Deliverables : core knowledge base
+Additional base: Input by user: pdfs, docx, urls
+
+L1: evidence, contraindication
+L2: match evidence concepts with core knowledge concepts, If contraindications, It will not be validated. Validating evidence. 
+
+In co-created hazards:
+ I would add an additional description of what “platform users” mean: mention
+validated by other sessions. i: All the hazards co-created on the platform get validated by the AI through a strict validation check. Once validated, the co-created hazards belonging to a specific country, region & sector combination are available for all the platform users.
+
+Methodology adapted to create the hazards D4.2 in the open labs
+
+Population profiles: Affeted population profiles

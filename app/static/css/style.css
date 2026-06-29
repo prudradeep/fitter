@@ -2428,6 +2428,9 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   line-height: 1.58;
   font-size: 0.92rem;
   box-shadow: none;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-row.bot .bubble {
@@ -2438,6 +2441,9 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
 .bubble-content {
   overflow: visible;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .bubble.is-collapsible .bubble-content {
@@ -2498,6 +2504,8 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
 .bubble p {
   margin: 0 0 12px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .bubble p:last-child {
@@ -2512,6 +2520,8 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
 .bubble li {
   margin: 7px 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .bubble li > ul,
@@ -2552,7 +2562,6 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   font-size: 0.66rem;
   font-weight: 800;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .bubble .hazard-group-heading--with-info {
@@ -3000,7 +3009,17 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 .bubble .hazard-population-table th,
 .bubble .hazard-population-table td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align: right; vertical-align: top; }
 .bubble .hazard-population-table th:first-child { text-align: left; }
-.bubble .hazard-population-table thead th { color: #64748b; font-size: 0.65rem; text-transform: uppercase; }
+.bubble .hazard-population-table thead th {
+  color: #64748b;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+.bubble .hazard-population-table th:not(:first-child),
+.bubble .hazard-population-table td:not(:first-child) {
+  min-width: 88px;
+}
 .bubble .hazard-population-table tbody th { color: #334155; font-weight: 700; }
 .bubble .hazard-population-table tbody td { color: #312e81; font-weight: 850; white-space: nowrap; }
 .bubble .hazard-population-table small { display: block; margin-top: 4px; color: #64748b; font-weight: 400; line-height: 1.4; }
@@ -3104,6 +3123,8 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   font-weight: 800;
   text-decoration: underline;
   text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .bubble code {
@@ -3112,6 +3133,9 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   border-radius: 5px;
   padding: 1px 5px;
   font-size: 0.9em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-row.user .bubble {

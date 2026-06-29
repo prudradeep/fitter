@@ -249,6 +249,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "NULL AFTER session_key"
                         )
                     )
+                if "title_is_manual" not in session_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_sessions ADD COLUMN title_is_manual "
+                            "BOOLEAN NOT NULL DEFAULT FALSE AFTER title"
+                        )
+                    )
                 if "session_data" not in session_columns:
                     connection.execute(
                         text(

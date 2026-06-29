@@ -218,6 +218,7 @@ async def rename_session(
         return {"error": True, "detail": "Session not found."}
 
     user_session.title = title[:220]
+    user_session.title_is_manual = True
     db.commit()
     return {
         "error": False,

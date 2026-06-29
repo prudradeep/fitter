@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   id INT AUTO_INCREMENT PRIMARY KEY,
   session_key VARCHAR(64) NOT NULL UNIQUE,
   title VARCHAR(220) NULL,
+  title_is_manual BOOLEAN NOT NULL DEFAULT FALSE,
   session_data TEXT NULL,
   user_id INT NULL,
   country_id INT NULL,

@@ -74,7 +74,6 @@ from app.services.chat_parsers import (
     parse_evaluation_answer,
     parse_grounded_claims_response,
     parse_grounded_validation_response,
-    parse_hazard_input_review_response,
     parse_llm_hazard_list,
     parse_mitigation_reason,
     parse_mitigation_clarity_response,
@@ -2108,13 +2107,14 @@ Return Markdown only.
                 error=True,
             )
 
-        if self._is_invalid_user_text(reason) or len(compact_for_match(reason)) < 8:
+        local_reason_error = self._local_mitigation_reason_error(reason)
+        if local_reason_error:
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_reason",
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
-                    reason="The reason is too short or unclear. Please explain the mechanism in a little more detail.",
+                    reason=local_reason_error,
                 ),
                 options=[],
                 session=session.summary(),
@@ -2496,6 +2496,7 @@ Return Markdown only.
         follow_up_questions = self._mitigation_clarification_questions(
             clarity,
             unresolved_dimension,
+            selected_hazard=session.selected_hazard or session.accepted_custom_hazard,
         )
         question_list = "\n".join(
             f"{index}. {question}"
@@ -2642,6 +2643,19 @@ Return Markdown only.
         *,
         error_reason: str | None = None,
     ) -> ChatResponse:
+        if not session.mitigation_target_population:
+            return self._mitigation_target_population_clarification_step(
+                session_id,
+                session,
+                mitigation_measure,
+                reason,
+                evidence_text,
+                error_reason=(
+                    "I could not identify a specific target population. Please name a "
+                    "concrete group, such as low-income households, rural residents, "
+                    "tenants, older adults, or another affected group."
+                ),
+            )
         session.phase = "mitigation_target_population_review"
         session.pending_mitigation_measure = mitigation_measure
         session.pending_mitigation_reason = reason
@@ -3123,6 +3137,7 @@ Return Markdown only.
         cls,
         clarity: dict[str, object],
         unresolved_dimension: str | None,
+        selected_hazard: str | None = None,
     ) -> list[str]:
         raw_questions = clarity.get("follow_up_questions")
         questions = [
@@ -3135,6 +3150,13 @@ Return Markdown only.
             if legacy_question:
                 questions.append(legacy_question)
 
+        if selected_hazard:
+            questions = [
+                question
+                for question in questions
+                if not cls._asks_for_already_selected_hazard(question)
+            ]
+
         fallback_questions = cls.mitigation_clarity_fallback_questions.get(
             unresolved_dimension,
             cls.mitigation_clarity_default_questions,
@@ -3145,6 +3167,35 @@ Return Markdown only.
             if question not in questions:
                 questions.append(question)
         return questions[:3]
+
+    @staticmethod
+    def _asks_for_already_selected_hazard(question: str) -> bool:
+        normalized = normalize_for_match(question)
+        asks_for_hazard = any(
+            phrase in normalized
+            for phrase in (
+                "what specific hazard",
+                "which hazard",
+                "what hazard",
+                "what specific risk",
+                "which risk",
+                "what risk",
+                "what problem",
+                "which problem",
+            )
+        )
+        mitigation_target = any(
+            phrase in normalized
+            for phrase in (
+                "aiming to mitigate",
+                "intended to mitigate",
+                "trying to mitigate",
+                "seeking to mitigate",
+                "measure address",
+                "measure mitigate",
+            )
+        )
+        return asks_for_hazard and mitigation_target
 
     def _can_freeze_after_mitigation_clarification(
         self,
@@ -3220,6 +3271,16 @@ Return Markdown only.
             "n/a",
         }:
             return ""
+        if ChatService._has_evidence_url_reference(clean_evidence):
+            lines = [
+                line
+                for line in clean_evidence.splitlines()
+                if not (
+                    line.strip().casefold().startswith("evidence content:")
+                    and "unable to extract evidence" in line.casefold()
+                )
+            ]
+            return "\n".join(lines).strip()
         return clean_evidence
 
     async def _validate_frozen_mitigation_inputs(
@@ -3605,17 +3666,21 @@ Return Markdown only.
         context = """
 You extract mitigation target-population groups from free text.
 
-First map groups to the fixed target-population option list when an option is
-explicitly stated or clearly implied. Then, if the text contains a valid target
-population group that is not represented by the fixed option list, include that
-group in additional_groups.
+First map groups to the fixed target-population option list only when an option
+is explicitly stated or strongly implied by a concrete qualifier in the text.
+Then, if the text contains a valid target population group that is not
+represented by the fixed option list, include that group in additional_groups.
 
-Valid target population groups are recognizable groups of people, households,
-businesses, institutions, communities, or places that could be targeted by a
-mitigation measure. Do not include policy actions, hazards, mechanisms, vague
-concepts, evidence sources, or random/unrecognizable text. Do not invent
-characteristics. Do not repeat an additional group already covered by a selected
-option.
+Valid target population groups are specific, recognizable groups of people,
+households, businesses, institutions, or places that could be targeted by a
+mitigation measure. Do not include generic placeholders such as "communities",
+"people", "citizens", "households", "residents", or "users" unless the text
+adds a concrete qualifier such as low-income, rural, elderly, tenants, disabled,
+small businesses, energy-poor, or another specific targetable attribute. Do not
+include policy actions, hazards, mechanisms, vague concepts, evidence sources,
+or random/unrecognizable text. Do not infer a population from broad nouns alone.
+Do not invent characteristics. Do not repeat an additional group already covered
+by a selected option.
 
 Return JSON only in this form:
 {"option_ids": [1, 2], "additional_groups": ["small businesses"]}
@@ -3638,6 +3703,7 @@ Use empty arrays when no valid target population group is found.
         )
         matched_ids: set[int] = set()
         additional_groups: list[str] = []
+        rows_by_id = {int(row.id): row for row in rows}
         if not is_llm_unavailable_response(response):
             try:
                 parsed = json.loads(self._extract_json_object(response))
@@ -3650,7 +3716,13 @@ Use empty arrays when no valid target population group is found.
                         option_id = int(raw_id)
                     except (TypeError, ValueError):
                         continue
-                    if option_id in allowed_ids:
+                    if (
+                        option_id in allowed_ids
+                        and self._target_population_option_is_supported_by_text(
+                            answer,
+                            rows_by_id[option_id],
+                        )
+                    ):
                         matched_ids.add(option_id)
             raw_groups = parsed.get("additional_groups") if isinstance(parsed, dict) else []
             if isinstance(raw_groups, list):
@@ -3692,6 +3764,26 @@ Use empty arrays when no valid target population group is found.
             "hazard",
             "measure",
             "evidence",
+            "people",
+            "persons",
+            "person",
+            "citizens",
+            "citizen",
+            "communities",
+            "community",
+            "households",
+            "household",
+            "residents",
+            "resident",
+            "users",
+            "user",
+            "consumers",
+            "consumer",
+            "population",
+            "generalpopulation",
+            "public",
+            "family",
+            "families",
             "targetpopulation",
             "noadditionaltargetpopulation",
             "notargetpopulation",
@@ -3704,12 +3796,13 @@ Use empty arrays when no valid target population group is found.
             return False
         if compact_key.startswith("noadditional") or compact_key.startswith("notarget"):
             return False
+        if not ChatService._has_specific_target_population_qualifier(cleaned):
+            return False
         return bool(re.search(r"[A-Za-z]", cleaned))
 
     @staticmethod
-    def _fallback_target_population_option_ids(answer: str, rows: list[object]) -> set[int]:
-        text = f" {normalize_for_match(answer)} "
-        phrase_map: dict[tuple[str, str], tuple[str, ...]] = {
+    def _target_population_phrase_map() -> dict[tuple[str, str], tuple[str, ...]]:
+        return {
             ("age range", "18"): ("children", "child", "minors", "under 18", "youth"),
             ("age range", "25 35"): ("young adults", "aged 25 35", "25 to 35"),
             ("age range", "35 65"): ("middle aged", "working age", "aged 35 65", "35 to 65"),
@@ -3740,16 +3833,145 @@ Use empty arrays when no valid target population group is found.
             ("tenancy status", "homeowner"): ("homeowners", "home owners", "owner occupiers"),
             ("tenancy status", "tenant"): ("tenants", "renters", "people who rent", "renting", "rent", "rented housing"),
         }
+
+    @staticmethod
+    def _has_specific_target_population_qualifier(group: str) -> bool:
+        normalized = normalize_for_match(group)
+        compact = compact_for_match(group)
+        generic_terms = {
+            "people",
+            "persons",
+            "person",
+            "citizens",
+            "citizen",
+            "communities",
+            "community",
+            "households",
+            "household",
+            "residents",
+            "resident",
+            "users",
+            "user",
+            "consumers",
+            "consumer",
+            "population",
+            "public",
+            "family",
+            "families",
+        }
+        has_generic_term = any(
+            f" {normalize_for_match(term)} " in f" {normalized} "
+            for term in generic_terms
+        )
+        if not has_generic_term:
+            return True
+
+        specific_qualifiers = (
+            "low income",
+            "middle income",
+            "medium income",
+            "high income",
+            "income poor",
+            "energy poor",
+            "fuel poor",
+            "financially vulnerable",
+            "vulnerable",
+            "poor",
+            "rural",
+            "urban",
+            "suburban",
+            "remote",
+            "elderly",
+            "older",
+            "senior",
+            "young",
+            "youth",
+            "children",
+            "disabled",
+            "disability",
+            "long term condition",
+            "tenant",
+            "renter",
+            "renting",
+            "homeowner",
+            "owner occupier",
+            "unemployed",
+            "retired",
+            "worker",
+            "employed",
+            "carer",
+            "caregiver",
+            "migrant",
+            "non eu",
+            "women",
+            "woman",
+            "female",
+            "men",
+            "male",
+            "small business",
+            "sme",
+            "utility arrears",
+            "car dependent",
+            "low energy efficiency",
+            "poorly insulated",
+            "student",
+        )
+        return any(
+            f" {normalize_for_match(qualifier)} " in f" {normalized} "
+            or compact_for_match(qualifier) in compact
+            for qualifier in specific_qualifiers
+        )
+
+    @classmethod
+    def _target_population_option_is_supported_by_text(cls, answer: str, row: object) -> bool:
+        text = f" {normalize_for_match(answer)} "
+        question = normalize_for_match(str(row.question))
+        option = normalize_for_match(str(row.option))
+        if not question or not option:
+            return False
+
+        phrases = cls._target_population_phrase_map().get((question, option), ())
+        if any(f" {normalize_for_match(phrase)} " in text for phrase in phrases):
+            return True
+
+        if option in {"yes", "no", "other"}:
+            return False
+
+        if len(option) < 3:
+            return False
+
+        broad_options = {
+            "citizens",
+            "community",
+            "communities",
+            "households",
+            "people",
+            "residents",
+            "users",
+            "public",
+        }
+        if option in broad_options:
+            return False
+
+        option_words = option.split()
+        if len(option_words) > 1:
+            return f" {option} " in text
+
+        exact_single_word_options = {
+            "woman",
+            "male",
+            "unemployed",
+            "retired",
+            "tenant",
+            "homeowner",
+        }
+        return option in exact_single_word_options and f" {option} " in text
+
+    @classmethod
+    def _fallback_target_population_option_ids(cls, answer: str, rows: list[object]) -> set[int]:
         matched: set[int] = set()
         for row in rows:
-            key = (
-                normalize_for_match(str(row.question)),
-                normalize_for_match(str(row.option)),
-            )
-            if any(
-                f" {normalize_for_match(phrase)} " in text
-                for phrase in phrase_map.get(key, ())
-            ):
+            if cls._target_population_option_is_supported_by_text(answer, row):
                 matched.add(int(row.id))
         return matched
 
@@ -4351,6 +4573,27 @@ Use empty arrays when no valid target population group is found.
                 error=True,
             )
 
+        sector_mismatch_reason = self._custom_hazard_sector_mismatch_reason(
+            session,
+            hazard,
+        )
+        if sector_mismatch_reason:
+            session.pending_hazard = None
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message(
+                    "hazard_rewrite_required.md",
+                    hazard=hazard,
+                    reason=sector_mismatch_reason,
+                    suggestions="",
+                    has_suggestions=False,
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+
         hazard_review = await self._review_custom_hazard_input(session, hazard)
         if hazard_review is None:
             return ChatResponse(
@@ -4455,6 +4698,27 @@ Use empty arrays when no valid target population group is found.
                     "hazard_validation_failed.md",
                     sector=session.sector,
                     reason=str(input_review["reason"]),
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
+
+        sector_mismatch_reason = self._custom_hazard_sector_mismatch_reason(
+            session,
+            session.pending_hazard or "",
+            reason,
+            evidence,
+        )
+        if sector_mismatch_reason:
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message(
+                    "hazard_validation_failed.md",
+                    sector=session.sector,
+                    reason=sector_mismatch_reason,
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
@@ -7058,7 +7322,7 @@ is no clear match, return an empty matched_profiles array.
             '<div class="hazard-population-table hazard-population-table--selected">'
             "<table>"
             "<thead><tr>"
-            '<th scope="col">Population profile</th>'
+            '<th scope="col">Affected population profile</th>'
             '<th scope="col">Regional</th>'
             '<th scope="col">National</th>'
             "</tr></thead>"
@@ -7435,6 +7699,7 @@ is no clear match, return an empty matched_profiles array.
     def _strip_practical_sections(markdown_text: str) -> str:
         practical_headings = (
             "practical considerations",
+            "general considerations to mitigate the negative effects",
             "practical policy recommendations",
             "current policy implementation",
         )
@@ -7727,7 +7992,8 @@ is no clear match, return an empty matched_profiles array.
             user_session.country_id = session.country_id
             user_session.region_id = session.region_id
             user_session.sector_id = session.sector_id
-            user_session.title = self._session_title(session)
+            if not user_session.title_is_manual:
+                user_session.title = self._session_title(session)
             session_data = asdict(session)
             session_data["stats_dialog_conversation"] = None
             user_session.session_data = json.dumps(session_data, default=str)
@@ -10009,6 +10275,13 @@ Use these retrieved sector-prompt excerpts as the authoritative statistical sour
                     "is unrelated to the selected country, "
                     "is unrelated to twin-transition policies, "
                     "or is too vague/generic to evaluate.\n"
+                    "- Treat the selected sector as a hard boundary. If the hazard "
+                    "or reason mainly belongs to Transport while the selected sector "
+                    "is Energy or Housing, return valid false. If it mainly belongs "
+                    "to Energy or Housing while the selected sector is Transport, "
+                    "return valid false. If Energy and Housing are separate selected "
+                    "sectors in the data, do not approve a hazard for one when its "
+                    "mechanism mainly belongs to the other.\n"
                     "- The reason field must be useful to the user and under 60 words."
                 ),
             }
@@ -10100,6 +10373,172 @@ hazard, even when the wording, grammar, or language differs.
                 best_score = score
         return best_record if best_score >= 0.45 else None
 
+    @classmethod
+    def _custom_hazard_sector_mismatch_reason(
+        cls,
+        session: ChatSession,
+        hazard: str,
+        reason: str = "",
+        evidence: str = "",
+    ) -> str | None:
+        selected_family = cls._sector_family(session.sector)
+        if selected_family not in {"energy", "housing", "transport"}:
+            return None
+
+        text = " ".join(
+            part.strip()
+            for part in (hazard, reason, evidence)
+            if isinstance(part, str) and part.strip()
+        )
+        if not text.strip():
+            return None
+
+        scores = cls._sector_signal_scores(text)
+        selected_score = scores.get(selected_family, 0)
+        other_scores = {
+            sector: score
+            for sector, score in scores.items()
+            if sector != selected_family and score > 0
+        }
+        if not other_scores:
+            return None
+
+        strongest_other, strongest_score = max(
+            other_scores.items(),
+            key=lambda item: item[1],
+        )
+        if selected_score == 0:
+            if strongest_score < 1:
+                return None
+        elif strongest_score < selected_score + 2:
+            return None
+
+        return (
+            f"This appears to be mainly a {cls._sector_display_name(strongest_other)} "
+            f"hazard, but the selected sector is "
+            f"{session.sector or cls._sector_display_name(selected_family)}. "
+            "Please rewrite it so the hazard clearly belongs to the selected sector, "
+            "or choose the matching sector before adding it."
+        )
+
+    @staticmethod
+    def _sector_family(sector: str | None) -> str:
+        normalized = normalize_for_match(sector or "")
+        if "transport" in normalized or "mobility" in normalized:
+            return "transport"
+        if "housing" in normalized or "home" in normalized or "building" in normalized:
+            return "housing"
+        if "energy" in normalized or "electric" in normalized or "power" in normalized:
+            return "energy"
+        return normalized
+
+    @staticmethod
+    def _sector_display_name(sector_family: str) -> str:
+        return {
+            "energy": "Energy",
+            "housing": "Housing",
+            "transport": "Transport",
+        }.get(sector_family, sector_family.title())
+
+    @staticmethod
+    def _sector_signal_scores(text: str) -> dict[str, int]:
+        normalized = f" {normalize_for_match(text)} "
+        phrase_groups: dict[str, tuple[str, ...]] = {
+            "transport": (
+                "transport",
+                "mobility",
+                "public transport",
+                "public transit",
+                "transit",
+                "bus",
+                "buses",
+                "rail",
+                "train",
+                "trains",
+                "tram",
+                "metro",
+                "vehicle",
+                "vehicles",
+                "electric vehicle",
+                "ev",
+                "charging station",
+                "charging stations",
+                "road",
+                "roads",
+                "traffic",
+                "car",
+                "cars",
+                "cycling",
+                "bicycle",
+                "bike",
+                "pedestrian",
+                "freight",
+                "aviation",
+            ),
+            "energy": (
+                "energy",
+                "electricity",
+                "electric",
+                "power",
+                "grid",
+                "renewable",
+                "renewables",
+                "solar",
+                "wind",
+                "utility bill",
+                "utility bills",
+                "utility arrears",
+                "energy bill",
+                "energy bills",
+                "tariff",
+                "tariffs",
+                "fuel poverty",
+                "energy poverty",
+                "heat pump",
+                "heat pumps",
+                "clean heating",
+            ),
+            "housing": (
+                "housing",
+                "home",
+                "homes",
+                "house",
+                "houses",
+                "building",
+                "buildings",
+                "dwelling",
+                "dwellings",
+                "apartment",
+                "apartments",
+                "residential",
+                "retrofit",
+                "retrofits",
+                "renovation",
+                "renovations",
+                "insulation",
+                "tenant",
+                "tenants",
+                "renter",
+                "renters",
+                "landlord",
+                "landlords",
+                "rent",
+                "rents",
+                "housing cost",
+                "housing costs",
+                "energy inefficient homes",
+                "poorly insulated",
+            ),
+        }
+        return {
+            sector: sum(
+                1
+                for phrase in phrases
+                if f" {normalize_for_match(phrase)} " in normalized
+            )
+            for sector, phrases in phrase_groups.items()
+        }
+
     async def _review_custom_hazard_input(
         self, session: ChatSession, hazard: str
     ) -> dict[str, object] | None:
@@ -10113,70 +10552,108 @@ hazard, even when the wording, grammar, or language differs.
                 "suggestions": local_matches,
             }
         context = f"""
-You are a practical hazard intake reviewer for Dr Transition.
+You are a classifier and evaluator for user inputs.
 
-Your job is to classify user text before it can be used as a new social hazard,
-and then decide whether it is already clearly covered by existing sector or
-user-added hazards.
+Your task is to determine whether the user's input describes, discusses, or asks
+about a hazard arising from the Green and Digital Transition policies in Europe
+for the selected sector only.
 
-{self._scope_instruction(session)}
+Selected sector: {session.sector or "Not selected"}
 
-{self._twin_transition_hazard_scope_instruction()}
+Scope
+
+Accept only inputs that are directly related to hazards, risks, vulnerabilities,
+unintended consequences, or negative impacts associated with one or more of the
+following:
+- The European Green Deal
+- EU climate policies
+- Decarbonisation
+- Energy transition
+- Renewable energy deployment
+- Circular economy policies
+- Sustainable mobility
+- Net-zero transition
+- Digital transition
+- Artificial Intelligence regulation and adoption
+- Digitalisation
+- Data governance
+- Cybersecurity related to digital transformation
+- Critical raw materials for green or digital technologies
+- Supply chain risks created by the green or digital transition
+- Social, economic, environmental, geopolitical, technological, or infrastructure
+  hazards resulting from these transitions
+
+Examples of hazards include, but are not limited to:
+- Grid instability due to renewable integration
+- Critical mineral shortages
+- Increased cyberattack surface from digitalisation
+- E-waste
+- Labour displacement from automation
+- Energy poverty caused by transition policies
+- Biodiversity impacts of renewable infrastructure
+- Dependence on non-EU suppliers of strategic technologies
+- AI-related risks affecting public services
+- Social inequalities resulting from transition measures
+
+Reject any input that is not about hazards of Europe's green or digital transition
+policies.
+
+Sector boundary
+
+Reject any input that belongs mainly to a different sector than the selected
+sector. The selected sector is a hard boundary, not a suggestion.
+
+- If the selected sector is Energy, reject hazards mainly about transport,
+  mobility, vehicles, traffic, public transit, rail, buses, cycling, road access,
+  or housing/building renovation unless the user clearly ties the hazard to an
+  Energy-sector transition mechanism.
+- If the selected sector is Housing, reject hazards mainly about transport,
+  mobility, vehicles, traffic, public transit, rail, buses, cycling, road access,
+  or energy supply/grid markets unless the user clearly ties the hazard to a
+  Housing-sector transition mechanism.
+- If the selected sector is Transport, reject hazards mainly about housing,
+  buildings, retrofits, rents, tenants, insulation, home heating, energy bills,
+  electricity grids, or renewable-energy supply unless the user clearly ties the
+  hazard to a Transport-sector transition mechanism.
+
+Reject examples include:
+- General political opinions unrelated to the transition
+- Climate change in general without reference to transition policies
+- Renewable technologies without discussing hazards
+- Pure economic questions unrelated to transition risks
+- General AI questions unrelated to Europe's digital transition
+- Personal advice
+- Medical, legal, educational, or unrelated technical questions
+- Any topic outside the defined scope
+
+If the user's input is ambiguous or lacks enough context to determine whether it
+concerns a hazard of the European Green and Digital Transition, do not guess.
+Instead, ask a concise clarification question that will allow you to determine
+whether the input is in scope.
+
+Output exactly one of the following:
+
+ACCEPT
+if the input is clearly within scope.
+
+REJECT
+if the input is clearly outside scope.
+
+CLARIFICATION
+followed by a single clarification question if additional information is needed
+to determine whether the input is within scope.
+
+Do not provide explanations, analysis, or additional commentary beyond the
+required output.
 """.strip()
         messages = [
             {
                 "role": "user",
                 "content": (
-                    "Review the proposed hazard before it is accepted.\n\n"
-                    "Classify the text as one of: Valid, Ambiguous, Invalid.\n\n"
-                    "Validation checks:\n"
-                    "- Check for generic or ambiguous context.\n"
-                    "- It should appear to be a recognizable word or phrase.\n"
-                    "- It must describe a negative impact, risk, burden, exclusion, "
-                    "or distributional harm caused or intensified by twin-transition "
-                    "policies in the selected sector.\n"
-                    "- Valid and meaningful text should pass only when it stays inside "
-                    "the twin-transition policy scope.\n"
-                    "- Random characters, gibberish, keyboard mashing, or unrecognizable text should fail.\n"
-                    "- Text that is too short to determine intent should be Ambiguous.\n\n"
-                    "Classification rules:\n"
-                    "- Invalid: random characters, keyboard mashing, gibberish, or no clear meaning.\n"
-                    "- Ambiguous: too short, incomplete, only a very broad topic label, "
-                    "or not enough context to understand the intended twin-transition "
-                    "policy hazard.\n"
-                    "- Valid: a clear question, request, statement, recognizable phrase, "
-                    "or meaningful hazard-like phrase that is within twin-transition "
-                    "policy scope. It does not need perfect wording.\n\n"
-                    "Be permissive for meaningful regional hazards. Accept concise phrases "
-                    "when the risk or negative outcome is understandable, even if the "
-                    "affected group or place is not fully specified yet, but reject hazards "
-                    "that are general social problems, natural disasters, health issues, "
-                    "or market risks with no clear twin-transition policy mechanism.\n\n"
-                    "if the topic is too broad or generic, ask for a rewrite with more specific mechanism or outcome. For example, if the user writes 'transport', you might say 'Please rewrite this with the affected outcome or mechanism, such as 'increased road traffic deaths' or 'disrupted public transit access'.\n\n"
-                    "Compare against existing hazards for semantic similarity. Put any "
-                    "existing hazards with the same meaning, a similar meaning, a close "
-                    "paraphrase, a narrower/broader version, or a substantially overlapping "
-                    "risk in suggestions. If any such match exists, set status to Invalid "
-                    "and valid to false. Do not accept a hazard that is similar to an "
-                    "existing one.\n\n"
-                    "Existing system and user regional hazards:\n"
-                    + ("\n".join(f"- {item}" for item in existing_hazards) or "- None")
-                    + "\n\n"
-                    f"Proposed hazard: {hazard}\n\n"
-                    "Return ONLY valid JSON with this exact shape:\n"
-                    '{"status": "Valid", "valid": true, "reason": "This is a meaningful hazard-like phrase.", "suggestions": []}\n\n'
-                    "Alternative examples:\n"
-                    '{"status": "Ambiguous", "valid": false, "reason": "Please rewrite this with the affected outcome or mechanism.", "suggestions": []}\n'
-                    '{"status": "Invalid", "valid": false, "reason": "The text appears to be gibberish or has no clear meaning.", "suggestions": []}\n\n'
-                    "Output rules:\n"
-                    "- status must be exactly one of: Valid, Ambiguous, Invalid.\n"
-                    "- valid must be true only when status is Valid and no existing hazard has the same or similar meaning.\n"
-                    "- valid must be false when the proposed hazard is outside twin-transition policy scope.\n"
-                    "- suggestions must contain exact existing hazard names with the same meaning, similar meaning, close paraphrase, broader/narrower overlap, or substantially overlapping risk.\n"
-                    "- If suggestions is not empty, status must be Invalid and valid must be false.\n"
-                    "- If no existing hazards are relevant, suggestions must be an empty array.\n"
-                    "- If status is Ambiguous, ask one reflective rewrite question in the reason field.\n"
-                    "- Keep the reason field under 50 words."
+                    f"Selected sector: {session.sector or 'Not selected'}\n"
+                    f"User input: {hazard}\n\n"
+                    "Return exactly ACCEPT, REJECT, or CLARIFICATION followed by "
+                    "one concise clarification question."
                 ),
             }
         ]
@@ -10189,20 +10666,49 @@ user-added hazards.
         if is_llm_unavailable_response(response):
             return None
 
-        parsed = parse_hazard_input_review_response(response)
-        if parsed.get("error"):
+        return self._parse_custom_hazard_classifier_response(response)
+
+    @staticmethod
+    def _parse_custom_hazard_classifier_response(response: str) -> dict[str, object] | None:
+        cleaned = str(response or "").strip()
+        if not cleaned:
             return None
-        existing_by_key = {normalize(item): item for item in existing_hazards}
-        suggestions = [
-            existing_by_key[normalize(item)]
-            for item in parsed.get("suggestions", [])
-            if isinstance(item, str) and normalize(item) in existing_by_key
-        ]
-        parsed["suggestions"] = list(dict.fromkeys(suggestions))
-        if parsed["suggestions"]:
-            parsed["status"] = "Invalid"
-            parsed["valid"] = False
-        return parsed
+        first_line, _, rest = cleaned.partition("\n")
+        label = first_line.strip().strip(":").casefold()
+        if label == "accept":
+            return {
+                "status": "Valid",
+                "valid": True,
+                "reason": "The input is within the European green or digital transition hazard scope.",
+                "suggestions": [],
+            }
+        if label == "reject":
+            return {
+                "status": "Invalid",
+                "valid": False,
+                "reason": (
+                    "Please enter a hazard, risk, vulnerability, unintended consequence, "
+                    "or negative impact related to Europe's Green or Digital Transition "
+                    "policies in the selected sector."
+                ),
+                "suggestions": [],
+            }
+        if label.startswith("clarification"):
+            question = first_line[len("CLARIFICATION") :].strip(" :-")
+            if not question:
+                question = rest.strip()
+            if not question:
+                question = (
+                    "Could you clarify how this relates to hazards of Europe's "
+                    "Green or Digital Transition policies?"
+                )
+            return {
+                "status": "Ambiguous",
+                "valid": False,
+                "reason": question,
+                "suggestions": [],
+            }
+        return None
 
     async def _validate_input_quality(
         self,
@@ -10568,6 +11074,9 @@ in this order: specificity, justification_clarity, evidence_identifiability.
 Return two or three short questions about THAT ONE dimension, each pointing at
 the specific phrase you could not interpret, answerable in one reply. Do not
 ask about any other dimension this round.
+If a selected hazard is provided in the user message, treat it as fixed context.
+Never ask the user what hazard, risk, or problem the measure is intended to
+mitigate. Ask only how the measure links to that already selected hazard.
 
 OUTPUT — return ONLY valid JSON with this exact shape:
 {{
@@ -10586,6 +11095,8 @@ RULES.
 - \"clear\" is true only when all three dimensions are CLEAR.
 - follow_up_questions: two or three questions, only the selected dimension,
   each tied to a specific ambiguous phrase you quote.
+- Do not ask which hazard/risk/problem is being mitigated when Selected hazard
+  is present; it is already known context.
 - Do not require implementation detail, evidence, feasibility, or correctness.
 - Do not penalise unsupported or arguable reasoning — support is checked later.
 - Scope anchoring is framing only and must never cause NEEDS_CLARIFICATION.
@@ -10609,6 +11120,8 @@ CALIBRATION (justification_clarity).
                     f"- Selected country: {session.country or 'Not selected'}\n"
                     f"- Selected region: {session.region or 'Not selected'}\n"
                     f"- Selected sector: {session.sector or 'Not selected'}\n"
+                    f"- Selected hazard: "
+                    f"{session.selected_hazard or session.accepted_custom_hazard or 'Not selected'}\n"
                     f"- Selected target populations/groups: "
                     f"{self._mitigation_target_population_text(session)}\n"
 
@@ -11685,6 +12198,8 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             return False
         if re.search(r"Temporary evidence document ID:\s*\d+", evidence, flags=re.IGNORECASE):
             return True
+        if ChatService._has_evidence_url_reference(evidence):
+            return True
         content = ChatService._inline_evidence_content(evidence)
         if content:
             return not content.casefold().startswith("unable to extract evidence")
@@ -11696,6 +12211,18 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         return True
 
     @staticmethod
+    def _has_evidence_url_reference(evidence: str | None) -> bool:
+        if not evidence:
+            return False
+        return bool(
+            re.search(
+                r"^Evidence URL:\s*https?://\S+",
+                evidence,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+        )
+
+    @staticmethod
     def _inline_evidence_content(evidence: str | None) -> str:
         if not evidence or not evidence.strip():
             return ""
@@ -11705,6 +12232,9 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             for line in lines
             if line.casefold().startswith("evidence content:")
             and line.split(":", 1)[1].strip()
+            and not line.split(":", 1)[1].strip().casefold().startswith(
+                "unable to extract evidence"
+            )
         ]
         if content_lines:
             return "\n".join(content_lines)
@@ -11963,13 +12493,20 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             "check before choosing a measure, such as delivery barriers, targeting, "
             "and implementation risks."
         )
-        heading = ChatService._policy_section_heading("Practical Considerations", intro)
+        heading = ChatService._policy_section_heading(
+            "General considerations to mitigate the negative effects",
+            intro,
+        )
         cleaned = str(markdown or "").strip()
         if not cleaned:
             return heading
         cleaned = ChatService._strip_policy_section_heading(
             cleaned,
             "Practical Considerations",
+        )
+        cleaned = ChatService._strip_policy_section_heading(
+            cleaned,
+            "General considerations to mitigate the negative effects",
         )
         cleaned = ChatService._strip_section_intro_paragraph(
             cleaned,
@@ -11986,6 +12523,13 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             cleaned = ChatService._strip_policy_section_heading(
                 cleaned,
                 "Practical Considerations",
+            )
+        if cleaned.casefold().lstrip().startswith(
+            "## general considerations to mitigate the negative effects"
+        ):
+            cleaned = ChatService._strip_policy_section_heading(
+                cleaned,
+                "General considerations to mitigate the negative effects",
             )
         return f"{heading}\n\n{cleaned}"
 
@@ -12060,6 +12604,10 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             flags=re.IGNORECASE | re.DOTALL,
         )
         cleaned = ChatService._strip_policy_section_heading(cleaned, "Practical Considerations")
+        cleaned = ChatService._strip_policy_section_heading(
+            cleaned,
+            "General considerations to mitigate the negative effects",
+        )
         cleaned = re.sub(r"<[^>]+>", " ", cleaned)
         items: list[str] = []
         current: list[str] = []
@@ -12836,8 +13384,101 @@ Synthesis rule:
             )
         if len(compact_for_match(mitigation_measure)) < 8:
             return "The mitigation measure is too short. Please write a clearer policy action."
-        if len(compact_for_match(reason)) < 8:
+        reason_error = self._local_mitigation_reason_error(reason)
+        if reason_error:
+            return reason_error
+        return None
+
+    def _local_mitigation_reason_error(self, reason: str) -> str | None:
+        if self._is_invalid_user_text(reason):
+            return (
+                "The reason appears to contain gibberish, keyboard mashing, or text that "
+                "is not meaningful. Please explain why this measure would reduce the "
+                "selected hazard for the affected groups."
+            )
+
+        normalized = normalize_for_match(reason)
+        compact = compact_for_match(reason)
+        if len(compact) < 8:
             return "The reason is too short. Please explain the mechanism in a little more detail."
+
+        non_answer_patterns = (
+            r"\b(?:i\s+)?don\s*t\s+know\b",
+            r"\b(?:i\s+)?do\s+not\s+know\b",
+            r"\bno\s+idea\b",
+            r"\bnot\s+sure\b",
+            r"\bunsure\b",
+            r"\bcan(?:not|t)\s+say\b",
+            r"\bdon\s*t\s+have\s+(?:a\s+)?reason\b",
+            r"\bno\s+reason\b",
+            r"\bnot\s+applicable\b",
+            r"\bn/?a\b",
+        )
+        if any(re.search(pattern, normalized) for pattern in non_answer_patterns):
+            return (
+                "The reason is ambiguous. Please explain how the mitigation measure "
+                "would reduce the selected hazard for the affected groups."
+            )
+
+        mechanism_terms = {
+            "reduce",
+            "reduces",
+            "reducing",
+            "lower",
+            "lowers",
+            "lowering",
+            "prevent",
+            "prevents",
+            "preventing",
+            "avoid",
+            "avoids",
+            "avoiding",
+            "support",
+            "supports",
+            "supporting",
+            "help",
+            "helps",
+            "helping",
+            "improve",
+            "improves",
+            "improving",
+            "increase",
+            "increases",
+            "increasing",
+            "provide",
+            "provides",
+            "providing",
+            "protect",
+            "protects",
+            "protecting",
+            "enable",
+            "enables",
+            "enabling",
+            "ensure",
+            "ensures",
+            "ensuring",
+            "address",
+            "addresses",
+            "addressing",
+            "mitigate",
+            "mitigates",
+            "mitigating",
+            "target",
+            "targets",
+            "targeting",
+            "because",
+            "by",
+            "through",
+            "so",
+        }
+        tokens = set(normalized.split())
+        if len(tokens) < 4 or not tokens & mechanism_terms:
+            return (
+                "The reason is too vague or unrelated to the mitigation context. "
+                "Please describe the mechanism, for example how the measure lowers "
+                "exposure, cost, exclusion, or vulnerability for the affected groups."
+            )
+
         return None
 
     def _existing_mitigation_records_for_selected_hazard(

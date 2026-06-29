@@ -100,6 +100,7 @@ class UserSession(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     session_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     title: Mapped[str | None] = mapped_column(String(220), index=True)
+    title_is_manual: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     session_data: Mapped[str | None] = mapped_column(Text)
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("app_users.id", ondelete="SET NULL"), index=True

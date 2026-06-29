@@ -942,7 +942,7 @@ function renderPracticalConsiderationsVisual(session = {}) {
   if (!items.length) return;
   const displayItems = items.map((item) => practicalConsiderationTitle(item));
   stageIconGrid.innerHTML = `
-    <section class="practical-considerations-visual" aria-label="Practical considerations">
+    <section class="practical-considerations-visual" aria-label="General considerations to mitigate the negative effects">
       <div class="practical-visual-orbit" aria-hidden="true">
         <span></span>
         <span></span>
@@ -950,7 +950,7 @@ function renderPracticalConsiderationsVisual(session = {}) {
       </div>
       <div class="practical-visual-heading">
         <span>Design checklist</span>
-        <h3>${items.length} practical ${items.length === 1 ? "consideration" : "considerations"}</h3>
+        <h3>${items.length} general ${items.length === 1 ? "consideration" : "considerations"} to mitigate the negative effects</h3>
       </div>
       <ol class="practical-consideration-list">
         ${displayItems

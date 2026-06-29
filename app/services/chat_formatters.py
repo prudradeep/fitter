@@ -18,12 +18,18 @@ ADDITIONAL_HAZARDS_INFO_TOOLTIP = (
     "disadvantaged groups' interests more broadly."
 )
 
+CUSTOM_HAZARDS_INFO_TOOLTIP = (
+    "All the hazards co-created on the platform get validated by the AI through "
+    "a strict validation check. Once validated, the co-created hazards belonging "
+    "to a specific country, region and sector combination are available for all "
+    "the platform users."
+)
+
 
 def _additional_hazards_info_icon() -> str:
     return (
         '<span class="additional-hazards-info" tabindex="0" '
-        f'aria-label="{escape(ADDITIONAL_HAZARDS_INFO_TOOLTIP)}" '
-        f'title="{escape(ADDITIONAL_HAZARDS_INFO_TOOLTIP)}">'
+        f'aria-label="{escape(ADDITIONAL_HAZARDS_INFO_TOOLTIP)}">'
         '<span aria-hidden="true">i</span>'
         '<span class="additional-hazards-tooltip" aria-hidden="true">'
         "<strong>The Experts involved in</strong>"
@@ -38,6 +44,20 @@ def _additional_hazards_info_icon() -> str:
         "technical and policy expertise to analyse transition policies and co-design "
         "mitigation measures. This also reduced power imbalances and supported broader "
         "representation of disadvantaged groups' interests.</span>"
+        "</span>"
+        "</span>"
+    )
+
+
+def _custom_hazards_info_icon() -> str:
+    tooltip = escape(CUSTOM_HAZARDS_INFO_TOOLTIP)
+    return (
+        '<span class="additional-hazards-info" tabindex="0" '
+        f'aria-label="{tooltip}">'
+        '<span aria-hidden="true">i</span>'
+        '<span class="additional-hazards-tooltip" aria-hidden="true">'
+        "<strong>Platform users</strong>"
+        f"<span>{tooltip}</span>"
         "</span>"
         "</span>"
     )
@@ -61,8 +81,11 @@ def format_hazards(session: ChatSession) -> str:
         sections.extend(
             [
                 "",
-                '<h3 class="hazard-group-heading">Co-Created hazards '
-                '<span>By users</span></h3>',
+                '<h3 class="hazard-group-heading hazard-group-heading--with-info">'
+                "Co-Created hazards "
+                "<span>Platform users</span>"
+                f"{_custom_hazards_info_icon()}"
+                "</h3>",
                 format_custom_hazards(session),
             ]
         )
@@ -227,7 +250,7 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
         f"<summary>Influence on <strong>{region}</strong>"
         f" <span>({count} socio-demographic {profile_label})</span></summary>"
         '<div class="hazard-population-table"><table>'
-        '<thead><tr><th scope="col">Population profile</th>'
+        '<thead><tr><th scope="col">Affected population profile</th>'
         '<th scope="col">Regional</th><th scope="col">National</th></tr></thead>'
         f"<tbody>{''.join(profile_rows)}</tbody></table></div>"
         "</details>"
