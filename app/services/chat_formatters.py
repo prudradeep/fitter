@@ -26,6 +26,10 @@ CUSTOM_HAZARDS_INFO_TOOLTIP = (
 )
 
 
+def _normalize_key(value: object) -> str:
+    return str(value or "").strip().casefold()
+
+
 def _additional_hazards_info_icon() -> str:
     return (
         '<span class="additional-hazards-info" tabindex="0" '
@@ -679,6 +683,11 @@ def format_additional_dgs(session: ChatSession) -> str:
 
 def format_all_dgs(session: ChatSession) -> str:
     sections: list[str] = []
+    assistant_profile_keys = {
+        _normalize_key(profile)
+        for profile in (session.socio_demographic_profiles or [])
+        if str(profile or "").strip()
+    }
     if session.socio_demographic_profiles:
         sections.append(
             "Socio-demographic profiles identified by the assistant:\n"
@@ -686,10 +695,15 @@ def format_all_dgs(session: ChatSession) -> str:
         )
     elif session.socio_demographic_findings:
         sections.append(session.socio_demographic_findings.strip())
-    if session.additional_dgs:
+    additional_dgs = [
+        dg
+        for dg in (session.additional_dgs or [])
+        if _normalize_key(dg) not in assistant_profile_keys
+    ]
+    if additional_dgs:
         sections.append(
             "Additional socio-demographic profiles added by the user:\n"
-            + "\n".join(f"- {dg}." for dg in session.additional_dgs)
+            + "\n".join(f"- {dg}." for dg in additional_dgs)
         )
     if not sections:
         return "- Use the socio-demographic profiles identified in the previous response."

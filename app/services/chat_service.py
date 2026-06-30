@@ -5240,6 +5240,11 @@ Use empty arrays when no valid target population group is found.
         if session.hazard_profiles is None:
             session.hazard_profiles = {}
         session.hazard_profiles[hazard] = profiles
+        if not profiles:
+            session.socio_demographic_profiles = []
+            target_population_step = self._start_target_population_questions(session_id, session)
+            if target_population_step is not None:
+                return target_population_step
         session.socio_demographic_profiles = [
             str(profile.get("name") or profile.get("profile") or "").strip()
             for profile in profiles
@@ -5409,12 +5414,19 @@ Use empty arrays when no valid target population group is found.
             hazard,
             display_profiles,
         )
-        session.socio_demographic_profiles = [
-            profile["name"] for profile in profiles if profile.get("name")
-        ]
-        session.additional_dgs = [
-            profile["name"] for profile in user_profiles if profile.get("name")
-        ] or None
+        if is_custom_hazard:
+            assistant_names, user_names = self._custom_hazard_profile_name_sections(
+                profiles
+            )
+            session.socio_demographic_profiles = assistant_names
+            session.additional_dgs = user_names or None
+        else:
+            session.socio_demographic_profiles = [
+                profile["name"] for profile in profiles if profile.get("name")
+            ]
+            session.additional_dgs = [
+                profile["name"] for profile in user_profiles if profile.get("name")
+            ] or None
         if not is_custom_hazard and not is_additional_hazard:
             system_hazard = self._ensure_system_hazard(session, hazard)
             if system_hazard is not None:
@@ -5458,39 +5470,89 @@ Use empty arrays when no valid target population group is found.
             session,
             (
                 f"For the selected hazard '{session.selected_hazard}', provide practical "
-                "considerations. Use the matched "
-                "mitigation-measure examples for the same sector, hazard, and affected "
-                "profiles as the main policy-design evidence when they are available; "
-                "synthesize them into implementation guidance instead of copying them verbatim. "
-                "Use the loaded sector statistical context to explain why those "
-                "implementation examples fit the affected profiles.\n\n"
+                "considerations for designing a mitigation measure within the context of "
+                "European twin-transition policies. Do not create the mitigation measure yet.\n\n"
+
+                "Use the matched mitigation-measure examples for the same sector, hazard, "
+                "and affected socio-demographic profiles as the primary policy-design evidence "
+                "whenever they are available. Synthesize the implementation approaches into "
+                "practical guidance rather than copying them verbatim. Use the loaded sector "
+                "statistical context to explain why these considerations are appropriate for "
+                "the affected profiles.\n\n"
+
                 "Socio-demographic profiles:\n"
                 f"{format_all_dgs(session)}\n\n"
+
                 "Selected target populations/groups:\n"
                 f"{self._mitigation_target_population_text(session)}\n\n"
+
                 "Matched mitigation-measure examples:\n"
                 f"{matched_examples or '- No matching examples were found for this sector, hazard, and profile set.'}\n\n"
-                "Answer in Markdown with one short section only: Practical "
-                "Considerations. Start the section with two concise sentences explaining "
-                "that it highlights implementation issues, design trade-offs, and "
-                "profile-specific concerns to consider before creating a mitigation "
-                "measure. Then keep bullets concise and do not create a final "
-                "mitigation measure yet. Do not include a Current Policy "
-                "Implementation section; it will be rendered separately from the "
-                "database examples."
+
+                "Return ONLY valid JSON. Do not wrap the JSON in Markdown code fences. "
+                "Do not include any explanation before or after the JSON.\n\n"
+
+                "Use the following JSON schema exactly:\n\n"
+
+                "{\n"
+                '  "title": "# Practical Considerations",\n'
+                '  "hazard": "<selected hazard>",\n'
+                '  "context": "European twin-transition policy implementation",\n'
+                '  "themes": [\n'
+                "    {\n"
+                '      "heading": "## <Dynamic Theme Heading>",\n'
+                '      "summary": "<Markdown paragraph summarising the theme>",\n'
+                '      "concerns": [\n'
+                '        "- <Markdown bullet point>",\n'
+                '        "- <Markdown bullet point>"\n'
+                "      ]\n"
+                "    }\n"
+                "  ]\n"
+                "}\n\n"
+
+                "Instructions:\n"
+                "- Derive every theme dynamically from the matched mitigation examples, sector statistical context, selected hazard, and affected socio-demographic profiles.\n"
+                "- Themes must represent implementation considerations specific to European twin-transition policies.\n"
+                "- Do NOT use predefined categories or generic headings.\n"
+                "- Create only themes that are directly supported by the available evidence.\n"
+                "- Merge related concerns into the same theme and avoid overlapping or duplicate themes.\n"
+                "- For each theme:\n"
+                "  - Generate a short Markdown heading beginning with '## '.\n"
+                "  - Write one concise Markdown paragraph summarising the theme.\n"
+                "  - Add as many Markdown bullet points as necessary in the 'concerns' array.\n"
+                "  - Each concern should describe one practical implementation consideration, challenge, dependency, trade-off, prerequisite, operational issue, equity consideration, or success factor.\n"
+                "- There is no minimum or maximum number of themes.\n"
+                "- There is no minimum or maximum number of concerns within each theme.\n"
+                "- Keep summaries concise (1–2 sentences).\n"
+                "- Keep each concern concise (1 sentence where possible).\n"
+                "- Do not invent unsupported concerns.\n"
+                "- If matched mitigation examples are unavailable, derive themes only from the sector statistical context, selected hazard, and affected profiles, and clearly indicate where evidence is limited.\n"
+                "- Do NOT generate a mitigation measure, policy proposal, action plan, recommendations, references, conclusion, or any section other than Practical Considerations.\n"
+                "- Preserve Markdown formatting inside all string values:\n"
+                "  - 'title' must start with '# '.\n"
+                "  - 'heading' must start with '## '.\n"
+                "  - 'summary' may contain Markdown formatting such as **bold**, *italic*, inline code, or links when appropriate.\n"
+                "  - Every entry in 'concerns' must begin with '- '.\n"
+                "- Return strictly valid JSON with no trailing commas and no additional text."
             ),
         )
-        practical_considerations = await ask_llm_chat(
+        practical_considerations_response = await ask_llm_chat(
             context=context,
             messages=messages,
             temperature=0.25,
-            max_tokens=750,
+            max_tokens=1200,
+        )
+        practical_considerations, practical_consideration_items = (
+            self._practical_considerations_json_to_markdown(
+                practical_considerations_response
+            )
         )
         practical_considerations = self._ensure_practical_considerations_intro(
             practical_considerations
         )
-        session.practical_considerations = self._extract_practical_consideration_items(
-            practical_considerations
+        session.practical_considerations = (
+            practical_consideration_items
+            or self._extract_practical_consideration_items(practical_considerations)
         )
         current_policy = self._current_policy_implementations_section(session)
         new_policy_suggestions = await self._new_policy_suggestions_section(session)
@@ -6920,6 +6982,45 @@ Do not invent characteristics that were not selected.
                 existing_profiles,
                 profiles,
             )
+
+    @staticmethod
+    def _custom_hazard_profile_name_sections(
+        profiles: list[dict[str, object]],
+    ) -> tuple[list[str], list[str]]:
+        user_sources = {
+            "target_population",
+            "target_population_additional",
+            "user_review",
+            "user_validated",
+        }
+        assistant_names: list[str] = []
+        user_names: list[str] = []
+        assistant_keys: set[str] = set()
+        user_keys: set[str] = set()
+
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            name = str(profile.get("name") or profile.get("profile") or "").strip()
+            if not name:
+                continue
+            key = normalize(name)
+            if not key:
+                continue
+            source = str(profile.get("source") or "").strip()
+            if source in user_sources:
+                if key not in user_keys and key not in assistant_keys:
+                    user_keys.add(key)
+                    user_names.append(name)
+                continue
+            if key not in assistant_keys:
+                assistant_keys.add(key)
+                assistant_names.append(name)
+            if key in user_keys:
+                user_keys.remove(key)
+                user_names = [value for value in user_names if normalize(value) != key]
+
+        return assistant_names, user_names
 
     @staticmethod
     def _merge_hazard_profile_lists(
@@ -14538,7 +14639,7 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             for link in self._mitigation_reference_link_values(reference_links):
                 self._append_unique_text(group["reference_links"], link)
 
-        for group in grouped_examples.values():
+        for group in list(grouped_examples.values())[:1]:
             measure = str(group["measure"])
             countries = group["countries"]
             summaries = group["summaries"]
@@ -14567,7 +14668,10 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             if not details:
                 details.append("- No implementation details were provided for this example.")
 
-            sections.append(f"### {measure}\n\n" + "\n".join(details))
+            sections.append(
+                f"### {self._normalize_current_policy_measure_title(measure)}\n\n"
+                + "\n".join(details)
+            )
 
         return "\n\n".join(sections)
 
@@ -14629,6 +14733,15 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         )
 
     @staticmethod
+    def _normalize_current_policy_measure_title(title: str) -> str:
+        cleaned = normalize_markdown_text(str(title or "")).strip()
+        cleaned = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" .:-")
+        if not cleaned:
+            return "Current implementation example"
+        return cleaned[:1].upper() + cleaned[1:]
+
+    @staticmethod
     def _new_policy_proposals_intro() -> str:
         return (
             "New policy proposals created using the data collection from open labs. The open labs followed a structured co-creation process that began with identifying twin-transition challenges and mapping their systemic causes. Participants then envisioned a fair future transition, translated the required systemic changes into new or improved policy measures, and finally refined and evaluated each proposal for its impact, feasibility, and contribution to an inclusive twin transition."
@@ -14675,6 +14788,90 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
         return cleaned
 
     @staticmethod
+    def _practical_considerations_json_to_markdown(response: str) -> tuple[str, list[str]]:
+        raw = str(response or "").strip()
+        if not raw:
+            return "", []
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            extracted = ChatService._extract_json_object(raw)
+            if extracted == "{}":
+                return raw, []
+            try:
+                payload = json.loads(extracted)
+            except json.JSONDecodeError:
+                return raw, []
+        if not isinstance(payload, dict):
+            return raw, []
+
+        title = ChatService._clean_practical_json_text(
+            payload.get("title"),
+            default="# Practical Considerations",
+        )
+        sections: list[str] = [title]
+        panel_items: list[str] = []
+        seen_panel_items: set[str] = set()
+        themes = payload.get("themes")
+        if not isinstance(themes, list):
+            themes = []
+
+        for theme in themes:
+            if not isinstance(theme, dict):
+                continue
+            heading = ChatService._clean_practical_json_text(theme.get("heading"))
+            heading_title = ChatService._markdown_heading_title(heading)
+            if not heading_title:
+                continue
+            heading = f"## {heading_title}"
+            panel_key = normalize_for_match(heading_title)
+            if panel_key and panel_key not in seen_panel_items:
+                seen_panel_items.add(panel_key)
+                panel_items.append(heading_title)
+
+            block: list[str] = [heading]
+            summary = ChatService._clean_practical_json_text(theme.get("summary"))
+            if summary:
+                block.extend(["", summary])
+
+            concerns = theme.get("concerns")
+            if isinstance(concerns, list):
+                cleaned_concerns = [
+                    ChatService._clean_practical_json_bullet(concern)
+                    for concern in concerns
+                ]
+                cleaned_concerns = [concern for concern in cleaned_concerns if concern]
+                if cleaned_concerns:
+                    block.extend(["", *cleaned_concerns])
+
+            sections.append("\n".join(block).strip())
+
+        return "\n\n".join(section for section in sections if section.strip()), panel_items
+
+    @staticmethod
+    def _clean_practical_json_text(value: object, default: str = "") -> str:
+        cleaned = str(value or "").strip()
+        cleaned = re.sub(r"^```(?:json|markdown|md)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned or default
+
+    @staticmethod
+    def _clean_practical_json_bullet(value: object) -> str:
+        cleaned = ChatService._clean_practical_json_text(value)
+        if not cleaned:
+            return ""
+        cleaned = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", cleaned).strip()
+        return f"- {cleaned}" if cleaned else ""
+
+    @staticmethod
+    def _markdown_heading_title(value: object) -> str:
+        cleaned = ChatService._clean_practical_json_text(value)
+        cleaned = re.sub(r"^\s*#{1,6}\s*", "", cleaned).strip()
+        cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+        cleaned = re.sub(r"\*(.*?)\*", r"\1", cleaned)
+        return cleaned.strip(" -#:\t\r\n")
+
+    @staticmethod
     def _extract_practical_consideration_items(markdown: str) -> list[str]:
         cleaned = str(markdown or "")
         cleaned = re.sub(
@@ -14708,18 +14905,28 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             }:
                 items.append(item)
 
+        skipping_nested_bullet = False
         for raw_line in cleaned.splitlines():
             line = raw_line.strip()
+            leading_whitespace = len(raw_line) - len(raw_line.lstrip(" \t"))
             if not line:
                 flush_current()
+                skipping_nested_bullet = False
                 continue
             if re.match(r"^\s*#{1,6}\s+", line):
                 flush_current()
+                skipping_nested_bullet = False
                 continue
             bullet_match = re.match(r"^\s*(?:[-*•]|\d+[.)])\s+(.+)$", line)
             if bullet_match:
+                if leading_whitespace >= 2:
+                    skipping_nested_bullet = True
+                    continue
                 flush_current()
+                skipping_nested_bullet = False
                 current.append(bullet_match.group(1).strip())
+                continue
+            if skipping_nested_bullet:
                 continue
             if current:
                 current.append(line)
@@ -14743,7 +14950,14 @@ Do not allow indirect inference, general knowledge, or plausible extrapolation.
             normalize_for_match("Practical Considerations i This section translates")
         ):
             return ""
-        return cleaned
+        colon_index = cleaned.find(":")
+        if 4 <= colon_index <= 120:
+            cleaned = cleaned[:colon_index]
+        else:
+            sentence_match = re.match(r"^(.{18,120}?[.!?])\s+", cleaned)
+            if sentence_match:
+                cleaned = sentence_match.group(1).rstrip(".!?")
+        return cleaned.strip(" -•\t\r\n.:")
 
     async def _new_policy_suggestions_section(
         self,

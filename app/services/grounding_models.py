@@ -10,6 +10,12 @@ logger = logging.getLogger(__name__)
 class GroundingModelService:
     """Adapters for optional dedicated reranker and NLI inference endpoints."""
 
+    max_reranker_query_chars = 16000
+    max_reranker_documents_per_request = 100
+    max_nli_premise_chars = 30000
+    max_nli_hypothesis_chars = 10000
+    max_nli_pairs_per_request = 100
+
     def __init__(self) -> None:
         self.settings = get_settings()
         self.reranker_status = (
@@ -29,17 +35,36 @@ class GroundingModelService:
         ):
             return results
 
-        documents = [str(result.get("content") or "") for result in results]
+        query_text = self._truncate_text(query, self.max_reranker_query_chars)
+        if not query_text:
+            return results
+
+        indexed_documents = [
+            (index, str(result.get("content") or "").strip())
+            for index, result in enumerate(results)
+            if str(result.get("content") or "").strip()
+        ]
+        if not indexed_documents:
+            return results
+
         try:
-            async with httpx.AsyncClient(
-                timeout=self.settings.reranker_timeout_seconds,
-            ) as client:
-                response = await client.post(
-                    self.settings.reranker_url,
-                    json={"query": query, "documents": documents},
-                )
-                response.raise_for_status()
-                scores = self._reranker_scores(response.json(), len(results))
+            scores_by_index: dict[int, float] = {}
+            async with httpx.AsyncClient(timeout=self.settings.reranker_timeout_seconds) as client:
+                for chunk in self._chunks(
+                    indexed_documents,
+                    self.max_reranker_documents_per_request,
+                ):
+                    response = await client.post(
+                        self.settings.reranker_url,
+                        json={
+                            "query": query_text,
+                            "documents": [document for _, document in chunk],
+                        },
+                    )
+                    response.raise_for_status()
+                    chunk_scores = self._reranker_scores(response.json(), len(chunk))
+                    for (index, _), score in zip(chunk, chunk_scores, strict=True):
+                        scores_by_index[index] = score
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             self.reranker_status = "RETRIEVAL_SCORE_FALLBACK"
             logger.warning(
@@ -50,7 +75,10 @@ class GroundingModelService:
         self.reranker_status = "DEDICATED_MODEL"
 
         reranked: list[dict[str, object]] = []
-        for result, score in zip(results, scores, strict=True):
+        for index, result in enumerate(results):
+            score = scores_by_index.get(index)
+            if score is None:
+                score = float(result.get("score") or 0.0)
             reranked.append({**result, "retrieval_score": result.get("score"), "score": score})
         return sorted(reranked, key=lambda result: float(result.get("score") or 0.0), reverse=True)
 
@@ -105,17 +133,48 @@ class GroundingModelService:
             or self.nli_status == "STRICT_LLM_FALLBACK"
         ):
             return None
+        indexed_pairs: list[dict[str, object]] = []
+        verdicts: list[dict[str, object]] = [
+            {"entailed": False, "label": "neutral", "score": 0.0}
+            for _ in premises
+        ]
+        for index, (premise, hypothesis) in enumerate(
+            zip(premises, hypotheses, strict=True)
+        ):
+            premise_text = self._truncate_text(premise, self.max_nli_premise_chars)
+            hypothesis_text = self._truncate_text(
+                hypothesis,
+                self.max_nli_hypothesis_chars,
+            )
+            if not premise_text or not hypothesis_text:
+                continue
+            indexed_pairs.append(
+                {
+                    "__index": index,
+                    "premise": premise_text,
+                    "hypothesis": hypothesis_text,
+                }
+            )
+        if not indexed_pairs:
+            return verdicts
         try:
             async with httpx.AsyncClient(timeout=self.settings.nli_timeout_seconds) as client:
-                response = await client.post(
-                    self.settings.nli_url,
-                    json={"pairs": [
-                        {"premise": premise, "hypothesis": hypothesis}
-                        for premise, hypothesis in zip(premises, hypotheses, strict=True)
-                    ]},
-                )
-                response.raise_for_status()
-                verdicts = self._nli_verdicts(response.json(), len(premises))
+                for chunk in self._chunks(indexed_pairs, self.max_nli_pairs_per_request):
+                    request_pairs = [
+                        {
+                            "premise": pair["premise"],
+                            "hypothesis": pair["hypothesis"],
+                        }
+                        for pair in chunk
+                    ]
+                    response = await client.post(
+                        self.settings.nli_url,
+                        json={"pairs": request_pairs},
+                    )
+                    response.raise_for_status()
+                    chunk_verdicts = self._nli_verdicts(response.json(), len(chunk))
+                    for pair, verdict in zip(chunk, chunk_verdicts, strict=True):
+                        verdicts[int(pair["__index"])] = verdict
         except (httpx.HTTPError, ValueError, TypeError) as exc:
             self.nli_status = "STRICT_LLM_FALLBACK"
             logger.warning(
@@ -153,3 +212,14 @@ class GroundingModelService:
                 }
             )
         return verdicts
+
+    @staticmethod
+    def _truncate_text(value: object, limit: int) -> str:
+        text = str(value or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip()
+
+    @staticmethod
+    def _chunks(values: list[object], size: int) -> list[list[object]]:
+        return [values[index:index + size] for index in range(0, len(values), size)]

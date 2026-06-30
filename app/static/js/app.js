@@ -173,7 +173,7 @@ const hazardOptionActionLabels = new Set([
   "show hazards added by experts",
   "show co-created hazards",
   "show listed hazards",
-]);
+].map(normalizeForMatch));
 const coverageCountries = stageCoverageRows
   .filter((row) => row.code)
   .map((row) => ({
@@ -1974,6 +1974,7 @@ function addMessage(role, text, isError = false, targetLog = chatLog) {
   content.className = "bubble-content";
   if (role === "bot") {
     content.innerHTML = text;
+    normalizePracticalConsiderationLists(content);
   } else {
     content.textContent = text;
   }
@@ -2014,6 +2015,7 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
 
   if (!typingEffectEnabled()) {
     content.innerHTML = html;
+    normalizePracticalConsiderationLists(content);
     initializeHighcharts(content);
     bubble.appendChild(timestamp);
     applyCollapsibleBubble(bubble);
@@ -2050,11 +2052,90 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
   for (const child of Array.from(template.content.childNodes)) {
     await typeNode(child, content);
   }
+  normalizePracticalConsiderationLists(content);
   initializeHighcharts(content);
   bubble.appendChild(timestamp);
   applyCollapsibleBubble(bubble);
   syncCollapsibleMessages(targetLog);
   scrollToBottom(targetLog);
+}
+
+function normalizePracticalConsiderationLists(root) {
+  if (!root) return;
+  const parentLabels = new Set([
+    "profile specific concerns",
+    "implementation issues",
+  ]);
+  const childLabels = new Set([
+    "affordability",
+    "accessibility",
+    "awareness engagement",
+    "burden reduction",
+    "cultural sensitivity",
+    "data protection",
+    "feasibility",
+    "flexibility",
+    "gender disparities",
+    "political group considerations",
+    "regulatory barriers",
+    "scalability",
+    "stakeholder involvement",
+    "vulnerable groups",
+  ]);
+  const profileChildLabels = new Set([
+    "cultural sensitivity",
+    "gender disparities",
+    "political group considerations",
+    "vulnerable groups",
+  ]);
+  const implementationChildLabels = new Set(
+    Array.from(childLabels).filter((label) => !profileChildLabels.has(label)),
+  );
+
+  root.querySelectorAll("ul").forEach((list) => {
+    let activeParent = null;
+    Array.from(list.children).forEach((item) => {
+      if (item.tagName !== "LI") return;
+      const ownText = Array.from(item.childNodes)
+        .filter((node) => node.nodeType === Node.TEXT_NODE || node.nodeType === Node.ELEMENT_NODE)
+        .map((node) => node.textContent || "")
+        .join(" ")
+        .split("\n")[0] || "";
+      const label = ownText.split(":")[0] || ownText;
+      const labelKey = normalizeForMatch(label);
+
+      if (parentLabels.has(labelKey) || labelKey.startsWith("implementation issues")) {
+        activeParent = item;
+        return;
+      }
+
+      if (!childLabels.has(labelKey)) return;
+      if (profileChildLabels.has(labelKey) || implementationChildLabels.has(labelKey)) {
+        const expectedParentKey = profileChildLabels.has(labelKey)
+          ? "profile specific concerns"
+          : "implementation issues";
+        const expectedParent = Array.from(list.children).find((candidate) => {
+          if (candidate.tagName !== "LI") return false;
+          const text = Array.from(candidate.childNodes)
+            .filter((node) => node.nodeType === Node.TEXT_NODE || node.nodeType === Node.ELEMENT_NODE)
+            .map((node) => node.textContent || "")
+            .join(" ")
+            .split("\n")[0] || "";
+          const key = normalizeForMatch((text.split(":")[0] || text));
+          return key === expectedParentKey || key.startsWith(expectedParentKey);
+        });
+        if (expectedParent) activeParent = expectedParent;
+      }
+      if (!activeParent) return;
+
+      let nestedList = activeParent.querySelector(":scope > ul");
+      if (!nestedList) {
+        nestedList = document.createElement("ul");
+        activeParent.appendChild(nestedList);
+      }
+      nestedList.appendChild(item);
+    });
+  });
 }
 
 function applyCollapsibleBubble(bubble) {
@@ -2581,7 +2662,14 @@ function renderOptions(options, otherOptions = []) {
   if (shouldCollapseHazardOptions(options)) {
     renderCollapsedHazardOptions(options);
   } else {
-    options.forEach((option) => optionTray.appendChild(createOptionButton(option.label)));
+    options.forEach((option) => {
+      const extraClass = isHazardOptionActionLabel(option.label)
+        ? "hazard-action-option"
+        : "";
+      const button = createOptionButton(option.label, extraClass);
+      if (extraClass) button.dataset.hazardAction = "true";
+      optionTray.appendChild(button);
+    });
   }
   renderOtherOptionsMenu();
   updateOptionHighlight();
@@ -2589,13 +2677,13 @@ function renderOptions(options, otherOptions = []) {
 
 function shouldCollapseHazardOptions(options = []) {
   if (currentStep !== "hazard_profile_selection") return false;
-  const hazardOptions = options.filter((option) => !hazardOptionActionLabels.has(normalizeForMatch(option.label)));
+  const hazardOptions = options.filter((option) => !isHazardOptionActionLabel(option.label));
   return hazardOptions.length > 3;
 }
 
 function renderCollapsedHazardOptions(options = []) {
-  const hazardOptions = options.filter((option) => !hazardOptionActionLabels.has(normalizeForMatch(option.label)));
-  const actionOptions = options.filter((option) => hazardOptionActionLabels.has(normalizeForMatch(option.label)));
+  const hazardOptions = options.filter((option) => !isHazardOptionActionLabel(option.label));
+  const actionOptions = options.filter((option) => isHazardOptionActionLabel(option.label));
   const visibleHazards = hazardOptions.slice(0, 3);
   const hiddenHazards = hazardOptions.slice(3);
 
@@ -2620,10 +2708,14 @@ function renderCollapsedHazardOptions(options = []) {
   optionTray.appendChild(showMore);
 
   actionOptions.forEach((option) => {
-    const button = createOptionButton(option.label);
+    const button = createOptionButton(option.label, "hazard-action-option");
     button.dataset.hazardAction = "true";
     optionTray.appendChild(button);
   });
+}
+
+function isHazardOptionActionLabel(label = "") {
+  return hazardOptionActionLabels.has(normalizeForMatch(label));
 }
 
 function renderTargetPopulationOptions(options = []) {
