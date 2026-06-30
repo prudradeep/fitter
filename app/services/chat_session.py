@@ -58,6 +58,7 @@ class ChatSession:
     accepted_custom_hazard: str | None = None
     accepted_custom_hazard_reason: str | None = None
     accepted_custom_hazard_evidence: str | None = None
+    accepted_custom_hazard_id: int | None = None
     accepted_custom_hazard_record_id: int | None = None
     pending_hazard_reason: str | None = None
     pending_hazard_evidence: str | None = None

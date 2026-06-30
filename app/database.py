@@ -156,6 +156,62 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     """
                 )
             )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS custom_hazards (
+                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      country_id INT NOT NULL,
+                      sector_id INT NOT NULL,
+                      region_id INT NULL,
+                      region_scope_key INT NOT NULL DEFAULT 0,
+                      name VARCHAR(255) NOT NULL,
+                      name_key VARCHAR(255) NOT NULL,
+                      reason TEXT NULL,
+                      evidence TEXT NULL,
+                      source VARCHAR(40) NOT NULL DEFAULT 'user',
+                      created_by_user_id INT NULL,
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      CONSTRAINT fk_custom_hazards_country
+                        FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE CASCADE,
+                      CONSTRAINT fk_custom_hazards_sector
+                        FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
+                      CONSTRAINT fk_custom_hazards_region
+                        FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL,
+                      CONSTRAINT fk_custom_hazards_created_by
+                        FOREIGN KEY (created_by_user_id) REFERENCES app_users(id) ON DELETE SET NULL,
+                      CONSTRAINT uq_custom_hazard_scope_name
+                        UNIQUE (country_id, sector_id, region_scope_key, name_key),
+                      INDEX ix_custom_hazards_country_id (country_id),
+                      INDEX ix_custom_hazards_sector_id (sector_id),
+                      INDEX ix_custom_hazards_region_id (region_id),
+                      INDEX ix_custom_hazards_created_by_user_id (created_by_user_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS custom_hazard_profiles (
+                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      custom_hazard_id INT NOT NULL,
+                      profile TEXT NOT NULL,
+                      profile_key VARCHAR(255) NOT NULL,
+                      variable_name VARCHAR(160) NULL,
+                      explanation TEXT NULL,
+                      statistical_basis TEXT NULL,
+                      source VARCHAR(40) NOT NULL DEFAULT 'custom_hazard_extraction',
+                      metadata_json TEXT NULL,
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      CONSTRAINT fk_custom_hazard_profiles_hazard
+                        FOREIGN KEY (custom_hazard_id) REFERENCES custom_hazards(id) ON DELETE CASCADE,
+                      CONSTRAINT uq_custom_hazard_profile UNIQUE (custom_hazard_id, profile_key),
+                      INDEX ix_custom_hazard_profiles_custom_hazard_id (custom_hazard_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """
+                )
+            )
 
         inspector = inspect(engine)
         table_names = inspector.get_table_names()
@@ -410,6 +466,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD COLUMN system_hazard_id INT NULL AFTER user_hazard_id"
                         )
                     )
+                if "custom_hazard_id" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN custom_hazard_id INT NULL AFTER user_hazard_id"
+                        )
+                    )
                 if "additional_hazard_id" not in mitigation_columns:
                     connection.execute(
                         text(
@@ -445,6 +508,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD INDEX ix_user_mitigation_measures_system_hazard_id (system_hazard_id)"
                         )
                     )
+                if "ix_user_mitigation_measures_custom_hazard_id" not in mitigation_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD INDEX ix_user_mitigation_measures_custom_hazard_id (custom_hazard_id)"
+                        )
+                    )
                 if "ix_user_mitigation_measures_user_session_id" not in mitigation_indexes:
                     connection.execute(
                         text(
@@ -473,6 +543,14 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ALTER TABLE user_mitigation_measures "
                             "ADD CONSTRAINT fk_user_mitigation_measures_system_hazard "
                             "FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE"
+                        )
+                    )
+                if "fk_user_mitigation_measures_custom_hazard" not in mitigation_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD CONSTRAINT fk_user_mitigation_measures_custom_hazard "
+                            "FOREIGN KEY (custom_hazard_id) REFERENCES custom_hazards(id) ON DELETE CASCADE"
                         )
                     )
                 if (
@@ -505,6 +583,10 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 connection.execute(
                     text("ALTER TABLE user_hazards ADD COLUMN system_hazard_id INT NULL AFTER user_session_id")
                 )
+            if "custom_hazard_id" not in columns:
+                connection.execute(
+                    text("ALTER TABLE user_hazards ADD COLUMN custom_hazard_id INT NULL AFTER user_session_id")
+                )
             if "region_id" not in columns:
                 connection.execute(
                     text("ALTER TABLE user_hazards ADD COLUMN region_id INT NULL AFTER sector_id")
@@ -512,6 +594,10 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
             if "ix_user_hazards_system_hazard_id" not in indexes:
                 connection.execute(
                     text("ALTER TABLE user_hazards ADD INDEX ix_user_hazards_system_hazard_id (system_hazard_id)")
+                )
+            if "ix_user_hazards_custom_hazard_id" not in indexes:
+                connection.execute(
+                    text("ALTER TABLE user_hazards ADD INDEX ix_user_hazards_custom_hazard_id (custom_hazard_id)")
                 )
             if "ix_user_hazards_region_id" not in indexes:
                 connection.execute(
@@ -522,6 +608,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     text(
                         "ALTER TABLE user_hazards ADD CONSTRAINT fk_user_hazards_system_hazard "
                         "FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE SET NULL"
+                    )
+                )
+            if "fk_user_hazards_custom_hazard" not in foreign_keys:
+                connection.execute(
+                    text(
+                        "ALTER TABLE user_hazards ADD CONSTRAINT fk_user_hazards_custom_hazard "
+                        "FOREIGN KEY (custom_hazard_id) REFERENCES custom_hazards(id) ON DELETE SET NULL"
                     )
                 )
             if "fk_user_hazards_region" not in foreign_keys:
@@ -551,6 +644,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD COLUMN system_hazard_id INT NULL AFTER user_hazard_id"
                         )
                     )
+                if "custom_hazard_id" not in response_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_question_responses "
+                            "ADD COLUMN custom_hazard_id INT NULL AFTER user_hazard_id"
+                        )
+                    )
                 if "additional_hazard_id" not in response_columns:
                     connection.execute(
                         text(
@@ -563,6 +663,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                         text(
                             "ALTER TABLE user_question_responses "
                             "ADD INDEX ix_user_question_responses_system_hazard_id (system_hazard_id)"
+                        )
+                    )
+                if "ix_user_question_responses_custom_hazard_id" not in response_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_question_responses "
+                            "ADD INDEX ix_user_question_responses_custom_hazard_id (custom_hazard_id)"
                         )
                     )
                 if "ix_user_question_responses_additional_hazard_id" not in response_indexes:
@@ -578,6 +685,14 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ALTER TABLE user_question_responses "
                             "ADD CONSTRAINT fk_user_question_responses_system_hazard "
                             "FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE SET NULL"
+                        )
+                    )
+                if "fk_user_question_responses_custom_hazard" not in response_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_question_responses "
+                            "ADD CONSTRAINT fk_user_question_responses_custom_hazard "
+                            "FOREIGN KEY (custom_hazard_id) REFERENCES custom_hazards(id) ON DELETE SET NULL"
                         )
                     )
                 if (
@@ -619,6 +734,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                         text(
                             "ALTER TABLE user_hazard_socio_demographics "
                             "ADD COLUMN system_hazard_id INT NULL AFTER user_hazard_id"
+                        )
+                    )
+                if "custom_hazard_id" not in dg_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD COLUMN custom_hazard_id INT NULL AFTER user_hazard_id"
                         )
                     )
                 if "additional_hazard_id" not in dg_columns:
@@ -712,6 +834,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD INDEX ix_user_hazard_socio_demographics_system_hazard_id (system_hazard_id)"
                         )
                     )
+                if "ix_user_hazard_socio_demographics_custom_hazard_id" not in dg_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD INDEX ix_user_hazard_socio_demographics_custom_hazard_id (custom_hazard_id)"
+                        )
+                    )
                 if "ix_user_hazard_socio_demographics_additional_hazard_id" not in dg_indexes:
                     connection.execute(
                         text(
@@ -733,6 +862,14 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ALTER TABLE user_hazard_socio_demographics "
                             "ADD CONSTRAINT fk_user_hazard_dgs_system_hazard "
                             "FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE"
+                        )
+                    )
+                if "fk_user_hazard_dgs_custom_hazard" not in dg_foreign_keys:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_hazard_socio_demographics "
+                            "ADD CONSTRAINT fk_user_hazard_dgs_custom_hazard "
+                            "FOREIGN KEY (custom_hazard_id) REFERENCES custom_hazards(id) ON DELETE CASCADE"
                         )
                     )
                 if (

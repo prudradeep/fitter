@@ -218,12 +218,57 @@ class AdditionalHazardProfileTargetPopulation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class CustomHazard(Base):
+    __tablename__ = "custom_hazards"
+    __table_args__ = (
+        UniqueConstraint(
+            "country_id",
+            "sector_id",
+            "region_scope_key",
+            "name_key",
+            name="uq_custom_hazard_scope_name",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    country_id: Mapped[int] = mapped_column(ForeignKey("countries.id", ondelete="CASCADE"), index=True)
+    sector_id: Mapped[int] = mapped_column(ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    region_scope_key: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="user", server_default="user")
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_users.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class CustomHazardProfile(Base):
+    __tablename__ = "custom_hazard_profiles"
+    __table_args__ = (
+        UniqueConstraint("custom_hazard_id", "profile_key", name="uq_custom_hazard_profile"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    custom_hazard_id: Mapped[int] = mapped_column(ForeignKey("custom_hazards.id", ondelete="CASCADE"), index=True)
+    profile: Mapped[str] = mapped_column(Text, nullable=False)
+    profile_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    variable_name: Mapped[str | None] = mapped_column(String(160))
+    explanation: Mapped[str | None] = mapped_column(Text)
+    statistical_basis: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="custom_hazard_extraction")
+    metadata_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class UserHazard(Base):
     __tablename__ = "user_hazards"
     __table_args__ = (UniqueConstraint("user_session_id", "name", name="uq_user_session_hazard"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_session_id: Mapped[int] = mapped_column(ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True)
+    custom_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True)
     system_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True)
     sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
@@ -242,6 +287,7 @@ class UserHazardSocioDemographic(Base):
         ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
     )
     user_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
+    custom_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("custom_hazards.id", ondelete="CASCADE"), index=True)
     system_hazard_id: Mapped[int | None] = mapped_column(
         ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
     )
@@ -307,6 +353,7 @@ class UserMitigationMeasure(Base):
         ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
     )
     user_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
+    custom_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("custom_hazards.id", ondelete="CASCADE"), index=True)
     system_hazard_id: Mapped[int | None] = mapped_column(
         ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
     )
@@ -448,6 +495,7 @@ class UserQuestionResponse(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_session_id: Mapped[int] = mapped_column(ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True)
     user_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("user_hazards.id", ondelete="SET NULL"), index=True)
+    custom_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True)
     system_hazard_id: Mapped[int | None] = mapped_column(
         ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True
     )
