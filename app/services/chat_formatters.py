@@ -200,9 +200,14 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
             variable_type = str(profile.get("variable_type") or "").strip()
             statistical_basis = str(profile.get("statistical_basis") or "").strip()
             source = str(profile.get("source") or "").strip()
-            target_population_labels = profile.get("target_population_labels")
-            target_population_option_ids = profile.get("target_population_option_ids")
-            population_lookup_labels = profile.get("population_lookup_labels")
+            target_population_labels = _list_from_profile_or_metadata(
+                profile,
+                "target_population_labels",
+            )
+            population_lookup_labels = _list_from_profile_or_metadata(
+                profile,
+                "population_lookup_labels",
+            )
         else:
             name = str(profile).strip()
             explanation = ""
@@ -211,15 +216,8 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
             statistical_basis = ""
             source = ""
             target_population_labels = []
-            target_population_option_ids = []
             population_lookup_labels = []
         if not name:
-            continue
-        if (
-            source.casefold() == "custom_hazard_extraction"
-            and not target_population_labels
-            and not target_population_option_ids
-        ):
             continue
         population = population_by_profile.get(normalize_markdown_text(name).casefold(), {})
         regional, national = _profile_population_values(profile, population, explanation)
@@ -232,16 +230,13 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
                 "variable_type": variable_type,
                 "statistical_basis": statistical_basis,
                 "source": source,
-                "target_population_labels": (
-                    target_population_labels if isinstance(target_population_labels, list) else []
-                ),
-                "population_lookup_labels": (
-                    population_lookup_labels if isinstance(population_lookup_labels, list) else []
-                ),
+                "target_population_labels": target_population_labels,
+                "population_lookup_labels": population_lookup_labels,
                 "regional": regional,
                 "national": national,
             }
         )
+    profile_items = _combine_covered_profile_items(profile_items)
     profile_rows = [_render_profile_row(item) for item in profile_items]
     if not profile_rows:
         return
@@ -258,6 +253,18 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
         f"<tbody>{''.join(profile_rows)}</tbody></table></div>"
         "</details>"
     )
+
+
+def _list_from_profile_or_metadata(profile: dict[str, object], key: str) -> list[object]:
+    value = profile.get(key)
+    if isinstance(value, list) and value:
+        return list(value)
+    metadata = profile.get("metadata")
+    if isinstance(metadata, dict):
+        value = metadata.get(key)
+        if isinstance(value, list):
+            return list(value)
+    return []
 
 
 def _group_hazard_profile_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -308,6 +315,56 @@ def _group_hazard_profile_items(items: list[dict[str, object]]) -> list[dict[str
             item["regional"] = _average_population(item.get("regional_values"))
             item["national"] = _average_population(item.get("national_values"))
     return ordered
+
+
+def _combine_covered_profile_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
+    if len(items) < 2:
+        return items
+
+    label_sets = [_mapped_label_key_set(item) for item in items]
+    covered_by: dict[int, int] = {}
+    for child_index, child_labels in enumerate(label_sets):
+        if not child_labels:
+            continue
+        parent_candidates = [
+            (len(parent_labels), parent_index)
+            for parent_index, parent_labels in enumerate(label_sets)
+            if parent_index != child_index
+            and child_labels < parent_labels
+        ]
+        if parent_candidates:
+            _, parent_index = max(parent_candidates)
+            covered_by[child_index] = parent_index
+
+    if not covered_by:
+        return items
+
+    combined = [dict(item) for item in items]
+    for child_index, parent_index in covered_by.items():
+        child_name = str(items[child_index].get("name") or "").strip()
+        if not child_name:
+            continue
+        covered_names = combined[parent_index].setdefault("covered_profile_names", [])
+        _append_unique(covered_names, child_name)
+
+    return [
+        item
+        for index, item in enumerate(combined)
+        if index not in covered_by
+    ]
+
+
+def _mapped_label_key_set(item: dict[str, object]) -> set[str]:
+    labels = item.get("target_population_labels")
+    if not isinstance(labels, list) or not labels:
+        labels = item.get("population_lookup_labels")
+    if not isinstance(labels, list):
+        return set()
+    return {
+        normalize_markdown_text(str(label)).casefold()
+        for label in labels
+        if str(label).strip()
+    }
 
 
 def _target_population_group_info(item: dict[str, object]) -> tuple[str, list[str]] | None:
@@ -392,6 +449,12 @@ def _render_profile_row(item: dict[str, object]) -> str:
     regional = item.get("regional")
     national = item.get("national")
     description_parts = []
+    covered_profile_names = item.get("covered_profile_names")
+    if isinstance(covered_profile_names, list) and covered_profile_names:
+        description_parts.append(
+            "Combined profiles: "
+            + escape("; ".join(str(name) for name in covered_profile_names if str(name).strip()))
+        )
     if item.get("is_grouped_target_population"):
         options = [
             str(option).strip()
@@ -407,6 +470,7 @@ def _render_profile_row(item: dict[str, object]) -> str:
     if statistical_basis:
         description_parts.append(f"Reference: {escape(statistical_basis)}")
     target_population_labels = item.get("target_population_labels")
+    population_lookup_labels = item.get("population_lookup_labels")
     if (
         not item.get("is_grouped_target_population")
         and isinstance(target_population_labels, list)
@@ -416,7 +480,15 @@ def _render_profile_row(item: dict[str, object]) -> str:
             "Mapped target population: "
             + escape("; ".join(str(label) for label in target_population_labels if str(label).strip()))
         )
-    population_lookup_labels = item.get("population_lookup_labels")
+    elif (
+        not item.get("is_grouped_target_population")
+        and isinstance(population_lookup_labels, list)
+        and population_lookup_labels
+    ):
+        description_parts.append(
+            "Mapped target population: "
+            + escape("; ".join(str(label) for label in population_lookup_labels if str(label).strip()))
+        )
     if isinstance(population_lookup_labels, list) and population_lookup_labels:
         description_parts.append(
             "Eurostat population lookup: "

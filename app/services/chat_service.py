@@ -5409,20 +5409,7 @@ Use empty arrays when no valid target population group is found.
         session.additional_dgs = [
             profile["name"] for profile in user_profiles if profile.get("name")
         ] or None
-        if is_custom_hazard:
-            hazard_reference = self._selected_hazard_reference(session_id, session, hazard)
-            for profile in profiles:
-                self._store_socio_demographic(
-                    session,
-                    profile["name"],
-                    user_hazard_id=hazard_reference["user_hazard_id"],
-                    source="llm",
-                    variable_name=profile.get("variable_name"),
-                    explanation=profile.get("explanation"),
-                    statistical_basis=profile.get("statistical_basis"),
-                    metadata=profile,
-                )
-        elif not is_additional_hazard:
+        if not is_custom_hazard and not is_additional_hazard:
             system_hazard = self._ensure_system_hazard(session, hazard)
             if system_hazard is not None:
                 for profile in profiles:
@@ -7452,9 +7439,21 @@ Do not invent characteristics that were not selected.
                 "source": source[:40] if source else "sector_prompt",
             }
             if isinstance(item, dict):
-                metadata = compact_profile_metadata(item)
-                if metadata:
-                    profile_item["metadata"] = metadata
+                metadata_value = item.get("metadata")
+                metadata = metadata_value if isinstance(metadata_value, dict) else {}
+                target_population_option_ids = item.get("target_population_option_ids")
+                if not isinstance(target_population_option_ids, list) or not target_population_option_ids:
+                    target_population_option_ids = metadata.get("target_population_option_ids")
+                target_population_labels = item.get("target_population_labels")
+                if not isinstance(target_population_labels, list) or not target_population_labels:
+                    target_population_labels = metadata.get("target_population_labels")
+                if isinstance(target_population_option_ids, list) and target_population_option_ids:
+                    profile_item["target_population_option_ids"] = list(target_population_option_ids)
+                if isinstance(target_population_labels, list) and target_population_labels:
+                    profile_item["target_population_labels"] = list(target_population_labels)
+                compacted_metadata = compact_profile_metadata(item)
+                if compacted_metadata:
+                    profile_item["metadata"] = compacted_metadata
             profiles.append(profile_item)
         return profiles[:12]
 
@@ -7618,9 +7617,11 @@ Do not invent characteristics that were not selected.
         profile: dict[str, object],
     ) -> list[str]:
         labels: list[str] = []
-        raw_labels = profile.get("target_population_labels")
-        if isinstance(raw_labels, list):
-            labels.extend(str(label).strip() for label in raw_labels if str(label).strip())
+        raw_labels = ChatService._list_from_profile_or_metadata(
+            profile,
+            "target_population_labels",
+        )
+        labels.extend(str(label).strip() for label in raw_labels if str(label).strip())
         if not labels:
             name = str(profile.get("name") or profile.get("profile") or "").strip()
             if name:
@@ -7992,8 +7993,14 @@ is no clear match, return an empty matched_profiles array.
                 continue
             variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
             variable_type = str(profile.get("variable_type") or "").strip()
-            target_population_labels = profile.get("target_population_labels")
-            population_lookup_labels = profile.get("population_lookup_labels")
+            target_population_labels = cls._list_from_profile_or_metadata(
+                profile,
+                "target_population_labels",
+            )
+            population_lookup_labels = cls._list_from_profile_or_metadata(
+                profile,
+                "population_lookup_labels",
+            )
             rows.append(
                 {
                     "name": name,
@@ -8001,16 +8008,8 @@ is no clear match, return an empty matched_profiles array.
                         str(profile.get("explanation") or "").strip()
                     ),
                     "statistical_basis": str(profile.get("statistical_basis") or "").strip(),
-                    "target_population_labels": (
-                        list(target_population_labels)
-                        if isinstance(target_population_labels, list)
-                        else []
-                    ),
-                    "population_lookup_labels": (
-                        list(population_lookup_labels)
-                        if isinstance(population_lookup_labels, list)
-                        else []
-                    ),
+                    "target_population_labels": target_population_labels,
+                    "population_lookup_labels": population_lookup_labels,
                     "regional": profile.get("regional_population_pct")
                     or profile.get("population_pct"),
                     "national": profile.get("national_population_pct"),
@@ -8018,6 +8017,71 @@ is no clear match, return an empty matched_profiles array.
                 }
             )
         return rows
+
+    @staticmethod
+    def _list_from_profile_or_metadata(profile: dict[str, object], key: str) -> list[object]:
+        value = profile.get(key)
+        if isinstance(value, list) and value:
+            return list(value)
+        metadata = profile.get("metadata")
+        if isinstance(metadata, dict):
+            value = metadata.get(key)
+            if isinstance(value, list):
+                return list(value)
+        return []
+
+    @classmethod
+    def _combine_covered_profile_rows(
+        cls,
+        rows: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        if len(rows) < 2:
+            return rows
+
+        label_sets = [cls._mapped_label_key_set(row) for row in rows]
+        covered_by: dict[int, int] = {}
+        for child_index, child_labels in enumerate(label_sets):
+            if not child_labels:
+                continue
+            parent_candidates = [
+                (len(parent_labels), parent_index)
+                for parent_index, parent_labels in enumerate(label_sets)
+                if parent_index != child_index
+                and child_labels < parent_labels
+            ]
+            if parent_candidates:
+                _, parent_index = max(parent_candidates)
+                covered_by[child_index] = parent_index
+
+        if not covered_by:
+            return rows
+
+        combined = [dict(row) for row in rows]
+        for child_index, parent_index in covered_by.items():
+            child_name = str(rows[child_index].get("name") or "").strip()
+            if not child_name:
+                continue
+            covered_names = combined[parent_index].setdefault("covered_profile_names", [])
+            cls._append_unique_value(covered_names, child_name)
+
+        return [
+            row
+            for index, row in enumerate(combined)
+            if index not in covered_by
+        ]
+
+    @staticmethod
+    def _mapped_label_key_set(row: dict[str, object]) -> set[str]:
+        labels = row.get("target_population_labels")
+        if not isinstance(labels, list) or not labels:
+            labels = row.get("population_lookup_labels")
+        if not isinstance(labels, list):
+            return set()
+        return {
+            normalize_for_match(str(label))
+            for label in labels
+            if str(label).strip()
+        }
 
     @classmethod
     def _group_selected_hazard_profile_rows(
@@ -8137,6 +8201,7 @@ is no clear match, return an empty matched_profiles array.
 
     @classmethod
     def _hazard_profile_table_html(cls, rows: list[dict[str, object]]) -> str:
+        rows = cls._combine_covered_profile_rows(rows)
         body_rows: list[str] = []
         for row in rows:
             macro_label = (
@@ -8147,6 +8212,17 @@ is no clear match, return an empty matched_profiles array.
             regional = row.get("regional")
             national = row.get("national")
             description_parts: list[str] = []
+            covered_profile_names = row.get("covered_profile_names")
+            if isinstance(covered_profile_names, list) and covered_profile_names:
+                combined_names = [
+                    str(name).strip()
+                    for name in covered_profile_names
+                    if str(name).strip()
+                ]
+                if combined_names:
+                    description_parts.append(
+                        "Combined profiles: " + "; ".join(combined_names)
+                    )
             explanation = str(row.get("explanation") or "").strip()
             if explanation:
                 description_parts.append(explanation)
@@ -8154,6 +8230,7 @@ is no clear match, return an empty matched_profiles array.
             if statistical_basis:
                 description_parts.append(f"Reference: {statistical_basis}")
             target_population_labels = row.get("target_population_labels")
+            population_lookup_labels = row.get("population_lookup_labels")
             if isinstance(target_population_labels, list) and target_population_labels:
                 mapped_labels = [
                     str(label).strip()
@@ -8164,7 +8241,16 @@ is no clear match, return an empty matched_profiles array.
                     description_parts.append(
                         "Mapped target population: " + "; ".join(mapped_labels)
                     )
-            population_lookup_labels = row.get("population_lookup_labels")
+            elif isinstance(population_lookup_labels, list) and population_lookup_labels:
+                mapped_labels = [
+                    str(label).strip()
+                    for label in population_lookup_labels
+                    if str(label).strip()
+                ]
+                if mapped_labels:
+                    description_parts.append(
+                        "Mapped target population: " + "; ".join(mapped_labels)
+                    )
             if isinstance(population_lookup_labels, list) and population_lookup_labels:
                 lookup_labels = [
                     str(label).strip()
@@ -8305,9 +8391,15 @@ is no clear match, return an empty matched_profiles array.
                 source = str(item.get("source") or "").strip()
                 metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
                 target_population_option_ids = item.get("target_population_option_ids")
+                if not isinstance(target_population_option_ids, list) or not target_population_option_ids:
+                    target_population_option_ids = metadata.get("target_population_option_ids")
                 target_population_labels = item.get("target_population_labels")
+                if not isinstance(target_population_labels, list) or not target_population_labels:
+                    target_population_labels = metadata.get("target_population_labels")
                 population_context = item.get("population_context")
                 population_lookup_labels = item.get("population_lookup_labels")
+                if not isinstance(population_lookup_labels, list) or not population_lookup_labels:
+                    population_lookup_labels = metadata.get("population_lookup_labels")
                 regional_population_pct = (
                     item.get("regional_population_pct") or item.get("population_pct")
                 )
@@ -11992,13 +12084,8 @@ Rules:
             option_rows,
             trust_option_ids=True,
         )
-        visible_profiles = [
-            profile
-            for profile in matched_profiles
-            if profile.get("target_population_option_ids")
-        ]
-        if visible_profiles:
-            return visible_profiles
+        if matched_profiles:
+            return matched_profiles
         return self._profiles_from_target_population_option_ids(
             self._selected_target_population_option_ids(session),
             option_rows,

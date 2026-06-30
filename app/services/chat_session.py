@@ -97,6 +97,11 @@ class ChatSession:
             or self.pending_mitigation_measure
             or self.suggested_mitigation_measure_name
         )
+        affected_profile_count = (
+            len(deduped_affected_profiles)
+            if self.selected_hazard
+            else self.eligible_hazard_profile_count()
+        )
         return SessionSummary(
             country=self.country,
             region=self.region,
@@ -111,7 +116,7 @@ class ChatSession:
             + regional_hazard_count
             + len(self.additional_hazards or []),
             top_hazards=self._top_hazard_population_summary(),
-            affected_profile_count=self.eligible_hazard_profile_count(),
+            affected_profile_count=affected_profile_count,
             affected_profiles=deduped_affected_profiles,
             affected_profile_details=deduped_affected_profile_details,
             mitigation_measure_count=1 if mitigation_measure else 0,
@@ -127,7 +132,20 @@ class ChatSession:
     def eligible_hazard_profile_count(self) -> int:
         unique_profiles: set[str] = set()
         stored_profiles = self.hazard_profiles or {}
-        for hazard in self.hazards or []:
+        hazards_to_count: list[str] = []
+        seen_hazards: set[str] = set()
+        for hazard in [
+            *(self.hazards or []),
+            *(self.custom_hazards or []),
+            *(self.additional_hazards or []),
+        ]:
+            hazard_name = str(hazard or "").strip()
+            hazard_key = hazard_name.casefold()
+            if hazard_name and hazard_key not in seen_hazards:
+                seen_hazards.add(hazard_key)
+                hazards_to_count.append(hazard_name)
+
+        for hazard in hazards_to_count:
             profiles = stored_profiles.get(hazard)
             if profiles is None:
                 hazard_key = hazard.casefold()
