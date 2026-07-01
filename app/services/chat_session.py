@@ -3,6 +3,7 @@ from dataclasses import dataclass, fields
 from uuid import uuid4
 
 from app.schemas import SessionSummary
+from app.services.enums import ChatPhase
 
 
 @dataclass
@@ -14,7 +15,7 @@ class ChatSession:
     region: str | None = None
     sector_id: int | None = None
     sector: str | None = None
-    phase: str = "wizard"
+    phase: str = ChatPhase.WIZARD.value
     hazards: list[str] | None = None
     hazard_profiles: dict[str, list[dict[str, str] | str] | str] | None = None
     hazard_rankings: dict[str, dict[str, object]] | None = None
@@ -440,9 +441,16 @@ class ChatSessionStore:
 
     def put(self, session_id: str, data: dict[str, object]) -> ChatSession:
         field_names = {field.name for field in fields(ChatSession)}
-        session = ChatSession(**{key: value for key, value in data.items() if key in field_names})
+        values = {key: value for key, value in data.items() if key in field_names}
+        values["phase"] = normalize_chat_phase(values.get("phase"))
+        session = ChatSession(**values)
         self._sessions[session_id] = session
         return session
 
 
 session_store = ChatSessionStore()
+
+
+def normalize_chat_phase(value: object) -> str:
+    phase = str(value or ChatPhase.WIZARD.value)
+    return phase if phase in {item.value for item in ChatPhase} else ChatPhase.WIZARD.value

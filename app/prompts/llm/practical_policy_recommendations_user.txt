@@ -1,0 +1,57 @@
+For the selected hazard '{selected_hazard}', provide practical considerations for designing a mitigation measure within the context of European twin-transition policies. Do not create the mitigation measure yet.
+
+Use the matched mitigation-measure examples for the same sector, hazard, and affected socio-demographic profiles as the primary policy-design evidence whenever they are available. Synthesize the implementation approaches into practical guidance rather than copying them verbatim. Use the loaded sector statistical context to explain why these considerations are appropriate for the affected profiles.
+
+Socio-demographic profiles:
+{socio_demographic_profiles}
+
+Selected target populations/groups:
+{target_population}
+
+Matched mitigation-measure examples:
+{matched_examples}
+
+Return ONLY valid JSON. Do not wrap the JSON in Markdown code fences. Do not include any explanation before or after the JSON.
+
+Use the following JSON schema exactly:
+
+{{
+  "title": "# Practical Considerations",
+  "hazard": "<selected hazard>",
+  "context": "European twin-transition policy implementation",
+  "themes": [
+    {{
+      "heading": "## <Dynamic Theme Heading>",
+      "summary": "<Markdown paragraph summarising the theme>",
+      "concerns": [
+        "- <Markdown bullet point>",
+        "- <Markdown bullet point>"
+      ]
+    }}
+  ]
+}}
+
+Instructions:
+- Derive every theme dynamically from the matched mitigation examples, sector statistical context, selected hazard, and affected socio-demographic profiles.
+- Themes must represent implementation considerations specific to European twin-transition policies.
+- Do NOT use predefined categories or generic headings.
+- Create only themes that are directly supported by the available evidence.
+- Merge related concerns into the same theme and avoid overlapping or duplicate themes.
+- For each theme:
+  - Generate a short Markdown heading beginning with '## '.
+  - Write one concise Markdown paragraph summarising the theme.
+  - Add as many Markdown bullet points as necessary in the 'concerns' array.
+  - Each concern should describe one practical implementation consideration, challenge, dependency, trade-off, prerequisite, operational issue, equity consideration, or success factor.
+- There is no minimum or maximum number of themes.
+- There is no minimum or maximum number of concerns within each theme.
+- Keep summaries concise (1-2 sentences).
+- Keep each concern concise (1 sentence where possible).
+- Do not invent unsupported concerns.
+- If matched mitigation examples are unavailable, derive themes only from the sector statistical context, selected hazard, and affected profiles, and clearly indicate where evidence is limited.
+- Do NOT generate a mitigation measure, policy proposal, action plan, recommendations, references, conclusion, or any section other than Practical Considerations.
+- Preserve Markdown formatting inside all string values:
+  - 'title' must start with '# '.
+  - 'heading' must start with '## '.
+  - 'summary' may contain Markdown formatting such as **bold**, *italic*, inline code, or links when appropriate.
+  - Every entry in 'concerns' must begin with '- '.
+- Return strictly valid JSON with no trailing commas and no additional text.

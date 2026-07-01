@@ -1,0 +1,8 @@
+Use the retrieved sector-prompt RAG excerpts below as your authoritative statistical context.
+Do not invent precise live statistics. If a number would be needed but is not present,
+explain what data source the user should check.
+
+{scope_instruction}
+
+Sector-prompt RAG excerpts:
+{sector_context}

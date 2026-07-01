@@ -214,13 +214,10 @@ Weightage based on the below
     if score flattened then go to validation
 
 
-Mitigation measure: open conversation
+
 
 Deliverables : core knowledge base
 Additional base: Input by user: pdfs, docx, urls
-
-L1: evidence, contraindication on main core knowledge base
-L2: match evidence concepts with core knowledge concepts, If contraindications, It will not be validated. Validating evidence. 
 
 In co-created hazards:
  I would add an additional description of what “platform users” mean: mention
@@ -230,11 +227,24 @@ Methodology adapted to create the hazards D4.2 in the open labs
 
 Population profiles: Affeted population profiles
 
-toggle strict vs normal.easy validation checks
-
-
-
 Regional employment shock and "left-behind" energy regions
 The phase-out of coal-fired power plants in Baden-Württemberg will lead to job losses among coal miners and power plant workers, as these facilities are a significant employer in the region. This could result in a regional employment shock, with potentially long-lasting impacts on the local economy. Additionally, residents in these regions may face increased energy costs due to the transition away from affordable coal-based power, exacerbating existing socio-economic inequalities.
 
 Low-income households and residents in coal-dependent regions.
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Reason(justification)
+Hazard Duplicacy check. Meaning same also check
+Mitigation measure: open conversation
+Open conversation:
+    Answer the question related to the KB, Stats.
+    Check for the options selected. country, region sector.
+Methodologies htmlfy animation interactive
+toggle strict vs normal. easy validation checks
+
+L1: evidence, contraindication on main core knowledge base
+L2: match evidence concepts with core knowledge concepts, If contraindications, It will not be validated. Validating evidence. 
+
+Test cases:
+    Fitter concept related hazard with evidence
+    vs Evidence not aligned with fitter concept

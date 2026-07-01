@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.services.prompt_loader import load_nested_prompt_file
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ ChatMessage = dict[str, str]
 
 async def ask_llm(prompt: str) -> str:
     return await ask_llm_chat(
-        context="You are Dr Transition, a digital coach for Twin-Transition policy analysis.",
+        context=load_nested_prompt_file("llm/dr_transition_coach.txt"),
         messages=[{"role": "user", "content": prompt}],
     )
 

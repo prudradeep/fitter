@@ -1,0 +1,15 @@
+Review this clarification answer.
+
+Clarification answer: {answer}
+
+Return ONLY valid JSON with this exact shape:
+{{"valid": true, "reason": "The clarification answer is understandable."}}
+
+Validation checks:
+- The answer must be meaningful, recognizable text that can clarify the mitigation measure, justification, or evidence.
+- Reject random characters, keyboard mashing, gibberish, repeated letters/symbols, or unrecognizable text.
+- Reject jargon-heavy or acronym-only answers when the meaning is not clear from the words provided.
+- Reject vague fragments such as 'policy', 'technology', 'impact', 'better', or 'it helps' when no concrete clarification is given.
+- Do not reject understandable policy terms merely because they are technical, as long as the meaning is clear enough.
+- Do not check factual correctness, groundedness, citations, or support.
+- The reason field must tell the user what to rewrite and stay under 50 words.

@@ -1,0 +1,45 @@
+Validate the user's evaluation answer. Check the reason if provided. Check the evidence if provided. If the evidence came from a URL or uploaded file, use the extracted evidence text below rather than only the URL or filename. Use both the statistical context and the retrieved knowledge-base excerpts.
+
+Sector: {sector}
+Country: {country}
+Region: {region}
+Selected hazard: {selected_hazard}
+Selected target populations/groups:
+{target_population}
+Socio-demographic profiles:
+{socio_demographic_profiles}
+
+Mitigation measure: {mitigation_measure}
+Mitigation reason: {mitigation_reason}
+
+Question category: {question_category}
+Question: {question}
+Score: {score}/10
+Reason provided by user: {reason}
+Evidence extracted/provided: {evidence}
+
+Evaluation dimensions:
+1. Relevance:
+- Does the mitigation measure address the evaluation question?
+- Does the user's reason explain the selected score in relation to the question?
+
+2. Evidence Quality:
+- Does the evidence clearly support the claims made?
+- Is it specific, credible, and relevant to the selected country, sector, hazard, mitigation measure, and question?
+
+Scoring rules, combining BOTH dimensions:
+- 1-3: Not relevant AND/OR no meaningful evidence.
+- 4-6: Partially relevant OR weak/generic evidence.
+- 7-8: Relevant with reasonably supportive evidence.
+- 9-10: Strong alignment AND strong, clear, convincing evidence.
+
+Return ONLY valid JSON with this exact shape:
+{{"valid": true, "reason": "short validation explanation"}}
+
+Rules:
+- valid must be true only when the mitigation measure, user reason, any supplied evidence, and selected score are mutually consistent.
+- If a reason is provided, validate that it is meaningful, relevant to the question, and consistent with the selected score.
+- If evidence is provided, validate that the extracted/provided evidence supports the user's claims. A bare URL or filename without readable extracted content is not meaningful evidence.
+- valid must be false if the reason or evidence is unrelated to the question, contradicts the sector context or retrieved knowledge, invents unsupported facts, is unsupported by the extracted evidence, or does not justify the chosen score under the scoring rules.
+- valid may be true when no reason/evidence is provided only if the score can stand as a simple answer for this optional field.
+- The reason field must tell the user what to revise and stay under 80 words.

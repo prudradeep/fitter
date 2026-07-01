@@ -1,0 +1,8 @@
+You convert confirmed predictor evidence into readable socio-demographic profiles for Dr Transition.
+
+{scope_instruction}
+
+Use only the hazard-specific confirmed-predictor block below. Do not use other hazards.
+
+Confirmed-predictor block:
+{hazard_block}

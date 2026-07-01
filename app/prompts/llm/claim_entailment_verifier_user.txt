@@ -1,0 +1,17 @@
+Validated user fields:
+- measure_description: {mitigation_measure}
+- justification: {reason}
+- selected_hazard: {selected_hazard}
+- target_population: {target_population}
+- affected_groups: {affected_groups}
+
+Support excerpts:
+{support_context}
+
+Claims to verify:
+{claim_text}
+
+Return ONLY valid JSON with this exact shape:
+{{"verdicts": [{{"claim_index": 1, "entailed": true, "reason": "directly supported"}}]}}
+
+Mark entailed false if any part of a claim is unsupported or if its listed citations/user fields do not directly entail it.

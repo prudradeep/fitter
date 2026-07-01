@@ -3,34 +3,40 @@ import re
 from difflib import SequenceMatcher
 from typing import Any
 
-from numpy.strings import lower
-
 from app.llm import ask_llm_chat
 from app.services.chat_options import compact_for_match, normalize_for_match
 from app.services.chat_parsers import is_llm_unavailable_response
+from app.services.enums import (
+    ConfidenceLevel,
+    CustomHazardAction,
+    CustomHazardDimension,
+    CustomHazardStatus,
+    GroundingStatus,
+)
+from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 
 
 DIMENSION_WEIGHTS = {
-    "hazard_definition_fit": 0.20,
-    "twin_transition_policy_fit": 0.25,
-    "selected_sector_fit": 0.20,
-    "country_region_fit": 0.15,
-    "affected_groups_fit": 0.20,
+    CustomHazardDimension.HAZARD_DEFINITION_FIT.value: 0.20,
+    CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value: 0.25,
+    CustomHazardDimension.SELECTED_SECTOR_FIT.value: 0.20,
+    CustomHazardDimension.COUNTRY_REGION_FIT.value: 0.15,
+    CustomHazardDimension.AFFECTED_GROUPS_FIT.value: 0.20,
 }
 
 CRITICAL_DIMENSIONS = (
-    "hazard_definition_fit",
-    "twin_transition_policy_fit",
-    "selected_sector_fit",
-    "country_region_fit",
+    CustomHazardDimension.HAZARD_DEFINITION_FIT.value,
+    CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value,
+    CustomHazardDimension.SELECTED_SECTOR_FIT.value,
+    CustomHazardDimension.COUNTRY_REGION_FIT.value,
 )
 
 DIMENSION_TITLES = {
-    "hazard_definition_fit": "Hazard definition",
-    "twin_transition_policy_fit": "Twin transition policy fit",
-    "selected_sector_fit": "Sector fit",
-    "country_region_fit": "Country / region fit",
-    "affected_groups_fit": "Affected population groups",
+    CustomHazardDimension.HAZARD_DEFINITION_FIT.value: "Hazard definition",
+    CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value: "Twin transition policy fit",
+    CustomHazardDimension.SELECTED_SECTOR_FIT.value: "Sector fit",
+    CustomHazardDimension.COUNTRY_REGION_FIT.value: "Country / region fit",
+    CustomHazardDimension.AFFECTED_GROUPS_FIT.value: "Affected population groups",
 }
 
 CLARIFICATION_IMPROVEMENT_THRESHOLD = 3
@@ -75,7 +81,8 @@ def default_custom_hazard_state() -> dict[str, Any]:
         "added_affected_groups": [],
         "duplicate_candidates": [],
         "duplicate_override_confirmed": False,
-        "status": "draft",
+        "confidence": ConfidenceLevel.LOW.value,
+        "status": CustomHazardStatus.DRAFT.value,
     }
 
 
@@ -122,8 +129,9 @@ async def validate_custom_hazard_dimensions(
         ]
     )
     result["overall_score"] = _overall_score(result.get("dimension_scores", {}))
-    result["next_action"] = _recommended_action(result, state)
-    result["status"] = _status_for_action(result["next_action"])
+    result["confidence"] = _confidence_for_percent(result["overall_score"]).value
+    result["next_action"] = _recommended_action(result, state).value
+    result["status"] = _status_for_action(result["next_action"]).value
     return result
 
 
@@ -162,7 +170,8 @@ def frontend_custom_hazard_payload(custom_hazard: dict[str, Any] | None) -> dict
         "affected_groups": state.get("affected_groups") or [],
         "duplicate_candidates": state.get("duplicate_candidates") or [],
         "validation_round": state.get("validation_round") or 0,
-        "status": state.get("status") or "draft",
+        "confidence": state.get("confidence") or ConfidenceLevel.LOW.value,
+        "status": state.get("status") or CustomHazardStatus.DRAFT.value,
     }
 
 
@@ -172,7 +181,9 @@ def normalize_custom_group(group: str, reason: str = "", source: str = "user_add
         "group": label[:120],
         "source_text": label[:120],
         "reason": reason.strip(),
-        "confidence": "high" if reason.strip() else "medium",
+        "confidence": (
+            ConfidenceLevel.HIGH if reason.strip() else ConfidenceLevel.MEDIUM
+        ).value,
         "needs_review": False,
         "source": source,
         "confirmed": True,
@@ -194,26 +205,7 @@ async def _llm_dimension_validation(
     if not hazard_text:
         return None
 
-    system = """
-You are a strict validation assistant for user-created twin-transition hazards.
-
-Return JSON only.
-
-Rules:
-- Do not invent evidence, policies, risks, locations, or affected groups.
-- Do not infer unsupported target groups.
-- A valid hazard must describe a possible negative impact, risk, harm, burden, exclusion, vulnerability, or disruption.
-- A fact, statistic, trend, or observation is NOT a hazard unless it clearly explains a negative impact.
-- Judge hazard definition separately from twin-transition policy fit.
-- Judge sector fit separately from twin-transition policy fit.
-- The selected sector must be one of: Energy, Housing, Transport.
-- Validate only against the selected sector.
-- Do not assume Energy when the sector is Housing or Transport.
-- Judge country/region fit separately from sector fit.
-- Generic groups alone are invalid: people, communities, citizens, residents, households, consumers, public, society, stakeholders.
-- Qualified or policy-specific groups are valid: low-income households, rural communities, energy communities, renewable energy communities, tenants, taxi drivers, older adults, disabled people.
-- Ask at most 2 clarification questions.
-""".strip()
+    system = load_nested_prompt_file("llm/custom_hazard_dimension_validation.txt")
 
     payload = {
         "selected_country": country,
@@ -234,30 +226,35 @@ Rules:
                 "hazard_definition_fit": {
                     "score": 0,
                     "reason": "",
+                    "confidence": "low | medium | high",
                     "needs_clarification": False,
                     "clarification_question": "",
                 },
                 "twin_transition_policy_fit": {
                     "score": 0,
                     "reason": "",
+                    "confidence": "low | medium | high",
                     "needs_clarification": False,
                     "clarification_question": "",
                 },
                 "selected_sector_fit": {
                     "score": 0,
                     "reason": "",
+                    "confidence": "low | medium | high",
                     "needs_clarification": False,
                     "clarification_question": "",
                 },
                 "country_region_fit": {
                     "score": 0,
                     "reason": "",
+                    "confidence": "low | medium | high",
                     "needs_clarification": False,
                     "clarification_question": "",
                 },
                 "affected_groups_fit": {
                     "score": 0,
                     "reason": "",
+                    "confidence": "low | medium | high",
                     "needs_clarification": False,
                     "clarification_question": "",
                 },
@@ -275,18 +272,18 @@ Rules:
                 {
                     "existing_hazard": "",
                     "similarity_score": 0,
+                    "confidence": "low | medium | high",
                     "reason": "",
                 }
             ],
-            "recommended_next_action": "ask_clarification | ask_duplicate_confirmation | review_groups | validate | reject",
+            "recommended_next_action": " | ".join(CustomHazardAction.values()),
             "clarification_questions": [],
         },
     }
 
-    user = (
-        "Validate this custom hazard using the supplied context and schema.\n"
-        "Return JSON only.\n\n"
-        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    user = render_prompt_template(
+        "llm/custom_hazard_dimension_validation_user.txt",
+        payload=json.dumps(payload, ensure_ascii=False, indent=2),
     )
 
     try:
@@ -342,11 +339,18 @@ def _heuristic_dimension_validation(
     group_score = 8 if groups else 4
 
     hazard_terms = {
-        "risk", "hazard", "harm", "burden", "unaffordable", "exclusion",
-        "vulnerable", "shortage", "loss", "disruption", "power cut",
-        "arrears", "fines", "penalty", "job loss", "cost increase"
+        "risk", "hazard", "harm", "burden", "cost", "costs", "higher",
+        "unaffordable", "exclusion", "vulnerable", "shortage", "loss",
+        "disruption", "power cut", "arrears", "fines", "penalty",
+        "job loss", "cost increase"
     }
-    hazard_definition_score = 8 if any(term in lower for term in hazard_terms) else 3
+    softer_hazard_terms = {"uncertainty", "pressure", "barrier", "delay"}
+    if any(term in lower for term in hazard_terms):
+        hazard_definition_score = 8
+    elif any(term in lower for term in softer_hazard_terms):
+        hazard_definition_score = 6
+    else:
+        hazard_definition_score = 3
     return {
         "dimension_scores": {
             "hazard_definition_fit": _score_payload(
@@ -394,6 +398,19 @@ def _merged_state(previous_state: dict[str, Any] | None) -> dict[str, Any]:
     state = default_custom_hazard_state()
     if isinstance(previous_state, dict):
         state.update(previous_state)
+    state["confidence"] = ConfidenceLevel.coerce(
+        state.get("confidence"),
+        ConfidenceLevel.LOW,
+    ).value
+    state["status"] = CustomHazardStatus.coerce(
+        state.get("status"),
+        CustomHazardStatus.DRAFT,
+    ).value
+    if state.get("next_action"):
+        state["next_action"] = CustomHazardAction.coerce(
+            state.get("next_action"),
+            CustomHazardAction.ASK_CLARIFICATION,
+        ).value
     return state
 
 
@@ -404,16 +421,21 @@ def _coerce_validation_result(value: dict[str, Any] | None) -> dict[str, Any] | 
     if not isinstance(dimensions, dict):
         return None
     coerced = {"dimension_scores": {}, "affected_groups": [], "duplicate_candidates": []}
+    fallback_score = _fallback_dimension_score(dimensions)
     for key in DIMENSION_WEIGHTS:
         item = dimensions.get(key)
         if not isinstance(item, dict):
-            return None
+            item = {
+                "score": fallback_score,
+                "reason": "Inferred from the available validation dimensions.",
+            }
         score = _clamp_score(item.get("score"))
         question = str(item.get("clarification_question") or "").strip()
         needs_clarification = score < 5
         coerced["dimension_scores"][key] = {
             "score": score,
             "reason": str(item.get("reason") or "").strip(),
+            "confidence": _coerce_confidence(item.get("confidence"), score).value,
             "needs_clarification": needs_clarification,
             "clarification_question": question if needs_clarification else "",
         }
@@ -432,6 +454,7 @@ def _score_payload(score: int, reason: str, question: str) -> dict[str, Any]:
     return {
         "score": score,
         "reason": reason,
+        "confidence": _confidence_for_score(score).value,
         "needs_clarification": score < 5,
         "clarification_question": question if score < 5 else "",
     }
@@ -446,7 +469,7 @@ def _overall_score(dimensions: dict[str, Any]) -> int:
     return round(weighted * 10)
 
 
-def _recommended_action(result: dict[str, Any], state: dict[str, Any]) -> str:
+def _recommended_action(result: dict[str, Any], state: dict[str, Any]) -> CustomHazardAction:
     score = int(result.get("overall_score") or 0)
     scores = [*state.get("scores", []), score]
     round_number = int(state.get("validation_round") or 0)
@@ -469,33 +492,39 @@ def _recommended_action(result: dict[str, Any], state: dict[str, Any]) -> str:
     unresolved_required_gap = critical_low or groups_low
 
     if result.get("duplicate_candidates") and not state.get("duplicate_override_confirmed"):
-        return "ask_duplicate_confirmation"
+        return CustomHazardAction.ASK_DUPLICATE_CONFIRMATION
 
     if unresolved_required_gap:
         if flattened:
-            return "reject"
-        return "ask_clarification"
+            return CustomHazardAction.REJECT
+        return CustomHazardAction.ASK_CLARIFICATION
 
     if result.get("affected_groups") and not state.get("confirmed_affected_groups"):
-        return "review_groups"
+        return CustomHazardAction.REVIEW_GROUPS
 
     if score >= 75:
-        return "validate"
+        return CustomHazardAction.VALIDATE
     if flattened:
-        return "validate"
+        return CustomHazardAction.VALIDATE
     if critical_low or groups_low:
-        return "ask_clarification"
-    return "validate"
+        return CustomHazardAction.ASK_CLARIFICATION
+    return CustomHazardAction.VALIDATE
 
 
-def _status_for_action(action: str) -> str:
+def _status_for_action(action: str | CustomHazardAction) -> CustomHazardStatus:
+    action_value = CustomHazardAction.coerce(
+        action,
+        CustomHazardAction.ASK_CLARIFICATION,
+    ).value
     return {
-        "ask_clarification": "needs_clarification",
-        "ask_duplicate_confirmation": "needs_duplicate_confirmation",
-        "review_groups": "needs_group_review",
-        "validate": "ready",
-        "reject": "rejected",
-    }.get(action, "needs_clarification")
+        CustomHazardAction.ASK_CLARIFICATION.value: CustomHazardStatus.NEEDS_CLARIFICATION,
+        CustomHazardAction.ASK_DUPLICATE_CONFIRMATION.value: (
+            CustomHazardStatus.NEEDS_DUPLICATE_CONFIRMATION
+        ),
+        CustomHazardAction.REVIEW_GROUPS.value: CustomHazardStatus.NEEDS_GROUP_REVIEW,
+        CustomHazardAction.VALIDATE.value: CustomHazardStatus.READY,
+        CustomHazardAction.REJECT.value: CustomHazardStatus.REJECTED,
+    }.get(action_value, CustomHazardStatus.NEEDS_CLARIFICATION)
 
 
 def _duplicate_candidates(
@@ -513,6 +542,9 @@ def _duplicate_candidates(
                 {
                     "existing_hazard": existing,
                     "similarity_score": _clamp_percent(item.get("similarity_score")),
+                    "confidence": _confidence_for_percent(
+                        _clamp_percent(item.get("similarity_score"))
+                    ).value,
                     "reason": str(item.get("reason") or "The hazards appear similar.").strip(),
                 }
             )
@@ -523,6 +555,7 @@ def _duplicate_candidates(
                 {
                     "existing_hazard": existing,
                     "similarity_score": round(score * 100),
+                    "confidence": _confidence_for_percent(round(score * 100)).value,
                     "reason": "The proposed hazard is the same as, or very similar to, an existing hazard.",
                 }
             )
@@ -553,7 +586,11 @@ def _extract_affected_groups(text: str) -> list[dict[str, Any]]:
                         "group": label[:120],
                         "source_text": match.group(0).strip(),
                         "reason": "Explicitly named in the hazard or clarification text.",
-                        "confidence": "high" if label.casefold() in POLICY_GROUPS else "medium",
+                        "confidence": (
+                            ConfidenceLevel.HIGH
+                            if label.casefold() in POLICY_GROUPS
+                            else ConfidenceLevel.MEDIUM
+                        ).value,
                         "needs_review": True,
                     }
                 )
@@ -578,7 +615,7 @@ def _coerce_group(group: dict[str, Any]) -> dict[str, Any]:
         "group": label[:120],
         "source_text": str(group.get("source_text") or label).strip()[:240],
         "reason": str(group.get("reason") or group.get("explanation") or "").strip(),
-        "confidence": str(group.get("confidence") or "medium").strip().lower(),
+        "confidence": _coerce_confidence(group.get("confidence")).value,
         "needs_review": bool(group.get("needs_review", True)),
         **({"source": group.get("source")} if group.get("source") else {}),
         **({"confirmed": group.get("confirmed")} if "confirmed" in group else {}),
@@ -619,8 +656,20 @@ def _dimension_card(key: str, dimensions: dict[str, Any]) -> dict[str, Any]:
         "title": DIMENSION_TITLES[key],
         "status": status,
         "score": score,
-        "reason": str(item.get("reason") or "Not checked yet.").strip() if isinstance(item, dict) else "Not checked yet.",
-        "clarification_question": str(item.get("clarification_question") or "").strip() or None if isinstance(item, dict) else None,
+        "confidence": _coerce_confidence(
+            item.get("confidence") if isinstance(item, dict) else None,
+            raw_score,
+        ).value,
+        "reason": (
+            str(item.get("reason") or "Not checked yet.").strip()
+            if isinstance(item, dict)
+            else "Not checked yet."
+        ),
+        "clarification_question": (
+            str(item.get("clarification_question") or "").strip() or None
+            if isinstance(item, dict)
+            else None
+        ),
     }
 
 
@@ -628,15 +677,26 @@ def _duplicate_card(state: dict[str, Any]) -> dict[str, Any]:
     candidates = state.get("duplicate_candidates") if isinstance(state.get("duplicate_candidates"), list) else []
     confirmed = bool(state.get("duplicate_override_confirmed"))
     if candidates and not confirmed:
-        status = "WARNING"
+        status = GroundingStatus.WARNING.value
         reason = f"This hazard appears similar to an existing hazard: '{candidates[0].get('existing_hazard')}'."
     elif candidates and confirmed:
-        status = "CONFIRMED"
+        status = GroundingStatus.CONFIRMED.value
         reason = "The user chose to continue with the custom hazard despite a possible duplicate."
     else:
-        status = "SUPPORTED"
+        status = GroundingStatus.SUPPORTED.value
         reason = "No duplicate hazard was detected in the selected sector."
-    return {"title": "Duplicate check", "status": status, "score": None, "reason": reason, "clarification_question": None}
+    return {
+        "title": "Duplicate check",
+        "status": status,
+        "score": None,
+        "confidence": (
+            ConfidenceLevel.HIGH.value
+            if status != GroundingStatus.WARNING.value
+            else ConfidenceLevel.MEDIUM.value
+        ),
+        "reason": reason,
+        "clarification_question": None,
+    }
 
 
 def _affected_groups_card(state: dict[str, Any]) -> dict[str, Any]:
@@ -644,11 +704,22 @@ def _affected_groups_card(state: dict[str, Any]) -> dict[str, Any]:
     if groups:
         names = [str(group.get("group") or group.get("name") or "").strip() for group in groups if isinstance(group, dict)]
         reason = "Identified groups: " + ", ".join([name for name in names if name])
-        status = "CONFIRMED" if state.get("confirmed_affected_groups") else "NEEDS CLARIFICATION"
+        status = (
+            GroundingStatus.CONFIRMED.value
+            if state.get("confirmed_affected_groups")
+            else GroundingStatus.NEEDS_CLARIFICATION.value
+        )
     else:
         reason = "No qualified affected population groups have been confirmed."
-        status = "INSUFFICIENT INFO"
-    return {"title": "Affected population groups", "status": status, "score": None, "reason": reason, "clarification_question": None}
+        status = GroundingStatus.INSUFFICIENT_INFO.value
+    return {
+        "title": "Affected population groups",
+        "status": status,
+        "score": None,
+        "confidence": ConfidenceLevel.HIGH.value if groups else ConfidenceLevel.LOW.value,
+        "reason": reason,
+        "clarification_question": None,
+    }
 
 
 def _profile_reason_card(state: dict[str, Any]) -> dict[str, Any]:
@@ -658,21 +729,26 @@ def _profile_reason_card(state: dict[str, Any]) -> dict[str, Any]:
         if isinstance(group, dict) and not str(group.get("reason") or "").strip()
     ]
     if missing:
-        status = "NEEDS CLARIFICATION"
+        status = GroundingStatus.NEEDS_CLARIFICATION.value
         reason = "A user-added affected group needs an impact reason."
         question = f"How does this hazard affect '{missing[0].get('group')}'?"
     elif added:
-        status = "CONFIRMED"
+        status = GroundingStatus.CONFIRMED.value
         reason = "Every user-added affected group has an impact reason."
         question = None
     else:
-        status = "INSUFFICIENT INFO"
+        status = GroundingStatus.INSUFFICIENT_INFO.value
         reason = "No user-added affected group impact reason has been provided."
         question = None
     return {
         "title": "Custom profile impact reason",
         "status": status,
         "score": None,
+        "confidence": (
+            ConfidenceLevel.HIGH.value
+            if status == GroundingStatus.CONFIRMED.value
+            else ConfidenceLevel.LOW.value
+        ),
         "reason": reason,
         "clarification_question": question,
     }
@@ -688,17 +764,17 @@ def _clarification_progress_card(state: dict[str, Any]) -> dict[str, Any]:
         and abs(improvement) < CLARIFICATION_IMPROVEMENT_THRESHOLD
     )
     if round_number == 0:
-        status = "INSUFFICIENT INFO"
+        status = GroundingStatus.INSUFFICIENT_INFO.value
         reason = "No clarification rounds have been run yet."
     elif flattened:
-        status = "READY"
+        status = GroundingStatus.READY.value
         reason = (
             f"Validation round {round_number}. Score improvement is "
             f"{improvement:.0f} points, below the "
             f"{CLARIFICATION_IMPROVEMENT_THRESHOLD}-point threshold, so clarification has flattened."
         )
     else:
-        status = "CONFIRMED"
+        status = GroundingStatus.CONFIRMED.value
         if improvement is None:
             reason = f"Validation round {round_number}. Waiting to compare score improvement after the next round."
         else:
@@ -707,6 +783,11 @@ def _clarification_progress_card(state: dict[str, Any]) -> dict[str, Any]:
         "title": "Clarification progress",
         "status": status,
         "score": None,
+        "confidence": (
+            ConfidenceLevel.MEDIUM.value
+            if status in {GroundingStatus.READY.value, GroundingStatus.CONFIRMED.value}
+            else ConfidenceLevel.LOW.value
+        ),
         "reason": reason,
         "clarification_question": None,
     }
@@ -714,12 +795,22 @@ def _clarification_progress_card(state: dict[str, Any]) -> dict[str, Any]:
 
 def _validation_readiness_card(state: dict[str, Any]) -> dict[str, Any]:
     score = int(state.get("overall_score") or 0)
-    status = "READY" if score >= 75 or state.get("status") == "ready" else ("REJECTED" if state.get("status") == "rejected" else "WARNING")
+    if score >= 75 or state.get("status") == CustomHazardStatus.READY.value:
+        status = GroundingStatus.READY.value
+    elif state.get("status") == CustomHazardStatus.REJECTED.value:
+        status = GroundingStatus.REJECTED.value
+    else:
+        status = GroundingStatus.WARNING.value
     return {
         "title": "Validation readiness",
         "status": status,
         "score": score,
-        "reason": "Ready to move to validation." if status == "READY" else "More support may be needed before validation.",
+        "confidence": _confidence_for_percent(score).value,
+        "reason": (
+            "Ready to move to validation."
+            if status == GroundingStatus.READY.value
+            else "More support may be needed before validation."
+        ),
         "clarification_question": None,
     }
 
@@ -778,6 +869,39 @@ def _clamp_percent(value: Any) -> int:
     if number <= 10:
         number *= 10
     return max(0, min(100, number))
+
+
+def _fallback_dimension_score(dimensions: dict[str, Any]) -> int:
+    scores = [
+        _clamp_score(item.get("score"))
+        for item in dimensions.values()
+        if isinstance(item, dict)
+    ]
+    if not scores:
+        return 0
+    return round(sum(scores) / len(scores))
+
+
+def _confidence_for_score(score: int) -> ConfidenceLevel:
+    if score >= 8:
+        return ConfidenceLevel.HIGH
+    if score >= 5:
+        return ConfidenceLevel.MEDIUM
+    return ConfidenceLevel.LOW
+
+
+def _confidence_for_percent(score: int) -> ConfidenceLevel:
+    if score >= 75:
+        return ConfidenceLevel.HIGH
+    if score >= 50:
+        return ConfidenceLevel.MEDIUM
+    return ConfidenceLevel.LOW
+
+
+def _coerce_confidence(value: Any, score: int | None = None) -> ConfidenceLevel:
+    if score is not None:
+        return ConfidenceLevel.coerce(value, _confidence_for_score(score))
+    return ConfidenceLevel.coerce(value, ConfidenceLevel.MEDIUM)
 
 
 def _parse_json_object(text: str) -> dict[str, Any] | None:

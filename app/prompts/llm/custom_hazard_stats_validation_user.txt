@@ -1,0 +1,29 @@
+Validate whether the proposed new regional hazard is a reasonable negative impact or risk of twin-transition policies for the selected country and sector, and does not contradict the sector statistics, survey findings, or prompt context.
+
+Sector: {sector}
+Country: {country}
+Region: {region}
+Existing hazards:
+{existing_hazards}
+
+Proposed hazard: {hazard}
+Reason: {reason}
+Evidence: {evidence}
+
+Return ONLY valid JSON with this exact shape:
+{{"valid": true, "reason": "short validation explanation"}}
+
+Example valid response:
+{{"valid": true, "reason": "The reason aligns with the survey context."}}
+
+Example invalid response:
+{{"valid": false, "reason": "The reason contradicts the sector context or is too vague to evaluate."}}
+
+Rules:
+- valid should be true only when the hazard and reason are meaningful, country/sector-relevant, compatible with the loaded context, and clearly connected to twin-transition policy impacts, even if the exact regional hazard is not explicitly named in the statistics.
+- User-added regional hazards may extend the system hazard list; do not reject solely because the hazard is new or locally specific.
+- If URL/file evidence excerpts are retrieved for this session, use them as additional support, but do not require optional evidence when the reason itself is clear and plausible.
+- valid must be false only when the reason or supplied evidence clearly contradicts the statistics, confuses predictors with hazards, invents unsupported numbers as facts, is unrelated to the sector, is unrelated to the selected country, is unrelated to twin-transition policies, or is too vague/generic to evaluate.
+- General household safety risks, such as carbon monoxide poisoning from domestic heating or cooking, are not valid unless the hazard/reason clearly explains which green or digital transition policy creates or increases that risk.
+- Treat the selected sector as a hard boundary. If the hazard or reason mainly belongs to Transport while the selected sector is Energy or Housing, return valid false. If it mainly belongs to Energy or Housing while the selected sector is Transport, return valid false. If Energy and Housing are separate selected sectors in the data, do not approve a hazard for one when its mechanism mainly belongs to the other.
+- The reason field must be useful to the user and under 60 words.

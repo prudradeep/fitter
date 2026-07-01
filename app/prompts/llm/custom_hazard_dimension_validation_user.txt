@@ -1,0 +1,4 @@
+Validate this custom hazard using the supplied context and schema.
+Return JSON only.
+
+{payload}

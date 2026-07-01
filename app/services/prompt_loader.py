@@ -25,3 +25,24 @@ def load_sector_prompt(sector: str | None) -> str:
     if not prompt_path.exists():
         prompt_path = PROMPT_DIR / "Default_system_prompt.txt"
     return prompt_path.read_text(encoding="utf-8").strip()
+
+
+@lru_cache
+def load_prompt_file(filename: str) -> str:
+    prompt_path = (PROMPT_DIR / filename).resolve()
+    if not prompt_path.exists() or prompt_path.parent != PROMPT_DIR.resolve():
+        raise FileNotFoundError(f"Prompt file not found: {filename}")
+    return prompt_path.read_text(encoding="utf-8").strip()
+
+
+@lru_cache
+def load_nested_prompt_file(filename: str) -> str:
+    prompt_path = (PROMPT_DIR / filename).resolve()
+    prompt_root = PROMPT_DIR.resolve()
+    if not prompt_path.exists() or prompt_root not in prompt_path.parents:
+        raise FileNotFoundError(f"Prompt file not found: {filename}")
+    return prompt_path.read_text(encoding="utf-8").strip()
+
+
+def render_prompt_template(filename: str, **context: object) -> str:
+    return load_nested_prompt_file(filename).format(**context).strip()

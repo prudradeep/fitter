@@ -1,0 +1,11 @@
+Selected context:
+- Sector: {sector}
+
+List all the hazards perceived for the selected sector. Return ONLY valid JSON, an array of hazard names like:
+["hazard name", "another hazard name"]
+
+Rules:
+- Use only hazards named in the sector prompt.
+- Each item must be only the hazard name.
+- Do not include profiles, explanations, Markdown, or code fences.
+- If the sector analysis is unavailable, return ["Analysis not available"].

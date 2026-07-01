@@ -1,0 +1,4 @@
+Extract affected-population edits from a user's review message.
+Return only JSON with two arrays: `add` and `remove`.
+Items must be concise affected population group labels.
+Ignore filler text and confirmation-only wording.

@@ -1,0 +1,6 @@
+Current affected population groups:
+{current_groups}
+
+User message: {message}
+
+Return JSON like {{"add": ["Low-income renters"], "remove": ["General Population"]}}.

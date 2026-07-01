@@ -1,0 +1,25 @@
+Review the proposed socio-demographic profile names.
+
+Sector: {sector}
+Country: {country}
+Region: {region}
+Selected hazard: {selected_hazard}
+
+Proposed profiles:
+{profiles}
+
+Return ONLY valid JSON with this exact shape:
+{{"valid": true, "reason": "The profile names are recognizable and meaningful."}}
+
+Validation checks:
+- Each item should be a recognizable socio-demographic group, population segment, household type, worker group, age group, income group, location-based group, or other affected profile.
+- The text must be valid and meaningful as a profile name.
+- Random characters, keyboard mashing, gibberish, or unrecognizable text is invalid.
+- Text that is too short to determine intent is invalid.
+- A profile should not be a mitigation measure, policy action, hazard, evidence URL, file name, or full sentence unrelated to affected people.
+
+Rules:
+- valid must be false if any proposed profile is invalid, ambiguous, too generic to identify a group, or unrelated to people/groups.
+- valid may be true for concise phrases such as 'low-income households', 'rural residents', 'older adults', or 'small business owners'.
+- If invalid, the reason must name the weak profile and ask the user to rewrite it as a clear affected group.
+- Keep reason under 60 words.

@@ -1,0 +1,15 @@
+Compare the proposed hazard with the existing hazard list.
+
+Treat it as duplicate when it has the same meaning, is a close paraphrase, uses different wording for the same policy risk, or is written in another language but means the same thing.
+
+Do not mark it duplicate merely because it is in the same broad topic area; the hazard mechanism or affected outcome must be substantially the same.
+
+Existing hazards:
+{existing_hazards}
+
+Proposed hazard: {hazard}
+
+Return ONLY valid JSON with this exact shape:
+{{"duplicate": false, "match": "", "reason": "short explanation"}}
+
+If duplicate is true, match must be the closest existing hazard. Keep reason under 40 words.

@@ -1,0 +1,4 @@
+User message:
+{user_message}
+
+Answer in flowing paragraphs. Stay grounded in the statistical context, the retrieved knowledge, the examples, and the validated mitigation measure/reason.

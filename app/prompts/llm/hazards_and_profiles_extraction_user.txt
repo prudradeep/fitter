@@ -1,0 +1,11 @@
+Return ONLY valid JSON: an array of objects with this shape:
+[{{"hazard": "hazard name", "profiles": [{{"variable_name": "raw predictor variable only", "profile": "human-readable profile", "name": "human-readable profile", "explanation": "short plain-language explanation", "statistical_basis": "brief source-grounded basis", "source": "sector_prompt"}}]}}]
+
+Rules:
+- Include every HAZARD found in the RAG excerpts.
+- For hazards with zero confirmed predictors, use an empty profiles array.
+- Create one profile object for each confirmed PREDICTOR entry.
+- Store only the raw predictor variable name in variable_name; never include IDs like 1A or 2B.
+- Keep profile names concise and human-readable.
+- Include lower-concern/protective predictors too and label them in the explanation.
+- Do not include Markdown, comments, or text outside the JSON.

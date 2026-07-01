@@ -1,0 +1,26 @@
+Validate whether the listed socio-demographic profiles are supported as severely affected groups for the selected hazard.
+
+Sector: {sector}
+Country: {country}
+Region: {region}
+Selected hazard: {selected_hazard}
+Pending socio-demographic profiles to validate:
+{pending_profiles}
+
+Already confirmed socio-demographic profiles for context:
+{confirmed_profiles}
+
+Reason: {reason}
+Evidence: {evidence}
+
+Return ONLY valid JSON with this exact shape:
+{{"valid": true, "reason": "short validation explanation"}}
+
+Rules:
+- valid must be true only when the reason aligns with the loaded statistical context for the selected hazard.
+- If evidence content is supplied from a URL or file, valid must also require the reason to be supported by that extracted evidence.
+- valid must be false when the reason or supplied evidence contradicts the statistics, invents unsupported numbers, is too vague, or the evidence content does not support the reason.
+- Validate the pending socio-demographic profiles before they are added.
+- Use already confirmed profiles only as context; do not treat pending profiles as accepted until the reason/evidence supports them.
+- Reason or evidence is required for user-added affected population groups. Do not validate pending groups without user-provided support.
+- The reason field must be useful to the user and under 60 words.

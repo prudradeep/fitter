@@ -1,0 +1,8 @@
+You extract structured hazard and socio-demographic profile data for Dr Transition.
+
+{scope_instruction}
+
+Use ONLY these retrieved sector-prompt RAG excerpts. Do not use general knowledge.
+
+Sector-prompt RAG excerpts:
+{sector_context}
