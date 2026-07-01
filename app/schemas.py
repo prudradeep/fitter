@@ -32,6 +32,7 @@ class SessionSummary(BaseModel):
     practical_considerations: list[str] = Field(default_factory=list)
     additional_hazards: list[str] = Field(default_factory=list)
     additional_hazard_population: list[dict[str, object]] = Field(default_factory=list)
+    custom_hazard: dict[str, object] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -45,3 +46,5 @@ class ChatResponse(BaseModel):
     input_values: dict[str, str] = Field(default_factory=dict)
     error: bool = False
     validation_details: dict[str, object] | None = None
+    custom_hazard: dict[str, object] | None = None
+    custom_hazard_grounding_status: list[dict[str, object]] = Field(default_factory=list)

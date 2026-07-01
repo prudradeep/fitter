@@ -67,6 +67,7 @@ class ChatSession:
     suggested_duplicate_hazard: str | None = None
     suggested_duplicate_hazard_record_id: int | None = None
     pending_affected_population_profiles: list[dict[str, str]] | None = None
+    custom_hazard: dict[str, object] | None = None
     pending_fuzzy_option: str | None = None
     stats_dialog_conversation: list[dict[str, str]] | None = None
 
@@ -128,6 +129,7 @@ class ChatSession:
                 if str(hazard).strip()
             ],
             additional_hazard_population=self._additional_hazard_population_summary(),
+            custom_hazard=dict(self.custom_hazard) if isinstance(self.custom_hazard, dict) else None,
         )
 
     def eligible_hazard_profile_count(self) -> int:

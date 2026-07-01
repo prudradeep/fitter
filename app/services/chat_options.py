@@ -31,16 +31,21 @@ HAZARD_ENTRY_OPTIONS = [
 ]
 
 HAZARD_DUPLICATE_OPTIONS = [
-    Option(id=1, label="Continue with this hazard"),
-    Option(id=2, label="Explore suggested hazard"),
-    Option(id=3, label="Write hazard again"),
+    Option(id=1, label="Continue with custom hazard"),
+    Option(id=2, label="Use existing hazard"),
+    Option(id=3, label="Edit custom hazard"),
 ]
 
 HAZARD_POPULATION_REVIEW_OPTIONS = [
-    Option(id=1, label="Continue"),
+    Option(id=1, label="Confirm affected groups"),
 ]
 
 MITIGATION_DUPLICATE_OPTIONS = [
+    Option(id=1, label="Yes"),
+    Option(id=2, label="No"),
+]
+
+FUZZY_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No"),
 ]

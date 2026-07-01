@@ -3245,6 +3245,14 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   line-height: 1.45;
 }
 
+.validation-clarification-question {
+  margin: 2px 0 0;
+  border-left: 3px solid #f59e0b;
+  padding-left: 7px;
+  color: #78350f;
+  line-height: 1.45;
+}
+
 .validation-badge {
   width: fit-content;
   border-radius: 999px;

@@ -1000,8 +1000,11 @@ function renderStageIcons(key, session = {}, options = currentOptions, { keepMap
   const topHazardKey = (session.top_hazards || [])
     .map((hazard) => `${hazard.hazard}:${hazard.regional_population_pct}:${hazard.national_population_pct}`)
     .join("|");
+  const additionalHazardKey = additionalHazardPopulationRows(session)
+    .map((hazard) => `${hazard.hazard}:${hazard.regional_population_pct}:${hazard.national_population_pct}`)
+    .join("|");
   const practicalKey = (session.practical_considerations || []).join("|");
-  const visualKey = `icons-${key}-${hazardContextOnly && !practicalVisible ? "context-only" : "summary"}-${currentStep}-${session.country || ""}-${session.selected_hazard || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${practicalKey}-${options.map((option) => option.label).join("|")}`;
+  const visualKey = `icons-${key}-${hazardContextOnly && !practicalVisible ? "context-only" : "summary"}-${currentStep}-${session.country || ""}-${session.selected_hazard || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${additionalHazardKey}-${practicalKey}-${options.map((option) => option.label).join("|")}`;
   if (renderedStageCardsKey === visualKey) return;
   renderedStageCardsKey = visualKey;
   if (!keepMap) stageVisualRenderId += 1;
@@ -1375,7 +1378,17 @@ function configureMic() {
   };
 }
 
-function placeholderForStep(step, options = []) {
+function hasPendingCustomProfileReason(session = currentSession) {
+  return Boolean(String(session?.custom_hazard?.pending_profile_reason_group || "").trim());
+}
+
+function placeholderForStep(step, options = [], session = currentSession) {
+  if (step === "custom_hazard_profile_reason" || hasPendingCustomProfileReason(session)) {
+    const group = String(session?.custom_hazard?.pending_profile_reason_group || "").trim();
+    return group
+      ? `Explain how this hazard affects ${group}...`
+      : "Explain how this hazard affects the added group...";
+  }
   if (options.length) {
     const optionLabels = options.map((option) => option.label);
     if (step === "hazard_profile_selection") {
@@ -1399,6 +1412,9 @@ function placeholderForStep(step, options = []) {
     if (step === "mitigation_review") {
       return "Ask about this mitigation, or move to next step...";
     }
+    if (step === "custom_hazard_group_review") {
+      return "Type a group to remove, or add/edit an affected group...";
+    }
     if (step === "target_population_question" || step === "add_dgs") {
       return "Choose a socio-demographic option...";
     }
@@ -1411,6 +1427,8 @@ function placeholderForStep(step, options = []) {
   const placeholders = {
     add_dgs: "Choose socio-demographic options...",
     hazards: "Type the hazard you want to add...",
+    custom_hazard_group_review: "Type a group to remove, or add/edit an affected group...",
+    custom_hazard_profile_reason: "Explain how this hazard affects the added group...",
     mitigation: "Ask a mitigation question or continue the plan...",
     mitigation_clarity: "Answer all clarification questions...",
     evaluation_question: "Use the score slider below...",
@@ -2175,10 +2193,53 @@ function renderValidationDetails(row, details) {
   summary.textContent = details.title || "Validation status";
   panel.appendChild(summary);
 
+  const customHazardCards = Array.isArray(details.custom_hazard_grounding_status)
+    ? details.custom_hazard_grounding_status
+    : [];
+  if (customHazardCards.length) {
+    const grid = document.createElement("div");
+    grid.className = "validation-dimension-grid custom-hazard-grounding-grid";
+    customHazardCards.forEach((card) => {
+      const item = document.createElement("div");
+      item.className = "validation-dimension custom-hazard-grounding-card";
+
+      const label = document.createElement("span");
+      label.textContent = String(card?.title || "Status");
+      const badge = document.createElement("strong");
+      badge.className = `validation-badge validation-badge-${validationStatusClass(card?.status)}`;
+      badge.textContent = String(card?.status || "INSUFFICIENT INFO");
+      item.append(label, badge);
+
+      if (card?.score !== null && card?.score !== undefined && card?.score !== "") {
+        const scoreText = document.createElement("small");
+        scoreText.textContent = `Score: ${formatValidationPercent(card.score)}/100`;
+        item.appendChild(scoreText);
+      }
+
+      const reason = String(card?.reason || "").trim();
+      if (reason) {
+        const reasonText = document.createElement("p");
+        reasonText.className = "validation-dimension-explanation";
+        reasonText.textContent = reason;
+        item.appendChild(reasonText);
+      }
+
+      const question = String(card?.clarification_question || "").trim();
+      if (question) {
+        const questionText = document.createElement("p");
+        questionText.className = "validation-clarification-question";
+        questionText.textContent = question;
+        item.appendChild(questionText);
+      }
+      grid.appendChild(item);
+    });
+    panel.appendChild(grid);
+  }
+
   const dimensions = details.dimensions && typeof details.dimensions === "object"
     ? details.dimensions
     : {};
-  if (Object.keys(dimensions).length) {
+  if (!customHazardCards.length && Object.keys(dimensions).length) {
     const grid = document.createElement("div");
     grid.className = "validation-dimension-grid";
     Object.entries(dimensions).forEach(([name, value]) => {
@@ -2257,14 +2318,19 @@ function validationLabel(value) {
 
 function validationStatusClass(status) {
   const normalized = String(status || "").toLowerCase();
-  if (["clear", "supported"].includes(normalized)) return "pass";
-  if (["contradicted"].includes(normalized)) return "fail";
+  if (["clear", "supported", "confirmed", "ready"].includes(normalized)) return "pass";
+  if (["contradicted", "rejected"].includes(normalized)) return "fail";
   return "pending";
 }
 
 function formatValidationNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(2) : String(value);
+}
+
+function formatValidationPercent(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? String(Math.round(number)) : String(value);
 }
 
 function formatValidationMetric(name, value) {
@@ -2313,20 +2379,21 @@ function setLoading(value) {
   });
 }
 
-function setInputMode(mode = "text", step = "", options = []) {
-  inputMode = mode;
+function setInputMode(mode = "text", step = "", options = [], session = currentSession) {
+  const effectiveMode = hasPendingCustomProfileReason(session) ? "textarea" : mode;
+  inputMode = effectiveMode;
   currentOptions = options || [];
   syncTargetPopulationQuestion(step, currentOptions);
-  updateStageVisual(step, currentSession, currentOptions);
-  const reasonEvidenceMode = mode === "reason_evidence" || mode === "mitigation_measure";
-  const evaluationMode = mode === "evaluation_question";
-  const textareaMode = mode === "textarea";
+  updateStageVisual(step, session || currentSession, currentOptions);
+  const reasonEvidenceMode = effectiveMode === "reason_evidence" || effectiveMode === "mitigation_measure";
+  const evaluationMode = effectiveMode === "evaluation_question";
+  const textareaMode = effectiveMode === "textarea";
   micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode || textareaMode;
-  const placeholder = placeholderForStep(step, options);
+  const placeholder = placeholderForStep(step, options, session);
   messageInput.placeholder = placeholder;
   textareaInput.placeholder = placeholder;
-  setReasonEvidencePlaceholders(step, mode);
-  reasonEvidenceFields.classList.toggle("mitigation-mode", mode === "mitigation_measure");
+  setReasonEvidencePlaceholders(step, effectiveMode);
+  reasonEvidenceFields.classList.toggle("mitigation-mode", effectiveMode === "mitigation_measure");
   messageInputRow.hidden = reasonEvidenceMode || evaluationMode;
   messageInput.hidden = textareaMode;
   textareaInput.hidden = !textareaMode;
@@ -3474,7 +3541,7 @@ async function restoreSession(nextSessionId) {
       addMessage(message.role, message.content, Boolean(message.is_error));
     });
     updateSessionCard(data.session || {});
-    setInputMode(data.input_mode || "text", data.step, data.options || []);
+    setInputMode(data.input_mode || "text", data.step, data.options || [], data.session);
     applyInputValues(data.input_values);
     renderOptions(data.options || [], data.other_options || []);
     applySavedInputState();
@@ -3644,7 +3711,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     typing.remove();
     currentStep = data.step;
     if (data.step === "stats_deep_dive_dialog") {
-      setInputMode(data.input_mode || "text", currentStep, data.options || []);
+      setInputMode(data.input_mode || "text", currentStep, data.options || [], data.session);
       updateSessionCard(data.session);
       renderOptions(data.options || [], data.other_options || []);
       await openStatsDeepDiveDialog();
@@ -3655,8 +3722,8 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     speakServerMessage(data.bot_message);
     await typeServerMessage(botRow, data.bot_message);
     renderValidationDetails(botRow, data.validation_details);
-    setInputMode(data.input_mode || "text", data.step, data.options || []);
     updateSessionCard(data.session);
+    setInputMode(data.input_mode || "text", data.step, data.options || [], data.session);
     applyInputValues(data.input_values);
     renderOptions(data.options || [], data.other_options || []);
     loadSessions();
