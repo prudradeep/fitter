@@ -31,6 +31,17 @@ CRITICAL_DIMENSIONS = (
     CustomHazardDimension.COUNTRY_REGION_FIT.value,
 )
 
+VALIDATION_THRESHOLDS = {
+    "strict": {
+        "ready_score": 75,
+        "dimension_floor": 5,
+    },
+    "easy": {
+        "ready_score": 60,
+        "dimension_floor": 4,
+    },
+}
+
 DIMENSION_TITLES = {
     CustomHazardDimension.HAZARD_DEFINITION_FIT.value: "Hazard definition",
     CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value: "Twin transition policy fit",
@@ -93,6 +104,7 @@ async def validate_custom_hazard_dimensions(
     region: str,
     known_hazards: list[str],
     previous_state: dict[str, Any] | None,
+    validation_mode: str = "strict",
 ) -> dict[str, Any]:
     state = _merged_state(previous_state)
     llm_result = await _llm_dimension_validation(
@@ -130,7 +142,7 @@ async def validate_custom_hazard_dimensions(
     )
     result["overall_score"] = _overall_score(result.get("dimension_scores", {}))
     result["confidence"] = _confidence_for_percent(result["overall_score"]).value
-    result["next_action"] = _recommended_action(result, state).value
+    result["next_action"] = _recommended_action(result, state, validation_mode).value
     result["status"] = _status_for_action(result["next_action"]).value
     return result
 
@@ -469,7 +481,14 @@ def _overall_score(dimensions: dict[str, Any]) -> int:
     return round(weighted * 10)
 
 
-def _recommended_action(result: dict[str, Any], state: dict[str, Any]) -> CustomHazardAction:
+def _recommended_action(
+    result: dict[str, Any],
+    state: dict[str, Any],
+    validation_mode: str = "strict",
+) -> CustomHazardAction:
+    thresholds = _validation_thresholds(validation_mode)
+    dimension_floor = thresholds["dimension_floor"]
+    ready_score = thresholds["ready_score"]
     score = int(result.get("overall_score") or 0)
     scores = [*state.get("scores", []), score]
     round_number = int(state.get("validation_round") or 0)
@@ -481,14 +500,15 @@ def _recommended_action(result: dict[str, Any], state: dict[str, Any]) -> Custom
     )
     dimensions = result.get("dimension_scores", {})
     critical_low = any(
-        _clamp_score(dimensions.get(key, {}).get("score") if isinstance(dimensions.get(key), dict) else 0) < 5
+        _clamp_score(dimensions.get(key, {}).get("score") if isinstance(dimensions.get(key), dict) else 0)
+        < dimension_floor
         for key in CRITICAL_DIMENSIONS
     )
     groups_low = _clamp_score(
         dimensions.get("affected_groups_fit", {}).get("score")
         if isinstance(dimensions.get("affected_groups_fit"), dict)
         else 0
-    ) < 5
+    ) < dimension_floor
     unresolved_required_gap = critical_low or groups_low
 
     if result.get("duplicate_candidates") and not state.get("duplicate_override_confirmed"):
@@ -502,13 +522,20 @@ def _recommended_action(result: dict[str, Any], state: dict[str, Any]) -> Custom
     if result.get("affected_groups") and not state.get("confirmed_affected_groups"):
         return CustomHazardAction.REVIEW_GROUPS
 
-    if score >= 75:
+    if score >= ready_score:
         return CustomHazardAction.VALIDATE
     if flattened:
         return CustomHazardAction.VALIDATE
     if critical_low or groups_low:
         return CustomHazardAction.ASK_CLARIFICATION
     return CustomHazardAction.VALIDATE
+
+
+def _validation_thresholds(validation_mode: str) -> dict[str, int]:
+    return VALIDATION_THRESHOLDS.get(
+        str(validation_mode or "").strip().casefold(),
+        VALIDATION_THRESHOLDS["strict"],
+    )
 
 
 def _status_for_action(action: str | CustomHazardAction) -> CustomHazardStatus:

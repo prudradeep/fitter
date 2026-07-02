@@ -73,6 +73,92 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(result["next_action"], "ask_duplicate_confirmation")
         self.assertEqual(result["status"], "needs_duplicate_confirmation")
 
+    def test_easy_validation_mode_accepts_borderline_dimension_scores(self):
+        dimensions = {
+            key: {"score": 4}
+            for key in [
+                "hazard_definition_fit",
+                "twin_transition_policy_fit",
+                "selected_sector_fit",
+                "country_region_fit",
+                "affected_groups_fit",
+            ]
+        }
+        result = {
+            "overall_score": 40,
+            "dimension_scores": dimensions,
+            "affected_groups": [],
+            "duplicate_candidates": [],
+        }
+
+        strict_action = validator._recommended_action(result, {}, "strict")
+        easy_action = validator._recommended_action(result, {}, "easy")
+
+        self.assertEqual(strict_action.value, "ask_clarification")
+        self.assertEqual(easy_action.value, "validate")
+
+    def test_easy_mode_accepts_soft_input_quality_rejection(self):
+        service = ChatService.__new__(ChatService)
+        service._scope_instruction = lambda session: "Stay in scope."
+        session = ChatSession(
+            country="Germany",
+            region="Saxony",
+            sector="Energy",
+            selected_hazard="Energy price shock",
+            validation_mode="easy",
+        )
+
+        with patch(
+            "app.services.chat_service.ask_llm_chat",
+            AsyncMock(return_value='{"valid": false, "reason": "Please clarify the policy link."}'),
+        ):
+            result = _run(
+                service._validate_input_quality(
+                    session=session,
+                    purpose="a reason explaining the selected hazard",
+                    fields={"Reason": "Coal phase-out increases local household heating costs."},
+                )
+            )
+
+        self.assertTrue(result["valid"])
+        self.assertIn("Easy validation accepted", result["reason"])
+
+    def test_easy_mode_relaxes_mitigation_grounding_required_dimensions(self):
+        service = ChatService.__new__(ChatService)
+        service.settings = SimpleNamespace(mitigation_support_score_floor=0.2)
+        parsed = {
+            "dimensions": {
+                "hazard_fit": {
+                    "status": "SUPPORTED",
+                    "citation_ids": ["S1"],
+                    "explanation": "The measure targets the selected hazard.",
+                },
+                "justification_soundness": {
+                    "status": "INSUFFICIENT_INFO",
+                    "citation_ids": [],
+                    "explanation": "The justification is only partly grounded.",
+                },
+            },
+            "verdict_stability": 1.0,
+            "sample_count": 1,
+        }
+
+        strict = service._score_mitigation_grounding(
+            parsed,
+            support_context="- [S1] Source, score 0.11: Evidence text.",
+            support_label=service.mitigation_support_label_curated_knowledge_base,
+            validation_mode="strict",
+        )
+        easy = service._score_mitigation_grounding(
+            parsed,
+            support_context="- [S1] Source, score 0.11: Evidence text.",
+            support_label=service.mitigation_support_label_curated_knowledge_base,
+            validation_mode="easy",
+        )
+
+        self.assertFalse(strict["valid"])
+        self.assertTrue(easy["valid"])
+
     def test_same_sector_duplicate_universe_includes_system_additional_custom_and_user_hazards(self):
         service = ChatService.__new__(ChatService)
         service.db = SimpleNamespace(

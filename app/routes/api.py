@@ -36,7 +36,11 @@ async def chat(
 ) -> ChatResponse:
     payload = await _chat_payload(request, db, current_user.id)
     service = ChatService(db, user_id=current_user.id)
-    return await service.handle_message(payload.message, payload.session_id)
+    return await service.handle_message(
+        payload.message,
+        payload.session_id,
+        payload.validation_mode,
+    )
 
 
 @router.post("/stats-deep-dive", response_model=ChatResponse)
@@ -46,7 +50,11 @@ async def stats_deep_dive(
     db: Session = Depends(get_db),
 ) -> ChatResponse:
     service = ChatService(db, user_id=current_user.id)
-    return await service.handle_stats_deep_dive_dialog(payload.message, payload.session_id)
+    return await service.handle_stats_deep_dive_dialog(
+        payload.message,
+        payload.session_id,
+        _validation_mode(payload.validation_mode),
+    )
 
 
 @router.post("/auto-user-message")
@@ -56,7 +64,10 @@ async def auto_user_message(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     service = ChatService(db, user_id=current_user.id)
-    return await service.generate_auto_user_message(payload.session_id)
+    return await service.generate_auto_user_message(
+        payload.session_id,
+        _validation_mode(payload.validation_mode),
+    )
 
 
 @router.get("/sessions")
@@ -408,11 +419,14 @@ async def knowledge_delete(
 async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequest:
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" not in content_type:
-        return ChatRequest.model_validate(await request.json())
+        payload = ChatRequest.model_validate(await request.json())
+        payload.validation_mode = _validation_mode(payload.validation_mode)
+        return payload
 
     form = await request.form()
     message = str(form.get("message") or "")
     session_id = str(form.get("session_id") or "") or None
+    validation_mode = _validation_mode(str(form.get("validation_mode") or ""))
     evidence_parts: list[str] = []
 
     evidence_url = str(form.get("evidence_url") or "").strip()
@@ -460,7 +474,15 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
     if evidence_parts:
         message = "\n".join([message.strip(), *evidence_parts]).strip()
 
-    return ChatRequest(message=message, session_id=session_id)
+    return ChatRequest(
+        message=message,
+        session_id=session_id,
+        validation_mode=validation_mode,
+    )
+
+
+def _validation_mode(value: object) -> str:
+    return "easy" if str(value or "").strip().casefold() == "easy" else "strict"
 
 
 def _knowledge_urls_from_payload(payload: dict[str, object]) -> list[str]:

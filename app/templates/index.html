@@ -72,6 +72,18 @@
                 </label>
                 <label class="settings-row">
                   <span>
+                    <strong>Validation check</strong>
+                    <small><span id="validationModeLabel">Strict</span> mode for app validations.</small>
+                  </span>
+                  <span class="voice-switch validation-mode-switch">
+                    <span class="switch-label">Easy</span>
+                    <input id="validationModeToggle" type="checkbox" />
+                    <span class="switch-track" aria-hidden="true"></span>
+                    <span class="switch-label">Strict</span>
+                  </span>
+                </label>
+                <label class="settings-row">
+                  <span>
                     <strong>Auto conversation</strong>
                     <small>Let the LLM simulate user replies for flow testing.</small>
                   </span>
@@ -608,6 +620,6 @@
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/highcharts-more.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/modules/venn.js"></script>
     <script src="{{ url_for('static', path='/js/app-utils.js') }}?v=20260701-split-assets"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260702-methodology-frame-fill"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260702-venn-compound-overlap"></script>
   </body>
 </html>

@@ -276,6 +276,16 @@
   color: #111827;
 }
 
+.validation-mode-switch {
+  gap: 6px;
+}
+
+.validation-mode-switch .switch-label {
+  color: #475569;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
 .settings-select {
   display: grid;
   gap: 7px;

@@ -118,6 +118,7 @@ from app.services.chat_selection_steps import ChatSelectionStepsMixin
 from app.services.hazard_effect_size import hazard_predictor_effect_rows
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.eurostat_service import EurostatService
+from app.services.evidence_contradiction_service import EvidenceContradictionService
 from app.services.grounding_models import GroundingModelService
 from app.services.hazard_ranking_service import HazardRankingService, slugify_hazard
 from app.services.message_renderer import markdown_to_html, render_message
@@ -212,8 +213,14 @@ class ChatService(
         self.eurostat = EurostatService(db)
         self.hazard_ranking = HazardRankingService(db)
 
-    async def handle_message(self, message: str, session_id: str | None) -> ChatResponse:
+    async def handle_message(
+        self,
+        message: str,
+        session_id: str | None,
+        validation_mode: str = "strict",
+    ) -> ChatResponse:
         clean_message = message.strip()
+        validation_mode = self._validation_mode(validation_mode)
 
         if clean_message == "/reset":
             if not self._session_belongs_to_current_user(session_id):
@@ -230,6 +237,7 @@ class ChatService(
                     logger.exception("Failed to clear temporary evidence during session reset")
             current_session_id, session = session_store.reset(session_id)
             session.session_key = current_session_id
+            session.validation_mode = validation_mode
             response = self._country_step(
                 current_session_id,
                 session,
@@ -244,6 +252,7 @@ class ChatService(
         self._hydrate_session_from_db(session_id)
         current_session_id, session = session_store.get_or_create(session_id)
         session.session_key = current_session_id
+        session.validation_mode = validation_mode
         self._ensure_user_session(current_session_id, session)
 
         response = await self._chat_response(current_session_id, session, clean_message)
@@ -259,15 +268,24 @@ class ChatService(
         self._finalize_chat_response(current_session_id, session, response)
         return response
 
+    @staticmethod
+    def _validation_mode(value: object) -> str:
+        return "easy" if str(value or "").strip().casefold() == "easy" else "strict"
+
     async def handle_stats_deep_dive_dialog(
-        self, message: str, session_id: str | None
+        self,
+        message: str,
+        session_id: str | None,
+        validation_mode: str = "strict",
     ) -> ChatResponse:
         clean_message = message.strip()
+        validation_mode = self._validation_mode(validation_mode)
         if not self._session_belongs_to_current_user(session_id):
             session_id = None
         self._hydrate_session_from_db(session_id)
         current_session_id, session = session_store.get_or_create(session_id)
         session.session_key = current_session_id
+        session.validation_mode = validation_mode
         self._ensure_user_session(current_session_id, session)
 
         if session.sector is None:
@@ -294,12 +312,18 @@ class ChatService(
         response.other_options = []
         return response
 
-    async def generate_auto_user_message(self, session_id: str | None) -> dict[str, object]:
+    async def generate_auto_user_message(
+        self,
+        session_id: str | None,
+        validation_mode: str = "strict",
+    ) -> dict[str, object]:
+        validation_mode = self._validation_mode(validation_mode)
         if not self._session_belongs_to_current_user(session_id):
             session_id = None
         self._hydrate_session_from_db(session_id)
         current_session_id, session = session_store.get_or_create(session_id)
         session.session_key = current_session_id
+        session.validation_mode = validation_mode
         self._ensure_user_session(current_session_id, session)
 
         current_response = self._repeat_current_options(current_session_id, session, "", False)
@@ -2965,6 +2989,7 @@ class ChatService(
             session.region or "",
             self._same_sector_hazard_names_for_duplicate_check(session),
             state,
+            session.validation_mode,
         )
         self._store_custom_hazard_validation_result(session, hazard, result)
         return await self._route_custom_hazard_next_action(session_id, session)
@@ -9854,6 +9879,20 @@ class ChatService(
         reason: str,
         evidence: str,
     ) -> dict[str, str | bool] | None:
+        if self._has_user_supplied_evidence(evidence):
+            contradiction_check = await self._validate_user_evidence_against_core_kb(
+                session=session,
+                claim_type="hazard",
+                claim_text=self._hazard_evidence_claim_text(session, hazard, reason),
+                evidence=evidence,
+            )
+            verdict = str(contradiction_check.get("verdict") or "").upper()
+            if verdict != "VALID":
+                return {
+                    "valid": False,
+                    "reason": self._evidence_contradiction_reason(contradiction_check),
+                }
+
         existing_hazards = "\n".join(f"- {item}" for item in (session.hazards or []))
         sector_context = await self._sector_prompt_rag_context(
             session,
@@ -10615,6 +10654,16 @@ class ChatService(
                 "valid": True,
                 "reason": "The text is understandable despite minor wording issues.",
             }
+        if (
+            not parsed.get("valid")
+            and session.validation_mode == "easy"
+            and self._fields_are_locally_meaningful(cleaned_fields)
+            and not self._is_hard_validation_rejection(str(parsed.get("reason") or ""))
+        ):
+            return {
+                "valid": True,
+                "reason": "Easy validation accepted locally meaningful input.",
+            }
         return parsed
 
     async def _validate_clarification_answer_quality(
@@ -10642,6 +10691,16 @@ class ChatService(
         if is_llm_unavailable_response(response):
             return None
         parsed = parse_validation_response(response)
+        if (
+            not parsed.get("valid")
+            and session.validation_mode == "easy"
+            and self._fields_are_locally_meaningful({"Clarification answer": answer})
+            and not self._is_hard_validation_rejection(str(parsed.get("reason") or ""))
+        ):
+            return {
+                "valid": True,
+                "reason": "Easy validation accepted locally meaningful clarification.",
+            }
         if (
             not parsed.get("valid")
             and self._is_style_only_validation_rejection(str(parsed.get("reason") or ""))
@@ -10681,7 +10740,20 @@ class ChatService(
         )
         if is_llm_unavailable_response(response):
             return None
-        return parse_validation_response(response)
+        parsed = parse_validation_response(response)
+        if (
+            not parsed.get("valid")
+            and session.validation_mode == "easy"
+            and self._fields_are_locally_meaningful(
+                {f"Profile {index}": profile for index, profile in enumerate(profiles)}
+            )
+            and not self._is_hard_validation_rejection(str(parsed.get("reason") or ""))
+        ):
+            return {
+                "valid": True,
+                "reason": "Easy validation accepted locally meaningful profile names.",
+            }
+        return parsed
 
     async def _semantic_dg_duplicate_check(
         self, session: ChatSession, dgs: list[str]
@@ -10761,7 +10833,20 @@ class ChatService(
         if is_llm_unavailable_response(response):
             return None
 
-        return parse_validation_response(response)
+        parsed = parse_validation_response(response)
+        if (
+            not parsed.get("valid")
+            and session.validation_mode == "easy"
+            and self._fields_are_locally_meaningful(
+                self._reason_evidence_quality_fields(reason, evidence)
+            )
+            and not self._is_hard_validation_rejection(str(parsed.get("reason") or ""))
+        ):
+            return {
+                "valid": True,
+                "reason": "Easy validation accepted locally meaningful reason and evidence.",
+            }
+        return parsed
 
     async def _assess_mitigation_clarity(
         self,
@@ -10803,7 +10888,17 @@ class ChatService(
         )
         if is_llm_unavailable_response(response):
             return None
-        return parse_mitigation_clarity_response(response)
+        parsed = parse_mitigation_clarity_response(response)
+        if session.validation_mode == "easy" and not parsed.get("error"):
+            dimensions = parsed.get("dimensions") if isinstance(parsed.get("dimensions"), dict) else {}
+            unresolved_count = sum(
+                1
+                for status in dimensions.values()
+                if str(status or "").upper() != "CLEAR"
+            )
+            if dimensions and unresolved_count <= 1:
+                parsed["clear"] = True
+        return parsed
 
     async def _validate_mitigation_against_stats(
         self,
@@ -10823,7 +10918,40 @@ class ChatService(
             if has_evidence
             else self.mitigation_support_label_curated_knowledge_base
         )
-        support_context = self._floor_filtered_support_context(raw_support_context)
+        if has_evidence:
+            contradiction_check = await self._validate_user_evidence_against_core_kb(
+                session=session,
+                claim_type="mitigation",
+                claim_text=self._mitigation_evidence_claim_text(
+                    session,
+                    mitigation_measure,
+                    reason,
+                ),
+                evidence=evidence,
+            )
+            verdict = str(contradiction_check.get("verdict") or "").upper()
+            if verdict != "VALID":
+                outcome = "REJECT" if verdict == "INVALID" else "ABSTAIN"
+                return {
+                    "valid": False,
+                    "outcome": outcome,
+                    "reason": self._evidence_contradiction_reason(contradiction_check),
+                    "dimensions": {},
+                    "rubric_coverage": 0.0,
+                    "retrieval_support": 0.0,
+                    "verdict_stability": 0.0,
+                    "sample_count": 1,
+                    "confidence_score": int(
+                        round(float(contradiction_check.get("confidence") or 0.0) * 100)
+                    ),
+                    "support_context": "",
+                    "support_label": support_label,
+                    "evidence_contradiction": contradiction_check,
+                }
+        support_context = self._floor_filtered_support_context(
+            raw_support_context,
+            session.validation_mode,
+        )
         valid_citation_ids = set(self._support_citation_scores(support_context))
         clarification_block = self._mitigation_clarification_history_block(session)
         context = render_prompt_template("llm/mitigation_groundedness_validation.txt")
@@ -10891,6 +11019,7 @@ class ChatService(
             support_context=support_context,
             support_label=support_label,
             has_user_evidence=has_evidence,
+            validation_mode=session.validation_mode,
         )
 
     def _sanitize_grounding_sample(
@@ -10945,8 +11074,12 @@ class ChatService(
                     dimensions.add(name)
         return dimensions
 
-    def _floor_filtered_support_context(self, support_context: str) -> str:
-        floor = self.settings.mitigation_support_score_floor
+    def _floor_filtered_support_context(
+        self,
+        support_context: str,
+        validation_mode: str = "strict",
+    ) -> str:
+        floor = self._mitigation_support_score_floor(validation_mode)
         lines: list[str] = []
         keep_current_excerpt = False
         for line in support_context.splitlines():
@@ -11060,16 +11193,19 @@ class ChatService(
         support_context: str,
         support_label: str,
         has_user_evidence: bool | None = None,
+        validation_mode: str = "strict",
     ) -> dict[str, object]:
         if has_user_evidence is None:
             has_user_evidence = support_label == self.mitigation_support_label_user_evidence
         citation_scores = self._support_citation_scores(support_context)
+        support_score_floor = self._mitigation_support_score_floor(validation_mode)
         raw_dimensions = parsed.get("dimensions")
         raw_dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
         dimensions, supported_scores = self._scored_mitigation_dimensions(
             raw_dimensions,
             citation_scores,
             has_user_evidence,
+            support_score_floor,
         )
 
         applicable_dimensions = {
@@ -11091,10 +11227,11 @@ class ChatService(
             dimension["status"] == "CONTRADICTED"
             for dimension in applicable_dimensions.values()
         )
-        all_critical_supported = bool(critical_dimensions) and all(
-            dimension["status"] == "SUPPORTED"
-            for dimension in critical_dimensions.values()
+        minimum_supported = self._minimum_supported_mitigation_dimensions(
+            len(critical_dimensions),
+            validation_mode,
         )
+        all_critical_supported = bool(critical_dimensions) and supported_count >= minimum_supported
         if has_contradiction:
             outcome = "REJECT"
         elif not all_critical_supported:
@@ -11137,7 +11274,10 @@ class ChatService(
         raw_dimensions: dict[object, object],
         citation_scores: dict[str, float],
         has_user_evidence: bool,
+        support_score_floor: float | None = None,
     ) -> tuple[dict[str, dict[str, object]], list[float]]:
+        if support_score_floor is None:
+            support_score_floor = self.settings.mitigation_support_score_floor
         dimensions: dict[str, dict[str, object]] = {}
         supported_scores: list[float] = []
         for name in self.mitigation_grounding_dimensions:
@@ -11151,7 +11291,7 @@ class ChatService(
                 for citation_id in citation_ids
                 if isinstance(citation_id, str)
                 and citation_id in citation_scores
-                and citation_scores[citation_id] >= self.settings.mitigation_support_score_floor
+                and citation_scores[citation_id] >= support_score_floor
             ]
             citation_optional = (
                 name in self.mitigation_input_supported_dimensions
@@ -11399,6 +11539,7 @@ class ChatService(
             return None
 
         citation_scores = self._support_citation_scores(support_context)
+        support_score_floor = self._mitigation_support_score_floor(session.validation_mode)
         allowed_user_fields = {
             "measure_description",
             "justification",
@@ -11413,8 +11554,7 @@ class ChatService(
             and (
                 any(
                     citation_id in citation_scores
-                    and citation_scores[citation_id]
-                    >= self.settings.mitigation_support_score_floor
+                    and citation_scores[citation_id] >= support_score_floor
                     for citation_id in claim.get("citation_ids", [])
                 )
                 or any(field in allowed_user_fields for field in claim.get("user_fields", []))
@@ -11468,6 +11608,23 @@ class ChatService(
             + caution_block
             + f"\n\n**Grounding confidence:** {confidence_score}/100. {evidence_note}"
         )
+
+    def _mitigation_support_score_floor(self, validation_mode: str = "strict") -> float:
+        floor = float(self.settings.mitigation_support_score_floor)
+        if self._validation_mode(validation_mode) == "easy":
+            return max(0.05, floor * 0.5)
+        return floor
+
+    @staticmethod
+    def _minimum_supported_mitigation_dimensions(
+        critical_dimension_count: int,
+        validation_mode: str = "strict",
+    ) -> int:
+        if critical_dimension_count <= 0:
+            return 0
+        if str(validation_mode or "").strip().casefold() == "easy":
+            return max(1, critical_dimension_count - 1)
+        return critical_dimension_count
 
     async def _entailed_mitigation_claims(
         self,
@@ -11579,6 +11736,108 @@ class ChatService(
             logger.exception("Main knowledge-base lookup failed during mitigation validation")
             results = []
         return self._format_knowledge_results(results)
+
+    async def _validate_user_evidence_against_core_kb(
+        self,
+        *,
+        session: ChatSession,
+        claim_type: str,
+        claim_text: str,
+        evidence: str,
+    ) -> dict[str, object]:
+        evidence_context = await self._user_evidence_context_for_contradiction_check(
+            session,
+            evidence,
+        )
+        return await EvidenceContradictionService(
+            self.db,
+            self.user_id,
+        ).validate_evidence_against_kb(
+            claim_type=claim_type,
+            claim_text=claim_text,
+            evidence_text=evidence,
+            l2_evidence_context=evidence_context,
+            sector=session.sector or "",
+            country=session.country or "",
+            region=session.region or "",
+        )
+
+    async def _user_evidence_context_for_contradiction_check(
+        self,
+        session: ChatSession,
+        evidence: str,
+    ) -> str:
+        temporary_context = await self._temporary_evidence_context(session)
+        inline_evidence = self._inline_evidence_content(evidence)
+        if inline_evidence:
+            inline_context = self._format_full_knowledge_results(
+                [
+                    {
+                        "title": "User-supplied evidence",
+                        "source_type": "evidence",
+                        "score": 1.0,
+                        "content": inline_evidence,
+                    }
+                ]
+            )
+        else:
+            inline_context = ""
+        return "\n".join(
+            part for part in (temporary_context, inline_context) if part.strip()
+        ).strip()
+
+    @staticmethod
+    def _hazard_evidence_claim_text(
+        session: ChatSession,
+        hazard: str,
+        reason: str,
+    ) -> str:
+        return (
+            f"Claim type: hazard\n"
+            f"Sector: {session.sector or 'Not provided'}\n"
+            f"Country: {session.country or 'Not provided'}\n"
+            f"Region: {session.region or 'Not provided'}\n"
+            f"Hazard: {hazard or 'Not provided'}\n"
+            f"Reason: {reason or 'Not provided'}"
+        )
+
+    def _mitigation_evidence_claim_text(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+    ) -> str:
+        return (
+            f"Claim type: mitigation\n"
+            f"Sector: {session.sector or 'Not provided'}\n"
+            f"Country: {session.country or 'Not provided'}\n"
+            f"Region: {session.region or 'Not provided'}\n"
+            f"Selected hazard: {session.selected_hazard or session.accepted_custom_hazard or 'Not provided'}\n"
+            f"Affected groups: {format_all_dgs(session) or 'Not provided'}\n"
+            f"Target population: {self._mitigation_target_population_text(session)}\n"
+            f"Mitigation measure: {mitigation_measure or 'Not provided'}\n"
+            f"Reason: {reason or 'Not provided'}"
+        )
+
+    @staticmethod
+    def _evidence_contradiction_reason(result: dict[str, object]) -> str:
+        verdict = str(result.get("verdict") or "NEEDS_CLARIFICATION").upper()
+        reason = str(result.get("reason") or "").strip()
+        questions = [
+            str(item).strip()
+            for item in result.get("clarification_questions", [])
+            if isinstance(item, str) and item.strip()
+        ]
+        suffix = ""
+        if questions:
+            suffix = "\n\nClarification needed:\n" + "\n".join(
+                f"- {question}" for question in questions
+            )
+        if verdict == "INVALID":
+            prefix = "User evidence conflicts with the core knowledge base."
+        else:
+            prefix = "User evidence could not be validated against the core knowledge base."
+        return f"{prefix} {reason}".strip() + suffix
 
     async def _mitigation_evidence_context(
         self,
@@ -13533,6 +13792,27 @@ class ChatService(
         return any(term in lowered for term in style_terms) and not any(
             term in lowered for term in meaning_terms
         )
+
+    @staticmethod
+    def _is_hard_validation_rejection(reason: str) -> bool:
+        lowered = reason.casefold()
+        hard_terms = (
+            "gibberish",
+            "keyboard",
+            "random",
+            "unrecognizable",
+            "unrecognisable",
+            "meaningless",
+            "unrelated",
+            "not related",
+            "outside the scope",
+            "out of scope",
+            "does not relate",
+            "contradicts",
+            "contradictory",
+            "unsafe",
+        )
+        return any(term in lowered for term in hard_terms)
 
     @staticmethod
     def _is_invalid_user_text(message: str) -> bool:

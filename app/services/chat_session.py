@@ -71,6 +71,7 @@ class ChatSession:
     custom_hazard: dict[str, object] | None = None
     pending_fuzzy_option: str | None = None
     stats_dialog_conversation: list[dict[str, str]] | None = None
+    validation_mode: str = "strict"
 
     def summary(self) -> SessionSummary:
         system_hazard_count = len(
@@ -131,6 +132,9 @@ class ChatSession:
             ],
             additional_hazard_population=self._additional_hazard_population_summary(),
             custom_hazard=dict(self.custom_hazard) if isinstance(self.custom_hazard, dict) else None,
+            validation_mode=(
+                self.validation_mode if self.validation_mode in {"strict", "easy"} else "strict"
+            ),
         )
 
     def eligible_hazard_profile_count(self) -> int:

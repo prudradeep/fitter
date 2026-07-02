@@ -4,6 +4,7 @@ const voiceEnabledKey = "dr_transition_voice_enabled";
 const voicePreferenceKey = "dr_transition_voice_preference";
 const typingEffectKey = "dr_transition_typing_effect_enabled";
 const autoConversationKey = "dr_transition_auto_conversation_enabled";
+const validationModeKey = "dr_transition_validation_mode";
 const teacherAvatarPath = "/static/img/teacher.png";
 const collapsibleMessageWordLimit = 100;
 
@@ -50,6 +51,8 @@ const closeSettingsButton = document.querySelector("#closeSettingsButton");
 const voiceAssistantToggle = document.querySelector("#voiceAssistantToggle");
 const typingEffectToggle = document.querySelector("#typingEffectToggle");
 const autoConversationToggle = document.querySelector("#autoConversationToggle");
+const validationModeToggle = document.querySelector("#validationModeToggle");
+const validationModeLabel = document.querySelector("#validationModeLabel");
 const voicePreferenceSelect = document.querySelector("#voicePreferenceSelect");
 const voiceAnalyzerElement = document.querySelector("#voiceAnalyzer");
 const sessionsButton = document.querySelector("#sessionsButton");
@@ -1116,6 +1119,19 @@ function configureTypingEffectControl() {
   typingEffectToggle.checked = saved === null ? true : saved === "true";
 }
 
+function currentValidationMode() {
+  return localStorage.getItem(validationModeKey) === "easy" ? "easy" : "strict";
+}
+
+function configureValidationModeControl() {
+  if (!validationModeToggle) return;
+  const mode = currentValidationMode();
+  validationModeToggle.checked = mode === "strict";
+  if (validationModeLabel) {
+    validationModeLabel.textContent = mode === "strict" ? "Strict" : "Easy";
+  }
+}
+
 function ensureVoiceAnalyzer() {
   if (!voiceAnalyzerElement || !voiceAssistantEnabled()) return;
   voiceAnalyzerElement.hidden = false;
@@ -1439,14 +1455,14 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
     return;
   }
 
-  primaryInputLabel.textContent = "Reason";
-  secondaryInputLabel.textContent = "Reason";
+  primaryInputLabel.textContent = "Reason/Justification";
+  secondaryInputLabel.textContent = "Reason/Justification";
   secondaryReasonInput.closest("label").hidden = true;
   evidenceUrlField.hidden = false;
   evidenceFileField.hidden = false;
 
   if (step === "socio_demographic_review") {
-    primaryInputLabel.textContent = "Reason (optional)";
+    primaryInputLabel.textContent = "Reason/Justification (optional)";
     reasonInput.placeholder = "Why should these DGs be treated as severely affected?";
     evidenceInput.placeholder = "https://example.org/demographic-evidence";
     return;
@@ -1739,6 +1755,92 @@ function groupedTargetPopulationLabels(labels = []) {
   ];
 }
 
+function targetPopulationComparableText(label) {
+  const value = String(label || "").trim();
+  if (!value.includes(":")) return value;
+  const [, ...answerParts] = value.split(":");
+  return answerParts.join(":").trim() || value;
+}
+
+function meaningfulPopulationKey(value) {
+  const tokens = normalizeForMatch(value)
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => ![
+      "a",
+      "an",
+      "and",
+      "by",
+      "group",
+      "groups",
+      "in",
+      "of",
+      "or",
+      "people",
+      "person",
+      "persons",
+      "population",
+      "populations",
+      "the",
+      "with",
+    ].includes(token));
+  if (tokens.length >= 2 || tokens.some((token) => token.length >= 6)) {
+    return tokens.join(" ");
+  }
+  return "";
+}
+
+function addPopulationKey(keys, value) {
+  const normalized = normalizeForMatch(value);
+  if (normalized) keys.add(normalized);
+  const meaningful = meaningfulPopulationKey(value);
+  if (meaningful) keys.add(meaningful);
+}
+
+function compoundPopulationParts(label) {
+  const text = targetPopulationComparableText(label);
+  const parts = text
+    .split(/\s+(?:and|or)\s+|[,;/]+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length <= 1) return [];
+
+  const prefixMatch = text.match(
+    /^(people|persons|person|residents|households|workers|individuals)\s+(?:in|with|from|of|affected by|living in)?\s+/i,
+  );
+  const prefix = prefixMatch?.[0] || "";
+  return parts.flatMap((part, index) => {
+    const values = [part];
+    if (index > 0 && prefix && !new RegExp(`^${prefix}`, "i").test(part)) {
+      values.push(`${prefix}${part}`);
+    }
+    return values;
+  });
+}
+
+function populationOverlapKeys(label) {
+  const keys = new Set();
+  addPopulationKey(keys, targetPopulationComparableText(label));
+  compoundPopulationParts(label).forEach((part) => addPopulationKey(keys, part));
+  return keys;
+}
+
+function populationLabelsOverlap(leftLabel, rightLabel) {
+  const leftKeys = populationOverlapKeys(leftLabel);
+  const rightKeys = populationOverlapKeys(rightLabel);
+  return Array.from(leftKeys).some((key) => rightKeys.has(key));
+}
+
+function overlappingAffectedPopulationLabels(affected, mitigation) {
+  const overlap = [];
+  affected.forEach((affectedLabel) => {
+    if (mitigation.some((mitigationLabel) => populationLabelsOverlap(affectedLabel, mitigationLabel))) {
+      overlap.push(affectedLabel);
+    }
+  });
+  return overlap;
+}
+
 function initializeHighcharts(root = document) {
   if (!root?.querySelectorAll) return;
   const metricTiles = Array.from(root.querySelectorAll(".metric-tile:not([data-bar-ready])"));
@@ -1755,8 +1857,7 @@ function initializeHighcharts(root = document) {
     const affected = parseChartData(element, "affected").map(String);
     const mitigation = parseChartData(element, "mitigation").map(String);
     if (!affected.length || !mitigation.length) return;
-    const mitigationKeys = new Set(mitigation.map(normalizeForMatch));
-    const overlap = affected.filter((label) => mitigationKeys.has(normalizeForMatch(label)));
+    const overlap = overlappingAffectedPopulationLabels(affected, mitigation);
     const affectedDisplay = groupedTargetPopulationLabels(affected);
     const mitigationDisplay = groupedTargetPopulationLabels(mitigation);
     const overlapDisplay = groupedTargetPopulationLabels(overlap);
@@ -3012,6 +3113,7 @@ async function sendStatsDialogMessage(message, echoUser = true) {
       body: JSON.stringify({
         message: cleanMessage,
         session_id: sessionId,
+        validation_mode: currentValidationMode(),
       }),
     });
 
@@ -3568,7 +3670,11 @@ async function requestAutoConversationTurn() {
     const response = await fetch("/api/auto-user-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "", session_id: sessionId }),
+      body: JSON.stringify({
+        message: "",
+        session_id: sessionId,
+        validation_mode: currentValidationMode(),
+      }),
     });
     if (response.status === 401) {
       window.location.href = "/login";
@@ -3663,6 +3769,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
             body: JSON.stringify({
               message: cleanMessage,
               session_id: sessionId,
+              validation_mode: currentValidationMode(),
             }),
           }),
     });
@@ -3723,6 +3830,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
 function buildChatFormData(message, extras = {}) {
   const formData = new FormData();
   formData.append("message", message);
+  formData.append("validation_mode", currentValidationMode());
   if (sessionId) formData.append("session_id", sessionId);
   if (extras.evidenceUrl) formData.append("evidence_url", extras.evidenceUrl);
   if (extras.evidenceFile instanceof File && extras.evidenceFile.size > 0) {
@@ -3827,6 +3935,11 @@ voiceAssistantToggle?.addEventListener("change", () => {
 
 typingEffectToggle?.addEventListener("change", () => {
   localStorage.setItem(typingEffectKey, String(typingEffectToggle.checked));
+});
+
+validationModeToggle?.addEventListener("change", () => {
+  localStorage.setItem(validationModeKey, validationModeToggle.checked ? "strict" : "easy");
+  configureValidationModeControl();
 });
 
 autoConversationToggle?.addEventListener("change", () => {
@@ -4150,6 +4263,7 @@ logoutForm?.addEventListener("submit", () => {
 document.addEventListener("DOMContentLoaded", () => {
   configureVoiceControls();
   configureTypingEffectControl();
+  configureValidationModeControl();
   configureMic();
   configureWorkspaceResizer();
   clearCurrentInputState();

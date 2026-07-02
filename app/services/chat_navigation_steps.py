@@ -343,6 +343,7 @@ class ChatNavigationStepsMixin:
                 "support_corpus": validation.get("support_label"),
                 "reranker": self.grounding_models.reranker_status,
                 "entailment": self.grounding_models.nli_status,
+                "evidence_contradiction": validation.get("evidence_contradiction"),
             },
             "reason": str(validation.get("reason") or "").strip(),
         }

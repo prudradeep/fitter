@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ChatRequest(BaseModel):
     message: str = Field(default="", max_length=16000)
     session_id: str | None = Field(default=None, max_length=64)
+    validation_mode: str = Field(default="strict", max_length=16)
 
 
 class Option(BaseModel):
@@ -33,6 +34,7 @@ class SessionSummary(BaseModel):
     additional_hazards: list[str] = Field(default_factory=list)
     additional_hazard_population: list[dict[str, object]] = Field(default_factory=list)
     custom_hazard: dict[str, object] | None = None
+    validation_mode: str = "strict"
 
 
 class ChatResponse(BaseModel):
