@@ -48,14 +48,17 @@ def _additional_hazards_info_icon() -> str:
         "technical and policy expertise to analyse transition policies and co-design "
         "mitigation measures. This also reduced power imbalances and supported broader "
         "representation of disadvantaged groups' interests.</span>"
-        '<details class="additional-hazards-methodology">'
-        "<summary>Show more</summary>"
-        '<img src="/static/img/methodologies.png" '
-        'alt="Infographic describing the methodology behind expert-added hazards" '
-        'loading="lazy" />'
-        "</details>"
         "</span>"
         "</span>"
+    )
+
+
+def _additional_hazards_methodology_cta() -> str:
+    return (
+        '<button class="additional-hazards-methodology-cta" '
+        'type="button" data-open-methodology="true">'
+        "Show methodologies"
+        "</button>"
     )
 
 
@@ -107,6 +110,7 @@ def format_hazards(session: ChatSession) -> str:
                 "Additional hazards "
                 "<span>By experts</span>"
                 f"{_additional_hazards_info_icon()}"
+                f"{_additional_hazards_methodology_cta()}"
                 "</h3>",
                 format_additional_hazards(session),
             ]

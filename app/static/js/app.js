@@ -93,6 +93,9 @@ const closeTargetPopulationButton = document.querySelector("#closeTargetPopulati
 const cancelTargetPopulationButton = document.querySelector("#cancelTargetPopulationButton");
 const targetAllGeneralPopulationButton = document.querySelector("#targetAllGeneralPopulationButton");
 const resetTargetPopulationButton = document.querySelector("#resetTargetPopulationButton");
+const methodologyDialog = document.querySelector("#methodologyDialog");
+const closeMethodologyButton = document.querySelector("#closeMethodologyButton");
+const methodologyFrame = document.querySelector("#methodologyFrame");
 const sessionEmpty = document.querySelector("#sessionEmpty");
 const selectedHazardContext = document.querySelector("#selectedHazardContext");
 const selectedContextLabel = document.querySelector("#selectedContextLabel");
@@ -1513,6 +1516,13 @@ chatScrollBottomButton?.addEventListener("click", () => {
   chatLog?.scrollTo({ top: chatLog.scrollHeight, behavior: "smooth" });
 });
 
+chatLog?.addEventListener("click", (event) => {
+  const methodologyButton = event.target.closest("[data-open-methodology]");
+  if (!methodologyButton) return;
+  event.preventDefault();
+  openMethodologyDialog();
+});
+
 function collapseExpandedMessages(targetLog = chatLog) {
   if (!targetLog) return;
   targetLog.querySelectorAll(".bubble.is-collapsible.is-expanded").forEach((bubble) => {
@@ -2898,6 +2908,26 @@ function closeTargetPopulationDialog() {
   }
 }
 
+function openMethodologyDialog() {
+  if (!methodologyDialog) return;
+  if (typeof methodologyDialog.showModal === "function") {
+    if (!methodologyDialog.open) methodologyDialog.showModal();
+  } else {
+    methodologyDialog.removeAttribute("hidden");
+  }
+  methodologyFrame?.focus();
+}
+
+function closeMethodologyDialog() {
+  if (!methodologyDialog) return;
+  if (typeof methodologyDialog.close === "function") {
+    methodologyDialog.close();
+  } else {
+    methodologyDialog.setAttribute("hidden", "");
+  }
+  messageInput?.focus();
+}
+
 function selectedTargetPopulationLabels(questionId) {
   const answer = [...targetPopulationAnswers].reverse().find(
     (item) => Number(item.question_id) === Number(questionId),
@@ -4017,6 +4047,10 @@ statsDialogForm?.addEventListener("submit", (event) => {
 
 closeTargetPopulationButton?.addEventListener("click", closeTargetPopulationDialog);
 cancelTargetPopulationButton?.addEventListener("click", closeTargetPopulationDialog);
+closeMethodologyButton?.addEventListener("click", closeMethodologyDialog);
+methodologyDialog?.addEventListener("click", (event) => {
+  if (event.target === methodologyDialog) closeMethodologyDialog();
+});
 targetAllGeneralPopulationButton?.addEventListener("click", () => {
   targetPopulationDialogBody
     ?.querySelectorAll("[data-quick-target-option='true']")

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services import custom_hazard_validation as validator
+from app.services.chat_formatters import format_hazards
 from app.services.chat_options import HAZARD_POPULATION_REVIEW_OPTIONS
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
@@ -132,6 +133,53 @@ class CustomHazardValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(response.step, "custom_hazard_duplicate_confirmation")
+        self.assertTrue(session.custom_hazard["duplicate_candidates"])
+        duplicate_card = next(
+            card
+            for card in response.custom_hazard_grounding_status
+            if card["title"] == "Duplicate check"
+        )
+        self.assertEqual(duplicate_card["status"], "WARNING")
+        self.assertIn("Regional employment shock", duplicate_card["reason"])
+
+    def test_valid_initial_custom_hazard_updates_duplicate_status_from_user_hazards(self):
+        service = ChatService.__new__(ChatService)
+        service.db = SimpleNamespace(
+            scalars=MagicMock(
+                side_effect=[
+                    SimpleNamespace(all=lambda: []),
+                    SimpleNamespace(all=lambda: []),
+                    SimpleNamespace(all=lambda: []),
+                    SimpleNamespace(
+                        all=lambda: [
+                            'Regional employment shock and "left-behind" energy regions'
+                        ]
+                    ),
+                ]
+            )
+        )
+        service._review_custom_hazard_input = AsyncMock(
+            return_value={"valid": True, "reason": "The hazard is meaningful."}
+        )
+        session = ChatSession(
+            sector_id=1,
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_input",
+        )
+
+        response = _run(
+            service._capture_custom_hazard(
+                "session-1",
+                session,
+                'Regional employment shock and "left-behind" energy regions',
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "custom_hazard_validation")
+        self.assertEqual(response.input_mode, "reason_evidence")
         self.assertTrue(session.custom_hazard["duplicate_candidates"])
         duplicate_card = next(
             card
@@ -624,6 +672,28 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertIn("Coal workers", message)
         self.assertNotIn("Updated Hazard List", message)
         self.assertNotIn("following hazards", message)
+
+    def test_additional_hazards_methodology_cta_survives_message_sanitizer(self):
+        session = ChatSession(
+            sector="Energy",
+            region="Saxony",
+            additional_hazards=["Regional employment shock"],
+            hazard_profiles={
+                "Regional employment shock": [{"name": "Coal workers"}],
+            },
+        )
+
+        message = render_message(
+            "hazards_overview.md",
+            sector="Energy",
+            region="Saxony",
+            hazards=format_hazards(session),
+        )
+
+        self.assertIn("<button", message)
+        self.assertIn("additional-hazards-methodology-cta", message)
+        self.assertIn('data-open-methodology="true"', message)
+        self.assertIn("Show methodologies", message)
 
     def test_custom_hazard_added_summary_keeps_left_panel_hazard_context(self):
         session = ChatSession(

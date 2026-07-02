@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260626-hazard-pop-practical-flow" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260702-methodology-frame-fill" />
   </head>
   <body>
     <header class="topbar">
@@ -340,7 +340,7 @@
             </div>
             <div id="reasonEvidenceFields" class="reason-evidence-fields" hidden>
               <label class="reason-field">
-                <span id="primaryInputLabel">Reason</span>
+                <span id="primaryInputLabel">Reason (Justification)</span>
                 <textarea
                   id="reasonInput"
                   rows="3"
@@ -393,7 +393,7 @@
                 </div>
               </label>
               <label>
-                <span>Reason <small>(optional)</small></span>
+                <span>Reason (Justification)<small>(optional)</small></span>
                 <textarea
                   id="evaluationReasonInput"
                   rows="3"
@@ -483,6 +483,19 @@
           <button type="submit">Submit</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="methodologyDialog" class="methodology-dialog">
+      <section class="methodology-dialog-panel" aria-label="Methodology for hazard identification in Open Labs">
+        <iframe
+          id="methodologyFrame"
+          class="methodology-frame"
+          src="{{ url_for('static', path='/methodology.html') }}?v=20260702-methodology-file"
+          title="Methodology for hazard identification in Open Labs"
+          loading="lazy"
+          tabindex="0"
+        ></iframe>
+      </section>
     </dialog>
 
     <dialog id="knowledgeDialog" class="target-dialog">
@@ -595,6 +608,6 @@
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/highcharts-more.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/modules/venn.js"></script>
     <script src="{{ url_for('static', path='/js/app-utils.js') }}?v=20260701-split-assets"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260626-additional-pop-fix"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260702-methodology-frame-fill"></script>
   </body>
 </html>

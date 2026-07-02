@@ -3707,6 +3707,7 @@ class ChatService(
                 error=True,
             )
 
+        self._refresh_custom_hazard_duplicate_candidates(session, hazard)
         return self._hazard_reason_evidence_step(session_id, session, hazard)
 
     async def _handle_custom_hazard_clarification(

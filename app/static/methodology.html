@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Methodology for Hazard Identification in Open Labs</title>
+    <style>
+      :root {
+        --navy: #0b376d;
+        --blue: #166bb6;
+        --teal: #008d93;
+        --green: #16854e;
+        --orange: #ed6b1c;
+        --purple: #7b3faf;
+        --light: #f8fbff;
+        --line: #cbddeb;
+        --text: #10233f;
+        --muted: #476078;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #eef5fb;
+        font-family: Arial, Helvetica, sans-serif;
+        color: var(--text);
+      }
+      .poster {
+        width: 1180px;
+        max-width: 96vw;
+        margin: 22px auto;
+        background: transparent;
+        border-radius: 18px;
+        padding: 26px 26px 30px;
+        box-shadow: 0 18px 45px rgba(9, 43, 89, 0.16);
+      }
+      h1 {
+        margin: 0;
+        text-align: center;
+        font-size: 43px;
+        line-height: 1.05;
+        color: var(--navy);
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: -1px;
+      }
+      h2 {
+        margin: 12px 0 18px;
+        text-align: center;
+        font-size: 26px;
+        color: var(--teal);
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+      .intro {
+        display: grid;
+        grid-template-columns: 1fr 330px;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: linear-gradient(90deg, #fff, #f5fbff);
+        padding: 22px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+      }
+      .intro .card p {
+        font-size: 19px;
+        line-height: 1.55;
+        margin: 0;
+      }
+      .bigicon {
+        width: 70px;
+        height: 70px;
+        color: var(--teal);
+        min-width: 70px;
+        text-align: center;
+        display: grid;
+        place-items: center;
+      }
+      .bigicon svg {
+        width: 58px;
+        height: 58px;
+      }
+      .sectors {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: #f6fbff;
+        padding: 14px;
+        text-align: center;
+      }
+      .sectors b {
+        display: inline-block;
+        background: #0b376d;
+        color: white;
+        border-radius: 16px;
+        padding: 8px 28px;
+        margin-bottom: 12px;
+      }
+      .sector-icons {
+        display: flex;
+        justify-content: space-around;
+      }
+      .sector .sector-badge {
+        width: 62px;
+        height: 62px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: white;
+        margin: auto;
+      }
+      .sector svg {
+        width: 34px;
+        height: 34px;
+      }
+      .sector small {
+        display: block;
+        margin-top: 7px;
+        font-weight: 800;
+        color: #0b376d;
+      }
+      .energy i {
+        background: #54a842;
+      }
+      .housing i {
+        background: #f36d21;
+      }
+      .transport i {
+        background: #1d7ac4;
+      }
+      .steps {
+        position: relative;
+      }
+      .step {
+        display: grid;
+        grid-template-columns: 78px 135px 1fr 70px 260px;
+        align-items: center;
+        gap: 18px;
+        margin: 9px 0;
+        padding: 12px 18px;
+        border: 1.5px solid var(--line);
+        border-radius: 16px;
+        background: linear-gradient(90deg, #fff, #f7fbff);
+        min-height: 112px;
+        transition: 0.25s ease;
+        cursor: pointer;
+      }
+      .step:hover,
+      .step.active {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 24px rgba(20, 77, 137, 0.14);
+        border-color: currentColor;
+      }
+      .num {
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: white !important;
+        font-weight: 900;
+        font-size: 28px;
+      }
+      .iconwrap {
+        width: 112px;
+        height: 92px;
+        border-radius: 50%;
+        background: rgba(13, 82, 150, 0.06);
+        display: grid;
+        place-items: center;
+      }
+      .iconwrap svg {
+        width: 54px;
+        height: 54px;
+      }
+      .txt h3 {
+        margin: 0 0 6px;
+        font-size: 22px;
+        text-transform: uppercase;
+      }
+      .txt p {
+        margin: 0;
+        font-size: 16px;
+        line-height: 1.35;
+      }
+      .arrow {
+        font-size: 35px;
+        color: #c6d8e8;
+      }
+      .output {
+        border-radius: 15px;
+        background: rgba(255, 255, 255, 0.6);
+        padding: 18px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .output svg {
+        width: 46px;
+        height: 46px;
+        flex: 0 0 46px;
+      }
+      .output span {
+        font-size: 16px;
+        line-height: 1.25;
+      }
+      .output b {
+        display: block;
+        margin-bottom: 4px;
+      }
+      .blue {
+        color: #0d68b1;
+      }
+      .green {
+        color: #12834b;
+      }
+      .orange {
+        color: #e96518;
+      }
+      .purple {
+        color: #7941aa;
+      }
+      .teal {
+        color: #008c94;
+      }
+      .blue .num,
+      .blue.num {
+        background: #0d68b1;
+      }
+      .green .num,
+      .green.num {
+        background: #12834b;
+      }
+      .orange .num,
+      .orange.num {
+        background: #e96518;
+      }
+      .purple .num,
+      .purple.num {
+        background: #7941aa;
+      }
+      .teal .num,
+      .teal.num {
+        background: #008c94;
+      }
+      .details {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.28s ease;
+        font-size: 15px;
+        color: #40566b;
+      }
+      .step.active .details {
+        max-height: 90px;
+        margin-top: 8px;
+      }
+      .step.active .details ul {
+        margin: 6px 0 0 18px;
+        padding: 0;
+      }
+      .down {
+        width: 100%;
+        text-align: center;
+        color: var(--navy);
+        font-size: 25px;
+        line-height: 8px;
+      }
+      .final {
+        margin-top: 18px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .final-title {
+        background: var(--navy);
+        color: white;
+        text-align: center;
+        font-size: 20px;
+        font-weight: 900;
+        padding: 9px;
+        text-transform: uppercase;
+      }
+      .final-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        background: #fff;
+      }
+      .final-item {
+        text-align: center;
+        padding: 16px 10px;
+        border-right: 1px solid var(--line);
+        font-weight: 700;
+        font-size: 13px;
+      }
+      .final-item:last-child {
+        border-right: 0;
+      }
+      .final-item .mini-icon {
+        width: 38px;
+        height: 38px;
+        display: block;
+        margin: 0 auto 7px;
+      }
+      .final-item svg {
+        width: 38px;
+        height: 38px;
+      }
+      .note {
+        margin-top: 14px;
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: #f4fbff;
+        padding: 15px 22px;
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        color: #0a6170;
+        font-size: 16px;
+      }
+      .note svg {
+        width: 44px;
+        height: 44px;
+        flex: 0 0 44px;
+      }
+      .controls {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        margin: 12px 0 6px;
+      }
+      .controls button {
+        border: 0;
+        border-radius: 20px;
+        background: #0b376d;
+        color: white;
+        padding: 9px 16px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .controls button:hover {
+        background: #166bb6;
+      }
+      @media (max-width: 900px) {
+        .poster {
+          padding: 16px;
+        }
+        h1 {
+          font-size: 28px;
+        }
+        h2 {
+          font-size: 18px;
+        }
+        .intro {
+          grid-template-columns: 1fr;
+        }
+        .step {
+          grid-template-columns: 50px 70px 1fr;
+        }
+        .arrow,
+        .output {
+          display: none;
+        }
+        .iconwrap {
+          width: 65px;
+          height: 65px;
+        }
+        .iconwrap svg {
+          width: 36px;
+          height: 36px;
+        }
+        .txt h3 {
+          font-size: 17px;
+        }
+        .txt p {
+          font-size: 14px;
+        }
+        .final-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="poster" id="poster">
+      <h1>Methodology for Hazard Identification in Open Labs</h1>
+      <h2>A Participatory & Systems Approach for the Twin Transition</h2>
+      <section class="intro">
+        <div class="card">
+          <span class="bigicon" data-icon="users"></span>
+          <p>
+            <b>Open Labs do not create hazards from scratch.</b><br />They
+            validate, contextualize, prioritize and enrich pre-identified
+            hazards using local stakeholder knowledge.
+          </p>
+        </div>
+        <div class="sectors">
+          <b>SECTORS</b>
+          <div class="sector-icons">
+            <div class="sector energy">
+              <span class="sector-badge num blue" data-icon="bolt"></span
+              ><small>ENERGY</small>
+            </div>
+            <div class="sector housing">
+              <span class="sector-badge num orange" data-icon="house"></span
+              ><small>HOUSING</small>
+            </div>
+            <div class="sector transport">
+              <span class="sector-badge num green" data-icon="bus"></span
+              ><small>TRANSPORT</small>
+            </div>
+          </div>
+        </div>
+      </section>
+      <div class="controls">
+        <button onclick="expandAll()">Expand all</button
+        ><button onclick="collapseAll()">Collapse all</button>
+      </div>
+      <section class="steps" id="steps"></section>
+      <section class="final">
+        <div class="final-title">Final Outputs of the Open Lab</div>
+        <div class="final-grid">
+          <div class="final-item green">
+            <span class="mini-icon" data-icon="book"></span
+            >Validated<br />Hazard Catalogue
+          </div>
+          <div class="final-item orange">
+            <span class="mini-icon" data-icon="table"></span
+            >Hazard<br />Prioritization Matrix
+          </div>
+          <div class="final-item blue">
+            <span class="mini-icon" data-icon="landmark"></span
+            >Hazard-to-<br />Policy Mapping
+          </div>
+          <div class="final-item purple">
+            <span class="mini-icon" data-icon="people"></span
+            >Hazard-to-Vulnerable<br />Population Mapping
+          </div>
+          <div class="final-item teal">
+            <span class="mini-icon" data-icon="network"></span
+            >Sectoral<br />System Maps
+          </div>
+          <div class="final-item orange">
+            <span class="mini-icon" data-icon="folderopen"></span>Hazard
+            Evidence<br />Repository
+          </div>
+          <div class="final-item green">
+            <span class="mini-icon" data-icon="bulb"></span>Recommendations
+            for<br />Mitigation Measures
+          </div>
+        </div>
+      </section>
+      <div class="note">
+        <span data-icon="target"></span
+        ><span
+          >This methodology ensures that hazards are evidence-based, locally
+          relevant and systemically understood, forming a solid foundation for
+          co-creating effective mitigation measures for a just and inclusive
+          twin transition.</span
+        >
+      </div>
+    </main>
+    <script>
+      function svgIcon(name) {
+        const common =
+          'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 64 64"';
+        const filled = 'viewBox="0 0 64 64" fill="currentColor"';
+        const icons = {
+          users: `<svg ${common}><circle cx="24" cy="22" r="8"/><circle cx="43" cy="24" r="7"/><path d="M10 48c2-10 10-16 20-16s18 6 20 16"/><path d="M35 39c3-5 8-8 15-7 6 1 10 6 11 14"/></svg>`,
+          people: `<svg ${common}><circle cx="22" cy="20" r="7"/><circle cx="42" cy="20" r="7"/><circle cx="32" cy="34" r="8"/><path d="M7 50c2-9 8-14 17-14"/><path d="M40 36c9 0 15 5 17 14"/><path d="M16 58c2-10 8-16 16-16s14 6 16 16"/></svg>`,
+          bolt: `<svg ${filled}><path d="M36 3 12 35h17l-3 26 26-36H35z"/></svg>`,
+          house: `<svg ${filled}><path d="M8 30 32 10l24 20v27H39V40H25v17H8z"/></svg>`,
+          bus: `<svg ${filled}><path d="M16 8h32c5 0 9 4 9 9v26c0 4-3 8-7 9v5a4 4 0 0 1-8 0v-4H22v4a4 4 0 0 1-8 0v-5c-4-1-7-5-7-9V17c0-5 4-9 9-9zm2 8v13h28V16H18zm2 27a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm24 0a5 5 0 1 0 0-10 5 5 0 0 0 0 10z"/></svg>`,
+          clipboard: `<svg ${common}><rect x="16" y="10" width="36" height="46" rx="4"/><path d="M25 10h18l-2-5H27z"/><path d="M25 25h18M25 35h18M25 45h11"/><path d="m12 49 10-10"/><circle cx="15" cy="52" r="8"/></svg>`,
+          comment: `<svg ${common}><path d="M14 18h36a8 8 0 0 1 8 8v8a8 8 0 0 1-8 8H32L18 54V42h-4a8 8 0 0 1-8-8v-8a8 8 0 0 1 8-8z"/><circle cx="25" cy="30" r="2"/><circle cx="34" cy="30" r="2"/><circle cx="43" cy="30" r="2"/></svg>`,
+          puzzle: `<svg ${filled}><path d="M24 8h16v12c0 3 3 4 5 2 5-4 11 0 11 6s-6 10-11 6c-2-2-5-1-5 2v20H24V44c0-3-3-4-5-2-5 4-11 0-11-6s6-10 11-6c2 2 5 1 5-2z"/></svg>`,
+          tree: `<svg ${common}><path d="M32 58V8M32 22 18 12M32 25l15-12M32 36 13-8M32 38 17 29M32 48 48 39M32 49 16 42"/><path d="M12 56h40"/></svg>`,
+          network: `<svg ${common}><circle cx="32" cy="32" r="6"/><circle cx="12" cy="18" r="5"/><circle cx="52" cy="18" r="5"/><circle cx="12" cy="48" r="5"/><circle cx="52" cy="48" r="5"/><path d="M17 21 27 29M47 21 37 29M17 45 27 35M47 45 37 35"/></svg>`,
+          shield: `<svg ${filled}><path d="M32 5 12 14v15c0 15 9 25 20 30 11-5 20-15 20-30V14zM30 43 18 31l5-5 7 7 13-15 5 4z"/></svg>`,
+          chart: `<svg ${filled}><path d="M12 50h8V32h-8zm16 0h8V20h-8zm16 0h8V10h-8z"/></svg>`,
+          profile: `<svg ${common}><path d="M18 7h25l9 9v41H18z"/><path d="M43 7v11h11"/><circle cx="32" cy="30" r="6"/><path d="M22 47c2-7 7-10 10-10s8 3 10 10"/></svg>`,
+          comments: `<svg ${common}><path d="M10 18h28a7 7 0 0 1 7 7v8a7 7 0 0 1-7 7H24L12 50V40h-2a7 7 0 0 1-7-7v-8a7 7 0 0 1 7-7z"/><path d="M38 25h16a7 7 0 0 1 7 7v8a7 7 0 0 1-7 7h-3v9L40 47"/></svg>`,
+          file: `<svg ${common}><path d="M18 7h25l9 9v41H18z"/><path d="M43 7v11h11"/><path d="M26 30h20M26 40h20M26 50h12"/></svg>`,
+          checkclip: `<svg ${common}><rect x="16" y="9" width="36" height="48" rx="4"/><path d="M25 9h18l-2-5H27z"/><path d="m25 32 6 6 13-15M25 48h19"/></svg>`,
+          warning: `<svg ${common}><path d="M32 8 59 55H5z"/><path d="M32 24v14M32 47h.1"/></svg>`,
+          arrows: `<svg ${common}><path d="M50 18A23 23 0 0 0 13 30"/><path d="M50 8v10H40"/><path d="M14 46a23 23 0 0 0 37-12"/><path d="M14 56V46h10"/></svg>`,
+          ranking: `<svg ${filled}><path d="M13 49h10V31H13zm14 0h10V18H27zm14 0h10V25H41z"/><circle cx="32" cy="10" r="6"/></svg>`,
+          folder: `<svg ${filled}><path d="M6 18c0-4 3-7 7-7h13l6 7h19c4 0 7 3 7 7v26c0 4-3 7-7 7H13c-4 0-7-3-7-7z"/></svg>`,
+          usersgear: `<svg ${common}><circle cx="22" cy="22" r="7"/><circle cx="42" cy="22" r="7"/><path d="M8 50c2-9 9-14 17-14M39 36c8 0 15 5 17 14"/><circle cx="32" cy="45" r="8"/><path d="m28 45 3 3 6-7"/></svg>`,
+          book: `<svg ${common}><path d="M32 54c-6-5-13-7-23-7V12c10 0 17 2 23 7zM32 54c6-5 13-7 23-7V12c-10 0-17 2-23 7z"/></svg>`,
+          table: `<svg ${common}><rect x="10" y="13" width="44" height="38" rx="2"/><path d="M10 26h44M10 39h44M25 13v38M40 13v38"/></svg>`,
+          landmark: `<svg ${common}><path d="M8 25h48L32 10zM14 25v24M26 25v24M38 25v24M50 25v24M9 54h46"/></svg>`,
+          folderopen: `<svg ${common}><path d="M6 22h19l5 7h28l-6 23H12z"/><path d="M10 22v-8h18l5 8"/></svg>`,
+          bulb: `<svg ${common}><path d="M42 28c0 7-5 10-7 15h-6c-2-5-7-8-7-15a10 10 0 0 1 20 0z"/><path d="M28 50h8M29 57h6M32 4v6M15 11l4 5M49 11l-4 5"/></svg>`,
+          target: `<svg ${common}><circle cx="32" cy="32" r="23"/><circle cx="32" cy="32" r="13"/><circle cx="32" cy="32" r="4"/><path d="M46 18 58 6M49 6h9v9"/></svg>`,
+        };
+        return icons[name] || icons.file;
+      }
+      function renderStaticIcons() {
+        document.querySelectorAll("[data-icon]").forEach((el) => {
+          el.innerHTML = svgIcon(el.dataset.icon);
+        });
+      }
+
+      const steps = [
+        {
+          n: 1,
+          c: "blue",
+          i: "clipboard",
+          t: "Preparation",
+          d: "Collect evidence and review policies, research, data and existing findings for each sector.",
+          o: "Initial Hazard Catalogue",
+          oi: "file",
+          x: [
+            "Review EU/national policy context",
+            "Prepare sector evidence packs",
+          ],
+        },
+        {
+          n: 2,
+          c: "green",
+          i: "people",
+          t: "Stakeholder Mapping",
+          d: "Invite diverse stakeholders including policymakers, experts, NGOs, industry and representatives of vulnerable groups.",
+          o: "Diverse & inclusive participant group",
+          oi: "people",
+          x: [
+            "Aim for balanced sector and social representation",
+            "Include intermediaries close to disadvantaged groups",
+          ],
+        },
+        {
+          n: 3,
+          c: "blue",
+          i: "comment",
+          t: "Persona-Based Exploration",
+          d: "Use personas to understand who is affected, how policies impact them and why certain groups bear greater burdens.",
+          o: "List of perceived negative impacts",
+          oi: "checkclip",
+          x: [
+            "Start with “Who is affected?”",
+            "Capture differentiated and intersectional impacts",
+          ],
+        },
+        {
+          n: 4,
+          c: "orange",
+          i: "puzzle",
+          t: "Cluster Impacts into Hazards",
+          d: "Group similar impacts and define clear, concise hazard statements.",
+          o: "Draft Hazard List",
+          oi: "warning",
+          x: ["Merge duplicates", "Use short observable hazard wording"],
+        },
+        {
+          n: 5,
+          c: "teal",
+          i: "tree",
+          t: "Root Cause Analysis",
+          d: "Ask “Why?” repeatedly to identify underlying causes and classify them across five system dimensions.",
+          o: "Root causes by dimension",
+          oi: "puzzle",
+          x: [
+            "Environment, society, economy, governance, technology",
+            "Identify structural causes, not only symptoms",
+          ],
+        },
+        {
+          n: 6,
+          c: "blue",
+          i: "network",
+          t: "System Mapping",
+          d: "Map the relationships: drivers, policies, hazards, affected groups, impacts and feedback loops.",
+          o: "Sectoral system map",
+          oi: "arrows",
+          x: [
+            "Show causal links",
+            "Identify barriers, drivers and feedback loops",
+          ],
+        },
+        {
+          n: 7,
+          c: "green",
+          i: "shield",
+          t: "Hazard Validation",
+          d: "Check each hazard for relevance, evidence, observability, actionability and clarity. Remove weak or duplicate items.",
+          o: "Validated Hazard List",
+          oi: "shield",
+          x: [
+            "Linked to transition policy",
+            "Supported by evidence and understandable",
+          ],
+        },
+        {
+          n: 8,
+          c: "orange",
+          i: "chart",
+          t: "Hazard Prioritization",
+          d: "Score hazards by severity, likelihood, population affected, urgency and policy relevance. Prioritize the highest.",
+          o: "Hazard Prioritization Matrix",
+          oi: "ranking",
+          x: [
+            "Use transparent scoring",
+            "Prioritize hazards affecting vulnerable groups",
+          ],
+        },
+        {
+          n: 9,
+          c: "purple",
+          i: "profile",
+          t: "Define Hazard Profiles",
+          d: "Document key information for each priority hazard and link it to policies, causes, evidence and affected groups.",
+          o: "Hazard Profiles",
+          oi: "folder",
+          x: [
+            "Hazard title, description and sector",
+            "Causes, drivers, barriers and evidence",
+          ],
+        },
+        {
+          n: 10,
+          c: "teal",
+          i: "comments",
+          t: "Validation Workshop",
+          d: "Present the hazard list to a broader audience. Participants confirm, modify, merge, remove or add hazards.",
+          o: "Final validated hazard catalogue",
+          oi: "usersgear",
+          x: [
+            "Broader review by experts and policymakers",
+            "Final agreement before mitigation design",
+          ],
+        },
+      ];
+      const root = document.getElementById("steps");
+      renderStaticIcons();
+      steps.forEach((s, idx) => {
+        root.insertAdjacentHTML(
+          "beforeend",
+          `<article class="step ${s.c}" onclick="this.classList.toggle('active')"><div class="num ${s.c}">${s.n}</div><div class="iconwrap">${svgIcon(s.i)}</div><div class="txt"><h3>${s.t}</h3><p>${s.d}</p><div class="details"><ul>${s.x.map((v) => `<li>${v}</li>`).join("")}</ul></div></div><div class="arrow">▶</div><div class="output">${svgIcon(s.oi)}<span><b>Output:</b>${s.o}</span></div></article>${idx < steps.length - 1 ? '<div class="down">↓</div>' : ""}`,
+        );
+      });
+      function expandAll() {
+        document
+          .querySelectorAll(".step")
+          .forEach((e) => e.classList.add("active"));
+      }
+      function collapseAll() {
+        document
+          .querySelectorAll(".step")
+          .forEach((e) => e.classList.remove("active"));
+      }
+    </script>
+  </body>
+</html>
