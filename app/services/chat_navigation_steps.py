@@ -271,6 +271,9 @@ class ChatNavigationStepsMixin:
         session.pending_hazard_clarification_question = None
         session.pending_hazard_clarification_answer = None
         session.pending_fuzzy_option = None
+        session.pending_selection = None
+        session.pending_selection_confirmation = None
+        session.pending_selection_action = None
         session.stats_dialog_conversation = None
 
     @staticmethod

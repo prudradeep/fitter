@@ -11,4 +11,7 @@ Proposed profiles:
 Return ONLY valid JSON with this exact shape:
 {{"duplicate": false, "match": "", "reason": "", "duplicates": []}}
 
+Do not treat a broader group as duplicate of a narrower group unless the narrower group is already explicitly covered.
+Example: "low-income tenants" is not duplicate of "low-income households" if tenancy is new information.
+
 When any proposed profile is duplicate, set duplicate to true and include duplicates as an array of objects like {{"profile": "new profile", "match": "existing profile", "reason": "short explanation"}}. Keep each reason under 30 words.

@@ -240,7 +240,7 @@ Open conversation:
     Answer the question related to the KB, Stats.
     Check for the options selected. country, region sector.
 Methodologies htmlfy animation interactive
-toggle strict vs normal. easy validation checks
+toggle strict vs normal validation checks
 
 L1: evidence, contraindication on main core knowledge base
 L2: match evidence concepts with core knowledge concepts, If contraindications, It will not be validated. Validating evidence. 

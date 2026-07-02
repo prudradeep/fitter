@@ -13,3 +13,5 @@ Return ONLY valid JSON with this exact shape:
 {{"duplicate": false, "match": "", "reason": "short explanation"}}
 
 If duplicate is true, match must be the closest existing hazard. Keep reason under 40 words.
+Only compare against existing hazards from the selected sector.
+Do not mark duplicate against hazards from another sector.

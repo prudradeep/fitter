@@ -43,3 +43,4 @@ Rules:
 - valid must be false if the reason or evidence is unrelated to the question, contradicts the sector context or retrieved knowledge, invents unsupported facts, is unsupported by the extracted evidence, or does not justify the chosen score under the scoring rules.
 - valid may be true when no reason/evidence is provided only if the score can stand as a simple answer for this optional field.
 - The reason field must tell the user what to revise and stay under 80 words.
+- Reject if score is missing, not numeric, or outside 1-10.

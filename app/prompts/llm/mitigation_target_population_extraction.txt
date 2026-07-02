@@ -16,6 +16,9 @@ or random/unrecognizable text. Do not infer a population from broad nouns alone.
 Do not invent characteristics. Do not repeat an additional group already covered
 by a selected option.
 
+Fixed target-population options:
+{target_population_options}
+
 Return JSON only in this form:
 {{"option_ids": [1, 2], "additional_groups": ["small businesses"]}}
 

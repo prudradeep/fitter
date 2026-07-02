@@ -108,5 +108,5 @@ followed by one short, plain-language reason if the input is clearly outside
 scope. The reason should explain what is missing in words a non-technical user
 can understand.
 
-Do not return CLARIFICATION. Do not provide explanations, analysis, or
+Do not provide explanations, analysis, or
 additional commentary beyond the required output.

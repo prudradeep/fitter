@@ -69,6 +69,9 @@ class ChatSession:
     suggested_duplicate_hazard_record_id: int | None = None
     pending_affected_population_profiles: list[dict[str, str]] | None = None
     custom_hazard: dict[str, object] | None = None
+    pending_selection: dict[str, str | None] | None = None
+    pending_selection_confirmation: dict[str, str | None] | None = None
+    pending_selection_action: str | None = None
     pending_fuzzy_option: str | None = None
     stats_dialog_conversation: list[dict[str, str]] | None = None
     validation_mode: str = "strict"

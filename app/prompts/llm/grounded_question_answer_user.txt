@@ -1,0 +1,13 @@
+Session context:
+- Country: {country}
+- Region: {region}
+- Sector: {sector}
+- Selected hazard: {selected_hazard}
+- Affected groups: {affected_groups}
+- Mitigation measure: {mitigation_measure}
+
+User question:
+{question}
+
+Answer in Markdown using only the Knowledge Base excerpts and sector statistical
+context supplied in the system message.

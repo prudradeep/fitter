@@ -168,6 +168,8 @@ class ChatPersistenceMixin:
     def _activity_step(session: ChatSession) -> str:
         if session.pending_fuzzy_option:
             return "fuzzy_confirmation"
+        if session.pending_selection_confirmation or session.pending_selection_action:
+            return "selection_confirmation"
         if session.country is None:
             return "country"
         if session.region is None:
