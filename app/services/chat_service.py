@@ -60,6 +60,7 @@ from app.services.grounding_models import GroundingModelService
 from app.services.hazard_ranking_service import HazardRankingService
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
+from app.services.voice_summary import generate_voice_summary
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,7 @@ class ChatService(
                 await self._intro_message_from_llm(current_session_id),
             )
             self._attach_other_options(response, session)
+            await self._attach_voice_summary(response)
             self._finalize_chat_response(current_session_id, session, response)
             return response
 
@@ -201,6 +203,7 @@ class ChatService(
                 "user",
                 self._chat_message_display_content(clean_message),
             )
+        await self._attach_voice_summary(response)
         self._finalize_chat_response(current_session_id, session, response)
         return response
 
@@ -222,7 +225,7 @@ class ChatService(
         self._ensure_user_session(current_session_id, session)
 
         if session.sector is None:
-            return ChatResponse(
+            response = ChatResponse(
                 session_id=current_session_id,
                 step=session.phase,
                 bot_message=self.invalid_message,
@@ -230,6 +233,8 @@ class ChatService(
                 session=session.summary(),
                 error=True,
             )
+            await self._attach_voice_summary(response)
+            return response
 
         prompt = clean_message or (
             "Dive deeper into the statistical findings for the listed hazards. "
@@ -243,7 +248,14 @@ class ChatService(
             persist_history=False,
         )
         response.other_options = []
+        await self._attach_voice_summary(response)
         return response
+
+    @staticmethod
+    async def _attach_voice_summary(response: ChatResponse) -> None:
+        if response.voice_summary or not response.bot_message.strip():
+            return
+        response.voice_summary = await generate_voice_summary(response.bot_message)
 
     async def generate_auto_user_message(
         self,

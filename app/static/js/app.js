@@ -166,6 +166,8 @@ const autoConversationTurnLimit = 80;
 let renderedVisualKey = "";
 let renderedStageCardsKey = "";
 let stageVisualRenderId = 0;
+let stageMapRetryTimer = null;
+const stageMapRetryAttempts = new Map();
 const mapTopologyCache = new Map();
 let optionTooltipElement = null;
 let optionTooltipTarget = null;
@@ -462,6 +464,25 @@ function resizeStageChart() {
   });
 }
 
+function finalizeStageMapRender(visualKey) {
+  stageMapRetryAttempts.delete(visualKey);
+  window.requestAnimationFrame(resizeStageChart);
+  window.setTimeout(resizeStageChart, 120);
+}
+
+function scheduleStageMapRetry(expectedStageKey, visualKey, reason = "") {
+  const attempts = stageMapRetryAttempts.get(visualKey) || 0;
+  if (attempts >= 5) return;
+  stageMapRetryAttempts.set(visualKey, attempts + 1);
+  window.clearTimeout(stageMapRetryTimer);
+  stageMapRetryTimer = window.setTimeout(() => {
+    if (stageKeyForStep(currentStep, inputMode) !== expectedStageKey) return;
+    if (reason) console.warn(`Retrying ${visualKey}: ${reason}`);
+    renderedVisualKey = "";
+    renderDynamicStageVisual(expectedStageKey, currentSession, currentOptions);
+  }, 220 * (attempts + 1));
+}
+
 function applyVisualPanelPercent(percent, persist = true) {
   if (!appShell || window.matchMedia("(max-width: 900px)").matches) return;
   const adjustedPercent = clampVisualPanelPercent(percent);
@@ -552,16 +573,17 @@ async function renderDynamicStageVisual(key, session = {}, options = currentOpti
 }
 
 async function renderCountrySelectionMap() {
+  const visualKey = "country-map";
   if (!stageMap || !window.Highcharts || !europeMapPath) {
     showStageMap();
+    scheduleStageMapRetry("country", visualKey, "map dependencies were not ready");
     return;
   }
-  const visualKey = "country-map";
   if (renderedVisualKey === visualKey) {
     showStageMap();
+    resizeStageChart();
     return;
   }
-  renderedVisualKey = visualKey;
   const renderId = ++stageVisualRenderId;
   showStageMap();
 
@@ -663,24 +685,30 @@ async function renderCountrySelectionMap() {
         },
       ],
     });
+    renderedVisualKey = visualKey;
+    finalizeStageMapRender(visualKey);
   } catch (error) {
     console.error("Country stage map failed", error);
+    renderedVisualKey = "";
     showStageMap();
+    scheduleStageMapRetry("country", visualKey, error?.message || "map render failed");
   }
 }
 
 async function renderRegionMap(country, region, { keepCards = false } = {}) {
   const countryMapPath = countryMapData.get(country);
+  const visualKey = `region-map-${country}-${region || ""}`;
+  const expectedStageKey = stageKeyForStep(currentStep, inputMode);
   if (!stageMap || !window.Highcharts || !countryMapPath) {
     showStageMap();
+    scheduleStageMapRetry(expectedStageKey, visualKey, "map dependencies were not ready");
     return;
   }
-  const visualKey = `region-map-${country}-${region || ""}`;
   if (renderedVisualKey === visualKey) {
     showStageMap({ keepIcons: keepCards });
+    resizeStageChart();
     return;
   }
-  renderedVisualKey = visualKey;
   const renderId = ++stageVisualRenderId;
   showStageMap({ keepIcons: keepCards });
 
@@ -715,10 +743,13 @@ async function renderRegionMap(country, region, { keepCards = false } = {}) {
       },
       series: [{ name: "Region", data, joinBy: "hc-key", nullColor: "#c7ccd3" }],
     });
-    window.requestAnimationFrame(resizeStageChart);
+    renderedVisualKey = visualKey;
+    finalizeStageMapRender(visualKey);
   } catch (error) {
     console.error("Region stage map failed", error);
-    showStageMap();
+    renderedVisualKey = "";
+    showStageMap({ keepIcons: keepCards });
+    scheduleStageMapRetry(expectedStageKey, visualKey, error?.message || "map render failed");
   }
 }
 
@@ -823,24 +854,36 @@ function renderHazardPopulationTable(session = {}) {
     .join("");
   const rows = hazards
     .map(
-      (hazard, index) => `
+      (hazard, index) => {
+        const hazardLabel = String(hazard.hazard || "Hazard");
+        return `
         <tr>
-          <td><span>${index + 1}</span>${escapeHtml(hazard.hazard || "Hazard")}</td>
+          <td>
+            <span class="stage-hazard-rank">${index + 1}</span>
+            <span class="stage-hazard-name" title="${escapeHtml(hazardLabel)}">${escapeHtml(hazardLabel)}</span>
+          </td>
           <td>${populationPercentage(hazard.regional_population_pct)}${populationTrend(hazard.regional_population_pct, hazard.national_population_pct)}</td>
           <td>${populationPercentage(hazard.national_population_pct)}</td>
         </tr>
-      `,
+      `;
+      },
     )
     .join("");
   const additionalHazardsList = additionalHazards
     .map(
-      (hazard, index) => `
+      (hazard, index) => {
+        const hazardLabel = String(hazard.hazard || "Hazard");
+        return `
         <tr>
-          <td><span>${index + 1}</span>${escapeHtml(hazard.hazard || "Hazard")}</td>
+          <td>
+            <span class="stage-hazard-rank">${index + 1}</span>
+            <span class="stage-hazard-name" title="${escapeHtml(hazardLabel)}">${escapeHtml(hazardLabel)}</span>
+          </td>
           <td>${populationPercentage(hazard.regional_population_pct)}${populationTrend(hazard.regional_population_pct, hazard.national_population_pct)}</td>
           <td>${populationPercentage(hazard.national_population_pct)}</td>
         </tr>
-      `,
+      `;
+      },
     )
     .join("");
   stageIconGrid.innerHTML = `
@@ -1219,7 +1262,6 @@ function drawVoiceAnalyzer(active) {
   if (!width || !height) return;
 
   const ctx = voiceAnalyzerContext;
-  const midY = height / 2;
   const now = performance.now();
   const boundaryAge = now - voiceAnalyzerLastBoundaryAt;
   const decay = active ? Math.exp(-boundaryAge / 260) : 0;
@@ -1231,27 +1273,27 @@ function drawVoiceAnalyzer(active) {
   ctx.clearRect(0, 0, width, height);
 
   const clusters = [
-    { center: 0.14, spread: 0.055, power: 0.93 },
-    { center: 0.38, spread: 0.04, power: 0.54 },
-    { center: 0.57, spread: 0.035, power: 0.58 },
-    { center: 0.84, spread: 0.055, power: 1 },
+    { center: 0.16, spread: 0.06, power: 0.95 },
+    { center: 0.31, spread: 0.045, power: 0.72 },
+    { center: 0.47, spread: 0.055, power: 1 },
+    { center: 0.68, spread: 0.045, power: 0.62 },
+    { center: 0.84, spread: 0.07, power: 0.86 },
   ];
-  const barCount = Math.max(34, Math.floor(width / 13));
-  const gap = width / (barCount + 1);
-  const barWidth = Math.max(4, Math.min(7, gap * 0.42));
-  const maxBarHeight = height * 0.82;
+  const barCount = Math.max(28, Math.floor(width / 3.8));
+  const gap = width / (barCount + 2);
+  const barWidth = Math.max(2, Math.min(4, gap * 0.58));
+  const baseline = height - 4;
+  const maxBarHeight = height - 8;
   const speechLevel = active ? Math.max(0.16, Math.min(1, voiceAnalyzerLevel)) : 0.42;
 
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, "#6a20c8");
-  gradient.addColorStop(0.48, "#7b22d8");
-  gradient.addColorStop(1, "#5a1db7");
+  ctx.save();
+  ctx.shadowColor = active ? "rgba(56, 189, 248, 0.34)" : "rgba(59, 130, 246, 0.2)";
+  ctx.shadowBlur = active ? 7 : 4;
+  ctx.fillStyle = "rgba(18, 75, 216, 0.88)";
+  ctx.fillRect(0, baseline, width, 2);
 
-  ctx.shadowColor = "rgba(123, 34, 216, 0.42)";
-  ctx.shadowBlur = active ? 9 : 4;
-  ctx.fillStyle = gradient;
   for (let index = 0; index < barCount; index += 1) {
-    const x = gap * (index + 1);
+    const x = gap * (index + 1.4);
     const normalizedX = x / width;
     let envelope = 0.08;
     clusters.forEach((cluster) => {
@@ -1260,12 +1302,32 @@ function drawVoiceAnalyzer(active) {
         Math.exp(-((normalizedX - cluster.center) ** 2) / (2 * cluster.spread ** 2));
     });
     const wordFocus = Math.exp(-((normalizedX - voiceAnalyzerProgress) ** 2) / (2 * 0.07 ** 2));
-    const speechShape = 0.58 + speechLevel * 0.34 + wordFocus * speechLevel * 0.46;
-    const barHeight = Math.max(6, Math.min(maxBarHeight, envelope * maxBarHeight * speechShape));
-    roundRect(ctx, x - barWidth / 2, midY - barHeight / 2, barWidth, barHeight, barWidth / 2);
+    const flicker = 0.74 + 0.26 * Math.sin(now / 170 + index * 1.37);
+    const speechShape = 0.46 + speechLevel * 0.3 + wordFocus * speechLevel * 0.42;
+    const barHeight = Math.max(
+      3,
+      Math.min(maxBarHeight, envelope * maxBarHeight * speechShape * flicker),
+    );
+    const barGradient = ctx.createLinearGradient(0, baseline - barHeight, 0, baseline);
+    if (index % 5 === 0) {
+      barGradient.addColorStop(0, "#67e8f9");
+      barGradient.addColorStop(0.42, "#22d3ee");
+      barGradient.addColorStop(1, "#1d4ed8");
+    } else if (index % 4 === 0) {
+      barGradient.addColorStop(0, "#d8b4fe");
+      barGradient.addColorStop(0.45, "#a855f7");
+      barGradient.addColorStop(1, "#2563eb");
+    } else {
+      barGradient.addColorStop(0, "#60a5fa");
+      barGradient.addColorStop(0.5, "#2563eb");
+      barGradient.addColorStop(1, "#1e40af");
+    }
+    ctx.fillStyle = barGradient;
+    roundRect(ctx, x - barWidth / 2, baseline - barHeight, barWidth, barHeight, 0.8);
     ctx.fill();
   }
   ctx.shadowBlur = 0;
+  ctx.restore();
 }
 
 function roundRect(ctx, x, y, width, height, radius) {
@@ -1296,9 +1358,11 @@ function pauseSpeech() {
   stopVoiceAnalyzer();
 }
 
-function speakServerMessage(html) {
+function speakServerMessage(html, voiceSummary = "") {
   if (!voiceAssistantToggle?.checked || !("speechSynthesis" in window)) return;
-  const text = plainTextFromHtml(html);
+  const text = String(voiceSummary || "").trim() || (typeof voiceSummaryFromHtml === "function"
+    ? voiceSummaryFromHtml(html)
+    : plainTextFromHtml(html));
   if (!text) return;
   pauseSpeech();
   const utterance = new SpeechSynthesisUtterance(text);
@@ -3129,7 +3193,7 @@ async function sendStatsDialogMessage(message, echoUser = true) {
 
     typing.remove();
     const botRow = addMessage("bot", "", data.error, statsDialogLog);
-    speakServerMessage(data.bot_message);
+    speakServerMessage(data.bot_message, data.voice_summary);
     await typeServerMessage(botRow, data.bot_message, statsDialogLog);
     updateSessionCard(data.session);
     loadSessions();
@@ -3798,7 +3862,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
       return;
     }
     const botRow = addMessage("bot", "", data.error);
-    speakServerMessage(data.bot_message);
+    speakServerMessage(data.bot_message, data.voice_summary);
     await typeServerMessage(botRow, data.bot_message);
     renderValidationDetails(botRow, data.validation_details);
     updateSessionCard(data.session);

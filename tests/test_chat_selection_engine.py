@@ -1,4 +1,6 @@
+import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
 from app.services.chat_session import ChatSession
@@ -13,6 +15,30 @@ class _SelectionEngine(ChatSelectionStepsMixin):
 
     def _available_sector_names(self, session):
         return ["Energy", "Housing"]
+
+
+class _AsyncSelectionEngine(_SelectionEngine):
+    def __init__(self):
+        self.applied_selection = None
+
+    def _is_exact_current_selection(self, session, message):
+        return False
+
+    def _deterministic_selection_from_text(self, session, message):
+        return None
+
+    async def _handle_anytime_grounded_question(self, session_id, session, message):
+        return None
+
+    def _selection_dependencies_are_valid(self, session, selection, current_phase):
+        return True
+
+    async def _apply_pending_selection(self, session_id, session, selection):
+        self.applied_selection = selection
+        session.country = selection.get("country")
+        session.region = selection.get("region")
+        session.sector = selection.get("sector")
+        return "applied"
 
 
 class ChatSelectionEngineTests(unittest.TestCase):
@@ -39,3 +65,48 @@ class ChatSelectionEngineTests(unittest.TestCase):
                 "country",
             )
         )
+
+    def test_llm_resolved_valid_selection_applies_without_confirmation(self):
+        engine = _AsyncSelectionEngine()
+        session = ChatSession()
+
+        with (
+            patch(
+                "app.services.chat_selection_steps.detect_message_intent",
+                new=AsyncMock(
+                    return_value={
+                        "intent": "selection",
+                        "confidence": "high",
+                        "reason": "User selected options.",
+                    }
+                ),
+            ),
+            patch(
+                "app.services.chat_selection_steps.resolve_selection",
+                new=AsyncMock(
+                    return_value={
+                        "matched": True,
+                        "country": "Germany",
+                        "region": "Bavaria",
+                        "sector": "Energy",
+                        "confidence": "high",
+                        "reason": "All options matched.",
+                    }
+                ),
+            ),
+        ):
+            response = asyncio.run(
+                engine._maybe_apply_conversational_selection(
+                    "session-1",
+                    session,
+                    "I'll go with the Energy sector in Bavaria Germany",
+                    "country",
+                )
+            )
+
+        self.assertEqual(response, "applied")
+        self.assertEqual(
+            engine.applied_selection,
+            {"country": "Germany", "region": "Bavaria", "sector": "Energy"},
+        )
+        self.assertIsNone(session.pending_selection_confirmation)

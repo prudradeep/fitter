@@ -41,6 +41,7 @@ class ChatResponse(BaseModel):
     session_id: str
     step: str
     bot_message: str
+    voice_summary: str | None = None
     options: list[Option] = Field(default_factory=list)
     other_options: list[str] = Field(default_factory=list)
     session: SessionSummary

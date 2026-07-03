@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260702-methodology-frame-fill" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260703-hazard-ellipsis" />
   </head>
   <body>
     <header class="topbar">
@@ -20,8 +20,8 @@
             <p>A digital coach for Twin-Transition policy</p>
           </div>
         </div>
-        <div id="voiceAnalyzer" class="voice-analyzer" aria-hidden="true" hidden></div>
         <div class="topbar-actions">
+          <div id="voiceAnalyzer" class="voice-analyzer" aria-hidden="true" hidden></div>
           <div class="session-menu">
             <button id="sessionsButton" class="reset-button" type="button">Manage Sessions</button>
             <div id="sessionsPanel" class="sessions-panel" hidden>
@@ -639,7 +639,7 @@
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/highmaps.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/highcharts-more.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/modules/venn.js"></script>
-    <script src="{{ url_for('static', path='/js/app-utils.js') }}?v=20260701-split-assets"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260702-venn-compound-overlap"></script>
+    <script src="{{ url_for('static', path='/js/app-utils.js') }}?v=20260703-voice-summary"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260703-stage-map-retry"></script>
   </body>
 </html>

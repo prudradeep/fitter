@@ -250,10 +250,13 @@ Test cases:
     vs Evidence not aligned with fitter concept
 
 
-open conversation checks
+
 duplicate hazard region
-summarize  content for speech. full detail available as a text in the end
 speech element redesign
-Strict check passed only visible to all, easy - visible to the same user only
+summarize  content for speech. full detail available as a text in the end
 left panel hazards listing elipsis on hover show full in tooltip
+
+
+open conversation checks
+Strict check passed only visible to all, easy - visible to the same user only
 Maintain Test cases in excel

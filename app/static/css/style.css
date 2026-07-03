@@ -48,21 +48,21 @@
 
 .topbar-actions {
   display: flex;
-  align-items: center;
+  align-items: end;
   gap: 12px;
 }
 
 .voice-analyzer {
-  width: clamp(300px, 38vw, 620px);
-  height: 72px;
-  flex: 1 1 420px;
-  max-width: 620px;
-  min-width: 300px;
+  width: min(34vw, 150px);
+  height: 58px;
+  flex: 0 1 150px;
+  max-width: 150px;
+  min-width: 96px;
   border: 0;
   border-radius: 0;
   overflow: hidden;
   background: transparent;
-  opacity: 0.9;
+  opacity: 0.92;
   transition:
     opacity 180ms ease,
     transform 180ms ease;
@@ -2097,14 +2097,14 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .stage-additional-hazards td:first-child {
-  max-width: 190px;
+  max-width: 100px;
   color: #334155;
   font-weight: 750;
   line-height: 1.35;
-  white-space: normal;
+  white-space: nowrap;
 }
 
-.stage-additional-hazards td:first-child span {
+.stage-additional-hazards td:first-child .stage-hazard-rank {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2116,6 +2116,16 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   color: #6d28d9;
   font-size: 0.68rem;
   font-weight: 950;
+}
+
+.stage-additional-hazards td:first-child .stage-hazard-name {
+  display: inline-block;
+  max-width: calc(100% - 34px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+  cursor: help;
 }
 
 .practical-considerations-visual {
@@ -2290,14 +2300,14 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 .population-trend.is-equal { color: #64748b; }
 
 .stage-hazard-table td:first-child {
-  max-width: 190px;
+  max-width: 100px;
   color: #334155;
   font-weight: 750;
   line-height: 1.35;
-  white-space: normal;
+  white-space: nowrap;
 }
 
-.stage-hazard-table td:first-child span {
+.stage-hazard-table td:first-child .stage-hazard-rank {
   display: inline-grid;
   place-items: center;
   width: 19px;
@@ -2308,6 +2318,16 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   color: #6d28d9;
   font-size: 0.61rem;
   font-weight: 900;
+}
+
+.stage-hazard-table td:first-child .stage-hazard-name {
+  display: inline-block;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+  cursor: help;
 }
 
 .stage-hazard-table tbody tr:hover {
@@ -5084,8 +5104,9 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
   .voice-analyzer {
     order: 2;
-    width: 100%;
-    max-width: none;
+    width: min(44vw, 150px);
+    max-width: 150px;
+    min-width: 96px;
     flex-basis: auto;
   }
 
@@ -5216,7 +5237,9 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   }
 
   .voice-analyzer {
-    min-width: 100%;
+    width: min(48vw, 150px);
+    max-width: 150px;
+    min-width: 96px;
     height: 58px;
   }
 

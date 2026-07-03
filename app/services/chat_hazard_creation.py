@@ -131,7 +131,7 @@ class ChatHazardCreationMixin:
             session.sector or "",
             session.country or "",
             session.region or "",
-            self._same_sector_hazard_names_for_duplicate_check(session),
+            self._same_scope_custom_hazard_names_for_duplicate_check(session),
             state,
             session.validation_mode,
         )
@@ -178,6 +178,51 @@ class ChatHazardCreationMixin:
             except Exception:
                 logger.exception("Failed to load same-sector hazards for duplicate check")
 
+        return self._dedupe_hazard_names(names)
+
+    def _same_scope_custom_hazard_names_for_duplicate_check(
+        self, session: ChatSession
+    ) -> list[str]:
+        names: list[str] = []
+        if session.country_id is None or session.sector_id is None:
+            return names
+
+        region_scope_key = session.region_id or 0
+        try:
+            names.extend(
+                self.db.scalars(
+                    select(CustomHazard.name).where(
+                        CustomHazard.country_id == session.country_id,
+                        CustomHazard.sector_id == session.sector_id,
+                        CustomHazard.region_scope_key == region_scope_key,
+                    )
+                ).all()
+            )
+            names.extend(
+                self.db.scalars(
+                    select(UserHazard.name)
+                    .join(UserSession, UserSession.id == UserHazard.user_session_id)
+                    .where(
+                        UserHazard.source == "custom",
+                        UserHazard.sector_id == session.sector_id,
+                        UserHazard.region_id.is_(None)
+                        if session.region_id is None
+                        else UserHazard.region_id == session.region_id,
+                        UserSession.country_id == session.country_id,
+                        UserSession.sector_id == session.sector_id,
+                        UserSession.region_id.is_(None)
+                        if session.region_id is None
+                        else UserSession.region_id == session.region_id,
+                    )
+                ).all()
+            )
+        except Exception:
+            logger.exception("Failed to load same-scope custom hazards for duplicate check")
+
+        return self._dedupe_hazard_names(names)
+
+    @staticmethod
+    def _dedupe_hazard_names(names: list[object]) -> list[str]:
         deduped: list[str] = []
         seen: set[str] = set()
         for name in names:
@@ -498,7 +543,7 @@ class ChatHazardCreationMixin:
         state = self._custom_hazard_state(session)
         matches = self._local_similar_hazards(
             hazard,
-            self._same_sector_hazard_names_for_duplicate_check(session),
+            self._same_scope_custom_hazard_names_for_duplicate_check(session),
         )
         state["duplicate_candidates"] = [
             {
@@ -506,7 +551,7 @@ class ChatHazardCreationMixin:
                 "similarity_score": round(fuzzy_score(hazard, match) * 100),
                 "reason": (
                     "The proposed hazard is the same as, or very similar to, "
-                    "an existing same-sector hazard."
+                    "an existing custom hazard in the same country, region, and sector."
                 ),
             }
             for match in matches[:3]

@@ -4,6 +4,28 @@ function plainTextFromHtml(html) {
   return element.textContent.replace(/\s+/g, " ").trim();
 }
 
+function voiceSummaryFromHtml(html) {
+  const text = plainTextFromHtml(html);
+  if (!text) return "";
+
+  const closing = "";
+  const cleaned = text
+    .replace(/\b(Continue|Back|Skip|Yes|No|Add more|Finish)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return closing;
+
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 18 && sentence !== closing);
+  const summarySentences = sentences.length
+    ? sentences.slice(0, 2)
+    : [cleaned.slice(0, 220).trim()];
+
+  return [...summarySentences, closing].join(" ");
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")

@@ -361,16 +361,8 @@ class ChatSelectionStepsMixin:
         if not any(selection.values()):
             return None
 
-        session.pending_selection_confirmation = selection
-        logger.info("Selection requires clarification: %s", selection)
-        return ChatResponse(
-            session_id=session_id,
-            step="selection_clarification",
-            bot_message=self._selection_confirmation_message(selection),
-            options=SELECTION_CONFIRMATION_OPTIONS,
-            session=session.summary(),
-            error=False,
-        )
+        logger.info("Applying resolved conversational selection: %s", selection)
+        return await self._apply_pending_selection(session_id, session, selection)
 
     async def _handle_pending_selection_workflow(
         self,
