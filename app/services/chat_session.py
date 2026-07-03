@@ -134,6 +134,11 @@ class ChatSession:
                 if str(hazard).strip()
             ],
             additional_hazard_population=self._additional_hazard_population_summary(),
+            custom_hazards=[
+                str(hazard).strip()
+                for hazard in (self.custom_hazards or [])
+                if str(hazard).strip()
+            ],
             custom_hazard=dict(self.custom_hazard) if isinstance(self.custom_hazard, dict) else None,
             validation_mode=(
                 self.validation_mode if self.validation_mode in {"strict", "easy"} else "strict"

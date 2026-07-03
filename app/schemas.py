@@ -33,6 +33,7 @@ class SessionSummary(BaseModel):
     practical_considerations: list[str] = Field(default_factory=list)
     additional_hazards: list[str] = Field(default_factory=list)
     additional_hazard_population: list[dict[str, object]] = Field(default_factory=list)
+    custom_hazards: list[str] = Field(default_factory=list)
     custom_hazard: dict[str, object] | None = None
     validation_mode: str = "strict"
 

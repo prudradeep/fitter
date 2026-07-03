@@ -811,6 +811,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             ["Top hazard 1", "Top hazard 2", "Top hazard 3"],
         )
         self.assertEqual(summary.additional_hazards, ["Expert-added hazard"])
+        self.assertEqual(summary.custom_hazards, ["New custom hazard"])
         self.assertEqual(
             [row["hazard"] for row in summary.additional_hazard_population],
             ["Expert-added hazard"],

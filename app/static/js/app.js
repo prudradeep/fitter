@@ -171,6 +171,7 @@ const stageMapRetryAttempts = new Map();
 const mapTopologyCache = new Map();
 let optionTooltipElement = null;
 let optionTooltipTarget = null;
+let listedHazardOptions = [];
 
 const defaultPlaceholder = "Type a country, region, or sector...";
 const panelWidthKey = "dr_transition_visual_panel_width";
@@ -2836,6 +2837,9 @@ document.addEventListener("scroll", positionOptionTooltip, true);
 function renderOptions(options, otherOptions = []) {
   currentOptions = options || [];
   currentOtherOptions = otherOptions || [];
+  if (currentStep === "hazard_profile_selection" && hasListedHazardActions(currentOptions)) {
+    listedHazardOptions = [...currentOptions];
+  }
   optionTray.innerHTML = "";
   highlightedOptionLabel = "";
   if (inputMode === "target_population_multi") {
@@ -2900,6 +2904,68 @@ function renderCollapsedHazardOptions(options = []) {
 
 function isHazardOptionActionLabel(label = "") {
   return hazardOptionActionLabels.has(normalizeForMatch(label));
+}
+
+function hasListedHazardActions(options = []) {
+  return options.some((option) => {
+    const normalized = normalizeForMatch(option?.label || "");
+    return (
+      normalized === "show hazards added by experts"
+      || normalized === "show co created hazards"
+    );
+  });
+}
+
+function hazardOptionObjectsFromLabels(labels = [], actionLabel = "Show listed hazards") {
+  const seen = new Set();
+  const options = labels
+    .map((label) => String(label || "").trim())
+    .filter(Boolean)
+    .filter((label) => {
+      const key = normalizeForMatch(label);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((label, index) => ({ id: index + 1, label }));
+  if (actionLabel) {
+    options.push({ id: options.length + 1, label: actionLabel });
+  }
+  return options;
+}
+
+function localHazardListForAction(label = "") {
+  const normalized = normalizeForMatch(label);
+  if (normalized === "show hazards added by experts") {
+    return Array.isArray(currentSession?.additional_hazards)
+      ? currentSession.additional_hazards
+      : [];
+  }
+  if (normalized === "show co created hazards") {
+    return Array.isArray(currentSession?.custom_hazards)
+      ? currentSession.custom_hazards
+      : [];
+  }
+  return [];
+}
+
+function handleLocalHazardAction(label = "") {
+  if (currentStep !== "hazard_profile_selection") return false;
+  const normalized = normalizeForMatch(label);
+  if (normalized === "show listed hazards" && listedHazardOptions.length) {
+    renderOptions(listedHazardOptions, currentOtherOptions);
+    return true;
+  }
+  if (
+    normalized !== "show hazards added by experts"
+    && normalized !== "show co created hazards"
+  ) {
+    return false;
+  }
+  const labels = localHazardListForAction(label);
+  if (!labels.length) return false;
+  renderOptions(hazardOptionObjectsFromLabels(labels), currentOtherOptions);
+  return true;
 }
 
 function renderTargetPopulationOptions(options = []) {
@@ -2976,6 +3042,9 @@ function createOptionButton(label, extraClass = "") {
     }
     if (isQuickSelectPopulationLabel(label)) {
       openTargetPopulationDialog();
+      return;
+    }
+    if (handleLocalHazardAction(label)) {
       return;
     }
     disableOldOptions();
