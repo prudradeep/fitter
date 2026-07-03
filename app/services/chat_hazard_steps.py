@@ -48,43 +48,10 @@ class ChatHazardStepsMixin:
             return self._hazard_profile_step(session_id, session)
 
         if action == normalize("Add a new Hazard"):
-            session.phase = "custom_hazard_input"
-            session.custom_hazard = default_custom_hazard_state()
-            return ChatResponse(
-                session_id=session_id,
-                step="hazards",
-                bot_message=render_message("add_hazard.md", sector=session.sector),
-                options=HAZARD_ENTRY_OPTIONS,
-                session=session.summary(),
-                error=False,
-            )
+            return self._custom_hazard_input_step(session_id, session)
 
         if action == normalize("Refresh hazards and DGs"):
-            hazard_items = await self._refresh_hazards_and_profiles_from_llm(
-                session_id,
-                session,
-                replace_sector_hazards=True,
-            )
-            session.hazards = [str(item["hazard"]) for item in hazard_items]
-            session.hazard_profiles = {
-                str(item["hazard"]): [
-                    profile
-                    for profile in item.get("profiles", [])
-                    if (
-                        isinstance(profile, dict)
-                        and str(profile.get("name") or "").strip()
-                    )
-                    or (isinstance(profile, str) and profile.strip())
-                ]
-                for item in hazard_items
-                if item.get("profiles")
-            }
-            session.custom_hazards = self._saved_custom_hazards_for_context(session)
-            session.additional_hazards = self._additional_hazards_for_context(session)
-            self._hydrate_custom_hazard_profiles(session)
-            self._filter_session_hazards_without_profiles(session)
-            await self._rank_session_hazards(session)
-            self._record_activity(session_id, session, "hazards_refreshed", session.sector or "")
+            await self._refresh_session_hazards(session_id, session)
             return self._hazards_step(session_id, session)
 
         if action == normalize("Dive deeper into statistical findings"):
@@ -99,9 +66,59 @@ class ChatHazardStepsMixin:
             error=True,
         )
 
+    def _custom_hazard_input_step(
+        self, session_id: str, session: ChatSession
+    ) -> ChatResponse:
+        self._clear_selected_hazard_context(session)
+        session.phase = "custom_hazard_input"
+        session.custom_hazard = default_custom_hazard_state()
+        return ChatResponse(
+            session_id=session_id,
+            step="hazards",
+            bot_message=render_message("add_hazard.md", sector=session.sector),
+            options=HAZARD_ENTRY_OPTIONS,
+            session=session.summary(),
+            error=False,
+        )
+
+    async def _refresh_session_hazards(
+        self, session_id: str, session: ChatSession
+    ) -> None:
+        hazard_items = await self._refresh_hazards_and_profiles_from_llm(
+            session_id,
+            session,
+            replace_sector_hazards=True,
+        )
+        session.hazards = [str(item["hazard"]) for item in hazard_items]
+        session.hazard_profiles = {
+            str(item["hazard"]): [
+                profile
+                for profile in item.get("profiles", [])
+                if (
+                    isinstance(profile, dict)
+                    and str(profile.get("name") or "").strip()
+                )
+                or (isinstance(profile, str) and profile.strip())
+            ]
+            for item in hazard_items
+            if item.get("profiles")
+        }
+        session.custom_hazards = self._saved_custom_hazards_for_context(session)
+        session.additional_hazards = self._additional_hazards_for_context(session)
+        self._hydrate_custom_hazard_profiles(session)
+        self._filter_session_hazards_without_profiles(session)
+        await self._rank_session_hazards(session)
+        self._record_activity(
+            session_id,
+            session,
+            "hazards_refreshed",
+            session.sector or "",
+        )
+
     def _stats_deep_dive_dialog_step(
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
+        session.phase = "stats_deep_dive"
         return ChatResponse(
             session_id=session_id,
             step="stats_deep_dive_dialog",
@@ -125,43 +142,10 @@ class ChatHazardStepsMixin:
             return self._hazard_profile_step(session_id, session)
 
         if action == normalize("Add a new Hazard"):
-            session.phase = "custom_hazard_input"
-            session.custom_hazard = default_custom_hazard_state()
-            return ChatResponse(
-                session_id=session_id,
-                step="hazards",
-                bot_message=render_message("add_hazard.md", sector=session.sector),
-                options=HAZARD_ENTRY_OPTIONS,
-                session=session.summary(),
-                error=False,
-            )
+            return self._custom_hazard_input_step(session_id, session)
 
         if action == normalize("Refresh hazards and DGs"):
-            hazard_items = await self._refresh_hazards_and_profiles_from_llm(
-                session_id,
-                session,
-                replace_sector_hazards=True,
-            )
-            session.hazards = [str(item["hazard"]) for item in hazard_items]
-            session.hazard_profiles = {
-                str(item["hazard"]): [
-                    profile
-                    for profile in item.get("profiles", [])
-                    if (
-                        isinstance(profile, dict)
-                        and str(profile.get("name") or "").strip()
-                    )
-                    or (isinstance(profile, str) and profile.strip())
-                ]
-                for item in hazard_items
-                if item.get("profiles")
-            }
-            session.custom_hazards = self._saved_custom_hazards_for_context(session)
-            session.additional_hazards = self._additional_hazards_for_context(session)
-            self._hydrate_custom_hazard_profiles(session)
-            self._filter_session_hazards_without_profiles(session)
-            await self._rank_session_hazards(session)
-            self._record_activity(session_id, session, "hazards_refreshed", session.sector or "")
+            await self._refresh_session_hazards(session_id, session)
             return self._hazards_step(session_id, session)
 
         if not message:
@@ -225,6 +209,13 @@ class ChatHazardStepsMixin:
             fuzzy_hazard = self._fuzzy_hazard(message, session)
             if fuzzy_hazard is not None:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_hazard)
+
+            question_handler = getattr(self, "_handle_anytime_grounded_question", None)
+            if question_handler is not None:
+                question_response = await question_handler(session_id, session, message)
+                if question_response is not None:
+                    return question_response
+
             return ChatResponse(
                 session_id=session_id,
                 step="hazard_profile_selection",

@@ -1,50 +1,26 @@
-import asyncio
-import json
 import logging
 import re
-from dataclasses import asdict
 from datetime import datetime, timezone
-from html import escape
 
 from app.llm import ask_llm_chat
 from app.config import get_settings
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
-    AdditionalHazard,
-    AdditionalHazardProfile,
-    AdditionalHazardProfileTargetPopulation,
     Country,
-    CustomHazard,
-    CustomHazardProfile,
     EvaluationQuestion,
-    MitigationMeasureExample,
-    MitigationMeasurePolicy,
-    MitigationMeasurePolicySystemHazard,
-    MitigationMeasureTargetGroup,
     QuestionOption,
     Region,
-    Sector,
-    SystemHazard,
-    SystemHazardSocioDemographic,
-    SystemHazardSocioDemographicPopulationMatch,
-    SystemHazardSocioDemographicTargetPopulation,
-    EurostatPopulationCache,
-    UserHazard,
-    UserHazardSocioDemographic,
-    UserMitigationMeasure,
-    UserQuestionResponse,
     UserSession,
 )
 from app.schemas import ChatResponse, Option
 from app.services.chat_formatters import (
-    format_additional_dgs,
     format_all_dgs,
-    format_evaluation_answers,
     hazard_names,
     normalize_markdown_text,
 )
+from app.services.chat_json import parse_json_array
 from app.services.chat_context_retrieval import ChatContextRetrievalMixin
 from app.services.chat_hazard_creation import ChatHazardCreationMixin
 from app.services.chat_hazard_steps import ChatHazardStepsMixin
@@ -53,24 +29,12 @@ from app.services.chat_custom_hazard_population_steps import (
 )
 from app.services.chat_grounded_question_steps import ChatGroundedQuestionStepsMixin
 from app.services.chat_auto_user import ChatAutoUserMixin
-from app.services.chat_json import (
-    extract_json_array as extract_json_array_text,
-    extract_json_object as extract_json_object_text,
-)
 from app.services.chat_mitigation_creation import ChatMitigationCreationMixin
 from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_navigation_steps import ChatNavigationStepsMixin
 from app.services.chat_options import (
-    ADD_DGS_OPTIONS,
     DG_REASON_EVIDENCE_OPTIONS,
-    EVALUATION_CATEGORIES,
-    FUZZY_CONFIRMATION_OPTIONS,
-    HAZARD_ENTRY_OPTIONS,
-    HAZARD_DUPLICATE_OPTIONS,
-    HAZARD_POPULATION_REVIEW_OPTIONS,
-    MITIGATION_DUPLICATE_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
-    OTHER_NAV_OPTIONS,
     POST_SECTOR_OPTIONS,
     REASON_CONFIRMATION_OPTIONS,
     SOCIO_DEMOGRAPHIC_OPTIONS,
@@ -78,60 +42,24 @@ from app.services.chat_options import (
     best_fuzzy_label,
     compact_for_match,
     exact_option_label,
-    fuzzy_score,
     match_option_label,
     normalize,
-    normalize_for_match,
-    option_list,
 )
 from app.services.chat_parsers import (
     is_llm_unavailable_response,
-    parse_duplicate_check_response,
-    parse_entailment_response,
-    parse_evaluation_answer,
-    parse_grounded_claims_response,
-    parse_grounded_validation_response,
-    parse_llm_hazard_list,
-    parse_mitigation_reason,
     parse_mitigation_clarity_response,
-    parse_reason_evidence,
-    parse_validation_response,
 )
 from app.services.chat_persistence import ChatPersistenceMixin
 from app.services.chat_session import ChatSession, session_store
 from app.services.validation_service import ChatValidationServiceMixin
-from app.services.custom_hazard_validation import (
-    build_custom_hazard_grounding_status,
-    custom_hazard_validation_details,
-    default_custom_hazard_state,
-    frontend_custom_hazard_payload,
-    normalize_custom_group,
-    validate_custom_hazard_dimensions,
-)
-from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
-from app.services.chat_population_edits import (
-    clean_affected_group_label,
-    clean_population_edit_items,
-    fallback_population_edits,
-    parse_custom_affected_group_edit_message,
-    split_affected_group_labels,
-)
 from app.services.chat_profile_rendering import ChatProfileRenderingMixin
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
-from app.services.hazard_effect_size import hazard_predictor_effect_rows
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.eurostat_service import EurostatService
-from app.services.evidence_contradiction_service import EvidenceContradictionService
 from app.services.grounding_models import GroundingModelService
-from app.services.hazard_ranking_service import HazardRankingService, slugify_hazard
+from app.services.hazard_ranking_service import HazardRankingService
 from app.services.message_renderer import markdown_to_html, render_message
-from app.services.profile_metadata import compact_profile_metadata
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
-from app.services.sector_prompt_rag import (
-    SectorPromptRagService,
-    section_five_primary_data,
-    strip_rule_lines,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -596,57 +524,6 @@ class ChatService(
             error=True,
         )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     async def _capture_additional_dgs(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
@@ -687,39 +564,6 @@ class ChatService(
             return await self._finalize_additional_dg_questions(session_id, session)
 
         return self._additional_dg_question_step(session_id, session)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     async def _socio_demographic_response(
         self, session_id: str, session: ChatSession, user_message: str
@@ -1199,14 +1043,7 @@ class ChatService(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         raw_json = message.split(":", 1)[1].strip()
-        try:
-            payload = json.loads(raw_json)
-        except json.JSONDecodeError:
-            return self._additional_dg_question_step(
-                session_id,
-                session,
-                error_reason="Please submit valid socio-demographic selections.",
-            )
+        payload = parse_json_array(raw_json)
         if not isinstance(payload, list):
             return self._additional_dg_question_step(
                 session_id,
@@ -1466,15 +1303,7 @@ class ChatService(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         raw_json = message.split(":", 1)[1].strip()
-        try:
-            payload = json.loads(raw_json)
-        except json.JSONDecodeError:
-            return self._target_population_question_step(
-                session_id,
-                session,
-                error_reason="Please submit valid affected population group selections.",
-            )
-
+        payload = parse_json_array(raw_json)
         if not isinstance(payload, list):
             return self._target_population_question_step(
                 session_id,
@@ -1603,113 +1432,6 @@ class ChatService(
             lines.append(f"  - {answer['answer']}")
         return "\n".join(lines)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _scope_instruction(session: ChatSession) -> str:
         return (
@@ -1746,50 +1468,6 @@ class ChatService(
             "- When rejecting, explain that the hazard must be rewritten as a "
             "twin-transition policy impact, with the mechanism or affected outcome."
         )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     async def _assess_mitigation_clarity(
         self,
@@ -1842,87 +1520,6 @@ class ChatService(
             if dimensions and unresolved_count <= 1:
                 parsed["clear"] = True
         return parsed
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def _could_be_fuzzy_selection(self, session: ChatSession, message: str) -> bool:
         labels: list[str] = []

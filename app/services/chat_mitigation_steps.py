@@ -4,6 +4,7 @@ from app.services.chat_options import (
     MITIGATION_DUPLICATE_OPTIONS,
     REASON_CONFIRMATION_OPTIONS,
     exact_option_label,
+    fuzzy_score,
     match_option_label,
     normalize,
 )
@@ -20,7 +21,17 @@ class ChatMitigationStepsMixin:
         *,
         target_population_confirmed: bool = False,
     ) -> ChatResponse:
-        if not target_population_confirmed:
+        previous_phase = str(session.phase or "")
+        if (
+            not target_population_confirmed
+            and previous_phase
+            not in {
+                "mitigation_target_population_review",
+                "mitigation_clarity",
+                "mitigation_reason",
+                "mitigation_review",
+            }
+        ):
             session.mitigation_target_population = None
         session.phase = "reason_confirmation"
         recommendations = await self._practical_policy_recommendations(session)
@@ -40,11 +51,12 @@ class ChatMitigationStepsMixin:
     async def _handle_reason_confirmation(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        exact_label = exact_option_label(message, REASON_CONFIRMATION_OPTIONS)
-        if exact_label is None:
-            fuzzy_label = match_option_label(message, REASON_CONFIRMATION_OPTIONS)
-            if fuzzy_label is not None:
-                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
+        exact_label = self._exact_or_safe_fuzzy_option(
+            message,
+            REASON_CONFIRMATION_OPTIONS,
+        )
+        if exact_label is not None and normalize(exact_label) != normalize(message):
+            return self._fuzzy_confirmation_step(session_id, session, exact_label)
         action = normalize(exact_label or message)
 
         if action == normalize("Yes"):
@@ -130,6 +142,39 @@ class ChatMitigationStepsMixin:
     def _mitigation_clarity_options() -> list[Option]:
         return [Option(id=1, label="Write mitigation measure again")]
 
+    @staticmethod
+    def _mitigation_duplicate_confirmation_options() -> list[Option]:
+        return [
+            Option(id=1, label="Yes, show existing mitigation report"),
+            Option(id=2, label="No, continue with my proposal"),
+        ]
+
+    @staticmethod
+    def _mitigation_existing_report_options() -> list[Option]:
+        return [
+            Option(id=1, label="Yes, continue with my proposed mitigation"),
+            Option(id=2, label="No, write another mitigation measure"),
+        ]
+
+    @staticmethod
+    def _exact_or_safe_fuzzy_option(message: str, options: list[Option]) -> str | None:
+        exact_label = exact_option_label(message, options)
+        if exact_label is not None:
+            return exact_label
+
+        normalized_message = normalize(message)
+        if len(normalized_message) < 3:
+            return None
+
+        fuzzy_label = match_option_label(message, options)
+        if fuzzy_label is None:
+            return None
+
+        # Avoid accidental confirmation from very short or weakly related text.
+        if fuzzy_score(message, fuzzy_label) < 88:
+            return None
+        return fuzzy_label
+
     async def _capture_mitigation_measure(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
@@ -137,6 +182,8 @@ class ChatMitigationStepsMixin:
         mitigation_measure = mitigation_measure or message.strip()
         self._clear_mitigation_clarity_state(session)
         self._clear_mitigation_validation_state(session)
+        session.suggested_mitigation_measure_id = None
+        session.suggested_mitigation_measure_name = None
         if not mitigation_measure:
             return ChatResponse(
                 session_id=session_id,
@@ -144,6 +191,23 @@ class ChatMitigationStepsMixin:
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
                     reason="`Mitigation measure:` is required.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_measure",
+                error=True,
+            )
+
+        if self._is_invalid_user_text(mitigation_measure):
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_measure",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason=(
+                        "The mitigation measure appears to contain gibberish, "
+                        "keyboard mashing, or unrecognizable text."
+                    ),
                 ),
                 options=[],
                 session=session.summary(),
@@ -213,17 +277,7 @@ class ChatMitigationStepsMixin:
             session,
             mitigation_measure,
         )
-        if duplicate_check is None:
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_measure",
-                bot_message=render_message("mitigation_validation_unavailable.md"),
-                options=[],
-                session=session.summary(),
-                input_mode="mitigation_measure",
-                error=True,
-            )
-        if duplicate_check["duplicate"]:
+        if duplicate_check is not None and duplicate_check.get("duplicate"):
             return self._mitigation_duplicate_suggestion_step(
                 session_id,
                 session,
@@ -273,7 +327,7 @@ class ChatMitigationStepsMixin:
                 existing_measure=session.suggested_mitigation_measure_name,
                 reason=str(duplicate_check.get("reason") or "").strip(),
             ),
-            options=MITIGATION_DUPLICATE_OPTIONS,
+            options=self._mitigation_duplicate_confirmation_options(),
             session=session.summary(),
             error=False,
         )
@@ -281,14 +335,14 @@ class ChatMitigationStepsMixin:
     def _handle_mitigation_duplicate_suggestion(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        exact_label = exact_option_label(message, MITIGATION_DUPLICATE_OPTIONS)
-        if exact_label is None:
-            fuzzy_label = match_option_label(message, MITIGATION_DUPLICATE_OPTIONS)
-            if fuzzy_label is not None:
-                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
+        options = self._mitigation_duplicate_confirmation_options()
+        exact_label = self._exact_or_safe_fuzzy_option(message, options)
         action = normalize(exact_label or message)
 
-        if action == normalize("Yes"):
+        if action in {
+            normalize("Yes"),
+            normalize("Yes, show existing mitigation report"),
+        }:
             session.phase = "mitigation_duplicate_report"
             return ChatResponse(
                 session_id=session_id,
@@ -303,12 +357,15 @@ class ChatMitigationStepsMixin:
                     reason=self._suggested_mitigation_reason(session),
                     evaluation_report=self._suggested_mitigation_evaluation_report(session),
                 ),
-                options=MITIGATION_DUPLICATE_OPTIONS,
+                options=self._mitigation_existing_report_options(),
                 session=session.summary(),
                 error=False,
             )
 
-        if action == normalize("No"):
+        if action in {
+            normalize("No"),
+            normalize("No, continue with my proposal"),
+        }:
             return self._continue_pending_mitigation_reason_step(session_id, session)
 
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
@@ -316,14 +373,14 @@ class ChatMitigationStepsMixin:
     def _handle_mitigation_duplicate_report(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        exact_label = exact_option_label(message, MITIGATION_DUPLICATE_OPTIONS)
-        if exact_label is None:
-            fuzzy_label = match_option_label(message, MITIGATION_DUPLICATE_OPTIONS)
-            if fuzzy_label is not None:
-                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
+        options = self._mitigation_duplicate_confirmation_options()
+        exact_label = self._exact_or_safe_fuzzy_option(message, options)
         action = normalize(exact_label or message)
 
-        if action == normalize("Yes"):
+        if action in {
+            normalize("Yes"),
+            normalize("Yes, show existing mitigation report"),
+        }:
             return self._continue_pending_mitigation_reason_step(session_id, session)
 
         if action == normalize("No"):
@@ -432,9 +489,9 @@ class ChatMitigationStepsMixin:
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
                     reason=(
-                        "The evidence could not be read as supporting content. Please provide "
-                        "a readable published source, such as a DOI/URL with extractable text "
-                        "or a supported file: PDF, DOCX, MD, or TXT."
+                        "Evidence is optional. If you provide evidence, it must be "
+                        "readable supporting content. Please provide a DOI/URL with "
+                        "extractable text or a supported file: PDF, DOCX, MD, or TXT."
                     ),
                 ),
                 options=[],

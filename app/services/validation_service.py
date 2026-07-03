@@ -43,12 +43,12 @@ from app.services.chat_formatters import (
     normalize_markdown_text,
 )
 from app.services.chat_json import (
-    extract_json_array as extract_json_array_text,
-    extract_json_object as extract_json_object_text,
+    parse_json_object,
 )
 from app.services.chat_options import (
     ADD_DGS_OPTIONS,
     DG_REASON_EVIDENCE_OPTIONS,
+    HAZARD_ENTRY_OPTIONS,
     EVALUATION_CATEGORIES,
     FUZZY_CONFIRMATION_OPTIONS,
     HAZARD_DUPLICATE_OPTIONS,
@@ -1159,10 +1159,7 @@ class ChatValidationServiceMixin:
         )
         if is_llm_unavailable_response(response):
             return None
-        try:
-            parsed = json.loads(self._extract_json_object(response))
-        except json.JSONDecodeError:
-            return None
+        parsed = parse_json_object(response)
         if not isinstance(parsed, dict):
             return None
         status = normalize(str(parsed.get("status") or ""))

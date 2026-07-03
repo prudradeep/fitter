@@ -174,6 +174,7 @@ class ChatNavigationStepsMixin:
             if session.country_id is None:
                 return self._country_step(session_id, session, self.invalid_message, True)
             self._clear_region_context(session)
+            session.phase = "region"
             regions = self.db.scalars(
                 select(Region).where(Region.country_id == session.country_id).order_by(Region.name)
             ).all()
@@ -193,6 +194,7 @@ class ChatNavigationStepsMixin:
             if session.country_id is None:
                 return self._country_step(session_id, session, self.invalid_message, True)
             self._clear_sector_context(session)
+            session.phase = "sector"
             return ChatResponse(
                 session_id=session_id,
                 step="sector",
@@ -219,7 +221,6 @@ class ChatNavigationStepsMixin:
     def _clear_sector_context(cls, session: ChatSession) -> None:
         session.sector_id = None
         session.sector = None
-        session.phase = "wizard"
         session.hazards = None
         session.hazard_profiles = None
         session.custom_hazards = None
@@ -550,6 +551,24 @@ class ChatNavigationStepsMixin:
                 error=error,
             )
 
+        if session.phase in {
+            "custom_hazard_input",
+            "custom_hazard_review",
+            "custom_hazard_clarification",
+            "custom_hazard_duplicate_confirmation",
+            "custom_hazard_group_review",
+            "custom_hazard_reason",
+            "custom_hazard_evidence",
+        }:
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=message,
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                error=error,
+            )
+
         if session.phase == "add_hazard":
             return ChatResponse(
                 session_id=session_id,
@@ -722,7 +741,17 @@ class ChatNavigationStepsMixin:
             return "region"
         if session.sector is None:
             return "sector"
-        if session.phase in {"add_hazard", "add_hazard_evidence"}:
+        if session.phase in {
+            "add_hazard",
+            "add_hazard_evidence",
+            "custom_hazard_input",
+            "custom_hazard_review",
+            "custom_hazard_clarification",
+            "custom_hazard_duplicate_confirmation",
+            "custom_hazard_group_review",
+            "custom_hazard_reason",
+            "custom_hazard_evidence",
+        }:
             return "hazards"
         if session.phase == "dg_reason_evidence":
             return "socio_demographic_review"

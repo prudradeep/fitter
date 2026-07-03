@@ -1,4 +1,4 @@
-import json
+from app.services.chat_json import parse_json_array, parse_json_object
 
 
 def parse_additional_dgs(message: str) -> list[str]:
@@ -115,19 +115,11 @@ def parse_evaluation_answer(message: str) -> tuple[int | None, str | None, str |
 
 
 def parse_validation_response(response: str) -> dict[str, str | bool]:
-    response = extract_json_object(response)
-    try:
-        parsed = json.loads(response.strip())
-    except json.JSONDecodeError:
+    parsed = parse_json_object(response)
+    if parsed is None:
         return {
             "valid": False,
             "reason": "The validation response was not valid JSON. Please clarify the reason and evidence.",
-        }
-
-    if not isinstance(parsed, dict):
-        return {
-            "valid": False,
-            "reason": "The validation response was not an object. Please clarify the reason and evidence.",
         }
 
     valid = parsed.get("valid")
@@ -142,7 +134,7 @@ def parse_validation_response(response: str) -> dict[str, str | bool]:
 
 
 def parse_grounded_validation_response(response: str) -> dict[str, object]:
-    parsed = _parse_json_dict(response)
+    parsed = parse_json_object(response)
     if parsed is None:
         return {
             "dimensions": {},
@@ -181,7 +173,7 @@ def parse_grounded_validation_response(response: str) -> dict[str, object]:
 
 
 def parse_grounded_claims_response(response: str) -> dict[str, object]:
-    parsed = _parse_json_dict(response)
+    parsed = parse_json_object(response)
     if parsed is None:
         return {"claims": [], "error": True}
 
@@ -215,7 +207,7 @@ def parse_grounded_claims_response(response: str) -> dict[str, object]:
 
 
 def parse_entailment_response(response: str) -> dict[str, object]:
-    parsed = _parse_json_dict(response)
+    parsed = parse_json_object(response)
     if parsed is None:
         return {"verdicts": [], "error": True}
 
@@ -240,19 +232,9 @@ def parse_entailment_response(response: str) -> dict[str, object]:
     return {"verdicts": verdicts, "error": False}
 
 
-def _parse_json_dict(response: str) -> dict[str, object] | None:
-    try:
-        parsed = json.loads(extract_json_object(response).strip())
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
 def parse_mitigation_clarity_response(response: str) -> dict[str, object]:
-    response = extract_json_object(response)
-    try:
-        parsed = json.loads(response.strip())
-    except json.JSONDecodeError:
+    parsed = parse_json_object(response)
+    if parsed is None:
         return {
             "clear": False,
             "dimensions": {},
@@ -260,17 +242,6 @@ def parse_mitigation_clarity_response(response: str) -> dict[str, object]:
             "follow_up_questions": ["Please clarify the mitigation measure or reason."],
             "frozen_inputs": {},
             "reason": "The clarity response was not valid JSON.",
-            "error": True,
-        }
-
-    if not isinstance(parsed, dict):
-        return {
-            "clear": False,
-            "dimensions": {},
-            "follow_up_question": "Please clarify the mitigation measure or reason.",
-            "follow_up_questions": ["Please clarify the mitigation measure or reason."],
-            "frozen_inputs": {},
-            "reason": "The clarity response was not an object.",
             "error": True,
         }
 
@@ -335,23 +306,12 @@ def _normalized_clarity_dimensions(value: object) -> dict[str, str]:
 
 
 def parse_duplicate_check_response(response: str) -> dict[str, object]:
-    response = extract_json_object(response)
-    try:
-        parsed = json.loads(response.strip())
-    except json.JSONDecodeError:
+    parsed = parse_json_object(response)
+    if parsed is None:
         return {
             "duplicate": False,
             "match": "",
             "reason": "The duplicate-check response was not valid JSON.",
-            "duplicates": [],
-            "error": True,
-        }
-
-    if not isinstance(parsed, dict):
-        return {
-            "duplicate": False,
-            "match": "",
-            "reason": "The duplicate-check response was not an object.",
             "duplicates": [],
             "error": True,
         }
@@ -395,23 +355,12 @@ def parse_duplicate_check_response(response: str) -> dict[str, object]:
 
 
 def parse_hazard_input_review_response(response: str) -> dict[str, object]:
-    response = extract_json_object(response)
-    try:
-        parsed = json.loads(response.strip())
-    except json.JSONDecodeError:
+    parsed = parse_json_object(response)
+    if parsed is None:
         return {
             "valid": False,
             "status": "Invalid",
             "reason": "The hazard review response was not valid JSON.",
-            "suggestions": [],
-            "error": True,
-        }
-
-    if not isinstance(parsed, dict):
-        return {
-            "valid": False,
-            "status": "Invalid",
-            "reason": "The hazard review response was not an object.",
             "suggestions": [],
             "error": True,
         }
@@ -455,41 +404,11 @@ def parse_hazard_input_review_response(response: str) -> dict[str, object]:
     }
 
 
-def extract_json_object(response: str) -> str:
-    cleaned = response.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`").strip()
-        if cleaned.casefold().startswith("json"):
-            cleaned = cleaned[4:].strip()
-
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(cleaned):
-        if char != "{":
-            continue
-        try:
-            parsed, end = decoder.raw_decode(cleaned[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return cleaned[index : index + end]
-
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return cleaned[start : end + 1]
-
-    return cleaned
-
-
 def parse_llm_hazard_list(response: str) -> list[str]:
     if is_llm_unavailable_response(response):
         return []
 
-    try:
-        parsed = json.loads(response.strip())
-    except json.JSONDecodeError:
-        parsed = None
-
+    parsed = parse_json_array(response)
     if isinstance(parsed, list):
         return clean_hazard_items(parsed)
 
@@ -519,11 +438,7 @@ def parse_llm_hazard_profiles(response: str) -> list[dict[str, object]]:
     if is_llm_unavailable_response(response):
         return []
 
-    try:
-        parsed = json.loads(response.strip())
-    except json.JSONDecodeError:
-        parsed = None
-
+    parsed = parse_json_array(response)
     items: list[dict[str, object]] = []
     seen: set[str] = set()
     if isinstance(parsed, list):

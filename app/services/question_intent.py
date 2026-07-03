@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-from typing import Any, Callable
+from typing import Callable
 
 from app.llm import ask_llm_chat
+from app.services.chat_json import parse_json_object
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.prompt_loader import load_nested_prompt_file
 
@@ -52,7 +52,7 @@ async def detect_user_question_intent(
     if is_llm_unavailable_response(response):
         return _fallback_intent(value, fallback, "LLM unavailable.")
 
-    parsed = _extract_json_object(response)
+    parsed = parse_json_object(response)
     if not isinstance(parsed, dict):
         return _fallback_intent(value, fallback, "Detector did not return valid JSON.")
 
@@ -88,7 +88,7 @@ async def detect_message_intent(
     if is_llm_unavailable_response(response):
         return _fallback_message_intent(value, "LLM unavailable.")
 
-    parsed = _extract_json_object(response)
+    parsed = parse_json_object(response)
     if not isinstance(parsed, dict):
         return _fallback_message_intent(value, "Detector did not return valid JSON.")
 
@@ -98,22 +98,6 @@ async def detect_message_intent(
     if intent not in SUPPORTED_MESSAGE_INTENTS or confidence not in {"high", "medium", "low"}:
         return _fallback_message_intent(value, "Detector JSON did not match schema.")
     return _message_intent(intent, confidence, reason or "Classified by message intent detector.")
-
-
-def _extract_json_object(text: str) -> dict[str, Any] | None:
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if not match:
-            logger.warning("Question intent detector returned non-JSON text: %s", text)
-            return None
-        try:
-            value = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            logger.warning("Question intent detector returned invalid JSON object: %s", text)
-            return None
-    return value if isinstance(value, dict) else None
 
 
 def _fallback_intent(

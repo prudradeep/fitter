@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 from app.llm import ask_llm_chat
+from app.services.chat_json import parse_json_object
 from app.services.chat_options import normalize
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.prompt_loader import load_nested_prompt_file
@@ -45,7 +45,7 @@ async def resolve_selection(
     if is_llm_unavailable_response(response):
         return _no_match("LLM unavailable.")
 
-    parsed = _extract_json_object(response)
+    parsed = parse_json_object(response)
     if not isinstance(parsed, dict):
         return _no_match("Resolver did not return valid JSON.")
 
@@ -101,22 +101,6 @@ def _validated_option(value: Any, options: list[str]) -> str | None:
 def _has_invalid_returned_value(parsed: dict[str, Any], key: str, validated: str | None) -> bool:
     raw_value = parsed.get(key)
     return raw_value is not None and bool(str(raw_value).strip()) and validated is None
-
-
-def _extract_json_object(text: str) -> dict[str, Any] | None:
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if not match:
-            logger.warning("Selection resolver returned non-JSON text: %s", text)
-            return None
-        try:
-            value = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            logger.warning("Selection resolver returned invalid JSON object: %s", text)
-            return None
-    return value if isinstance(value, dict) else None
 
 
 def _no_match(reason: str) -> SelectionResult:

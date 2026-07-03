@@ -242,9 +242,18 @@ Open conversation:
 Methodologies htmlfy animation interactive
 toggle strict vs normal validation checks
 
-L1: evidence, contraindication on main core knowledge base
+L1: evidence concepts should be aligned with the provided hazard. If any contradiction found invalid/clarification
 L2: match evidence concepts with core knowledge concepts, If contraindications, It will not be validated. Validating evidence. 
 
 Test cases:
     Fitter concept related hazard with evidence
     vs Evidence not aligned with fitter concept
+
+
+open conversation checks
+duplicate hazard region
+summarize  content for speech. full detail available as a text in the end
+speech element redesign
+Strict check passed only visible to all, easy - visible to the same user only
+left panel hazards listing elipsis on hover show full in tooltip
+Maintain Test cases in excel

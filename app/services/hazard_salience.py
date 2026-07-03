@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from app.services.csv_utils import first_existing_csvs, normalized_key, optional_float
+
 
 HIGH_CONCERN_THRESHOLD = 12.0
 
@@ -36,13 +38,13 @@ def hazard_salience_rows() -> list[dict[str, object]]:
 
 
 def country_hazard_salience(country: str | None = None, sector: str | None = None) -> list[dict[str, object]]:
-    country_key = _norm(country)
-    sector_key = _norm(sector)
+    country_key = normalized_key(country)
+    sector_key = normalized_key(sector)
     rows = [
         row
         for row in _hazard_salience()
-        if (not country_key or _norm(row.country) == country_key)
-        and (not sector_key or _norm(row.sector) == sector_key)
+        if (not country_key or normalized_key(row.country) == country_key)
+        and (not sector_key or normalized_key(row.sector) == sector_key)
     ]
     return [row.as_dict() for row in rows]
 
@@ -73,7 +75,7 @@ def _hazard_salience() -> tuple[HazardSalienceRow, ...]:
                 if not country:
                     continue
                 for hazard in hazard_columns:
-                    value = _to_float(record.get(hazard))
+                    value = optional_float(record.get(hazard))
                     if value is None:
                         continue
                     totals.setdefault((country, hazard), []).append(value)
@@ -100,33 +102,12 @@ def _hazard_salience() -> tuple[HazardSalienceRow, ...]:
 
 def _df_csv_paths() -> list[Path]:
     root = Path(__file__).resolve().parents[2]
-    candidates = [
-        root / "outputs" / "dfs",
-        root / "app" / "outputs" / "dfs",
-    ]
-    paths: list[Path] = []
-    for directory in candidates:
-        if directory.exists():
-            paths.extend(sorted(directory.glob("*.csv")))
-    return paths
+    return first_existing_csvs(root, ("outputs/dfs", "app/outputs/dfs"), "*.csv")
 
 
 def _sector_from_filename(path: Path) -> str:
     stem = path.stem
     return stem[:-3] if stem.endswith("_df") else stem
-
-
-def _to_float(value: object) -> float | None:
-    try:
-        if value is None or str(value).strip() == "":
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _norm(value: str | None) -> str:
-    return str(value or "").strip().casefold()
 
 
 def _salience_sort_key(row: HazardSalienceRow) -> tuple[str, float, str, str]:

@@ -178,7 +178,11 @@ class SectorPromptRagService:
         )
         if results:
             return results
-        return await self.service.search(query, limit=limit)
+        return await self.service.search(
+            query,
+            limit=limit,
+            source_uris=[self._source_uri("default")],
+        )
 
     async def hazard_blocks(self, sector: str | None) -> list[dict[str, object]]:
         sector_key = sector_prompt_name(sector)
@@ -191,7 +195,7 @@ class SectorPromptRagService:
                 KnowledgeDocument.user_id.is_(None),
                 KnowledgeDocument.scope == SECTOR_PROMPT_SCOPE,
                 KnowledgeDocument.source_uri == source_uri,
-                KnowledgeChunk.content.like("HAZARD%"),
+                func.lower(KnowledgeChunk.content).like("hazard%"),
             )
             .order_by(KnowledgeChunk.chunk_index, KnowledgeChunk.id)
         ).all()
@@ -218,7 +222,7 @@ class SectorPromptRagService:
                 KnowledgeDocument.user_id.is_(None),
                 KnowledgeDocument.scope == SECTOR_PROMPT_SCOPE,
                 KnowledgeDocument.source_uri == source_uri,
-                KnowledgeChunk.content.like("HAZARD%"),
+                func.lower(KnowledgeChunk.content).like("hazard%"),
             )
         )
         return int(count or 0)
@@ -231,7 +235,7 @@ class SectorPromptRagService:
                 KnowledgeDocument.user_id.is_(None),
                 KnowledgeDocument.scope == SECTOR_PROMPT_SCOPE,
                 KnowledgeDocument.source_uri == source_uri,
-                KnowledgeChunk.content.like("HAZARD%"),
+                func.lower(KnowledgeChunk.content).like("hazard%"),
             )
         ).all()
         return any(has_rule_lines(content) for content in rows)
@@ -255,7 +259,7 @@ class SectorPromptRagService:
             )
             content = str(result.get("content") or "").strip()
             if content:
-                excerpt = content[:content_limit] if content_limit else content
+                excerpt = _clean_excerpt(content, content_limit)
                 lines.append(f"- [SP{index}] {title}{score_label}{nli_score_label}: {excerpt}")
         return "\n".join(lines)
 
@@ -283,7 +287,7 @@ class SectorPromptRagService:
 
         chunks: list[ChunkDraft] = []
         hazard_pattern = re.compile(
-            r"(?ms)^HAZARD\s+\d+\.\s+.+?(?=^HAZARD\s+\d+\.|\Z)"
+            r"(?ims)^HAZARD\s+\d+\s*[\.:–-]\s+.+?(?=^HAZARD\s+\d+\s*[\.:–-]|\Z)"
         )
         for match in hazard_pattern.finditer(section):
             hazard_block = strip_rule_lines(match.group(0)).strip()
@@ -294,15 +298,15 @@ class SectorPromptRagService:
 
 def section_five_primary_data(text: str) -> str:
     start_match = re.search(
-        r"(?m)^SECTION\s+5\.\s+PER-HAZARD CONFIRMED PREDICTORS\b.*$",
+        r"(?im)^\s*(?:SECTION\s+)?5\s*[\.:–-]\s+PER-HAZARD CONFIRMED PREDICTORS\b.*$",
         text,
     )
     if not start_match:
-        start_match = re.search(r"(?m)^SECTION\s+5\.", text)
+        start_match = re.search(r"(?im)^\s*(?:SECTION\s+)?5\s*[\.:–-]", text)
     if not start_match:
         return ""
     remainder = text[start_match.start() :]
-    end_match = re.search(r"(?m)^SECTION\s+6\.", remainder)
+    end_match = re.search(r"(?im)^\s*(?:SECTION\s+)?6\s*[\.:–-]", remainder)
     return remainder[: end_match.start()].strip() if end_match else remainder.strip()
 
 
@@ -321,3 +325,13 @@ def has_rule_lines(text: str) -> bool:
         bool(re.fullmatch(r"[─═\-_=]{6,}", line.strip()))
         for line in str(text or "").splitlines()
     )
+
+
+def _clean_excerpt(content: str, content_limit: int | None) -> str:
+    text = str(content or "").strip()
+    if not content_limit or len(text) <= content_limit:
+        return text
+    truncated = text[:content_limit].rstrip()
+    if " " in truncated:
+        truncated = truncated.rsplit(" ", 1)[0].rstrip()
+    return f"{truncated}…"

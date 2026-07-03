@@ -2,9 +2,7 @@ import asyncio
 import json
 import logging
 import re
-from dataclasses import asdict
 from datetime import datetime, timezone
-from html import escape
 
 from sqlalchemy import and_, delete, func, select
 
@@ -18,10 +16,6 @@ from app.models import (
     CustomHazardProfile,
     EurostatPopulationCache,
     EvaluationQuestion,
-    MitigationMeasureExample,
-    MitigationMeasurePolicy,
-    MitigationMeasurePolicySystemHazard,
-    MitigationMeasureTargetGroup,
     QuestionOption,
     Region,
     Sector,
@@ -37,26 +31,17 @@ from app.models import (
 )
 from app.schemas import ChatResponse, Option
 from app.services.chat_formatters import (
-    format_additional_dgs,
-    format_all_dgs,
-    format_evaluation_answers,
     hazard_names,
     normalize_markdown_text,
 )
 from app.services.chat_json import (
-    extract_json_array as extract_json_array_text,
-    extract_json_object as extract_json_object_text,
+    parse_json_array,
+    parse_json_object,
 )
 from app.services.chat_options import (
-    ADD_DGS_OPTIONS,
-    DG_REASON_EVIDENCE_OPTIONS,
+    HAZARD_ENTRY_OPTIONS,
     EVALUATION_CATEGORIES,
-    FUZZY_CONFIRMATION_OPTIONS,
     HAZARD_DUPLICATE_OPTIONS,
-    HAZARD_POPULATION_REVIEW_OPTIONS,
-    MITIGATION_DUPLICATE_OPTIONS,
-    MITIGATION_REVIEW_OPTIONS,
-    SOCIO_DEMOGRAPHIC_OPTIONS,
     best_fuzzy_label,
     compact_for_match,
     exact_option_label,
@@ -64,25 +49,13 @@ from app.services.chat_options import (
     match_option_label,
     normalize,
     normalize_for_match,
-    option_list,
 )
 from app.services.chat_parsers import (
     is_llm_unavailable_response,
-    parse_duplicate_check_response,
-    parse_entailment_response,
-    parse_evaluation_answer,
-    parse_grounded_claims_response,
-    parse_grounded_validation_response,
     parse_llm_hazard_list,
-    parse_mitigation_clarity_response,
-    parse_mitigation_reason,
-    parse_reason_evidence,
-    parse_validation_response,
 )
 from app.services.chat_population_edits import (
     clean_affected_group_label,
-    clean_population_edit_items,
-    fallback_population_edits,
     parse_custom_affected_group_edit_message,
     split_affected_group_labels,
 )
@@ -92,14 +65,9 @@ from app.services.custom_hazard_validation import (
     custom_hazard_validation_details,
     default_custom_hazard_state,
     frontend_custom_hazard_payload,
-    normalize_custom_group,
     validate_custom_hazard_dimensions,
 )
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
-from app.services.evidence_contradiction_service import EvidenceContradictionService
-from app.services.grounding_models import GroundingModelService
-from app.services.hazard_effect_size import hazard_predictor_effect_rows
-from app.services.hazard_ranking_service import HazardRankingService, slugify_hazard
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.profile_metadata import compact_profile_metadata
@@ -1338,15 +1306,7 @@ class ChatHazardCreationMixin:
         title = required_title
         description = ""
         if not is_llm_unavailable_response(response):
-            try:
-                parsed = json.loads(response.strip())
-            except json.JSONDecodeError:
-                start = response.find("{")
-                end = response.rfind("}")
-                try:
-                    parsed = json.loads(response[start : end + 1]) if start >= 0 and end > start else {}
-                except json.JSONDecodeError:
-                    parsed = {}
+            parsed = parse_json_object(response) or {}
             if isinstance(parsed, dict):
                 if not required_title:
                     title = str(parsed.get("title") or "").strip()
@@ -2124,15 +2084,7 @@ class ChatHazardCreationMixin:
     def _parse_hazard_profile_items(cls, response: str) -> list[dict[str, str]]:
         if is_llm_unavailable_response(response):
             return []
-        try:
-            parsed = json.loads(response.strip())
-        except json.JSONDecodeError:
-            parsed = None
-        if not isinstance(parsed, list):
-            try:
-                parsed = json.loads(cls._extract_json_array(response))
-            except json.JSONDecodeError:
-                parsed = None
+        parsed = parse_json_array(response)
         if not isinstance(parsed, list):
             return []
 
@@ -2200,10 +2152,6 @@ class ChatHazardCreationMixin:
                     profile_item["metadata"] = compacted_metadata
             profiles.append(profile_item)
         return profiles[:12]
-
-    @staticmethod
-    def _extract_json_array(value: str) -> str:
-        return extract_json_array_text(value)
 
     async def _profiles_with_population_context(
         self,
@@ -2462,13 +2410,7 @@ class ChatHazardCreationMixin:
             temperature=0,
             max_tokens=500,
         )
-        try:
-            parsed = json.loads(response.strip())
-        except json.JSONDecodeError:
-            try:
-                parsed = json.loads(self._extract_json_array(response))
-            except json.JSONDecodeError:
-                return {}
+        parsed = parse_json_array(response)
         if not isinstance(parsed, list):
             return {}
         population_by_name = {
@@ -4687,10 +4629,7 @@ class ChatHazardCreationMixin:
     def _metadata_from_json(value: str | None) -> dict[str, object]:
         if not value:
             return {}
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
+        parsed = parse_json_object(value)
         return parsed if isinstance(parsed, dict) else {}
 
     def _match_hazard(self, message: str, session: ChatSession) -> str | None:
@@ -4930,7 +4869,7 @@ class ChatHazardCreationMixin:
         return set(stored_by_hazard) == expected_hazards
 
     def _parse_hazard_items_response(self, response: str) -> list[dict[str, object]]:
-        parsed = self._json_array_from_response(response)
+        parsed = parse_json_array(response)
         if not isinstance(parsed, list):
             return []
         hazard_items: list[dict[str, object]] = []
@@ -4960,21 +4899,6 @@ class ChatHazardCreationMixin:
                 ]
             hazard_items.append({"hazard": hazard[:180], "profiles": profiles})
         return hazard_items
-
-    @staticmethod
-    def _json_array_from_response(response: str) -> object:
-        try:
-            return json.loads(response.strip())
-        except json.JSONDecodeError:
-            pass
-        start = response.find("[")
-        end = response.rfind("]")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        try:
-            return json.loads(response[start : end + 1])
-        except json.JSONDecodeError:
-            return None
 
     @staticmethod
     def _clean_hazard_profile_item(value: object) -> dict[str, str]:
@@ -5243,13 +5167,7 @@ class ChatHazardCreationMixin:
         )
         if is_llm_unavailable_response(response):
             return {}
-        try:
-            parsed = json.loads(response.strip())
-        except json.JSONDecodeError:
-            try:
-                parsed = json.loads(self._extract_json_object(response))
-            except json.JSONDecodeError:
-                parsed = None
+        parsed = parse_json_object(response)
         if not isinstance(parsed, dict):
             return {}
         name = str(parsed.get("name") or parsed.get("profile") or "").strip().strip("`*_ ")
@@ -5283,10 +5201,6 @@ class ChatHazardCreationMixin:
             "source": source[:40] if source else "sector_prompt",
             "metadata": parsed,
         }
-
-    @staticmethod
-    def _extract_json_object(value: str) -> str:
-        return extract_json_object_text(value)
 
     @staticmethod
     def _confirmed_predictor_count(hazard_block: str) -> int | None:

@@ -67,6 +67,7 @@ class ChatSelectionStepsMixin:
         if not regions:
             session.region_id = None
             session.region = "National scope"
+            session.phase = "sector"
             sectors = self._sectors_for_country(country.id)
             bot_message = await self._selection_message_from_llm(
                 session,
@@ -82,6 +83,7 @@ class ChatSelectionStepsMixin:
                 error=False,
             )
 
+        session.phase = "region"
         bot_message = await self._selection_message_from_llm(
             session,
             event="country_selected",
@@ -140,6 +142,7 @@ class ChatSelectionStepsMixin:
 
         session.region_id = region.id
         session.region = region.name
+        session.phase = "sector"
         self._ensure_user_session(session_id, session)
         self._record_activity(session_id, session, "region_selected", region.name, step="region")
         sectors = self._sectors_for_country(session.country_id)
@@ -148,6 +151,20 @@ class ChatSelectionStepsMixin:
             deferred_sector = str(session.pending_selection.get("sector") or "").strip()
         if deferred_sector and session.sector is None:
             session.pending_selection = None
+            sector_names = {normalize(row.name) for row in sectors}
+            if normalize(deferred_sector) not in sector_names:
+                return ChatResponse(
+                    session_id=session_id,
+                    step="sector",
+                    bot_message=(
+                        f"You mentioned **{deferred_sector}** earlier, but it is not "
+                        f"available for **{session.country or 'the selected country'}**.\n\n"
+                        "Please choose one of the available sectors."
+                    ),
+                    options=option_list(sectors),
+                    session=session.summary(),
+                    error=True,
+                )
             return await self._select_sector(session_id, session, deferred_sector)
         bot_message = await self._selection_message_from_llm(
             session,
@@ -566,6 +583,7 @@ class ChatSelectionStepsMixin:
         action: str,
     ) -> ChatResponse:
         session.pending_selection_action = action
+        session.pending_selection_confirmation = None
         labels = {
             "change_country": "change country",
             "change_region": "change region",
@@ -589,11 +607,13 @@ class ChatSelectionStepsMixin:
     ) -> ChatResponse:
         if action in {"change_country", "restart_selection"}:
             self.reset_state_from(session, "country")
+            session.phase = "country"
             return self._country_step(session_id, session, self.welcome_message, False)
         if action == "change_region":
             if session.country_id is None:
                 return self._country_step(session_id, session, self.invalid_message, True)
             self.reset_state_from(session, "region")
+            session.phase = "region"
             regions = self.db.scalars(
                 select(Region).where(Region.country_id == session.country_id).order_by(Region.name)
             ).all()
@@ -610,8 +630,27 @@ class ChatSelectionStepsMixin:
             )
         if action == "change_sector":
             if session.country_id is None:
+                session.phase = "country"
                 return self._country_step(session_id, session, self.invalid_message, True)
+            if session.region_id is None and session.region != "National scope":
+                self.reset_state_from(session, "region")
+                session.phase = "region"
+                regions = self.db.scalars(
+                    select(Region).where(Region.country_id == session.country_id).order_by(Region.name)
+                ).all()
+                return ChatResponse(
+                    session_id=session_id,
+                    step="region",
+                    bot_message=(
+                        "Please choose a region first. Then I can show the sectors "
+                        "available for that country."
+                    ),
+                    options=option_list(list(regions)),
+                    session=session.summary(),
+                    error=False,
+                )
             self.reset_state_from(session, "sector")
+            session.phase = "sector"
             return ChatResponse(
                 session_id=session_id,
                 step="sector",
@@ -702,14 +741,24 @@ class ChatSelectionStepsMixin:
     def _country_by_name(self, name: str | None) -> Country | None:
         if not name:
             return None
-        return self.db.scalar(select(Country).where(Country.name == name))
+        matched = self._match_country(name)
+        if matched is not None:
+            return matched
+        target = normalize(name)
+        countries = self.db.scalars(select(Country).order_by(Country.name)).all()
+        return next((country for country in countries if normalize(country.name) == target), None)
 
     def _region_by_name(self, name: str | None, country_id: int) -> Region | None:
         if not name:
             return None
-        return self.db.scalar(
-            select(Region).where(Region.country_id == country_id, Region.name == name)
-        )
+        matched = self._match_region(name, country_id)
+        if matched is not None:
+            return matched
+        target = normalize(name)
+        regions = self.db.scalars(
+            select(Region).where(Region.country_id == country_id).order_by(Region.name)
+        ).all()
+        return next((region for region in regions if normalize(region.name) == target), None)
 
     def _match_country(self, message: str) -> Country | None:
         countries = self.db.scalars(

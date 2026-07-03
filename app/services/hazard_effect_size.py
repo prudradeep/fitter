@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from app.services.csv_utils import first_existing_csvs, normalized_key, optional_float
+
 
 @dataclass(frozen=True)
 class HazardPredictorEffect:
@@ -46,13 +48,13 @@ def hazard_effect_size_rows(
     hazard: str | None = None,
     min_or: float = 1.0,
 ) -> list[dict[str, object]]:
-    sector_key = _norm(sector)
-    hazard_key = _norm(hazard)
+    sector_key = normalized_key(sector)
+    hazard_key = normalized_key(hazard)
     rows = [
         row
         for row in _hazard_effect_sizes(min_or)
-        if (not sector_key or _norm(row.sector) == sector_key)
-        and (not hazard_key or _norm(row.hazard) == hazard_key)
+        if (not sector_key or normalized_key(row.sector) == sector_key)
+        and (not hazard_key or normalized_key(row.hazard) == hazard_key)
     ]
     return [row.as_dict() for row in rows]
 
@@ -62,13 +64,13 @@ def hazard_predictor_effect_rows(
     hazard: str | None = None,
     min_or: float = 1.0,
 ) -> list[dict[str, object]]:
-    sector_key = _norm(sector)
-    hazard_key = _norm(hazard)
+    sector_key = normalized_key(sector)
+    hazard_key = normalized_key(hazard)
     rows = [
         row
         for row in _hazard_predictor_effects(min_or)
-        if (not sector_key or _norm(row.sector) == sector_key)
-        and (not hazard_key or _norm(row.hazard) == hazard_key)
+        if (not sector_key or normalized_key(row.sector) == sector_key)
+        and (not hazard_key or normalized_key(row.hazard) == hazard_key)
     ]
     return [row.as_dict() for row in rows]
 
@@ -105,7 +107,7 @@ def _hazard_predictor_effects(min_or: float = 1.0) -> tuple[HazardPredictorEffec
             for record in reader:
                 if not _confirmed_predictor(record):
                     continue
-                odds_ratio = _to_float(record.get("OR"))
+                odds_ratio = optional_float(record.get("OR"))
                 if odds_ratio is None or odds_ratio < min_or:
                     continue
                 rows.append(
@@ -122,15 +124,11 @@ def _hazard_predictor_effects(min_or: float = 1.0) -> tuple[HazardPredictorEffec
 
 def _step6_csv_paths() -> list[Path]:
     root = Path(__file__).resolve().parents[2]
-    candidates = [
-        root / "outputs" / "step6",
-        root / "app" / "outputs" / "step6",
-    ]
-    paths: list[Path] = []
-    for directory in candidates:
-        if directory.exists():
-            paths.extend(sorted(directory.glob("*_A_step6_*.csv")))
-    return paths
+    return first_existing_csvs(
+        root,
+        ("outputs/step6", "app/outputs/step6"),
+        "*_A_step6_*.csv",
+    )
 
 
 def _sector_hazard_from_filename(path: Path) -> tuple[str, str]:
@@ -150,16 +148,3 @@ def _confirmed_predictor(record: dict[str, str]) -> bool:
         return True
     return str(value).strip().casefold() in {"true", "1", "yes", "y"}
 
-
-def _to_float(value: object) -> float | None:
-    try:
-        if value is None or str(value).strip() == "":
-            return None
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
-
-
-def _norm(value: str | None) -> str:
-    return str(value or "").strip().casefold()

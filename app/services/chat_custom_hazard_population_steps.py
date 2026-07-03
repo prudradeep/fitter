@@ -1,4 +1,3 @@
-import json
 import logging
 import re
 
@@ -8,6 +7,7 @@ from app.llm import ask_llm_chat
 from app.models import QuestionOption, UserHazardSocioDemographic, UserQuestionResponse
 from app.schemas import ChatResponse
 from app.services.chat_formatters import normalize_markdown_text
+from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
     HAZARD_POPULATION_REVIEW_OPTIONS,
     POST_SECTOR_OPTIONS,
@@ -476,10 +476,7 @@ class ChatCustomHazardPopulationStepsMixin:
             max_tokens=220,
         )
         if not is_llm_unavailable_response(response):
-            try:
-                parsed = json.loads(self._extract_json_object(response))
-            except json.JSONDecodeError:
-                parsed = {}
+            parsed = parse_json_object(response) or {}
             if isinstance(parsed, dict):
                 add = self._clean_population_edit_items(parsed.get("add"))
                 remove = self._clean_population_edit_items(parsed.get("remove"))

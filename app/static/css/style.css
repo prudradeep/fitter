@@ -5322,3 +5322,69 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
     font-size: 0.92rem;
   }
 }
+
+.methodology-dialog-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: #fff;
+    border-radius: 20px;
+    overflow: hidden;
+}
+
+.methodology-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    padding: 18px 28px;
+
+    background: #ffffff;
+    border-bottom: 1px solid #e8edf5;
+
+    flex-shrink: 0;
+}
+
+.methodology-title-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.methodology-title {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 800;
+    color: #173f74;
+    line-height: 1.2;
+}
+
+.methodology-subtitle {
+    margin: 6px 0 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #2b8da2;
+    letter-spacing: .4px;
+}
+
+.methodology-close {
+    width: 42px;
+    height: 42px;
+
+    border: none;
+    border-radius: 50%;
+
+    background: #f2f5fa;
+    color: #173f74;
+
+    font-size: 22px;
+    font-weight: 700;
+
+    cursor: pointer;
+
+    transition: .2s ease;
+}
+
+.methodology-close:hover {
+    background: #173f74;
+    color: #fff;
+}

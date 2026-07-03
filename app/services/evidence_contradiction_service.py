@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.llm import ask_llm_chat
-from app.services.chat_parsers import extract_json_object
+from app.services.chat_json import parse_json_object
 from app.services.chat_formatters import normalize_markdown_text
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.prompt_loader import render_prompt_template
@@ -60,7 +60,7 @@ class EvidenceContradictionService:
             temperature=0.0,
             max_tokens=900,
         )
-        parsed = _parse_json_dict(response)
+        parsed = parse_json_object(response)
         return parsed or {}
 
     async def retrieve_core_kb_matches(
@@ -128,7 +128,7 @@ class EvidenceContradictionService:
             max_tokens=1000,
         )
         return _normalize_verdict(
-            _parse_json_dict(response),
+            parse_json_object(response),
             fallback_l2=l2_concepts,
             fallback_l1=l1_matches,
         )
@@ -239,14 +239,6 @@ async def detect_contraindications(**kwargs: Any) -> dict[str, Any]:
 async def validate_evidence_against_kb(**kwargs: Any) -> dict[str, Any]:
     service = EvidenceContradictionService(kwargs.pop("db", None), kwargs.pop("user_id", None))
     return await service.validate_evidence_against_kb(**kwargs)
-
-
-def _parse_json_dict(response: str) -> dict[str, Any] | None:
-    try:
-        parsed = json.loads(extract_json_object(response).strip())
-    except (json.JSONDecodeError, AttributeError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
 
 
 def _normalize_verdict(
