@@ -26,4 +26,7 @@ Rules:
 - confidence must be "high", "medium", or "low".
 - If uncertain, use intent="unclear" and confidence="low".
 - Exact option labels in the provided context usually mean selection.
+- Question-shaped messages can still be selection when they ask to use, look at,
+  analyse/analyze, select, choose, or start with an available country, region, or
+  sector. Example: "Can we look at Portugal?" is selection, not question.
 - Messages with alternatives such as "Germany or Ireland" are unclear.

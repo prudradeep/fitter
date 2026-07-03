@@ -23,6 +23,14 @@ class ChatSelectionStepsMixin:
     async def _select_country(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
+        if not message.strip():
+            return self._country_step(
+                session_id,
+                session,
+                "Please select a country from the available options.",
+                False,
+            )
+
         pending_response = await self._handle_pending_selection_workflow(
             session_id,
             session,
@@ -276,7 +284,13 @@ class ChatSelectionStepsMixin:
         if not message.strip() or self._is_exact_current_selection(session, message):
             return None
 
-        deterministic_selection = self._deterministic_selection_from_text(session, message)
+        deterministic_selection = self._ordinal_selection_from_text(
+            session,
+            message,
+            current_phase,
+        )
+        if deterministic_selection is None:
+            deterministic_selection = self._deterministic_selection_from_text(session, message)
         if deterministic_selection is not None:
             if self._selection_is_outside_current_phase(
                 session,
@@ -315,31 +329,17 @@ class ChatSelectionStepsMixin:
         logger.info("Selection message intent: %s", intent)
         intent_name = str(intent.get("intent") or "unclear")
         intent_confidence = str(intent.get("confidence") or "low")
-        if intent_name == "question" and intent_confidence in {"high", "medium"}:
-            return await self._handle_anytime_grounded_question(session_id, session, message)
         if intent_name in {"change_country", "change_region", "change_sector"}:
-            return self._selection_action_confirmation_step(session_id, session, intent_name)
+            return await self._apply_selection_action(session_id, session, intent_name)
         if intent_name == "restart_selection":
-            return self._selection_action_confirmation_step(
-                session_id,
-                session,
-                "restart_selection",
-            )
-        if intent_name in {"confirmation_yes", "confirmation_no", "unclear"}:
+            return await self._apply_selection_action(session_id, session, "restart_selection")
+        if intent_name in {"confirmation_yes", "confirmation_no", "multi_selection", "unclear"}:
             return self._repeat_current_options(
                 session_id,
                 session,
                 "Please choose one of the available options, or type your selection another way.",
-                error=True,
+                error=False,
             )
-
-        question_response = await self._handle_anytime_grounded_question(
-            session_id,
-            session,
-            message,
-        )
-        if question_response is not None:
-            return question_response
 
         result = await resolve_selection(
             user_text=message,
@@ -356,6 +356,12 @@ class ChatSelectionStepsMixin:
             "region": result.get("region") if isinstance(result.get("region"), str) else None,
             "sector": result.get("sector") if isinstance(result.get("sector"), str) else None,
         }
+        if (
+            intent_name == "question"
+            and intent_confidence in {"high", "medium"}
+            and not self._looks_like_selection_request(message)
+        ):
+            return await self._handle_anytime_grounded_question(session_id, session, message)
         if not self._selection_dependencies_are_valid(session, selection, current_phase):
             return self._invalid_selection_response(session_id, session, selection)
         if not any(selection.values()):
@@ -412,11 +418,41 @@ class ChatSelectionStepsMixin:
         region = str(selection.get("region") or "").strip()
         sector = str(selection.get("sector") or "").strip()
 
-        if country and session.country is None:
+        if self._selection_matches_current_context(session, country, region, sector):
+            return self._repeat_current_options(
+                session_id,
+                session,
+                self._already_selected_message(session, country, region, sector),
+                False,
+            )
+
+        if country and session.country is not None and normalize(country) != normalize(session.country):
+            self.reset_state_from(session, "country")
             response = await self._select_country(session_id, session, country)
-        if region and session.country is not None and session.region is None:
+        elif country and session.country is None:
+            response = await self._select_country(session_id, session, country)
+
+        if (
+            region
+            and session.country is not None
+            and session.region is not None
+            and normalize(region) != normalize(session.region)
+        ):
+            self.reset_state_from(session, "region")
             response = await self._select_region(session_id, session, region)
-        if sector and session.country is not None and session.region is not None and session.sector is None:
+        elif region and session.country is not None and session.region is None:
+            response = await self._select_region(session_id, session, region)
+
+        if (
+            sector
+            and session.country is not None
+            and session.region is not None
+            and session.sector is not None
+            and normalize(sector) != normalize(session.sector)
+        ):
+            self.reset_state_from(session, "sector")
+            response = await self._select_sector(session_id, session, sector)
+        elif sector and session.country is not None and session.region is not None and session.sector is None:
             response = await self._select_sector(session_id, session, sector)
         elif sector and session.country is not None and session.region is None:
             session.pending_selection = {"country": None, "region": None, "sector": sector}
@@ -424,6 +460,90 @@ class ChatSelectionStepsMixin:
         if response is not None:
             return response
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
+
+    def _ordinal_selection_from_text(
+        self,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> dict[str, str | None] | None:
+        ordinal = self._ordinal_index_from_text(message)
+        if ordinal is None:
+            return None
+
+        key = ""
+        labels: list[str] = []
+        if current_phase == "country":
+            key = "country"
+            labels = self._available_country_names()
+        elif current_phase == "region":
+            key = "region"
+            labels = self._available_region_names(session)
+        elif current_phase == "sector":
+            key = "sector"
+            labels = self._available_sector_names(session)
+        if not key or not labels:
+            return None
+
+        index = ordinal if ordinal >= 0 else len(labels) + ordinal
+        if index < 0 or index >= len(labels):
+            return None
+        return {
+            "country": labels[index] if key == "country" else None,
+            "region": labels[index] if key == "region" else None,
+            "sector": labels[index] if key == "sector" else None,
+        }
+
+    @classmethod
+    def _ordinal_index_from_text(cls, message: str) -> int | None:
+        tokens = normalize_for_match(message).split()
+        if not tokens:
+            return None
+        allowed = {"the", "one", "option", "please", "select", "choose", "go", "with"}
+        number_words = {
+            "first": 1,
+            "second": 2,
+            "third": 3,
+            "fourth": 4,
+            "fifth": 5,
+            "sixth": 6,
+            "seventh": 7,
+            "eighth": 8,
+            "ninth": 9,
+            "tenth": 10,
+        }
+
+        ordinal_positions: list[tuple[int, int]] = []
+        for index, token in enumerate(tokens):
+            value: int | None = None
+            if token in number_words:
+                value = number_words[token]
+            else:
+                match = cls._ordinal_number_match(token)
+                if match is not None:
+                    value = match
+            if value is not None:
+                ordinal_positions.append((index, value))
+
+        if tokens == ["last"] or all(token in {*allowed, "last"} for token in tokens):
+            return -1
+        if len(ordinal_positions) != 1:
+            return None
+
+        ordinal_position, ordinal_value = ordinal_positions[0]
+        if any(token not in {*allowed, "last", tokens[ordinal_position]} for token in tokens):
+            return None
+        if "last" in tokens:
+            return -ordinal_value
+        return ordinal_value - 1
+
+    @staticmethod
+    def _ordinal_number_match(token: str) -> int | None:
+        suffixes = ("st", "nd", "rd", "th")
+        for suffix in suffixes:
+            if token.endswith(suffix) and token[: -len(suffix)].isdigit():
+                return int(token[: -len(suffix)])
+        return int(token) if token.isdigit() else None
 
     def _deterministic_selection_from_text(
         self,
@@ -441,22 +561,44 @@ class ChatSelectionStepsMixin:
             ("sector", self._available_sector_names(session)),
         ]
         for key, labels in option_groups:
-            matches = [
-                label
-                for label in labels
-                if f" {normalize_for_match(label)} " in remaining
-            ]
+            matches: list[tuple[str, str]] = []
+            for label in labels:
+                for term in self._selection_label_terms(label):
+                    if f" {term} " in remaining:
+                        matches.append((label, term))
+                        break
             if len(matches) > 1:
                 return None
             if matches:
-                label = matches[0]
+                label, term = matches[0]
                 selection[key] = label
-                remaining = remaining.replace(f" {normalize_for_match(label)} ", " ")
+                remaining = remaining.replace(f" {term} ", " ")
         if not any(selection.values()):
             return None
         if not self._is_selection_filler_text(remaining):
             return None
         return selection
+
+    @staticmethod
+    def _selection_label_terms(label: str) -> list[str]:
+        normalized = normalize_for_match(label)
+        aliases = {
+            "bavaria": ["bavarian"],
+            "germany": ["german", "deutschland"],
+            "spain": ["spanish"],
+            "portugal": ["portuguese"],
+            "ireland": ["irish"],
+            "italy": ["italian"],
+            "hungary": ["hungarian"],
+            "transport": ["mobility", "transit"],
+            "housing": ["homes", "buildings"],
+            "energy": ["power", "electricity"],
+        }
+        terms = [normalized]
+        terms.extend(aliases.get(normalized, []))
+        if normalized.endswith("ia"):
+            terms.append(f"{normalized[:-1]}n")
+        return list(dict.fromkeys(term for term in terms if term))
 
     @staticmethod
     def _is_selection_filler_text(value: str) -> bool:
@@ -490,8 +632,73 @@ class ChatSelectionStepsMixin:
             "country",
             "region",
             "state",
+            "change",
+            "actually",
+            "again",
+            "assessment",
+            "focus",
+            "on",
+            "this",
+            "transition",
+            "context",
         }
         return all(token in filler for token in tokens)
+
+    @staticmethod
+    def _looks_like_selection_request(message: str) -> bool:
+        normalized = normalize_for_match(message)
+        selection_phrases = (
+            "can we look at ",
+            "could we look at ",
+            "can you look at ",
+            "could you look at ",
+            "can we use ",
+            "could we use ",
+            "can we select ",
+            "could we select ",
+            "can we choose ",
+            "could we choose ",
+            "can we analyze ",
+            "could we analyze ",
+            "can we analyse ",
+            "could we analyse ",
+        )
+        return any(normalized.startswith(prefix.strip()) for prefix in selection_phrases)
+
+    @staticmethod
+    def _selection_matches_current_context(
+        session: ChatSession,
+        country: str,
+        region: str,
+        sector: str,
+    ) -> bool:
+        selected_values = [value for value in [country, region, sector] if value]
+        if not selected_values:
+            return False
+        comparisons = [
+            (country, session.country),
+            (region, session.region),
+            (sector, session.sector),
+        ]
+        return all(
+            not incoming or (current is not None and normalize(incoming) == normalize(current))
+            for incoming, current in comparisons
+        )
+
+    @staticmethod
+    def _already_selected_message(
+        session: ChatSession,
+        country: str,
+        region: str,
+        sector: str,
+    ) -> str:
+        if sector and session.sector and normalize(sector) == normalize(session.sector):
+            return f"{session.sector} is already selected. Selection flow completed."
+        if region and session.region and normalize(region) == normalize(session.region):
+            return f"{session.region} is already selected. Please choose a sector."
+        if country and session.country and normalize(country) == normalize(session.country):
+            return f"{session.country} is already selected. Please choose a region."
+        return "This option is already selected. Please continue with the next step."
 
     def _selection_is_outside_current_phase(
         self,
@@ -530,6 +737,14 @@ class ChatSelectionStepsMixin:
         session: ChatSession,
         selection: dict[str, str | None],
     ) -> ChatResponse:
+        applied_context_response = self._apply_valid_context_before_invalid_tail(
+            session_id,
+            session,
+            selection,
+        )
+        if applied_context_response is not None:
+            return applied_context_response
+
         country_name = selection.get("country") or session.country
         sector = selection.get("sector")
         if country_name and sector:
@@ -567,6 +782,46 @@ class ChatSelectionStepsMixin:
                         error=True,
                     )
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
+
+    def _apply_valid_context_before_invalid_tail(
+        self,
+        session_id: str,
+        session: ChatSession,
+        selection: dict[str, str | None],
+    ) -> ChatResponse | None:
+        country_name = selection.get("country")
+        region_name = selection.get("region")
+        sector_name = selection.get("sector")
+        if not country_name or not region_name or not sector_name or session.region is not None:
+            return None
+
+        country = self._country_by_name(country_name)
+        if country is None:
+            return None
+        region = self._region_by_name(region_name, country.id)
+        if region is None:
+            return None
+
+        session.country_id = country.id
+        session.country = country.name
+        session.region_id = region.id
+        session.region = region.name
+        session.phase = "sector"
+        self._ensure_user_session(session_id, session)
+        self._record_activity(session_id, session, "country_selected", country.name, step="country")
+        self._record_activity(session_id, session, "region_selected", region.name, step="region")
+        sectors = self._sectors_for_country(country.id)
+        return ChatResponse(
+            session_id=session_id,
+            step="sector",
+            bot_message=(
+                f"**{sector_name}** is not available for **{country.name}**.\n\n"
+                "Please choose one of the available sectors."
+            ),
+            options=option_list(sectors),
+            session=session.summary(),
+            error=True,
+        )
 
     def _selection_action_confirmation_step(
         self,

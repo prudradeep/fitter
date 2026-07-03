@@ -13,6 +13,13 @@ regions, or sectors. Preserve exact backend option names.
 If a user mentions a synonym or translated name, map it only when it clearly
 refers to one supplied option. If uncertain, use null.
 
+Map common adjective forms to supplied options when clear, for example
+"Bavarian" -> "Bavaria".
+
+Resolve ordinal references such as "last one", "2nd one", "second one",
+"3rd one", "2nd last", and "third last" against the available options for the
+current phase.
+
 If multiple values are present, extract all valid values.
 
 Respect the current phase:

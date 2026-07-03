@@ -5,6 +5,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.uv-cache/
 data/*.faiss
 data/grounding-logs/
 data/service-runtime/
+open_*.xlsx
+*.log

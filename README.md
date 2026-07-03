@@ -191,6 +191,35 @@ Health check:
 http://localhost:8000/health
 ```
 
+## Open Conversation Selection Regression
+
+Generate the Country -> Region -> Sector test-case workbook and the Pass/Fail
+results workbook with one command:
+
+```bash
+uv run python tests/run_open_conversation_selection_regression.py
+```
+
+This creates these files in the current working directory:
+
+```text
+open_conversation_selection_test_cases.xlsx
+open_conversation_selection_test_results.xlsx
+```
+
+To run only the workbook/unit tests:
+
+```bash
+uv run python -m unittest tests.test_open_conversation_selection_test_cases tests.test_chat_selection_engine tests.test_conversational_selection tests.test_question_intent
+```
+
+The lower-level scripts are also available when needed:
+
+```bash
+uv run python tests/generate_open_conversation_selection_test_cases.py
+uv run python tests/run_open_conversation_selection_cases.py
+```
+
 ## API
 
 The full chat flow uses one endpoint:
