@@ -30,7 +30,7 @@ class OpenConversationSelectionTestCaseWorkbookTests(unittest.TestCase):
         categories = {str(row["Category"]) for row in rows}
 
         self.assertGreaterEqual(len(rows), 80)
-        self.assertLessEqual(len(rows), 120)
+        self.assertLessEqual(len(rows), 130)
         self.assertIn("Country + region + sector in one message", categories)
         self.assertIn("Full natural-language flow", categories)
         self.assertIn("Conversational references", categories)

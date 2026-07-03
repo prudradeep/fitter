@@ -314,6 +314,15 @@ class ChatSelectionStepsMixin:
                 )
             return await self._apply_pending_selection(session_id, session, deterministic_selection)
 
+        navigation_response = await self._open_selection_navigation_response(
+            session_id,
+            session,
+            message,
+            current_phase,
+        )
+        if navigation_response is not None:
+            return navigation_response
+
         intent = await detect_message_intent(
             message,
             context={
@@ -460,6 +469,65 @@ class ChatSelectionStepsMixin:
         if response is not None:
             return response
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
+
+    async def _open_selection_navigation_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> ChatResponse | None:
+        action = self._selection_action_from_open_text(session, message, current_phase)
+        if action is None:
+            return None
+        return await self._apply_selection_action(session_id, session, action)
+
+    def _selection_action_from_open_text(
+        self,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> str | None:
+        normalized = normalize_for_match(message)
+        if not normalized:
+            return None
+
+        if normalized in {"restart", "start over", "reset", "reset everything", "restart selection"}:
+            return "restart_selection"
+        if normalized in {
+            "change country",
+            "choose another country",
+            "select another country",
+            "back to country",
+            "go back to country",
+            "start over with a different country",
+        }:
+            return "change_country"
+        if normalized in {
+            "change region",
+            "choose another region",
+            "select another region",
+            "back to region",
+            "go back to region",
+        }:
+            return "change_region"
+        if normalized in {
+            "change sector",
+            "choose another sector",
+            "choose a different sector",
+            "select another sector",
+            "back to sector",
+            "go back to sector",
+        }:
+            return "change_sector"
+        if normalized in {"go back", "back", "previous", "previous step", "change previous step"}:
+            if session.sector is not None:
+                return "change_sector"
+            if current_phase == "sector" or session.region is not None:
+                return "change_region"
+            if current_phase == "region" or session.country is not None:
+                return "change_country"
+        return None
 
     def _ordinal_selection_from_text(
         self,
@@ -635,6 +703,7 @@ class ChatSelectionStepsMixin:
             "change",
             "actually",
             "again",
+            "switch",
             "assessment",
             "focus",
             "on",

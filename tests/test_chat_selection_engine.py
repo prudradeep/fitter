@@ -2,11 +2,12 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from app.services.chat_hazard_steps import ChatHazardStepsMixin
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
 from app.services.chat_session import ChatSession
 
 
-class _SelectionEngine(ChatSelectionStepsMixin):
+class _SelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsMixin):
     def _available_country_names(self):
         return ["Germany", "Ireland", "Portugal"]
 
@@ -88,6 +89,58 @@ class ChatSelectionEngineTests(unittest.TestCase):
         self.assertEqual(
             engine._ordinal_selection_from_text(ChatSession(country="Germany"), "second one", "region"),
             {"country": None, "region": "Berlin", "sector": None},
+        )
+
+    def test_post_sector_open_text_maps_to_main_options_only(self):
+        engine = _SelectionEngine()
+
+        self.assertEqual(engine._post_sector_label_from_open_text("next step"), "Start Mitigation Planning")
+        self.assertEqual(engine._post_sector_label_from_open_text("Create mitigation"), "Start Mitigation Planning")
+        self.assertEqual(
+            engine._post_sector_label_from_open_text("Create mitigation measure"),
+            "Start Mitigation Planning",
+        )
+        self.assertEqual(engine._post_sector_label_from_open_text("second one"), "Add a new Hazard")
+        self.assertEqual(engine._post_sector_label_from_open_text("Create a new hazard"), "Add a new Hazard")
+        self.assertEqual(
+            engine._post_sector_label_from_open_text("I want to create a new hazard"),
+            "Add a new Hazard",
+        )
+        self.assertEqual(engine._post_sector_label_from_open_text("last one"), "Refresh hazards and DGs")
+        self.assertEqual(engine._post_sector_label_from_open_text("Update hazards list"), "Refresh hazards and DGs")
+        self.assertIsNone(engine._post_sector_label_from_open_text("Other Options"))
+
+    def test_socio_demographic_open_text_maps_to_mitigation_actions(self):
+        engine = _SelectionEngine()
+
+        self.assertEqual(
+            engine._socio_demographic_label_from_open_text("Create mitigation"),
+            "Create Mitigation Measure",
+        )
+        self.assertEqual(
+            engine._socio_demographic_label_from_open_text("Please create a mitigation measure"),
+            "Create Mitigation Measure",
+        )
+        self.assertEqual(
+            engine._socio_demographic_label_from_open_text("add more DGs"),
+            "Add more DGs",
+        )
+
+    def test_open_navigation_actions_from_post_sector_context(self):
+        engine = _SelectionEngine()
+        session = ChatSession(country="Germany", region="Bavaria", sector="Energy")
+
+        self.assertEqual(
+            engine._selection_action_from_open_text(session, "go back", "sector"),
+            "change_sector",
+        )
+        self.assertEqual(
+            engine._selection_action_from_open_text(session, "select another region", "sector"),
+            "change_region",
+        )
+        self.assertEqual(
+            engine._selection_action_from_open_text(session, "start over", "sector"),
+            "restart_selection",
         )
 
     def test_exact_sector_before_country_is_outside_current_phase(self):

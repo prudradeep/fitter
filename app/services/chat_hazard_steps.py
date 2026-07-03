@@ -8,6 +8,7 @@ from app.services.chat_options import (
     exact_option_label,
     match_option_label,
     normalize,
+    normalize_for_match,
 )
 from app.services.chat_session import ChatSession
 from app.services.custom_hazard_validation import default_custom_hazard_state
@@ -37,7 +38,26 @@ class ChatHazardStepsMixin:
     async def _handle_hazards_action(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
+        navigation_handler = getattr(self, "_open_selection_navigation_response", None)
+        if navigation_handler is not None:
+            navigation_response = await navigation_handler(
+                session_id,
+                session,
+                message,
+                "sector",
+            )
+            if navigation_response is not None:
+                return navigation_response
+
+        selection = self._post_sector_selection_from_open_text(session, message)
+        if selection is not None:
+            apply_selection = getattr(self, "_apply_pending_selection", None)
+            if apply_selection is not None:
+                return await apply_selection(session_id, session, selection)
+
         exact_label = exact_option_label(message, POST_SECTOR_OPTIONS)
+        if exact_label is None:
+            exact_label = self._post_sector_label_from_open_text(message)
         if exact_label is None:
             fuzzy_label = match_option_label(message, POST_SECTOR_OPTIONS)
             if fuzzy_label is not None:
@@ -133,6 +153,8 @@ class ChatHazardStepsMixin:
     ) -> ChatResponse:
         exact_label = exact_option_label(message, STATS_DEEP_DIVE_OPTIONS)
         if exact_label is None:
+            exact_label = self._post_sector_label_from_open_text(message)
+        if exact_label is None:
             fuzzy_label = match_option_label(message, STATS_DEEP_DIVE_OPTIONS)
             if fuzzy_label is not None:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
@@ -159,6 +181,103 @@ class ChatHazardStepsMixin:
             )
 
         return await self._stats_deep_dive(session_id, session, message)
+
+    def _post_sector_label_from_open_text(self, message: str) -> str | None:
+        normalized = normalize_for_match(message)
+        if not normalized:
+            return None
+        if normalized == "other options":
+            return None
+        if normalized in {
+            "next",
+            "next step",
+            "continue",
+            "continue flow",
+            "continue the flow",
+            "go ahead",
+            "proceed",
+            "move forward",
+            "start mitigation",
+            "start mitigation planning",
+            "create mitigation",
+            "create a mitigation",
+            "create mitigation measure",
+            "create a mitigation measure",
+            "start creating mitigation",
+            "make mitigation measure",
+            "new mitigation measure",
+        }:
+            return "Start Mitigation Planning"
+        if "mitigation" in normalized and any(
+            token in normalized
+            for token in (
+                "start",
+                "create",
+                "make",
+                "build",
+                "develop",
+                "plan",
+                "prepare",
+            )
+        ):
+            return "Start Mitigation Planning"
+        if normalized in {
+            "add hazard",
+            "add a hazard",
+            "add new hazard",
+            "add a new hazard",
+            "create hazard",
+            "create a hazard",
+            "create a new hazard",
+            "new hazard",
+            "start a new hazard",
+        }:
+            return "Add a new Hazard"
+        if "hazard" in normalized and any(
+            token in normalized
+            for token in ("add", "create", "new")
+        ):
+            return "Add a new Hazard"
+        if normalized in {
+            "refresh",
+            "refresh hazards",
+            "refresh dgs",
+            "refresh hazards and dgs",
+            "reload hazards",
+            "regenerate hazards",
+            "update hazards",
+        }:
+            return "Refresh hazards and DGs"
+        if "hazard" in normalized and any(
+            token in normalized
+            for token in ("refresh", "reload", "regenerate", "update")
+        ):
+            return "Refresh hazards and DGs"
+
+        ordinal_parser = getattr(self, "_ordinal_index_from_text", None)
+        if ordinal_parser is None:
+            return None
+        ordinal = ordinal_parser(message)
+        if ordinal is None:
+            return None
+        labels = [option.label for option in POST_SECTOR_OPTIONS]
+        index = ordinal if ordinal >= 0 else len(labels) + ordinal
+        if index < 0 or index >= len(labels):
+            return None
+        return labels[index]
+
+    def _post_sector_selection_from_open_text(
+        self,
+        session: ChatSession,
+        message: str,
+    ) -> dict[str, str | None] | None:
+        selector = getattr(self, "_deterministic_selection_from_text", None)
+        if selector is None:
+            return None
+        selection = selector(session, message)
+        if selection is None:
+            return None
+        return selection
 
     def _hazard_profile_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         self._filter_session_hazards_without_profiles(session)
@@ -248,6 +367,8 @@ class ChatHazardStepsMixin:
     ) -> ChatResponse:
         exact_label = exact_option_label(message, SOCIO_DEMOGRAPHIC_OPTIONS)
         if exact_label is None:
+            exact_label = self._socio_demographic_label_from_open_text(message)
+        if exact_label is None:
             fuzzy_label = match_option_label(message, SOCIO_DEMOGRAPHIC_OPTIONS)
             if fuzzy_label is not None:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
@@ -267,3 +388,29 @@ class ChatHazardStepsMixin:
             session=session.summary(),
             error=True,
         )
+
+    def _socio_demographic_label_from_open_text(self, message: str) -> str | None:
+        normalized = normalize_for_match(message)
+        if not normalized:
+            return None
+        if normalized in {
+            "create mitigation",
+            "create a mitigation",
+            "create mitigation measure",
+            "create a mitigation measure",
+            "start mitigation",
+            "start mitigation measure",
+            "make mitigation measure",
+            "new mitigation measure",
+        }:
+            return "Create Mitigation Measure"
+        if "mitigation" in normalized and any(
+            token in normalized
+            for token in ("start", "create", "make", "build", "develop", "prepare")
+        ):
+            return "Create Mitigation Measure"
+        if normalized in {"add dgs", "add more dgs", "add demographic groups"}:
+            return "Add more DGs"
+        if "dg" in normalized and "add" in normalized:
+            return "Add more DGs"
+        return None

@@ -17,6 +17,7 @@ from openpyxl.utils import get_column_letter
 
 from app.schemas import ChatResponse, Option
 from app.services.chat_options import best_fuzzy_label, normalize, option_list
+from app.services.chat_hazard_steps import ChatHazardStepsMixin
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
 from app.services.chat_session import ChatSession
 from tests.generate_open_conversation_selection_test_cases import (
@@ -67,7 +68,7 @@ class _SectorRow(_Row):
     pass
 
 
-class _OpenConversationSelectionEngine(ChatSelectionStepsMixin):
+class _OpenConversationSelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsMixin):
     welcome_message = "Please select a country from the available options."
     invalid_message = "I could not understand your selection. Please choose from the available options."
 
@@ -97,6 +98,8 @@ class _OpenConversationSelectionEngine(ChatSelectionStepsMixin):
             "region": "region",
             "sector": "sector",
             "completed": "hazards",
+            "hazards": "hazards",
+            "post-sector": "hazards",
             "confirmation": "country",
         }.get(phase, session.phase)
 
@@ -145,6 +148,8 @@ class _OpenConversationSelectionEngine(ChatSelectionStepsMixin):
                         self.invalid_message,
                         True,
                     )
+            elif phase in {"hazards", "post-sector"}:
+                response = await self._handle_hazards_action("test-session", session, message)
             else:
                 response = await self._maybe_apply_conversational_selection(
                     "test-session",
@@ -421,6 +426,31 @@ class _OpenConversationSelectionEngine(ChatSelectionStepsMixin):
             )
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
+    def _hazard_profile_step(self, session_id: str, session: ChatSession) -> ChatResponse:
+        session.phase = "hazard_profile_selection"
+        return ChatResponse(
+            session_id=session_id,
+            step="hazard_profile_selection",
+            bot_message="Please select a hazard to start mitigation planning.",
+            options=[Option(id=1, label="Heat stress"), Option(id=2, label="Energy poverty")],
+            session=session.summary(),
+            error=False,
+        )
+
+    def _custom_hazard_input_step(self, session_id: str, session: ChatSession) -> ChatResponse:
+        session.phase = "custom_hazard_input"
+        return ChatResponse(
+            session_id=session_id,
+            step="hazards",
+            bot_message=f"Describe the new hazard for {session.sector}.",
+            options=[Option(id=1, label="Go back to list of hazards")],
+            session=session.summary(),
+            error=False,
+        )
+
+    async def _refresh_session_hazards(self, session_id: str, session: ChatSession) -> None:
+        session.pending_hazard = "__refresh_hazards__"
+
     def _country_step(
         self,
         session_id: str,
@@ -618,6 +648,12 @@ def infer_actual_action(response: ChatResponse, session: ChatSession) -> str:
         return "ASK_CLARIFICATION"
     if response.error:
         return "SHOW_ERROR"
+    if response.step == "hazard_profile_selection":
+        return "START_MITIGATION_PLANNING"
+    if session.phase == "custom_hazard_input":
+        return "ADD_NEW_HAZARD"
+    if session.pending_hazard == "__refresh_hazards__":
+        return "REFRESH_HAZARDS"
     if "already selected" in response.bot_message.casefold():
         return "NO_CHANGE"
     if response.step == "country" and not session.country:
@@ -641,6 +677,12 @@ def row_result(
     session: ChatSession,
 ) -> dict[str, str]:
     actual_action = infer_actual_action(response, session)
+    if (
+        str(item.get("Expected Action") or "") == "RESET_ALL"
+        and not response.error
+        and not any([session.country, session.region, session.sector])
+    ):
+        actual_action = "RESET_ALL"
     if str(item.get("Expected Action") or "") == "GO_BACK" and not response.error:
         actual_action = "GO_BACK"
     actual_clarify = response.step == "selection_confirmation" or (
@@ -650,7 +692,7 @@ def row_result(
             "Please choose one of the available options, or type your selection another way.",
             "Please select a country from the available options.",
         }
-        and str(item.get("Expected Action") or "") != "GO_BACK"
+        and str(item.get("Expected Action") or "") not in {"GO_BACK", "RESET_ALL"}
     )
     actual_error = bool(response.error)
 
