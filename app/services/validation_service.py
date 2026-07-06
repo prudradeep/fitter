@@ -1524,6 +1524,220 @@ class ChatValidationServiceMixin:
             }
         return parsed
 
+    async def _validate_mitigation_measure_only(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+    ) -> dict[str, object] | None:
+        local_review = self._local_mitigation_measure_only_review(
+            session,
+            mitigation_measure,
+        )
+        if local_review is not None:
+            return local_review
+
+        context = render_prompt_template("llm/mitigation_measure_validation.txt")
+        messages = [
+            {
+                "role": "user",
+                "content": render_prompt_template(
+                    "llm/mitigation_measure_validation_user.txt",
+                    country=session.country or "Not provided",
+                    region=session.region or "Not provided",
+                    sector=session.sector or "Not provided",
+                    hazard=(
+                        session.selected_hazard
+                        or session.pending_hazard
+                        or "Not provided"
+                    ),
+                    mitigation_measure=mitigation_measure,
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=700,
+        )
+        if is_llm_unavailable_response(response):
+            return None
+        parsed = parse_json_object(response)
+        if not isinstance(parsed, dict):
+            return self._local_mitigation_measure_only_review(
+                session,
+                mitigation_measure,
+                allow_valid=True,
+            )
+        return self._normalize_mitigation_measure_only_review(parsed)
+
+    def _local_mitigation_measure_only_review(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+        *,
+        allow_valid: bool = False,
+    ) -> dict[str, object] | None:
+        measure = str(mitigation_measure or "").strip()
+        normalized = normalize_for_match(measure)
+        if not normalized:
+            return self._mitigation_measure_only_review_payload(
+                "INVALID",
+                "The mitigation measure is empty.",
+                policy_quality=False,
+                clarification_question="Please provide a concrete mitigation intervention.",
+            )
+        weak_exact = {
+            "improve awareness",
+            "government should help",
+            "reduce emissions",
+            "make transport better",
+            "help people",
+            "support residents",
+            "address the issue",
+            "solve the problem",
+            "reduce risk",
+            "mitigate the hazard",
+        }
+        if normalized in weak_exact:
+            return self._mitigation_measure_only_review_payload(
+                "NEEDS_CLARIFICATION",
+                "The mitigation measure is too vague to evaluate as a concrete intervention.",
+                policy_quality=False,
+                clarification_question=(
+                    "What concrete intervention, target group, instrument, or delivery mechanism "
+                    "does this mitigation measure propose?"
+                ),
+                suggested_improvement=(
+                    "Describe a specific policy instrument, such as targeted grants, infrastructure deployment, "
+                    "advisory services, data systems, or standards."
+                ),
+            )
+        hazard = normalize_for_match(session.selected_hazard or session.pending_hazard or "")
+        if hazard and normalized == hazard:
+            return self._mitigation_measure_only_review_payload(
+                "INVALID",
+                "The text restates the hazard instead of proposing a mitigation intervention.",
+                hazard_fit=False,
+                policy_quality=False,
+            )
+        token_count = len(normalized.split())
+        intervention_terms = {
+            "grant",
+            "grants",
+            "subsidy",
+            "subsidies",
+            "install",
+            "deploy",
+            "expand",
+            "introduce",
+            "retrofit",
+            "upgrade",
+            "build",
+            "fund",
+            "provide",
+            "develop",
+            "improve",
+            "implement",
+            "infrastructure",
+            "service",
+            "services",
+            "programme",
+            "program",
+            "platform",
+            "standards",
+            "charging",
+            "heat",
+            "pump",
+            "smart",
+            "digital",
+            "meter",
+            "meters",
+            "retrofits",
+            "renovation",
+            "renovations",
+        }
+        has_intervention = any(term in normalized.split() for term in intervention_terms)
+        if token_count < 2 or (token_count < 5 and not has_intervention):
+            return self._mitigation_measure_only_review_payload(
+                "NEEDS_CLARIFICATION",
+                "The mitigation measure needs slightly more detail.",
+                policy_quality=False,
+                clarification_question=(
+                    "Can you specify the mitigation action or policy intervention?"
+                ),
+                suggested_improvement=(
+                    "Name the intervention or action, such as grants, subsidies, retrofits, smart meters, or infrastructure upgrades."
+                ),
+            )
+        return (
+            self._mitigation_measure_only_review_payload(
+                "VALID",
+                "The mitigation measure is concrete enough for the selected context.",
+            )
+            if allow_valid
+            else None
+        )
+
+    @staticmethod
+    def _normalize_mitigation_measure_only_review(payload: dict[str, object]) -> dict[str, object]:
+        status = str(payload.get("status") or "").strip().upper()
+        if status not in {"VALID", "INVALID", "NEEDS_CLARIFICATION"}:
+            status = "NEEDS_CLARIFICATION"
+        checks = payload.get("checks") if isinstance(payload.get("checks"), dict) else {}
+        normalized_checks: dict[str, bool] = {}
+        for key in (
+            "hazard_fit",
+            "sector_fit",
+            "country_region_fit",
+            "twin_transition_fit",
+            "policy_quality",
+        ):
+            raw = checks.get(key) if isinstance(checks, dict) else None
+            if isinstance(raw, bool):
+                normalized_checks[key] = raw
+            elif isinstance(raw, dict):
+                normalized_checks[key] = bool(raw.get("valid", status == "VALID"))
+            else:
+                normalized_checks[key] = status == "VALID"
+        return {
+            "status": status,
+            "summary": str(payload.get("summary") or "").strip(),
+            "checks": normalized_checks,
+            "clarification_question": str(payload.get("clarification_question") or "").strip(),
+            "suggested_improvement": str(payload.get("suggested_improvement") or "").strip(),
+        }
+
+    @classmethod
+    def _mitigation_measure_only_review_payload(
+        cls,
+        status: str,
+        summary: str,
+        *,
+        hazard_fit: bool = True,
+        sector_fit: bool = True,
+        country_region_fit: bool = True,
+        twin_transition_fit: bool = True,
+        policy_quality: bool = True,
+        clarification_question: str = "",
+        suggested_improvement: str = "",
+    ) -> dict[str, object]:
+        return cls._normalize_mitigation_measure_only_review(
+            {
+                "status": status,
+                "summary": summary,
+                "checks": {
+                    "hazard_fit": hazard_fit,
+                    "sector_fit": sector_fit,
+                    "country_region_fit": country_region_fit,
+                    "twin_transition_fit": twin_transition_fit,
+                    "policy_quality": policy_quality,
+                },
+                "clarification_question": clarification_question,
+                "suggested_improvement": suggested_improvement,
+            }
+        )
+
     async def _validate_clarification_answer_quality(
         self, session: ChatSession, answer: str
     ) -> dict[str, str | bool] | None:

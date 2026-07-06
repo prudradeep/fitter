@@ -261,3 +261,28 @@ open conversation checks
 
 
 Strict check passed only visible to all, easy - visible to the same user only
+
+test case
+I want to know about the housing sector in Berlin, Germany
+I want to know about the hazards in Transport sector of catalonia, Spain
+
+hazard:
+ restart from the begining
+ start again
+ I want to start with Transport sector in Bavaria Germany
+
+at all step:
+ I want to start with Transport sector in Catalonia Germany
+    i want to write/draft/develop mitigation measure for my region
+there are more hazards in my region: Should ask for the clarification. You want to add more hazard
+
+
+SP1, SP2, ... What is this. reference link or tooltip
+
+use current policy implementation suggested by you and change it for my region
+
+I found a close hazard match. Please choose the hazard you want from the available options.
+Confirmation required
+
+
+Implemented in: EU / Member States => clear visibility highlight..

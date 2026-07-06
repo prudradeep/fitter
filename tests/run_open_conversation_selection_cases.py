@@ -18,6 +18,8 @@ from openpyxl.utils import get_column_letter
 from app.schemas import ChatResponse, Option
 from app.services.chat_options import best_fuzzy_label, normalize, option_list
 from app.services.chat_hazard_steps import ChatHazardStepsMixin
+from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
+from app.services.chat_navigation_steps import ChatNavigationStepsMixin
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
 from app.services.chat_session import ChatSession
 from tests.generate_open_conversation_selection_test_cases import (
@@ -38,6 +40,8 @@ RESULT_COLUMNS = [
     "Actual Country",
     "Actual Region",
     "Actual Sector",
+    "Actual Hazard",
+    "Actual Mitigation Measure",
     "Actual Bot Response",
     "Actual Action",
     "Actual Should Ask Clarification",
@@ -68,7 +72,12 @@ class _SectorRow(_Row):
     pass
 
 
-class _OpenConversationSelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsMixin):
+class _OpenConversationSelectionEngine(
+    ChatMitigationStepsMixin,
+    ChatHazardStepsMixin,
+    ChatNavigationStepsMixin,
+    ChatSelectionStepsMixin,
+):
     welcome_message = "Please select a country from the available options."
     invalid_message = "I could not understand your selection. Please choose from the available options."
 
@@ -100,6 +109,8 @@ class _OpenConversationSelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsM
             "completed": "hazards",
             "hazards": "hazards",
             "post-sector": "hazards",
+            "hazard": "hazard_profile_selection",
+            "reason confirmation": "reason_confirmation",
             "confirmation": "country",
         }.get(phase, session.phase)
 
@@ -150,6 +161,13 @@ class _OpenConversationSelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsM
                     )
             elif phase in {"hazards", "post-sector"}:
                 response = await self._handle_hazards_action("test-session", session, message)
+            elif phase == "hazard":
+                response = await self._handle_hazard_profile_selection("test-session", session, message)
+            elif phase == "reason confirmation":
+                session.suggested_new_policy_proposal = (
+                    "Targeted heat pump support for vulnerable households"
+                )
+                response = await self._handle_reason_confirmation("test-session", session, message)
             else:
                 response = await self._maybe_apply_conversational_selection(
                     "test-session",
@@ -189,6 +207,11 @@ class _OpenConversationSelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsM
                     session.sector_id = sector.id
                     session.sector = sector.name
                     session.phase = "hazards"
+                    self._seed_hazard_context(session)
+            elif key.casefold() == "hazard":
+                session.selected_hazard = value
+            elif key.casefold() == "mitigation":
+                session.pending_mitigation_measure = value
         return session
 
     @staticmethod
@@ -428,14 +451,106 @@ class _OpenConversationSelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsM
 
     def _hazard_profile_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         session.phase = "hazard_profile_selection"
+        self._seed_hazard_context(session)
         return ChatResponse(
             session_id=session_id,
             step="hazard_profile_selection",
             bot_message="Please select a hazard to start mitigation planning.",
-            options=[Option(id=1, label="Heat stress"), Option(id=2, label="Energy poverty")],
+            options=self._hazard_options(session),
             session=session.summary(),
             error=False,
         )
+
+    async def _hazard_profiles_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        hazard: str,
+    ) -> ChatResponse:
+        session.phase = "socio_demographic_review"
+        return ChatResponse(
+            session_id=session_id,
+            step="socio_demographic_review",
+            bot_message=f"{hazard} selected. Review affected profiles.",
+            options=[Option(id=1, label="Create Mitigation Measure"), Option(id=2, label="Add more DGs")],
+            session=session.summary(),
+            error=False,
+        )
+
+    def _hazard_options(self, session: ChatSession) -> list[Option]:
+        self._seed_hazard_context(session)
+        options = [Option(id=index, label=hazard) for index, hazard in enumerate(self._primary_hazard_names(session), start=1)]
+        if session.additional_hazards:
+            options.append(Option(id=len(options) + 1, label="Show hazards added by experts"))
+        if session.custom_hazards:
+            options.append(Option(id=len(options) + 1, label="Show co-created hazards"))
+        return options
+
+    def _additional_hazard_selection_options(self, session: ChatSession) -> list[Option]:
+        self._seed_hazard_context(session)
+        options = [Option(id=index, label=hazard) for index, hazard in enumerate(session.additional_hazards or [], start=1)]
+        options.append(Option(id=len(options) + 1, label="Show listed hazards"))
+        return options
+
+    def _custom_hazard_selection_options(self, session: ChatSession) -> list[Option]:
+        self._seed_hazard_context(session)
+        options = [Option(id=index, label=hazard) for index, hazard in enumerate(session.custom_hazards or [], start=1)]
+        options.append(Option(id=len(options) + 1, label="Show listed hazards"))
+        return options
+
+    def _match_hazard(self, message: str, session: ChatSession) -> str | None:
+        normalized = normalize(message)
+        for index, hazard in enumerate(self._all_hazard_names(session), start=1):
+            if str(index) == str(message).strip() or normalize(hazard) == normalized:
+                return hazard
+        return None
+
+    def _fuzzy_hazard(self, message: str, session: ChatSession) -> str | None:
+        return best_fuzzy_label(message, self._all_hazard_names(session))
+
+    def _is_saved_custom_hazard(self, session: ChatSession, hazard: str) -> bool:
+        return normalize(hazard) in {normalize(item) for item in (session.custom_hazards or [])}
+
+    def _custom_hazard_id_for_context(self, session: ChatSession, hazard: str):
+        return 1 if self._is_saved_custom_hazard(session, hazard) else None
+
+    def _target_population_answers_for_saved_hazard(self, session: ChatSession, hazard: str) -> list[dict[str, object]]:
+        return []
+
+    def _hydrate_custom_hazard_profiles(self, session: ChatSession) -> None:
+        self._seed_hazard_context(session)
+
+    def _filter_session_hazards_without_profiles(self, session: ChatSession) -> None:
+        self._seed_hazard_context(session)
+
+    def _seed_hazard_context(self, session: ChatSession) -> None:
+        session.hazards = session.hazards or ["Heat stress", "Energy poverty"]
+        session.additional_hazards = session.additional_hazards or ["Expert-added hazard"]
+        session.custom_hazards = session.custom_hazards or ["Co-created energy risk"]
+        session.hazard_profiles = session.hazard_profiles or {
+            "Heat stress": [{"name": "Workers"}],
+            "Energy poverty": [{"name": "Low-income households"}],
+            "Expert-added hazard": [{"name": "Tenants"}],
+            "Co-created energy risk": [{"name": "Residents"}],
+        }
+
+    @staticmethod
+    def _primary_hazard_names(session: ChatSession) -> list[str]:
+        additional = {normalize(hazard) for hazard in (session.additional_hazards or [])}
+        custom = {normalize(hazard) for hazard in (session.custom_hazards or [])}
+        return [
+            hazard
+            for hazard in (session.hazards or [])
+            if normalize(hazard) not in additional and normalize(hazard) not in custom
+        ]
+
+    def _all_hazard_names(self, session: ChatSession) -> list[str]:
+        self._seed_hazard_context(session)
+        return [
+            *self._primary_hazard_names(session),
+            *(session.additional_hazards or []),
+            *(session.custom_hazards or []),
+        ]
 
     def _custom_hazard_input_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         session.phase = "custom_hazard_input"
@@ -564,6 +679,49 @@ class _OpenConversationSelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsM
     def _record_activity(self, session_id, session, activity_type, details=None, step=None):
         return None
 
+    @classmethod
+    def _clear_selected_hazard_context(cls, session: ChatSession) -> None:
+        session.selected_hazard = None
+        session.selected_hazard_record_id = None
+
+    def _clear_mitigation_clarity_state(self, session: ChatSession) -> None:
+        return None
+
+    def _clear_mitigation_validation_state(self, session: ChatSession) -> None:
+        return None
+
+    def _current_policy_mitigation_measure(self, session: ChatSession) -> str:
+        return "Current policy-based mitigation"
+
+    def _mitigation_measure_examples(self, sector_id: int | None) -> str:
+        return "- Example mitigation measure."
+
+    async def _other_actions_message_from_llm(self, session: ChatSession) -> str:
+        return "Other actions shown."
+
+    def _primary_other_nav_options(self, session: ChatSession, step: str) -> list[Option]:
+        return [Option(id=1, label="Start over with a different country")]
+
+    async def _capture_mitigation_measure(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+    ) -> ChatResponse:
+        mitigation_measure = str(message or "").strip()
+        session.pending_mitigation_measure = mitigation_measure
+        session.phase = "mitigation_reason"
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_reason",
+            bot_message="Typed mitigation measure accepted and reason requested.",
+            options=[],
+            session=session.summary(),
+            input_mode="reason_evidence",
+            input_values={"mitigation_measure": mitigation_measure},
+            error=False,
+        )
+
     def _available_country_names(self) -> list[str]:
         return [country.name for country in self.countries]
 
@@ -638,7 +796,7 @@ class _OpenConversationSelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsM
 
 
 def infer_actual_action(response: ChatResponse, session: ChatSession) -> str:
-    if response.step == "selection_confirmation":
+    if response.step in {"selection_confirmation", "fuzzy_confirmation"}:
         return "ASK_CLARIFICATION"
     if (
         not response.error
@@ -648,8 +806,21 @@ def infer_actual_action(response: ChatResponse, session: ChatSession) -> str:
         return "ASK_CLARIFICATION"
     if response.error:
         return "SHOW_ERROR"
+    if response.step == "hazard_profile_selection" and response.bot_message in {
+        "Choose one of the hazards added by experts from the selected country-sector evidence.",
+        "Choose one of the co-created hazards added by users.",
+    }:
+        return "ASK_CLARIFICATION"
     if response.step == "hazard_profile_selection":
         return "START_MITIGATION_PLANNING"
+    if response.step == "socio_demographic_review" and session.selected_hazard:
+        return "SELECT_HAZARD"
+    if response.step == "mitigation_measure":
+        return "WRITE_MITIGATION_MANUALLY"
+    if response.step == "mitigation_reason" and session.pending_mitigation_measure:
+        if response.bot_message == "Typed mitigation measure accepted and reason requested.":
+            return "CAPTURE_MITIGATION_MEASURE"
+        return "ADOPT_MITIGATION_PROPOSAL"
     if session.phase == "custom_hazard_input":
         return "ADD_NEW_HAZARD"
     if session.pending_hazard == "__refresh_hazards__":
@@ -685,12 +856,15 @@ def row_result(
         actual_action = "RESET_ALL"
     if str(item.get("Expected Action") or "") == "GO_BACK" and not response.error:
         actual_action = "GO_BACK"
-    actual_clarify = response.step == "selection_confirmation" or (
+    actual_clarify = response.step in {"selection_confirmation", "fuzzy_confirmation"} or (
         not response.error
         and response.bot_message
         in {
             "Please choose one of the available options, or type your selection another way.",
             "Please select a country from the available options.",
+            "<p>Did you mean <strong>Heat stress</strong>?</p>",
+            "Choose one of the hazards added by experts from the selected country-sector evidence.",
+            "Choose one of the co-created hazards added by users.",
         }
         and str(item.get("Expected Action") or "") not in {"GO_BACK", "RESET_ALL"}
     )
@@ -700,6 +874,8 @@ def row_result(
         "country": str(item.get("Expected Country") or "").strip(),
         "region": str(item.get("Expected Region") or "").strip(),
         "sector": str(item.get("Expected Sector") or "").strip(),
+        "hazard": str(item.get("Expected Hazard") or "").strip(),
+        "mitigation": str(item.get("Expected Mitigation Measure") or "").strip(),
         "action": str(item.get("Expected Action") or "").strip(),
         "clarify": bool_value(item.get("Should Ask Clarification")),
         "error": bool_value(item.get("Should Show Error")),
@@ -712,6 +888,8 @@ def row_result(
             if isinstance(session.pending_selection, dict)
             else ""
         ),
+        "hazard": session.selected_hazard or "",
+        "mitigation": session.pending_mitigation_measure or session.mitigation_measure or "",
         "action": actual_action,
         "clarify": actual_clarify,
         "error": actual_error,
@@ -723,6 +901,16 @@ def row_result(
             mismatches.append(f"{key}: expected {expected[key]!r}, got {actual[key]!r}")
         if not expected[key] and actual[key] and expected["action"] in {"SHOW_ERROR", "ASK_CLARIFICATION", "NO_CHANGE", "RESET_ALL"}:
             mismatches.append(f"{key}: expected blank/no change, got {actual[key]!r}")
+    if expected["hazard"] and expected["hazard"] != actual["hazard"]:
+        mismatches.append(f"hazard: expected {expected['hazard']!r}, got {actual['hazard']!r}")
+    if not expected["hazard"] and actual["hazard"] and expected["action"] in {"SHOW_ERROR", "ASK_CLARIFICATION", "NO_CHANGE", "RESET_ALL"}:
+        mismatches.append(f"hazard: expected blank/no change, got {actual['hazard']!r}")
+    if expected["mitigation"] and expected["mitigation"] != actual["mitigation"]:
+        mismatches.append(
+            f"mitigation: expected {expected['mitigation']!r}, got {actual['mitigation']!r}"
+        )
+    if not expected["mitigation"] and actual["mitigation"] and expected["action"] in {"SHOW_ERROR", "ASK_CLARIFICATION", "NO_CHANGE", "RESET_ALL"}:
+        mismatches.append(f"mitigation: expected blank/no change, got {actual['mitigation']!r}")
     if expected["action"] and expected["action"] != actual["action"]:
         compatible_actions = {
             ("SELECT_SECTOR", "COMPLETE_SELECTION"),
@@ -741,6 +929,8 @@ def row_result(
         "Actual Country": actual["country"],
         "Actual Region": actual["region"],
         "Actual Sector": actual["sector"],
+        "Actual Hazard": actual["hazard"],
+        "Actual Mitigation Measure": actual["mitigation"],
         "Actual Bot Response": response.bot_message,
         "Actual Action": actual_action,
         "Actual Should Ask Clarification": "Yes" if actual_clarify else "No",
@@ -765,6 +955,8 @@ async def run_cases() -> list[dict[str, str]]:
                     "Actual Country": "",
                     "Actual Region": "",
                     "Actual Sector": "",
+                    "Actual Hazard": "",
+                    "Actual Mitigation Measure": "",
                     "Actual Bot Response": "",
                     "Actual Action": "NO_CHANGE",
                     "Actual Should Ask Clarification": "No",

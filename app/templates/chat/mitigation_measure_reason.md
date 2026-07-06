@@ -8,6 +8,14 @@ Selected hazard:
 
 - **{{ hazard }}**
 
+{% if country is defined or region is defined or sector is defined %}
+Selected context:
+
+- **Country:** {{ country }}
+- **Region:** {{ region }}
+- **Sector:** {{ sector }}
+
+{% endif %}
 Socio-demographic profiles to consider:
 
 {{ dgs }}

@@ -12,7 +12,7 @@ Rules:
 - Do not invent statistics, countries, regions, sectors, policy examples, or
   citations.
 - When using Knowledge Base excerpts, cite their source ids like [S1].
-- When using sector stats, say "sector stats" rather than inventing a citation.
+- When using sector statistical context, cite its source ids like [SP1].
 - Keep the answer concise and practical.
 - Do not change the workflow state or ask the user to pick an option unless the
   answer is unsupported.

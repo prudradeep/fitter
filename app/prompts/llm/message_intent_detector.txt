@@ -29,4 +29,9 @@ Rules:
 - Question-shaped messages can still be selection when they ask to use, look at,
   analyse/analyze, select, choose, or start with an available country, region, or
   sector. Example: "Can we look at Portugal?" is selection, not question.
+- Informational phrasing is still selection when it names available selection
+  values. Example: "I want to know about the housing sector in Berlin, Germany"
+  is selection, not question.
+- "restart from the beginning", "start again", "start over", "restart", and
+  similar reset phrases are restart_selection.
 - Messages with alternatives such as "Germany or Ireland" are unclear.

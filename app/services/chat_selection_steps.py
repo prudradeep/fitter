@@ -1,9 +1,24 @@
+import hashlib
+import json
 import logging
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.models import Country, Region, Sector
+from app.models import (
+    AdditionalHazard,
+    AdditionalHazardProfile,
+    AdditionalHazardProfileTargetPopulation,
+    Country,
+    EurostatPopulationCache,
+    HazardListingCache,
+    Region,
+    Sector,
+    SystemHazard,
+    SystemHazardSocioDemographic,
+    SystemHazardSocioDemographicTargetPopulation,
+)
 from app.schemas import ChatResponse, Option
 from app.services.chat_options import best_fuzzy_label, normalize, normalize_for_match, option_list
 from app.services.chat_session import ChatSession
@@ -17,6 +32,7 @@ SELECTION_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No"),
 ]
+HAZARD_LISTING_CACHE_VERSION = "v1"
 
 
 class ChatSelectionStepsMixin:
@@ -235,6 +251,14 @@ class ChatSelectionStepsMixin:
         session.sector_id = sector.id
         session.sector = sector.name
         session.phase = "hazards"
+        if self._load_hazard_listing_cache(session):
+            session.custom_hazards = self._saved_custom_hazards_for_context(session)
+            self._hydrate_custom_hazard_profiles(session)
+            self._filter_session_hazards_without_profiles(session)
+            self._ensure_user_session(session_id, session)
+            self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
+            return self._hazards_step(session_id, session)
+
         self._normalize_stored_sdp_variable_names(session)
         hazard_items = self._stored_hazard_items_for_context(session_id, session)
         expected_hazard_count = await self._sector_prompt_rag_hazard_count(session.sector)
@@ -270,6 +294,7 @@ class ChatSelectionStepsMixin:
         self._hydrate_custom_hazard_profiles(session)
         self._filter_session_hazards_without_profiles(session)
         await self._rank_session_hazards(session)
+        self._store_hazard_listing_cache(session)
         self._ensure_user_session(session_id, session)
         self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
         return self._hazards_step(session_id, session)
@@ -492,7 +517,18 @@ class ChatSelectionStepsMixin:
         if not normalized:
             return None
 
-        if normalized in {"restart", "start over", "reset", "reset everything", "restart selection"}:
+        if normalized in {
+            "restart",
+            "restart from the beginning",
+            "restart from beginning",
+            "start again",
+            "start over",
+            "start from the beginning",
+            "start from beginning",
+            "reset",
+            "reset everything",
+            "restart selection",
+        }:
             return "restart_selection"
         if normalized in {
             "change country",
@@ -518,6 +554,8 @@ class ChatSelectionStepsMixin:
             "select another sector",
             "back to sector",
             "go back to sector",
+            "back to sectors",
+            "go back to sectors",
         }:
             return "change_sector"
         if normalized in {"go back", "back", "previous", "previous step", "change previous step"}:
@@ -567,7 +605,7 @@ class ChatSelectionStepsMixin:
         tokens = normalize_for_match(message).split()
         if not tokens:
             return None
-        allowed = {"the", "one", "option", "please", "select", "choose", "go", "with"}
+        allowed = {"the", "one", "option", "hazard", "please", "select", "choose", "go", "with"}
         number_words = {
             "first": 1,
             "second": 2,
@@ -623,12 +661,35 @@ class ChatSelectionStepsMixin:
             return None
         remaining = f" {normalized} "
         selection: dict[str, str | None] = {"country": None, "region": None, "sector": None}
-        option_groups = [
-            ("country", self._available_country_names()),
-            ("region", self._available_region_names(session)),
-            ("sector", self._available_sector_names(session)),
-        ]
-        for key, labels in option_groups:
+
+        country_match = self._single_label_match(
+            remaining,
+            self._available_country_names(),
+        )
+        if country_match == "":
+            return None
+        if country_match:
+            selection["country"] = country_match
+            remaining = self._remove_selection_term(remaining, country_match)
+
+        region_labels = self._available_region_names(session)
+        sector_labels = self._available_sector_names(session)
+        if country_match and (
+            session.country is None or normalize(country_match) != normalize(session.country)
+        ) and hasattr(self, "db"):
+            country = self._country_by_name(country_match)
+            if country is not None:
+                region_labels = [
+                    region.name
+                    for region in self.db.scalars(
+                        select(Region)
+                        .where(Region.country_id == country.id)
+                        .order_by(Region.name)
+                    ).all()
+                ]
+                sector_labels = [sector.name for sector in self._sectors_for_country(country.id)]
+
+        for key, labels in [("region", region_labels), ("sector", sector_labels)]:
             matches: list[tuple[str, str]] = []
             for label in labels:
                 for term in self._selection_label_terms(label):
@@ -646,6 +707,25 @@ class ChatSelectionStepsMixin:
         if not self._is_selection_filler_text(remaining):
             return None
         return selection
+
+    @classmethod
+    def _single_label_match(cls, remaining: str, labels: list[str]) -> str | None:
+        matches: list[str] = []
+        for label in labels:
+            for term in cls._selection_label_terms(label):
+                if f" {term} " in remaining:
+                    matches.append(label)
+                    break
+        if len(matches) > 1:
+            return ""
+        return matches[0] if matches else None
+
+    @classmethod
+    def _remove_selection_term(cls, remaining: str, label: str) -> str:
+        for term in cls._selection_label_terms(label):
+            if f" {term} " in remaining:
+                return remaining.replace(f" {term} ", " ")
+        return remaining
 
     @staticmethod
     def _selection_label_terms(label: str) -> list[str]:
@@ -682,6 +762,7 @@ class ChatSelectionStepsMixin:
             "want",
             "would",
             "like",
+            "know",
             "to",
             "start",
             "begin",
@@ -695,6 +776,7 @@ class ChatSelectionStepsMixin:
             "an",
             "and",
             "in",
+            "about",
             "for",
             "sector",
             "country",
@@ -752,6 +834,226 @@ class ChatSelectionStepsMixin:
         return all(
             not incoming or (current is not None and normalize(incoming) == normalize(current))
             for incoming, current in comparisons
+        )
+
+    def _load_hazard_listing_cache(self, session: ChatSession) -> bool:
+        if session.country_id is None or session.sector_id is None:
+            return False
+        try:
+            row = self.db.scalar(
+                select(HazardListingCache).where(
+                    HazardListingCache.country_id == session.country_id,
+                    HazardListingCache.region_scope_key == self._hazard_cache_region_scope_key(session),
+                    HazardListingCache.sector_id == session.sector_id,
+                    HazardListingCache.cache_version == HAZARD_LISTING_CACHE_VERSION,
+                )
+            )
+            if row is None:
+                return False
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            if row.expires_at is not None and row.expires_at <= now:
+                return False
+            if row.source_fingerprint != self._hazard_listing_source_fingerprint(session):
+                return False
+            payload = json.loads(row.payload_json)
+        except Exception:
+            logger.exception("Hazard-listing cache lookup failed")
+            return False
+        if not isinstance(payload, dict):
+            return False
+        return self._apply_hazard_listing_cache_payload(session, payload)
+
+    def _store_hazard_listing_cache(self, session: ChatSession) -> None:
+        if session.country_id is None or session.sector_id is None:
+            return
+        payload = self._hazard_listing_cache_payload(session)
+        try:
+            payload_json = json.dumps(payload, ensure_ascii=False)
+            row = self.db.scalar(
+                select(HazardListingCache).where(
+                    HazardListingCache.country_id == session.country_id,
+                    HazardListingCache.region_scope_key == self._hazard_cache_region_scope_key(session),
+                    HazardListingCache.sector_id == session.sector_id,
+                    HazardListingCache.cache_version == HAZARD_LISTING_CACHE_VERSION,
+                )
+            )
+            if row is None:
+                row = HazardListingCache(
+                    country_id=session.country_id,
+                    region_id=session.region_id,
+                    region_scope_key=self._hazard_cache_region_scope_key(session),
+                    sector_id=session.sector_id,
+                    cache_version=HAZARD_LISTING_CACHE_VERSION,
+                    source_fingerprint=self._hazard_listing_source_fingerprint(session),
+                    payload_json=payload_json,
+                    expires_at=self._hazard_listing_cache_expiry(session),
+                )
+                self.db.add(row)
+            else:
+                row.region_id = session.region_id
+                row.source_fingerprint = self._hazard_listing_source_fingerprint(session)
+                row.payload_json = payload_json
+                row.expires_at = self._hazard_listing_cache_expiry(session)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("Hazard-listing cache store failed")
+
+    @staticmethod
+    def _hazard_cache_region_scope_key(session: ChatSession) -> int:
+        return int(session.region_id or 0)
+
+    @staticmethod
+    def _hazard_listing_cache_payload(session: ChatSession) -> dict[str, object]:
+        system_hazards = [
+            str(hazard).strip()
+            for hazard in (session.hazards or [])
+            if str(hazard or "").strip()
+        ]
+        additional_hazards = [
+            str(hazard).strip()
+            for hazard in (session.additional_hazards or [])
+            if str(hazard or "").strip()
+        ]
+        cache_hazard_names = {hazard.casefold() for hazard in [*system_hazards, *additional_hazards]}
+        hazard_profiles = {
+            str(hazard): profiles
+            for hazard, profiles in (session.hazard_profiles or {}).items()
+            if str(hazard or "").strip().casefold() in cache_hazard_names
+        }
+        hazard_rankings = {
+            str(hazard): ranking
+            for hazard, ranking in (session.hazard_rankings or {}).items()
+            if str(hazard or "").strip().casefold()
+            in {item.casefold() for item in system_hazards}
+        }
+        return {
+            "system_hazards": system_hazards,
+            "additional_hazards": additional_hazards,
+            "hazard_profiles": hazard_profiles,
+            "hazard_rankings": hazard_rankings,
+        }
+
+    @staticmethod
+    def _apply_hazard_listing_cache_payload(
+        session: ChatSession,
+        payload: dict[str, object],
+    ) -> bool:
+        system_hazards = payload.get("system_hazards")
+        additional_hazards = payload.get("additional_hazards")
+        hazard_profiles = payload.get("hazard_profiles")
+        hazard_rankings = payload.get("hazard_rankings")
+        if not isinstance(system_hazards, list) or not isinstance(additional_hazards, list):
+            return False
+        if not isinstance(hazard_profiles, dict) or not isinstance(hazard_rankings, dict):
+            return False
+        session.hazards = [
+            str(hazard).strip()
+            for hazard in system_hazards
+            if str(hazard or "").strip()
+        ]
+        session.additional_hazards = [
+            str(hazard).strip()
+            for hazard in additional_hazards
+            if str(hazard or "").strip()
+        ]
+        session.hazard_profiles = {
+            str(hazard): profiles
+            for hazard, profiles in hazard_profiles.items()
+            if isinstance(profiles, (list, str))
+        }
+        session.hazard_rankings = {
+            str(hazard): dict(ranking)
+            for hazard, ranking in hazard_rankings.items()
+            if isinstance(ranking, dict)
+        }
+        return bool(session.hazards or session.additional_hazards)
+
+    def _hazard_listing_source_fingerprint(self, session: ChatSession) -> str:
+        parts: list[object] = [
+            HAZARD_LISTING_CACHE_VERSION,
+            session.country_id,
+            session.region_id or 0,
+            session.sector_id,
+            self._hazard_source_stats(
+                SystemHazard,
+                SystemHazard.sector_id == session.sector_id,
+            ),
+            self._hazard_source_stats(
+                SystemHazardSocioDemographic,
+                SystemHazardSocioDemographic.sector_id == session.sector_id,
+            ),
+            self._hazard_source_stats(
+                SystemHazardSocioDemographicTargetPopulation,
+                SystemHazardSocioDemographicTargetPopulation.system_hazard_socio_demographic_id.in_(
+                    select(SystemHazardSocioDemographic.id).where(
+                        SystemHazardSocioDemographic.sector_id == session.sector_id
+                    )
+                ),
+            ),
+            self._hazard_source_stats(
+                AdditionalHazard,
+                AdditionalHazard.country_id == session.country_id,
+                AdditionalHazard.sector_id == session.sector_id,
+            ),
+            self._hazard_source_stats(
+                AdditionalHazardProfile,
+                AdditionalHazardProfile.additional_hazard_id.in_(
+                    select(AdditionalHazard.id).where(
+                        AdditionalHazard.country_id == session.country_id,
+                        AdditionalHazard.sector_id == session.sector_id,
+                    )
+                ),
+            ),
+            self._hazard_source_stats(
+                AdditionalHazardProfileTargetPopulation,
+                AdditionalHazardProfileTargetPopulation.additional_hazard_profile_id.in_(
+                    select(AdditionalHazardProfile.id)
+                    .join(
+                        AdditionalHazard,
+                        AdditionalHazard.id == AdditionalHazardProfile.additional_hazard_id,
+                    )
+                    .where(
+                        AdditionalHazard.country_id == session.country_id,
+                        AdditionalHazard.sector_id == session.sector_id,
+                    )
+                ),
+            ),
+            self._hazard_source_stats(
+                EurostatPopulationCache,
+                EurostatPopulationCache.country_id == session.country_id,
+                EurostatPopulationCache.region_id == session.region_id,
+                EurostatPopulationCache.sector_id == session.sector_id,
+            ),
+        ]
+        payload = json.dumps(parts, default=str, sort_keys=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _hazard_source_stats(self, model, *conditions) -> tuple[int, int, str]:
+        timestamp = getattr(model, "updated_at", None) or getattr(model, "created_at", None)
+        max_timestamp = func.max(timestamp) if timestamp is not None else None
+        row = self.db.execute(
+            select(
+                func.count(model.id),
+                func.coalesce(func.max(model.id), 0),
+                max_timestamp,
+            ).where(*conditions)
+        ).one()
+        return (
+            int(row[0] or 0),
+            int(row[1] or 0),
+            str(row[2] or ""),
+        )
+
+    def _hazard_listing_cache_expiry(self, session: ChatSession) -> datetime | None:
+        if session.country_id is None or session.sector_id is None:
+            return None
+        return self.db.scalar(
+            select(func.min(EurostatPopulationCache.expires_at)).where(
+                EurostatPopulationCache.country_id == session.country_id,
+                EurostatPopulationCache.region_id == session.region_id,
+                EurostatPopulationCache.sector_id == session.sector_id,
+            )
         )
 
     @staticmethod

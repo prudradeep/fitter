@@ -3,11 +3,13 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.services.chat_hazard_steps import ChatHazardStepsMixin
+from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
 from app.services.chat_session import ChatSession
+from app.schemas import Option
 
 
-class _SelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsMixin):
+class _SelectionEngine(ChatHazardStepsMixin, ChatMitigationStepsMixin, ChatSelectionStepsMixin):
     def _available_country_names(self):
         return ["Germany", "Ireland", "Portugal"]
 
@@ -15,7 +17,14 @@ class _SelectionEngine(ChatHazardStepsMixin, ChatSelectionStepsMixin):
         return ["Bavaria", "Berlin"]
 
     def _available_sector_names(self, session):
-        return ["Energy", "Housing"]
+        return ["Energy", "Housing", "Transport"]
+
+    def _hazard_options(self, session):
+        return [
+            Option(id=1, label="Heat stress"),
+            Option(id=2, label="Energy poverty"),
+            Option(id=3, label="Show hazards added by experts"),
+        ]
 
 
 class _AsyncSelectionEngine(_SelectionEngine):
@@ -24,9 +33,6 @@ class _AsyncSelectionEngine(_SelectionEngine):
 
     def _is_exact_current_selection(self, session, message):
         return False
-
-    def _deterministic_selection_from_text(self, session, message):
-        return None
 
     async def _handle_anytime_grounded_question(self, session_id, session, message):
         return None
@@ -65,6 +71,91 @@ class ChatSelectionEngineTests(unittest.TestCase):
         self.assertEqual(
             selection,
             {"country": "Germany", "region": "Bavaria", "sector": "Housing"},
+        )
+
+    def test_informational_phrase_with_context_values_is_selection(self):
+        engine = _SelectionEngine()
+        selection = engine._deterministic_selection_from_text(
+            ChatSession(country="Germany", region="Bavaria", sector="Energy"),
+            "I want to know about the housing sector in Berlin, Germany",
+        )
+
+        self.assertEqual(
+            selection,
+            {"country": "Germany", "region": "Berlin", "sector": "Housing"},
+        )
+
+    def test_new_full_selection_from_any_step_can_change_existing_selection(self):
+        engine = _AsyncSelectionEngine()
+        session = ChatSession(country="Germany", region="Berlin", sector="Housing")
+
+        response = asyncio.run(
+            engine._open_selection_response_from_any_step(
+                "session-1",
+                session,
+                "I want to start with Transport sector in Bavaria Germany",
+                current_phase="sector",
+            )
+        )
+
+        self.assertEqual(response, "applied")
+        self.assertEqual(
+            engine.applied_selection,
+            {"country": "Germany", "region": "Bavaria", "sector": "Transport"},
+        )
+
+    def test_hazard_listing_cache_payload_excludes_custom_hazards(self):
+        session = ChatSession(
+            hazards=["System hazard"],
+            additional_hazards=["Additional hazard"],
+            custom_hazards=["Custom hazard"],
+            hazard_profiles={
+                "System hazard": [{"name": "System profile"}],
+                "Additional hazard": [{"name": "Additional profile"}],
+                "Custom hazard": [{"name": "Custom profile"}],
+            },
+            hazard_rankings={
+                "System hazard": {"relevance_score": 1.5},
+                "Custom hazard": {"relevance_score": 9.9},
+            },
+        )
+
+        payload = _SelectionEngine._hazard_listing_cache_payload(session)
+
+        self.assertEqual(payload["system_hazards"], ["System hazard"])
+        self.assertEqual(payload["additional_hazards"], ["Additional hazard"])
+        self.assertIn("System hazard", payload["hazard_profiles"])
+        self.assertIn("Additional hazard", payload["hazard_profiles"])
+        self.assertNotIn("Custom hazard", payload["hazard_profiles"])
+        self.assertEqual(
+            payload["hazard_rankings"],
+            {"System hazard": {"relevance_score": 1.5}},
+        )
+
+    def test_hazard_listing_cache_payload_restores_session(self):
+        session = ChatSession()
+        payload = {
+            "system_hazards": ["System hazard"],
+            "additional_hazards": ["Additional hazard"],
+            "hazard_profiles": {
+                "System hazard": [{"name": "System profile"}],
+                "Additional hazard": [{"name": "Additional profile"}],
+            },
+            "hazard_rankings": {"System hazard": {"relevance_score": 1.5}},
+        }
+
+        restored = _SelectionEngine._apply_hazard_listing_cache_payload(session, payload)
+
+        self.assertTrue(restored)
+        self.assertEqual(session.hazards, ["System hazard"])
+        self.assertEqual(session.additional_hazards, ["Additional hazard"])
+        self.assertEqual(
+            session.hazard_profiles["Additional hazard"],
+            [{"name": "Additional profile"}],
+        )
+        self.assertEqual(
+            session.hazard_rankings,
+            {"System hazard": {"relevance_score": 1.5}},
         )
 
     def test_country_ordinal_references_current_options(self):
@@ -126,6 +217,23 @@ class ChatSelectionEngineTests(unittest.TestCase):
             "Add more DGs",
         )
 
+    def test_open_hazard_selection_from_text(self):
+        engine = _SelectionEngine()
+        session = ChatSession(country="Germany", region="Bavaria", sector="Energy")
+
+        self.assertEqual(
+            engine._open_hazard_selection_from_text(session, "I want to mitigate heat stress"),
+            "Heat stress",
+        )
+        self.assertEqual(
+            engine._open_hazard_selection_from_text(session, "focus on Energy poverty"),
+            "Energy poverty",
+        )
+        self.assertEqual(
+            engine._open_hazard_selection_from_text(session, "second one"),
+            "Energy poverty",
+        )
+
     def test_open_navigation_actions_from_post_sector_context(self):
         engine = _SelectionEngine()
         session = ChatSession(country="Germany", region="Bavaria", sector="Energy")
@@ -140,6 +248,14 @@ class ChatSelectionEngineTests(unittest.TestCase):
         )
         self.assertEqual(
             engine._selection_action_from_open_text(session, "start over", "sector"),
+            "restart_selection",
+        )
+        self.assertEqual(
+            engine._selection_action_from_open_text(session, "restart from the beginning", "sector"),
+            "restart_selection",
+        )
+        self.assertEqual(
+            engine._selection_action_from_open_text(session, "start again", "sector"),
             "restart_selection",
         )
 

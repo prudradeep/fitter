@@ -326,6 +326,15 @@ class ChatService(
         if session.sector is None:
             return await self._select_sector(current_session_id, session, clean_message)
 
+        open_selection_response = await self._open_selection_response_from_any_step(
+            current_session_id,
+            session,
+            clean_message,
+            current_phase="sector",
+        )
+        if open_selection_response is not None:
+            return open_selection_response
+
         question_response = await self._handle_anytime_grounded_question(
             current_session_id,
             session,

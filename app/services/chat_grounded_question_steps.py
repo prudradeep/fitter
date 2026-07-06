@@ -1,5 +1,7 @@
 import asyncio
+from html import escape
 import logging
+import re
 
 from app.llm import ask_llm_chat
 from app.schemas import ChatResponse
@@ -10,6 +12,7 @@ from app.services.knowledge_base import KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html
 from app.services.prompt_loader import render_prompt_template
 from app.services.question_intent import detect_user_question_intent
+from app.services.sector_prompt_rag import SectorPromptRagService
 
 logger = logging.getLogger(__name__)
 
@@ -84,23 +87,29 @@ class ChatGroundedQuestionStepsMixin:
             and str(intent.get("confidence") or "").casefold() in {"high", "medium"}
         ):
             return None
-        answer = await self._answer_grounded_question(session, message)
+        answer, source_map = await self._answer_grounded_question(session, message)
         return self._repeat_current_options(
             session_id,
             session,
-            markdown_to_html(answer),
+            self._grounded_answer_html(answer, source_map),
             error=False,
         )
 
-    async def _answer_grounded_question(self, session: ChatSession, question: str) -> str:
-        knowledge_context, stats_context = await asyncio.gather(
+    async def _answer_grounded_question(
+        self, session: ChatSession, question: str
+    ) -> tuple[str, dict[str, dict[str, str]]]:
+        (
+            (knowledge_context, knowledge_sources),
+            (stats_context, stats_sources),
+        ) = await asyncio.gather(
             self._question_knowledge_context(session, question),
             self._question_stats_context(session, question),
         )
         if not knowledge_context.strip() and not stats_context.strip():
             return (
                 "I do not have enough information in the Knowledge Base or loaded "
-                "sector stats to answer that yet."
+                "sector stats to answer that yet.",
+                {},
             )
 
         context = render_prompt_template(
@@ -129,14 +138,17 @@ class ChatGroundedQuestionStepsMixin:
                 ),
             }
         ]
-        return await ask_llm_chat(
+        answer = await ask_llm_chat(
             context=context,
             messages=messages,
             temperature=0.1,
             max_tokens=800,
         )
+        return answer, {**knowledge_sources, **stats_sources}
 
-    async def _question_knowledge_context(self, session: ChatSession, question: str) -> str:
+    async def _question_knowledge_context(
+        self, session: ChatSession, question: str
+    ) -> tuple[str, dict[str, dict[str, str]]]:
         query = " ".join(
             item
             for item in [
@@ -159,7 +171,15 @@ class ChatGroundedQuestionStepsMixin:
         except Exception:
             logger.exception("Main knowledge-base lookup failed during anytime question")
             main_results = []
-        main_context = self._format_knowledge_results(main_results)
+        sources: dict[str, dict[str, str]] = {}
+        main_context, main_sources = self._format_grounded_question_sources(
+            main_results,
+            prefix="S",
+            source_label="Knowledge Base",
+            start_index=1,
+        )
+        sources.update(main_sources)
+        next_index = len(main_sources) + 1
         if main_context:
             contexts.append("Main Knowledge Base:\n" + main_context)
 
@@ -174,28 +194,158 @@ class ChatGroundedQuestionStepsMixin:
             except Exception:
                 logger.exception("Temporary knowledge-base lookup failed during anytime question")
                 temporary_results = []
-            temporary_context = self._format_knowledge_results(temporary_results)
+            temporary_context, temporary_sources = self._format_grounded_question_sources(
+                temporary_results,
+                prefix="S",
+                source_label="Session evidence",
+                start_index=next_index,
+            )
+            sources.update(temporary_sources)
             if temporary_context:
                 contexts.append("Session evidence:\n" + temporary_context)
 
-        return "\n\n".join(contexts)
+        return "\n\n".join(contexts), sources
 
-    async def _question_stats_context(self, session: ChatSession, question: str) -> str:
+    async def _question_stats_context(
+        self, session: ChatSession, question: str
+    ) -> tuple[str, dict[str, dict[str, str]]]:
         if not session.sector:
-            return ""
-        return await self._sector_prompt_rag_context(
-            session,
-            " ".join(
-                item
-                for item in [
-                    question,
-                    session.selected_hazard or "",
-                    format_all_dgs(session),
-                    session.mitigation_measure or session.pending_mitigation_measure or "",
-                ]
-                if item
-            ),
-            limit=8,
+            return "", {}
+        query = " ".join(
+            item
+            for item in [
+                question,
+                session.selected_hazard or "",
+                format_all_dgs(session),
+                session.mitigation_measure or session.pending_mitigation_measure or "",
+            ]
+            if item
+        )
+        try:
+            results = await SectorPromptRagService(self.db).search(
+                session.sector,
+                query,
+                limit=8,
+            )
+        except Exception:
+            logger.exception("Sector-prompt RAG lookup failed")
+            results = []
+        context, sources = self._format_grounded_question_sources(
+            results,
+            prefix="SP",
+            source_label="Sector stats",
+            start_index=1,
+        )
+        if context:
+            return context, sources
+        return "- No relevant sector-prompt RAG excerpts were found.", {}
+
+    @staticmethod
+    def _format_grounded_question_sources(
+        results: list[dict[str, object]],
+        *,
+        prefix: str,
+        source_label: str,
+        start_index: int = 1,
+        content_limit: int = 900,
+    ) -> tuple[str, dict[str, dict[str, str]]]:
+        lines: list[str] = []
+        sources: dict[str, dict[str, str]] = {}
+        for offset, result in enumerate(results, start=start_index):
+            source_id = f"{prefix}{offset}"
+            title = str(result.get("title") or source_label or "Knowledge source").strip()
+            source_type = str(result.get("source_type") or source_label or "").strip()
+            source_uri = str(result.get("source_uri") or "").strip()
+            page_number = result.get("page_number")
+            page_label = f", page {page_number}" if page_number else ""
+            score = result.get("score")
+            score_label = f", score {score}" if score is not None else ""
+            nli_label = result.get("nli_label")
+            nli_score = result.get("nli_score")
+            nli_score_label = (
+                f", NLI {nli_label} {nli_score}"
+                if nli_label is not None and nli_score is not None
+                else ""
+            )
+            content = str(result.get("content") or "").strip()
+            if not content:
+                continue
+            context_excerpt = ChatGroundedQuestionStepsMixin._source_excerpt(content, content_limit)
+            tooltip_excerpt = ChatGroundedQuestionStepsMixin._source_excerpt(content, 360)
+            lines.append(
+                f"- [{source_id}] {title}{page_label}{score_label}{nli_score_label}: "
+                f"{context_excerpt}"
+            )
+            sources[source_id] = {
+                "id": source_id,
+                "title": title,
+                "source_type": source_type or source_label,
+                "source_uri": source_uri,
+                "page": str(page_number or ""),
+                "excerpt": tooltip_excerpt,
+            }
+        return "\n".join(lines), sources
+
+    @staticmethod
+    def _source_excerpt(content: str, limit: int = 360) -> str:
+        text = " ".join(str(content or "").split())
+        if len(text) <= limit:
+            return text
+        truncated = text[:limit].rstrip()
+        if " " in truncated:
+            truncated = truncated.rsplit(" ", 1)[0].rstrip()
+        return f"{truncated}..."
+
+    @classmethod
+    def _grounded_answer_html(
+        cls,
+        answer: str,
+        source_map: dict[str, dict[str, str]],
+    ) -> str:
+        html = markdown_to_html(answer)
+        if not source_map:
+            return html
+        pattern = re.compile(
+            r"(?<![\w-])\[("
+            + "|".join(re.escape(source_id) for source_id in sorted(source_map, key=len, reverse=True))
+            + r")\](?![\w-])"
+        )
+        return pattern.sub(lambda match: cls._source_chip_html(match.group(1), source_map), html)
+
+    @staticmethod
+    def _source_chip_html(source_id: str, source_map: dict[str, dict[str, str]]) -> str:
+        source = source_map.get(source_id) or {}
+        title = source.get("title") or "Knowledge source"
+        source_type = source.get("source_type") or "Source"
+        source_uri = source.get("source_uri") or ""
+        page = source.get("page") or ""
+        excerpt = source.get("excerpt") or ""
+        meta_parts = [source_type]
+        if page:
+            meta_parts.append(f"page {page}")
+        if source_uri:
+            meta_parts.append(source_uri.replace("sector-prompt://", ""))
+        aria_label = f"{source_id}: {title}. {'; '.join(meta_parts)}. {excerpt}"
+        tooltip = (
+            '<span class="source-citation-tooltip" aria-hidden="true">'
+            f"<strong>{escape(title)}</strong>"
+            f"<small>{escape(' · '.join(meta_parts))}</small>"
+            f"<span>{escape(excerpt)}</span>"
+            "</span>"
+        )
+        label = f"<span aria-hidden=\"true\">{escape(source_id)}</span>"
+        if source_uri.startswith(("http://", "https://")):
+            return (
+                f'<a class="source-citation" href="{escape(source_uri, quote=True)}" '
+                'target="_blank" rel="noopener noreferrer" '
+                f'aria-label="{escape(aria_label, quote=True)}">'
+                f"{label}{tooltip}</a>"
+            )
+        return (
+            '<span class="source-citation" tabindex="0" '
+            f'aria-label="{escape(aria_label, quote=True)}" '
+            f'title="{escape(aria_label, quote=True)}">'
+            f"{label}{tooltip}</span>"
         )
 
     @staticmethod

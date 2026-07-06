@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -13,6 +14,23 @@ from app.services.prompt_loader import render_prompt_template
 logger = logging.getLogger(__name__)
 
 VALID_VERDICTS = {"VALID", "INVALID", "NEEDS_CLARIFICATION"}
+ALIGNMENT_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "for",
+    "from",
+    "in",
+    "into",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+}
 
 
 class EvidenceContradictionService:
@@ -190,6 +208,17 @@ class EvidenceContradictionService:
                 evidence_summary=evidence_context[:500],
             )
 
+        alignment_result = _claim_concept_alignment(
+            claim_type=claim_type,
+            claim_text=claim_text,
+            concepts=l2_concepts,
+            sector=sector,
+            country=country,
+            region=region,
+        )
+        if alignment_result is not None:
+            return alignment_result
+
         l1_matches = await self.retrieve_core_kb_matches(
             concepts=l2_concepts,
             claim_text=claim_text,
@@ -263,15 +292,21 @@ def _normalize_verdict(
     confidence = _clamp_float(payload.get("confidence"))
     if verdict == "VALID" and confidence <= 0:
         verdict = "NEEDS_CLARIFICATION"
+    matched_l1_concepts = _coerce_list(payload.get("matched_l1_concepts")) or _match_items(
+        fallback_l1
+    )
+    matched_l2_concepts = _coerce_list(payload.get("matched_l2_concepts")) or _concept_items(
+        fallback_l2
+    )
+    if verdict == "VALID" and (not matched_l1_concepts or not matched_l2_concepts):
+        verdict = "NEEDS_CLARIFICATION"
     return {
         "verdict": verdict,
         "confidence": confidence,
         "contradiction_found": contradiction_found,
         "contraindication_found": contraindication_found,
-        "matched_l1_concepts": _coerce_list(payload.get("matched_l1_concepts"))
-        or _match_items(fallback_l1),
-        "matched_l2_concepts": _coerce_list(payload.get("matched_l2_concepts"))
-        or _concept_items(fallback_l2),
+        "matched_l1_concepts": matched_l1_concepts,
+        "matched_l2_concepts": matched_l2_concepts,
         "reason": str(payload.get("reason") or "").strip()
         or "Evidence needs clarification against the core knowledge base.",
         "clarification_questions": [
@@ -305,6 +340,143 @@ def _needs_clarification(
         ],
         "evidence_summary": evidence_summary,
         "kb_support_summary": kb_support_summary,
+    }
+
+
+def _invalid_alignment(
+    reason: str,
+    *,
+    concepts: dict[str, Any],
+    evidence_summary: str = "",
+) -> dict[str, Any]:
+    return {
+        "verdict": "INVALID",
+        "confidence": 0.9,
+        "contradiction_found": True,
+        "contraindication_found": False,
+        "matched_l1_concepts": [],
+        "matched_l2_concepts": _concept_items(concepts),
+        "reason": reason,
+        "clarification_questions": [],
+        "evidence_summary": evidence_summary,
+        "kb_support_summary": "",
+    }
+
+
+def _claim_concept_alignment(
+    *,
+    claim_type: str,
+    claim_text: str,
+    concepts: dict[str, Any],
+    sector: str,
+    country: str,
+    region: str,
+) -> dict[str, Any] | None:
+    evidence_summary = str(concepts.get("evidence_summary") or "")[:500]
+    selected_sector = str(sector or "").strip()
+    evidence_sector = _concept_text(concepts.get("sector"))
+    if selected_sector and evidence_sector and not _concepts_align(selected_sector, evidence_sector):
+        return _invalid_alignment(
+            (
+                "User evidence concepts are not aligned with the selected sector. "
+                f"Selected sector: {selected_sector}. Evidence sector: {evidence_sector}."
+            ),
+            concepts=concepts,
+            evidence_summary=evidence_summary,
+        )
+
+    selected_hazard = _claim_field(claim_text, "Hazard") or _claim_field(
+        claim_text,
+        "Selected hazard",
+    )
+    evidence_hazard = _concept_text(concepts.get("hazard"))
+    if selected_hazard:
+        if evidence_hazard:
+            if not _concepts_align(selected_hazard, evidence_hazard):
+                return _invalid_alignment(
+                    (
+                        "User evidence concepts are not aligned with the provided hazard. "
+                        f"Provided hazard: {selected_hazard}. Evidence hazard: {evidence_hazard}."
+                    ),
+                    concepts=concepts,
+                    evidence_summary=evidence_summary,
+                )
+        else:
+            return _needs_clarification(
+                (
+                    "User evidence does not identify the provided hazard clearly enough "
+                    "to validate alignment."
+                ),
+                matched_l2_concepts=_concept_items(concepts),
+                evidence_summary=evidence_summary,
+            )
+
+    if str(claim_type or "").strip().casefold() == "mitigation":
+        selected_measure = _claim_field(claim_text, "Mitigation measure")
+        evidence_measure = _concept_text(concepts.get("mitigation_measure"))
+        if (
+            selected_measure
+            and evidence_measure
+            and not _concepts_align(selected_measure, evidence_measure)
+        ):
+            return _invalid_alignment(
+                (
+                    "User evidence concepts are not aligned with the provided mitigation "
+                    f"measure. Provided mitigation measure: {selected_measure}. "
+                    f"Evidence mitigation measure: {evidence_measure}."
+                ),
+                concepts=concepts,
+                evidence_summary=evidence_summary,
+            )
+
+    evidence_location = _concept_text(concepts.get("location"))
+    if evidence_location and country and not _concepts_align(country, evidence_location):
+        return _needs_clarification(
+            (
+                "User evidence appears to refer to a different or unclear location. "
+                f"Selected location: {', '.join(item for item in (region, country) if item)}. "
+                f"Evidence location: {evidence_location}."
+            ),
+            matched_l2_concepts=_concept_items(concepts),
+            evidence_summary=evidence_summary,
+        )
+
+    return None
+
+
+def _claim_field(claim_text: str, field_name: str) -> str:
+    pattern = re.compile(rf"^\s*{re.escape(field_name)}\s*:\s*(.+?)\s*$", re.IGNORECASE)
+    for line in str(claim_text or "").splitlines():
+        match = pattern.match(line)
+        if match:
+            value = match.group(1).strip()
+            return "" if value.casefold() == "not provided" else value
+    return ""
+
+
+def _concept_text(value: Any) -> str:
+    if isinstance(value, list):
+        return " ".join(str(item).strip() for item in value if str(item).strip())
+    return str(value or "").strip()
+
+
+def _concepts_align(expected: str, actual: str) -> bool:
+    expected_tokens = _alignment_tokens(expected)
+    actual_tokens = _alignment_tokens(actual)
+    if not expected_tokens or not actual_tokens:
+        return True
+    if expected_tokens <= actual_tokens or actual_tokens <= expected_tokens:
+        return True
+    overlap = expected_tokens & actual_tokens
+    return len(overlap) >= max(1, min(len(expected_tokens), len(actual_tokens)) // 2)
+
+
+def _alignment_tokens(value: str) -> set[str]:
+    normalized = normalize_markdown_text(str(value or "")).casefold()
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", normalized)
+        if len(token) > 2 and token not in ALIGNMENT_STOP_WORDS
     }
 
 

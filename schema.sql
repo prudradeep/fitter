@@ -475,6 +475,33 @@ CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_population_matches (
   INDEX ix_system_dg_population_match_eurostat_cache (eurostat_population_cache_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS hazard_listing_cache (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  country_id INT NOT NULL,
+  region_id INT NULL,
+  region_scope_key INT NOT NULL DEFAULT 0,
+  sector_id INT NOT NULL,
+  cache_version VARCHAR(40) NOT NULL DEFAULT 'v1',
+  source_fingerprint VARCHAR(64) NOT NULL,
+  payload_json LONGTEXT NOT NULL,
+  expires_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_hazard_listing_cache_country
+    FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE CASCADE,
+  CONSTRAINT fk_hazard_listing_cache_region
+    FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_hazard_listing_cache_sector
+    FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
+  CONSTRAINT uq_hazard_listing_context_version
+    UNIQUE (country_id, region_scope_key, sector_id, cache_version),
+  INDEX ix_hazard_listing_cache_country_id (country_id),
+  INDEX ix_hazard_listing_cache_region_id (region_id),
+  INDEX ix_hazard_listing_cache_region_scope_key (region_scope_key),
+  INDEX ix_hazard_listing_cache_sector_id (sector_id),
+  INDEX ix_hazard_listing_cache_expires_at (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_activities (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_session_id INT NOT NULL,

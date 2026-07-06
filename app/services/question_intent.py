@@ -123,7 +123,17 @@ def _fallback_message_intent(message: str, reason: str) -> MessageIntent:
         return _message_intent("confirmation_yes", "medium", reason)
     if normalized in {"no", "wrong", "cancel", "incorrect", "not this"}:
         return _message_intent("confirmation_no", "medium", reason)
-    if normalized in {"restart", "start over", "reset everything", "reset"}:
+    if normalized in {
+        "restart",
+        "restart from the beginning",
+        "restart from beginning",
+        "start again",
+        "start over",
+        "start from the beginning",
+        "start from beginning",
+        "reset everything",
+        "reset",
+    }:
         return _message_intent("restart_selection", "medium", reason)
     if normalized in {"change country", "choose another country", "go back to country"}:
         return _message_intent("change_country", "medium", reason)

@@ -620,6 +620,42 @@ class SystemHazardSocioDemographicPopulationMatch(Base):
     )
 
 
+class HazardListingCache(Base):
+    __tablename__ = "hazard_listing_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "country_id",
+            "region_scope_key",
+            "sector_id",
+            "cache_version",
+            name="uq_hazard_listing_context_version",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    country_id: Mapped[int] = mapped_column(
+        ForeignKey("countries.id", ondelete="CASCADE"), index=True
+    )
+    region_id: Mapped[int | None] = mapped_column(
+        ForeignKey("regions.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    region_scope_key: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    sector_id: Mapped[int] = mapped_column(
+        ForeignKey("sectors.id", ondelete="CASCADE"), index=True
+    )
+    cache_version: Mapped[str] = mapped_column(String(40), nullable=False, default="v1")
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class UserActivity(Base):
     __tablename__ = "user_activities"
 

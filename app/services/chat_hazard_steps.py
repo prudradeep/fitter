@@ -15,6 +15,14 @@ from app.services.custom_hazard_validation import default_custom_hazard_state
 from app.services.message_renderer import render_message
 
 
+def is_hazard_action_label(label: str) -> bool:
+    return normalize_for_match(label) in {
+        "show hazards added by experts",
+        "show co created hazards",
+        "show listed hazards",
+    }
+
+
 class ChatHazardStepsMixin:
     def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         self._hydrate_custom_hazard_profiles(session)
@@ -38,22 +46,33 @@ class ChatHazardStepsMixin:
     async def _handle_hazards_action(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        navigation_handler = getattr(self, "_open_selection_navigation_response", None)
-        if navigation_handler is not None:
-            navigation_response = await navigation_handler(
+        open_selection_handler = getattr(self, "_open_selection_response_from_any_step", None)
+        if open_selection_handler is not None:
+            open_selection_response = await open_selection_handler(
                 session_id,
                 session,
                 message,
-                "sector",
+                current_phase="sector",
             )
-            if navigation_response is not None:
-                return navigation_response
+            if open_selection_response is not None:
+                return open_selection_response
+        else:
+            navigation_handler = getattr(self, "_open_selection_navigation_response", None)
+            if navigation_handler is not None:
+                navigation_response = await navigation_handler(
+                    session_id,
+                    session,
+                    message,
+                    "sector",
+                )
+                if navigation_response is not None:
+                    return navigation_response
 
-        selection = self._post_sector_selection_from_open_text(session, message)
-        if selection is not None:
-            apply_selection = getattr(self, "_apply_pending_selection", None)
-            if apply_selection is not None:
-                return await apply_selection(session_id, session, selection)
+            selection = self._post_sector_selection_from_open_text(session, message)
+            if selection is not None:
+                apply_selection = getattr(self, "_apply_pending_selection", None)
+                if apply_selection is not None:
+                    return await apply_selection(session_id, session, selection)
 
         exact_label = exact_option_label(message, POST_SECTOR_OPTIONS)
         if exact_label is None:
@@ -128,6 +147,9 @@ class ChatHazardStepsMixin:
         self._hydrate_custom_hazard_profiles(session)
         self._filter_session_hazards_without_profiles(session)
         await self._rank_session_hazards(session)
+        cache_store = getattr(self, "_store_hazard_listing_cache", None)
+        if cache_store is not None:
+            cache_store(session)
         self._record_activity(
             session_id,
             session,
@@ -294,6 +316,28 @@ class ChatHazardStepsMixin:
     async def _handle_hazard_profile_selection(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
+        open_selection_handler = getattr(self, "_open_selection_response_from_any_step", None)
+        if open_selection_handler is not None:
+            open_selection_response = await open_selection_handler(
+                session_id,
+                session,
+                message,
+                current_phase="sector",
+            )
+            if open_selection_response is not None:
+                return open_selection_response
+        else:
+            navigation_handler = getattr(self, "_open_selection_navigation_response", None)
+            if navigation_handler is not None:
+                navigation_response = await navigation_handler(
+                    session_id,
+                    session,
+                    message,
+                    "sector",
+                )
+                if navigation_response is not None:
+                    return navigation_response
+
         action = normalize(message)
         if action in {
             normalize("Show additional hazards"),
@@ -323,7 +367,9 @@ class ChatHazardStepsMixin:
         if action == normalize("Show listed hazards"):
             return self._hazard_profile_step(session_id, session)
 
-        hazard = self._match_hazard(message, session)
+        hazard = self._open_hazard_selection_from_text(session, message)
+        if hazard is None:
+            hazard = self._match_hazard(message, session)
         if hazard is None:
             fuzzy_hazard = self._fuzzy_hazard(message, session)
             if fuzzy_hazard is not None:
@@ -362,12 +408,87 @@ class ChatHazardStepsMixin:
 
         return await self._hazard_profiles_response(session_id, session, hazard)
 
+    def _open_hazard_selection_from_text(
+        self,
+        session: ChatSession,
+        message: str,
+    ) -> str | None:
+        normalized_message = normalize_for_match(message)
+        if not normalized_message:
+            return None
+        hazard_labels = [
+            option.label
+            for option in self._hazard_options(session)
+            if not is_hazard_action_label(option.label)
+        ]
+        if not hazard_labels:
+            return None
+
+        ordinal_parser = getattr(self, "_ordinal_index_from_text", None)
+        if ordinal_parser is not None:
+            ordinal = ordinal_parser(message)
+            if ordinal is not None:
+                index = ordinal if ordinal >= 0 else len(hazard_labels) + ordinal
+                if 0 <= index < len(hazard_labels):
+                    return hazard_labels[index]
+
+        normalized_hazards = [
+            (hazard, normalize_for_match(hazard))
+            for hazard in hazard_labels
+            if normalize_for_match(hazard)
+        ]
+        exact_matches = [
+            hazard
+            for hazard, normalized_hazard in normalized_hazards
+            if normalized_hazard == normalized_message
+        ]
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+
+        contained_matches = [
+            hazard
+            for hazard, normalized_hazard in normalized_hazards
+            if self._normalized_phrase_contains(normalized_message, normalized_hazard)
+        ]
+        if len(contained_matches) == 1:
+            return contained_matches[0]
+        return None
+
+    @staticmethod
+    def _normalized_phrase_contains(text: str, phrase: str) -> bool:
+        if not text or not phrase:
+            return False
+        text_tokens = text.split()
+        phrase_tokens = phrase.split()
+        if not text_tokens or not phrase_tokens or len(phrase_tokens) > len(text_tokens):
+            return False
+        window_size = len(phrase_tokens)
+        return any(
+            text_tokens[index : index + window_size] == phrase_tokens
+            for index in range(0, len(text_tokens) - window_size + 1)
+        )
+
     async def _handle_socio_demographic_review(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         exact_label = exact_option_label(message, SOCIO_DEMOGRAPHIC_OPTIONS)
         if exact_label is None:
+            option_matcher = getattr(self, "_open_option_label_from_text", None)
+            if option_matcher is not None:
+                exact_label = option_matcher(message, SOCIO_DEMOGRAPHIC_OPTIONS)
+        if exact_label is None:
             exact_label = self._socio_demographic_label_from_open_text(message)
+        if exact_label is None:
+            open_selection_handler = getattr(self, "_open_selection_response_from_any_step", None)
+            if open_selection_handler is not None:
+                open_selection_response = await open_selection_handler(
+                    session_id,
+                    session,
+                    message,
+                    current_phase="sector",
+                )
+                if open_selection_response is not None:
+                    return open_selection_response
         if exact_label is None:
             fuzzy_label = match_option_label(message, SOCIO_DEMOGRAPHIC_OPTIONS)
             if fuzzy_label is not None:

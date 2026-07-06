@@ -2,17 +2,23 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock
 
-from app.services.evidence_contradiction_service import EvidenceContradictionService
+from app.services.evidence_contradiction_service import (
+    EvidenceContradictionService,
+    _normalize_verdict,
+)
 
 
 def _run(coro):
     return asyncio.run(coro)
 
 
-def _service_with(verdict: dict[str, object]) -> EvidenceContradictionService:
+def _service_with(
+    verdict: dict[str, object],
+    concepts: dict[str, object] | None = None,
+) -> EvidenceContradictionService:
     service = EvidenceContradictionService(None, None)
     service.extract_evidence_concepts = AsyncMock(
-        return_value={
+        return_value=concepts or {
             "sector": "Energy",
             "policy": "coal phase-out",
             "hazard": "higher household heating costs",
@@ -113,7 +119,18 @@ class EvidenceContradictionServiceTests(unittest.TestCase):
                 "clarification_questions": [],
                 "evidence_summary": "L2 supports retrofit subsidy.",
                 "kb_support_summary": "L1 warns of rent pass-through risk.",
-            }
+            },
+            concepts={
+                "sector": "Housing",
+                "policy": "retrofit subsidy",
+                "hazard": "rent increases",
+                "affected_group": "low-income tenants",
+                "mitigation_measure": "retrofit subsidy",
+                "claimed_mechanism": "rent pass-through risk",
+                "location": "Berlin, Germany",
+                "expected_outcome": "tenant displacement risk",
+                "causal_chain": "retrofit subsidy -> rent pass-through -> tenant risk",
+            },
         )
 
         result = _run(
@@ -143,7 +160,17 @@ class EvidenceContradictionServiceTests(unittest.TestCase):
                 "clarification_questions": ["How does the policy create the claimed hazard?"],
                 "evidence_summary": "L2 discusses EV adoption.",
                 "kb_support_summary": "L1 needs a mechanism for distributional harm.",
-            }
+            },
+            concepts={
+                "sector": "Transport",
+                "policy": "EV adoption policy",
+                "hazard": "transport affordability pressure",
+                "affected_group": "rural non-car owners",
+                "claimed_mechanism": "",
+                "location": "Occitanie, France",
+                "expected_outcome": "unclear distributional harm",
+                "causal_chain": "EV adoption policy -> missing hazard mechanism",
+            },
         )
 
         result = _run(
@@ -173,7 +200,17 @@ class EvidenceContradictionServiceTests(unittest.TestCase):
                 "clarification_questions": [],
                 "evidence_summary": "L2 describes transport fares.",
                 "kb_support_summary": "L1 match concerns housing retrofit.",
-            }
+            },
+            concepts={
+                "sector": "Transport",
+                "policy": "fare subsidy",
+                "hazard": "higher ticket costs",
+                "affected_group": "commuters",
+                "claimed_mechanism": "fare changes",
+                "location": "Catalonia, Spain",
+                "expected_outcome": "transport affordability pressure",
+                "causal_chain": "fare policy -> ticket costs -> commuter impacts",
+            },
         )
 
         result = _run(
@@ -188,7 +225,106 @@ class EvidenceContradictionServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(result["verdict"], "INVALID")
-        self.assertIn("Transport", result["reason"])
+        self.assertIn("selected sector", result["reason"])
+
+    def test_evidence_hazard_mismatch_returns_invalid_before_l1_detection(self):
+        service = _service_with(
+            {
+                "verdict": "VALID",
+                "confidence": 0.9,
+                "contradiction_found": False,
+                "contraindication_found": False,
+                "matched_l1_concepts": [],
+                "matched_l2_concepts": [],
+                "reason": "Should not be used.",
+                "clarification_questions": [],
+                "evidence_summary": "",
+                "kb_support_summary": "",
+            },
+            concepts={
+                "sector": "Energy",
+                "policy": "energy efficiency retrofit",
+                "hazard": "cold damp homes",
+                "affected_group": "tenants",
+                "claimed_mechanism": "poor insulation",
+                "location": "Bavaria, Germany",
+                "expected_outcome": "respiratory illness",
+                "causal_chain": "poor insulation -> damp homes -> tenant illness",
+            },
+        )
+
+        result = _run(
+            service.validate_evidence_against_kb(
+                claim_type="hazard",
+                claim_text=(
+                    "Claim type: hazard\n"
+                    "Sector: Energy\n"
+                    "Country: Germany\n"
+                    "Region: Bavaria\n"
+                    "Hazard: Heat stress\n"
+                    "Reason: Heat waves increase cooling needs."
+                ),
+                evidence_text="Evidence discusses cold damp homes.",
+                sector="Energy",
+                country="Germany",
+                region="Bavaria",
+            )
+        )
+
+        self.assertEqual(result["verdict"], "INVALID")
+        self.assertTrue(result["contradiction_found"])
+        self.assertIn("provided hazard", result["reason"])
+        service.detect_contraindications.assert_not_awaited()
+
+    def test_mitigation_evidence_without_hazard_alignment_needs_clarification(self):
+        service = _service_with(
+            {
+                "verdict": "VALID",
+                "confidence": 0.9,
+                "contradiction_found": False,
+                "contraindication_found": False,
+                "matched_l1_concepts": [],
+                "matched_l2_concepts": [],
+                "reason": "Should not be used.",
+                "clarification_questions": [],
+                "evidence_summary": "",
+                "kb_support_summary": "",
+            },
+            concepts={
+                "sector": "Energy",
+                "policy": "grant programme",
+                "hazard": "",
+                "affected_group": "low-income households",
+                "mitigation_measure": "cooling grants",
+                "claimed_mechanism": "subsidized cooling equipment",
+                "location": "Bavaria, Germany",
+                "expected_outcome": "lower exposure",
+                "causal_chain": "grant programme -> cooling equipment -> missing hazard link",
+            },
+        )
+
+        result = _run(
+            service.validate_evidence_against_kb(
+                claim_type="mitigation",
+                claim_text=(
+                    "Claim type: mitigation\n"
+                    "Sector: Energy\n"
+                    "Country: Germany\n"
+                    "Region: Bavaria\n"
+                    "Selected hazard: Heat stress\n"
+                    "Mitigation measure: Cooling grants\n"
+                    "Reason: Reduce heat exposure for vulnerable households."
+                ),
+                evidence_text="Evidence discusses cooling grants but does not identify heat stress.",
+                sector="Energy",
+                country="Germany",
+                region="Bavaria",
+            )
+        )
+
+        self.assertEqual(result["verdict"], "NEEDS_CLARIFICATION")
+        self.assertIn("provided hazard", result["reason"])
+        service.detect_contraindications.assert_not_awaited()
 
     def test_wrong_region_returns_needs_clarification(self):
         service = _service_with(
@@ -219,6 +355,26 @@ class EvidenceContradictionServiceTests(unittest.TestCase):
 
         self.assertEqual(result["verdict"], "NEEDS_CLARIFICATION")
         self.assertIn("different country", result["reason"])
+
+    def test_valid_verdict_without_core_concept_match_needs_clarification(self):
+        result = _normalize_verdict(
+            {
+                "verdict": "VALID",
+                "confidence": 0.8,
+                "contradiction_found": False,
+                "contraindication_found": False,
+                "matched_l1_concepts": [],
+                "matched_l2_concepts": ["L2 heat stress concept"],
+                "reason": "The evidence appears relevant but no L1 concept was matched.",
+                "clarification_questions": [],
+                "evidence_summary": "",
+                "kb_support_summary": "",
+            },
+            fallback_l2={"hazard": "heat stress"},
+            fallback_l1=[],
+        )
+
+        self.assertEqual(result["verdict"], "NEEDS_CLARIFICATION")
 
 
 if __name__ == "__main__":

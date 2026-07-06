@@ -1,0 +1,19 @@
+Country:
+{{ country }}
+
+Region:
+{{ region }}
+
+Sector:
+{{ sector }}
+
+Hazard:
+{{ hazard }}
+
+Mitigation Measure:
+{{ mitigation_measure }}
+
+Validate ONLY the mitigation measure.
+
+Do NOT evaluate or request the implementation reason or justification.
+Return ONLY the specified JSON.

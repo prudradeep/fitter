@@ -7,6 +7,7 @@ from app.services.chat_options import (
     fuzzy_score,
     match_option_label,
     normalize,
+    normalize_for_match,
 )
 from app.services.chat_parsers import parse_mitigation_reason, parse_reason_evidence
 from app.services.chat_session import ChatSession
@@ -55,9 +56,18 @@ class ChatMitigationStepsMixin:
             message,
             REASON_CONFIRMATION_OPTIONS,
         )
+        if exact_label is None:
+            exact_label = self._open_option_label_from_text(
+                message,
+                REASON_CONFIRMATION_OPTIONS,
+            )
         if exact_label is not None and normalize(exact_label) != normalize(message):
-            return self._fuzzy_confirmation_step(session_id, session, exact_label)
+            if self._ordinal_index_from_open_text(message) is None:
+                return self._fuzzy_confirmation_step(session_id, session, exact_label)
         action = normalize(exact_label or message)
+        open_action = self._reason_confirmation_action_from_open_text(message)
+        if exact_label is None and open_action is not None:
+            action = open_action
 
         if action == normalize("Yes"):
             session.phase = "mitigation_measure"
@@ -82,41 +92,7 @@ class ChatMitigationStepsMixin:
             normalize("Adopt mitigation proposal suggested above"),
             normalize("Continue with current mitigation measure"),
         }:
-            mitigation_measure = (
-                str(session.suggested_new_policy_proposal or "").strip()
-                or self._current_policy_mitigation_measure(session)
-            )
-            if not mitigation_measure:
-                return ChatResponse(
-                    session_id=session_id,
-                    step="reason_confirmation",
-                    bot_message=(
-                        "I could not find a suggested mitigation proposal to adopt. "
-                        "Choose **Yes** to write one manually."
-                    ),
-                    options=REASON_CONFIRMATION_OPTIONS,
-                    session=session.summary(),
-                    error=True,
-                )
-            self._clear_mitigation_clarity_state(session)
-            self._clear_mitigation_validation_state(session)
-            session.pending_mitigation_measure = mitigation_measure
-            session.phase = "mitigation_reason"
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_reason",
-                bot_message=render_message(
-                    "mitigation_measure_reason.md",
-                    hazard=session.selected_hazard or "the selected hazard",
-                    dgs=format_all_dgs(session),
-                    mitigation_measure=mitigation_measure,
-                ),
-                options=[],
-                session=session.summary(),
-                input_mode="reason_evidence",
-                input_values={"mitigation_measure": mitigation_measure},
-                error=False,
-            )
+            return self._adopt_suggested_mitigation_response(session_id, session)
 
         if action == normalize("No"):
             session.phase = "other_actions"
@@ -129,6 +105,18 @@ class ChatMitigationStepsMixin:
                 error=False,
             )
 
+        selection_response = await self._open_selection_response_from_any_step(
+            session_id,
+            session,
+            message,
+            current_phase="sector",
+        )
+        if selection_response is not None:
+            return selection_response
+
+        if self._looks_like_typed_mitigation_measure(message):
+            return await self._capture_mitigation_measure(session_id, session, message)
+
         return ChatResponse(
             session_id=session_id,
             step="reason_confirmation",
@@ -137,6 +125,242 @@ class ChatMitigationStepsMixin:
             session=session.summary(),
             error=True,
         )
+
+    def _adopt_suggested_mitigation_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+    ) -> ChatResponse:
+        mitigation_measure = self._suggested_mitigation_measure_for_context(session)
+        if not mitigation_measure:
+            return ChatResponse(
+                session_id=session_id,
+                step="reason_confirmation",
+                bot_message=(
+                    "I could not find a suggested mitigation proposal to adopt. "
+                    "Choose **Yes** to write one manually."
+                ),
+                options=REASON_CONFIRMATION_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+        self._clear_mitigation_clarity_state(session)
+        self._clear_mitigation_validation_state(session)
+        session.pending_mitigation_measure = mitigation_measure
+        session.phase = "mitigation_reason"
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_reason",
+            bot_message=render_message(
+                "mitigation_measure_reason.md",
+                country=session.country or "the selected country",
+                region=session.region or "the selected region",
+                sector=session.sector or "the selected sector",
+                hazard=session.selected_hazard or "the selected hazard",
+                dgs=format_all_dgs(session),
+                mitigation_measure=mitigation_measure,
+            ),
+            options=[],
+            session=session.summary(),
+            input_mode="reason_evidence",
+            input_values={"mitigation_measure": mitigation_measure},
+            error=False,
+        )
+
+    def _suggested_mitigation_measure_for_context(self, session: ChatSession) -> str:
+        return (
+            str(session.suggested_new_policy_proposal or "").strip()
+            or self._current_policy_mitigation_measure(session)
+        )
+
+    async def _open_selection_response_from_any_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+        *,
+        current_phase: str,
+    ) -> ChatResponse | None:
+        pending_handler = getattr(self, "_handle_pending_selection_workflow", None)
+        if pending_handler is not None:
+            pending_response = await pending_handler(session_id, session, message)
+            if pending_response is not None:
+                return pending_response
+
+        deterministic_selector = getattr(self, "_deterministic_selection_from_text", None)
+        apply_selection = getattr(self, "_apply_pending_selection", None)
+        dependencies_valid = getattr(self, "_selection_dependencies_are_valid", None)
+        invalid_response = getattr(self, "_invalid_selection_response", None)
+        if deterministic_selector is not None and apply_selection is not None:
+            selection = deterministic_selector(session, message)
+            if selection is not None and any(selection.values()):
+                if dependencies_valid is not None and not dependencies_valid(
+                    session,
+                    selection,
+                    current_phase,
+                ):
+                    if invalid_response is not None:
+                        return invalid_response(session_id, session, selection)
+                    return None
+                return await apply_selection(session_id, session, selection)
+
+        navigation_handler = getattr(self, "_open_selection_navigation_response", None)
+        if navigation_handler is not None:
+            return await navigation_handler(session_id, session, message, current_phase)
+        return None
+
+    def _open_option_label_from_text(
+        self,
+        message: str,
+        options: list[Option],
+    ) -> str | None:
+        ordinal = self._ordinal_index_from_open_text(message)
+        if ordinal is None:
+            return None
+        labels = [option.label for option in options]
+        index = ordinal if ordinal >= 0 else len(labels) + ordinal
+        if index < 0 or index >= len(labels):
+            return None
+        return labels[index]
+
+    def _ordinal_index_from_open_text(self, message: str) -> int | None:
+        ordinal_parser = getattr(self, "_ordinal_index_from_text", None)
+        if ordinal_parser is not None:
+            return ordinal_parser(message)
+
+        tokens = normalize_for_match(message).split()
+        if not tokens:
+            return None
+        allowed = {"the", "one", "option", "please", "select", "choose", "go", "with"}
+        number_words = {
+            "first": 1,
+            "second": 2,
+            "third": 3,
+            "fourth": 4,
+            "fifth": 5,
+            "sixth": 6,
+            "seventh": 7,
+            "eighth": 8,
+            "ninth": 9,
+            "tenth": 10,
+        }
+        ordinal_positions: list[tuple[int, int]] = []
+        for index, token in enumerate(tokens):
+            value = number_words.get(token)
+            if value is None:
+                value = self._ordinal_number_from_token(token)
+            if value is not None:
+                ordinal_positions.append((index, value))
+        if tokens == ["last"] or all(token in {*allowed, "last"} for token in tokens):
+            return -1
+        if len(ordinal_positions) != 1:
+            return None
+        ordinal_position, ordinal_value = ordinal_positions[0]
+        if any(token not in {*allowed, "last", tokens[ordinal_position]} for token in tokens):
+            return None
+        if "last" in tokens:
+            return -ordinal_value
+        return ordinal_value - 1
+
+    @staticmethod
+    def _ordinal_number_from_token(token: str) -> int | None:
+        for suffix in ("st", "nd", "rd", "th"):
+            if token.endswith(suffix) and token[: -len(suffix)].isdigit():
+                return int(token[: -len(suffix)])
+        return int(token) if token.isdigit() else None
+
+    @staticmethod
+    def _reason_confirmation_action_from_open_text(message: str) -> str | None:
+        normalized = normalize_for_match(message)
+        if not normalized:
+            return None
+        yes_phrases = {
+            "yes",
+            "yes please",
+            "continue",
+            "go ahead",
+            "proceed",
+            "start",
+            "start writing",
+            "i will write one",
+            "i want to write one",
+            "let me create one",
+            "write my own",
+            "create manually",
+            "manual",
+        }
+        no_phrases = {
+            "no",
+            "no thanks",
+            "not now",
+            "skip",
+            "cancel",
+            "stop",
+            "do not continue",
+        }
+        adopt_phrases = {
+            "adopt",
+            "adopt it",
+            "adopt proposal",
+            "adopt the proposal",
+            "adopt mitigation proposal",
+            "adopt mitigation proposal suggested above",
+            "use it",
+            "use this",
+            "use this proposal",
+            "use suggested",
+            "use suggested proposal",
+            "use the suggested proposal",
+            "use proposed mitigation",
+            "use the proposed mitigation",
+            "show proposed mitigation",
+            "show the proposed mitigation",
+            "show the proposed mitigation measure",
+            "show suggested mitigation",
+            "show the suggested mitigation",
+            "show the suggested mitigation measure",
+            "continue with current mitigation measure",
+        }
+        if normalized in yes_phrases:
+            return normalize("Yes")
+        if normalized in no_phrases:
+            return normalize("No")
+        if normalized in adopt_phrases:
+            return normalize("Adopt mitigation proposal suggested above")
+        if "mitigation" in normalized and any(
+            token in normalized for token in ("adopt", "use", "show", "suggested", "proposed")
+        ):
+            return normalize("Adopt mitigation proposal suggested above")
+        if "proposal" in normalized and any(token in normalized for token in ("adopt", "use", "show")):
+            return normalize("Adopt mitigation proposal suggested above")
+        return None
+
+    @staticmethod
+    def _looks_like_typed_mitigation_measure(message: str) -> bool:
+        normalized = normalize_for_match(message)
+        if len(normalized) < 20:
+            return False
+        if "?" in str(message or ""):
+            return False
+        navigation_prefixes = (
+            "change ",
+            "choose ",
+            "select ",
+            "switch ",
+            "go back",
+            "back ",
+            "previous",
+            "start over",
+            "reset",
+        )
+        if normalized.startswith(navigation_prefixes):
+            return False
+        if any(
+            normalized.startswith(prefix)
+            for prefix in ("what ", "why ", "how ", "when ", "where ", "which ", "who ")
+        ):
+            return False
+        return True
 
     @staticmethod
     def _mitigation_clarity_options() -> list[Option]:
@@ -230,15 +454,9 @@ class ChatMitigationStepsMixin:
                 error=True,
             )
 
-        input_review = await self._validate_input_quality(
-            session=session,
-            purpose=(
-                "a mitigation measure for reducing the selected hazard's "
-                "negative impact on affected socio-demographic profiles"
-            ),
-            fields={
-                "Mitigation measure": mitigation_measure,
-            },
+        input_review = await self._validate_mitigation_measure_only(
+            session,
+            mitigation_measure,
         )
         if input_review is None:
             return ChatResponse(
@@ -250,13 +468,14 @@ class ChatMitigationStepsMixin:
                 input_mode="mitigation_measure",
                 error=True,
             )
-        if not input_review["valid"]:
+        if str(input_review.get("status") or "").upper() != "VALID":
+            reason = self._mitigation_measure_validation_message(input_review)
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_measure",
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
-                    reason=str(input_review["reason"]),
+                    reason=reason,
                 ),
                 options=[],
                 session=session.summary(),
@@ -302,6 +521,23 @@ class ChatMitigationStepsMixin:
             error=False,
         )
 
+    @staticmethod
+    def _mitigation_measure_validation_message(review: dict[str, object]) -> str:
+        status = str(review.get("status") or "").upper()
+        summary = str(review.get("summary") or "").strip()
+        clarification = str(review.get("clarification_question") or "").strip()
+        suggestion = str(review.get("suggested_improvement") or "").strip()
+        parts = []
+        if status == "NEEDS_CLARIFICATION":
+            parts.append(summary or "The mitigation measure needs clarification.")
+            if clarification:
+                parts.append(clarification)
+        else:
+            parts.append(summary or "The mitigation measure is not valid for the selected context.")
+        if suggestion:
+            parts.append(f"Suggested improvement: {suggestion}")
+        return " ".join(part for part in parts if part).strip()
+
     def _mitigation_duplicate_suggestion_step(
         self,
         session_id: str,
@@ -337,6 +573,8 @@ class ChatMitigationStepsMixin:
     ) -> ChatResponse:
         options = self._mitigation_duplicate_confirmation_options()
         exact_label = self._exact_or_safe_fuzzy_option(message, options)
+        if exact_label is None:
+            exact_label = self._open_option_label_from_text(message, options)
         action = normalize(exact_label or message)
 
         if action in {
@@ -373,17 +611,22 @@ class ChatMitigationStepsMixin:
     def _handle_mitigation_duplicate_report(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        options = self._mitigation_duplicate_confirmation_options()
+        options = self._mitigation_existing_report_options()
         exact_label = self._exact_or_safe_fuzzy_option(message, options)
+        if exact_label is None:
+            exact_label = self._open_option_label_from_text(message, options)
         action = normalize(exact_label or message)
 
         if action in {
             normalize("Yes"),
-            normalize("Yes, show existing mitigation report"),
+            normalize("Yes, continue with my proposed mitigation"),
         }:
             return self._continue_pending_mitigation_reason_step(session_id, session)
 
-        if action == normalize("No"):
+        if action in {
+            normalize("No"),
+            normalize("No, write another mitigation measure"),
+        }:
             session.phase = "mitigation_measure"
             session.pending_mitigation_measure = None
             self._clear_mitigation_clarity_state(session)
