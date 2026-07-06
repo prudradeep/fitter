@@ -14,3 +14,4 @@ open_*.xlsx
 build/
 dist/
 desktop/tauri/node_modules/
+desktop/tauri/src-tauri/target/
