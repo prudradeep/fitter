@@ -15,10 +15,11 @@ from app.auth import (
 )
 from app.database import get_db
 from app.models import AppUser
+from app.resource_paths import resource_path
 from app.services.coverage import get_coverage_map_rows
 
 router = APIRouter(tags=["auth"])
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory=str(resource_path("app/templates")))
 
 
 @router.get("/login", response_class=HTMLResponse)

@@ -16,6 +16,7 @@ from app.database import (
     validate_database_connection,
 )
 from app.models import AppUser
+from app.resource_paths import resource_path
 from app.routes.api import router as api_router
 from app.routes.auth import router as auth_router
 from app.services.coverage import get_coverage_rows
@@ -38,8 +39,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
+app.mount("/static", StaticFiles(directory=str(resource_path("app/static"))), name="static")
+templates = Jinja2Templates(directory=str(resource_path("app/templates")))
 
 app.include_router(auth_router)
 app.include_router(api_router)

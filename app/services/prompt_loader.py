@@ -1,7 +1,8 @@
 from functools import lru_cache
-from pathlib import Path
 
-PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
+from app.resource_paths import resource_path
+
+PROMPT_DIR = resource_path("app/prompts")
 
 PROMPT_FILES = {
     "energy": "Energy_truth.txt",

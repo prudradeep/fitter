@@ -11,3 +11,6 @@ data/grounding-logs/
 data/service-runtime/
 open_*.xlsx
 *.log
+build/
+dist/
+desktop/tauri/node_modules/

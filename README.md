@@ -191,6 +191,28 @@ Health check:
 http://localhost:8000/health
 ```
 
+## Windows Desktop Installer
+
+The repository includes an initial Windows desktop packaging layer under
+`desktop/tauri/` and `packaging/windows/`.
+
+The packaged desktop target is:
+
+- `DrTransition.exe`, a native Tauri/WebView2 launcher
+- `drtransition-backend.exe`, the main FastAPI backend
+- `drtransition-reranker.exe`, the grounding reranker service
+- `drtransition-nli.exe`, the grounding NLI service
+
+On launch, `DrTransition.exe` starts the backend, reranker, and NLI services as
+hidden local processes, waits for their health checks, then opens the app in its
+own desktop window instead of the user's browser.
+
+Build documentation is in:
+
+```text
+docs/WINDOWS_DESKTOP_INSTALLER.md
+```
+
 ## Open Conversation Selection Regression
 
 Generate the Country -> Region -> Sector test-case workbook and the Pass/Fail

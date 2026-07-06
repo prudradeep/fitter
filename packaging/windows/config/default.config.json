@@ -1,0 +1,36 @@
+{
+  "appVersion": "0.1.0",
+  "backend": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8000,
+    "healthUrl": "http://127.0.0.1:8000/health",
+    "executable": "backend\\drtransition-backend\\drtransition-backend.exe"
+  },
+  "grounding": {
+    "enabled": true,
+    "reranker": {
+      "host": "127.0.0.1",
+      "port": 8081,
+      "healthUrl": "http://127.0.0.1:8081/health",
+      "executable": "backend\\drtransition-reranker\\drtransition-reranker.exe"
+    },
+    "nli": {
+      "host": "127.0.0.1",
+      "port": 8082,
+      "healthUrl": "http://127.0.0.1:8082/health",
+      "executable": "backend\\drtransition-nli\\drtransition-nli.exe"
+    }
+  },
+  "ollama": {
+    "baseUrl": "http://127.0.0.1:11434",
+    "selectedModel": "mistral-nemo",
+    "embeddingModel": "nomic-embed-text"
+  },
+  "paths": {
+    "dataDirectory": "%ProgramData%\\DrTransition",
+    "logDirectory": "%LOCALAPPDATA%\\DrTransition\\logs",
+    "uploadDirectory": "%ProgramData%\\DrTransition\\uploads",
+    "faissIndexPath": "%ProgramData%\\DrTransition\\knowledge.faiss"
+  }
+}

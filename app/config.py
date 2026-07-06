@@ -1,7 +1,18 @@
+import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _env_files() -> tuple[Path, ...]:
+    candidates = [Path(".env")]
+    for env_name in ("PROGRAMDATA", "LOCALAPPDATA"):
+        base = os.getenv(env_name)
+        if base:
+            candidates.append(Path(base) / "DrTransition" / ".env")
+    return tuple(candidates)
 
 
 class Settings(BaseSettings):
@@ -36,7 +47,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:8000,http://127.0.0.1:8000"
     log_level: str = "INFO"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_env_files(), env_file_encoding="utf-8", extra="ignore")
 
     @property
     def cors_origin_list(self) -> list[str]:
