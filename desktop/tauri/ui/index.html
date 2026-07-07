@@ -3,11 +3,184 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Dr Transition</title>
+    <title>Dr Transition Setup</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: #f6f7f9;
+        color: #18202b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      main {
+        width: min(920px, calc(100vw - 40px));
+        margin: 0 auto;
+        padding: 36px 0 44px;
+      }
+
+      header {
+        margin-bottom: 24px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 30px;
+        font-weight: 650;
+        letter-spacing: 0;
+      }
+
+      p {
+        margin: 0;
+        color: #4b5565;
+        line-height: 1.55;
+      }
+
+      .panel {
+        border: 1px solid #d9dee7;
+        border-radius: 8px;
+        background: #ffffff;
+        overflow: hidden;
+      }
+
+      .check {
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr);
+        gap: 14px;
+        padding: 18px 20px;
+        border-top: 1px solid #e5e9f0;
+      }
+
+      .check:first-child {
+        border-top: 0;
+      }
+
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        font-weight: 700;
+      }
+
+      .ok .mark {
+        background: #e8f6ef;
+        color: #177245;
+      }
+
+      .fail .mark {
+        background: #fdebea;
+        color: #b42318;
+      }
+
+      h2 {
+        margin: 1px 0 5px;
+        font-size: 17px;
+        font-weight: 650;
+        letter-spacing: 0;
+      }
+
+      .action {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border-radius: 6px;
+        background: #f7f9fc;
+        color: #2f3b4c;
+        font-family: Consolas, "Cascadia Mono", monospace;
+        font-size: 13px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      footer {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border: 1px solid #d9dee7;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #4b5565;
+        font-size: 14px;
+      }
+
+      .loading {
+        padding: 22px;
+        color: #4b5565;
+      }
+    </style>
   </head>
   <body>
     <main>
-      <p>Starting Dr Transition...</p>
+      <header>
+        <h1 id="title">Checking Dr Transition</h1>
+        <p id="summary">Reading local runtime status...</p>
+      </header>
+
+      <section id="checks" class="panel">
+        <div class="loading">Loading setup diagnostics...</div>
+      </section>
+
+      <footer id="logs"></footer>
     </main>
+
+    <script>
+      async function getStatus() {
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (!invoke) {
+          return null;
+        }
+        return invoke("runtime_status");
+      }
+
+      function render(status) {
+        const checks = document.getElementById("checks");
+        const logs = document.getElementById("logs");
+        document.getElementById("title").textContent = status?.title || "Dr Transition Setup";
+        document.getElementById("summary").textContent = status?.summary || "Runtime status is not available.";
+
+        const rows = status?.checks || [];
+        checks.innerHTML = "";
+        for (const item of rows) {
+          const row = document.createElement("article");
+          row.className = `check ${item.ok ? "ok" : "fail"}`;
+          row.innerHTML = `
+            <div class="mark">${item.ok ? "✓" : "!"}</div>
+            <div>
+              <h2></h2>
+              <p class="detail"></p>
+              <div class="action"></div>
+            </div>
+          `;
+          row.querySelector("h2").textContent = item.name;
+          row.querySelector(".detail").textContent = item.detail;
+          row.querySelector(".action").textContent = item.action;
+          checks.appendChild(row);
+        }
+
+        if (!rows.length) {
+          checks.innerHTML = '<div class="loading">No setup checks were returned.</div>';
+        }
+        logs.textContent = status?.logs_dir ? `Logs: ${status.logs_dir}` : "";
+      }
+
+      getStatus()
+        .then(render)
+        .catch((error) => {
+          render({
+            title: "Unable to read setup diagnostics",
+            summary: String(error),
+            checks: [],
+            logs_dir: ""
+          });
+        });
+    </script>
   </body>
 </html>

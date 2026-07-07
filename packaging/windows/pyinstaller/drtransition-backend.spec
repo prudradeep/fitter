@@ -12,6 +12,12 @@ datas = [
     (str(root / "app" / "prompts"), "app/prompts"),
     (str(root / "app" / "outputs"), "app/outputs"),
     (str(root / "schema.sql"), "."),
+    (str(root / "mm.csv"), "."),
+    (str(root / "MM Target group.xlsx"), "."),
+    (str(root / "sectoral_challenges.xlsx"), "."),
+    (str(root / "hazards.xlsx"), "."),
+    (str(root / "additionalHazards.csv"), "."),
+    (str(root / "additionalHazardProfiles.csv"), "."),
     (str(root / ".env.example"), "."),
 ]
 

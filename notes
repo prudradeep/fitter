@@ -259,9 +259,6 @@ Maintain Test cases in excel
 
 open conversation checks
 
-
-Strict check passed only visible to all, easy - visible to the same user only
-
 test case
 I want to know about the housing sector in Berlin, Germany
 I want to know about the hazards in Transport sector of catalonia, Spain
@@ -286,3 +283,26 @@ Confirmation required
 
 
 Implemented in: EU / Member States => clear visibility highlight..
+
+
+dive deeper into statistical findings
+If question related to stats use only stat prompts.
+Check if history of grouding question supplied or not? last 5-6 messages
+Load .env files based on the running environment
+
+Population comparison (i) => Calculation of Average across mapped affected profiles
+Top 3 hazards
+Analysis stage UI change
+Disable the MySQL inputs, Toggle to edit
+
+Unique profile count => Affected Profiles count
+
+D4_1_FINAL_for_submission_V4: Methodology & results infographic | From the Survey
+Final Template: Details on Crowd Sourcing on information of hazards and mitigation measure Infographic | Co-created hazards
+
+i => This peace of hazard/mitigation 
+
+Settings => Toggle for enable crowd sourcing -> Strictly Validated hazards and MM are shared with all users. Don't share anything with others if it's off.
+
+Strict check passed only visible to all, easy - visible to the same user only
+Add label [easy check(Private visibility)/strict check(Global visibility)]

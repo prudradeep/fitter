@@ -11,6 +11,15 @@ The target runtime is:
 
 The desktop launcher starts the backend services as hidden child processes, waits for their health endpoints, then opens the UI in a native desktop window. The user's external browser is not launched.
 
+If required local dependencies are missing, the launcher opens a setup diagnostics
+window instead of failing silently. That window reports:
+
+- Whether a runtime `.env` file was found
+- Whether MySQL is reachable on `127.0.0.1:3306`
+- Whether Ollama is reachable
+- Whether the configured chat and embedding models are downloaded in Ollama
+- The local log directory for bundled service errors
+
 ## Layout
 
 ```text
@@ -136,6 +145,38 @@ config/default.config.json
 
 It defines the backend, reranker, NLI, Ollama, and data/log paths. The launcher reads this file from the installed app directory.
 
+The packaged Python backend reads environment variables from these locations, in
+order:
+
+```text
+.env
+%ProgramData%\DrTransition\.env
+%LOCALAPPDATA%\DrTransition\.env
+```
+
+When a build-time `.env` exists in the repository root, the installer copies it
+to:
+
+```text
+%ProgramData%\DrTransition\.env
+```
+
+The copy is conditional and does not overwrite an existing runtime `.env`.
+
+For installed desktop use, prefer one of:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\DrTransition"
+Copy-Item .\.env "$env:LOCALAPPDATA\DrTransition\.env"
+```
+
+or, for a machine-wide admin-managed config:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:ProgramData\DrTransition"
+Copy-Item .\.env "$env:ProgramData\DrTransition\.env"
+```
+
 Default runtime ports:
 
 - Main app: `8000`
@@ -149,6 +190,86 @@ The reranker and NLI services are packaged as separate executables and started b
 
 If either service is already healthy on its configured port, the launcher reuses it instead of starting another process.
 
+## Dependency and Model Checks
+
+The installer now performs the first dependency setup pass:
+
+- Checks for MySQL before installing it; if `mysql.exe` already exists, the installer skips installation and only starts/checks the service
+- Checks for Ollama before installing it; if `ollama.exe` already exists, the installer skips installation and only starts/checks the API
+- Asks for the database name and MySQL credentials
+- Creates the application database/user
+- Creates a default app login if it does not already exist
+- Updates `%ProgramData%\DrTransition\.env`
+- Seeds the schema and bundled CSV/XLSX reference data through the packaged backend
+- Pulls the required Ollama chat and embedding models
+
+If a custom Ollama model directory is already configured through `OLLAMA_MODELS`
+or a common Ollama `server.json` location, the installer preserves that path
+before starting Ollama or pulling models. It does not reset the model directory
+to Ollama's default path.
+
+Missing dependencies are installed with `winget`:
+
+```text
+Oracle.MySQL
+Ollama.Ollama
+```
+
+The setup log is written to:
+
+```text
+%LOCALAPPDATA%\DrTransition\logs\installer-setup.log
+```
+
+The desktop launcher still checks the external dependencies before starting the
+bundled services. If setup did not complete, it opens the diagnostics window
+instead of starting the backend.
+
+Default app login created during seed:
+
+```text
+Email: admin@drtransition.local
+Password: DrTransition@123
+```
+
+The seed step is idempotent. If that email already exists, the installer does
+not reset its password.
+
+Manual checks:
+
+```powershell
+Test-NetConnection 127.0.0.1 -Port 3306
+Invoke-RestMethod http://127.0.0.1:11434/api/tags
+ollama list
+```
+
+Default model downloads:
+
+```powershell
+ollama pull mistral-nemo
+ollama pull nomic-embed-text
+```
+
+If a model is missing, the setup diagnostics window shows the exact `ollama pull`
+command for the configured model.
+
+The diagnostics launcher reads these values from the runtime `.env` when present:
+
+```text
+OLLAMA_BASE_URL
+OLLAMA_MODEL
+OLLAMA_EMBEDDING_MODEL
+```
+
+During installer setup, leaving the chat model as `auto` selects a model from
+RAM/GPU conditions:
+
+- `< 8 GB RAM`: `llama3.2:3b`
+- `8-15 GB RAM`: `llama3.2:3b`
+- `16-31 GB RAM`: `mistral`
+- `32+ GB RAM`: `mistral-nemo`
+- `32+ GB RAM and 12+ GB GPU VRAM`: `qwen2.5:14b`
+
 ## Current Scope
 
 Included now:
@@ -160,14 +281,13 @@ Included now:
 - Hardware/model helper scripts
 - Installer payload assembly
 - Config/log path conventions
+- First-run diagnostics for `.env`, MySQL, Ollama, and Ollama models
+- Installer-driven MySQL/Ollama detection, install, DB creation, seeding, and model pull
 
 Next production hardening layer:
 
-- MySQL installer detection/install/reuse flow
-- Ollama installer detection/install/reuse flow
-- Automatic Ollama model pull UI
 - Optional offline Hugging Face model bundle
 - Code signing
 - Upgrade migration rules
-- Installer page wiring for hardware analysis and model choice
+- Rich installer progress UI for long MySQL/Ollama/model operations
 - Diagnostics export command

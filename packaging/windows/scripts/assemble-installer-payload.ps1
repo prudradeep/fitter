@@ -4,9 +4,11 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
 $payload = Join-Path $root "build\windows-installer\payload"
 $backendPayload = Join-Path $payload "backend"
 $configPayload = Join-Path $payload "config"
+$scriptsPayload = Join-Path $payload "scripts"
 
 New-Item -ItemType Directory -Force -Path $backendPayload | Out-Null
 New-Item -ItemType Directory -Force -Path $configPayload | Out-Null
+New-Item -ItemType Directory -Force -Path $scriptsPayload | Out-Null
 
 $serviceNames = @("drtransition-backend", "drtransition-reranker", "drtransition-nli")
 foreach ($serviceName in $serviceNames) {
@@ -24,6 +26,9 @@ if (-not (Test-Path $tauriExe)) {
 Copy-Item -LiteralPath $tauriExe -Destination (Join-Path $payload "DrTransition.exe") -Force
 
 Copy-Item -LiteralPath (Join-Path $root "packaging\windows\config\default.config.json") -Destination $configPayload -Force
+Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Install-DrTransitionDependencies.ps1") -Destination $scriptsPayload -Force
+Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Test-SystemCompatibility.ps1") -Destination $scriptsPayload -Force
+Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Get-ModelRecommendation.ps1") -Destination $scriptsPayload -Force
 Copy-Item -LiteralPath (Join-Path $root "schema.sql") -Destination $payload -Force
 Copy-Item -LiteralPath (Join-Path $root ".env.example") -Destination $payload -Force
 
