@@ -840,7 +840,7 @@ function renderHazardPopulationTable(session = {}) {
   const additionalHazards = additionalHazardPopulationRows(session);
   const counts = [
     ["Hazards", session.hazard_count],
-    ["Unique profiles", session.affected_profile_count],
+    ["Affected profiles", session.affected_profile_count],
     ["Mitigation measures", session.mitigation_measure_count],
   ];
   const countCards = counts

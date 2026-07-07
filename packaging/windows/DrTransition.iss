@@ -45,8 +45,22 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch Dr Transition"; Flags: n
 var
   CompatibilityPage: TOutputMsgWizardPage;
   DatabasePage: TInputQueryWizardPage;
+  EditDatabaseDefaultsCheck: TNewCheckBox;
   ModelPage: TInputQueryWizardPage;
   DependencySetupFailed: Boolean;
+
+procedure SetDatabaseDefaultsEditable(Editable: Boolean);
+begin
+  DatabasePage.Edits[0].ReadOnly := not Editable;
+  DatabasePage.Edits[1].ReadOnly := not Editable;
+  DatabasePage.Edits[3].ReadOnly := not Editable;
+  DatabasePage.Edits[4].ReadOnly := not Editable;
+end;
+
+procedure EditDatabaseDefaultsCheckClick(Sender: TObject);
+begin
+  SetDatabaseDefaultsEditable(EditDatabaseDefaultsCheck.Checked);
+end;
 
 function InitializeSetup(): Boolean;
 begin
@@ -88,6 +102,17 @@ begin
   DatabasePage.Values[1] := 'root';
   DatabasePage.Values[3] := 'dr_transition';
   DatabasePage.Values[4] := 'dr_transition_password';
+  SetDatabaseDefaultsEditable(False);
+
+  EditDatabaseDefaultsCheck := TNewCheckBox.Create(DatabasePage);
+  EditDatabaseDefaultsCheck.Parent := DatabasePage.Surface;
+  EditDatabaseDefaultsCheck.Left := DatabasePage.Edits[0].Left;
+  EditDatabaseDefaultsCheck.Top := DatabasePage.Edits[0].Top - ScaleY(32);
+  EditDatabaseDefaultsCheck.Width := DatabasePage.SurfaceWidth;
+  EditDatabaseDefaultsCheck.Height := ScaleY(17);
+  EditDatabaseDefaultsCheck.Caption := 'Edit default database settings';
+  EditDatabaseDefaultsCheck.Checked := False;
+  EditDatabaseDefaultsCheck.OnClick := @EditDatabaseDefaultsCheckClick;
 
   ModelPage := CreateInputQueryPage(
     DatabasePage.ID,

@@ -85,6 +85,7 @@ function Wait-SetupProcess {
         }
     }
     $Process.WaitForExit()
+    $Process.Refresh()
     return $Process.ExitCode
 }
 
@@ -517,7 +518,11 @@ function Invoke-DatabaseSeed {
     )
     $process = Start-Process -FilePath $backendExe -ArgumentList (Join-ProcessArguments $seedArgs) -WorkingDirectory $InstallDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $seedOut -RedirectStandardError $seedErr
     $exitCode = Wait-SetupProcess -Process $process -Activity "Database seed" -HeartbeatSeconds 15
-    if ($exitCode -ne 0) {
+    $seedSucceeded = $false
+    if (Test-Path -LiteralPath $seedOut) {
+        $seedSucceeded = [bool](Select-String -LiteralPath $seedOut -Pattern "Database reference data seeded successfully." -Quiet)
+    }
+    if (($null -eq $exitCode -and -not $seedSucceeded) -or ($null -ne $exitCode -and $exitCode -ne 0)) {
         if (Test-Path -LiteralPath $seedOut) {
             Write-SetupLog "Seed stdout tail:"
             Get-Content -LiteralPath $seedOut -Tail 20 | ForEach-Object { Write-SetupLog "  $_" }
@@ -528,6 +533,9 @@ function Invoke-DatabaseSeed {
         }
         $exitText = if ($null -eq $exitCode) { "unknown" } else { [string]$exitCode }
         throw "Database seed failed with exit code $exitText. Check $seedErr"
+    }
+    if ($null -eq $exitCode -and $seedSucceeded) {
+        Write-SetupLog "Database seed process exit code was unavailable; seed success output was detected"
     }
     Write-SetupLog "Default app user is ready: $DefaultAppUserEmail"
     Write-SetupLog "Database seed completed"
