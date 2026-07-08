@@ -87,7 +87,13 @@ class ChatGroundedQuestionStepsMixin:
             and str(intent.get("confidence") or "").casefold() in {"high", "medium"}
         ):
             return None
-        answer, source_map = await self._answer_grounded_question(session, message)
+        if self._is_stats_related_question(message):
+            return self._stats_deep_dive_dialog_step(
+                session_id,
+                session,
+                initial_question=message,
+            )
+        answer, source_map = await self._answer_grounded_question(session_id, session, message)
         return self._repeat_current_options(
             session_id,
             session,
@@ -96,7 +102,7 @@ class ChatGroundedQuestionStepsMixin:
         )
 
     async def _answer_grounded_question(
-        self, session: ChatSession, question: str
+        self, session_id: str, session: ChatSession, question: str
     ) -> tuple[str, dict[str, dict[str, str]]]:
         (
             (knowledge_context, knowledge_sources),
@@ -134,6 +140,7 @@ class ChatGroundedQuestionStepsMixin:
                     mitigation_measure=session.mitigation_measure
                     or session.pending_mitigation_measure
                     or "Not selected",
+                    conversation_history=self._grounded_question_history(session_id, session),
                     question=question,
                 ),
             }
@@ -145,6 +152,70 @@ class ChatGroundedQuestionStepsMixin:
             max_tokens=800,
         )
         return answer, {**knowledge_sources, **stats_sources}
+
+    def _grounded_question_history(
+        self,
+        session_id: str | None,
+        session: ChatSession,
+        limit: int = 6,
+    ) -> str:
+        history_sources = (
+            self._recent_chat_messages_for_auto_user(session_id, limit=limit)
+            if session_id
+            else []
+        )
+        if not history_sources:
+            history_sources = [
+                *(session.stats_conversation or []),
+                *(session.stats_dialog_conversation or []),
+                *(session.mitigation_clarification_history or []),
+            ]
+        cleaned: list[dict[str, str]] = []
+        for item in history_sources:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            content = " ".join(str(item.get("content") or "").split())
+            content = re.sub(r"<[^>]+>", " ", content)
+            content = " ".join(content.split())
+            if role not in {"user", "assistant"} or not content:
+                continue
+            cleaned.append({"role": role, "content": self._source_excerpt(content, 500)})
+        if not cleaned:
+            return "- No recent conversation history available."
+        return "\n".join(
+            f"- {item['role'].title()}: {item['content']}"
+            for item in cleaned[-limit:]
+        )
+
+    @staticmethod
+    def _is_stats_related_question(message: str) -> bool:
+        normalized = normalize_for_match(message)
+        if not normalized:
+            return False
+        stats_terms = {
+            "stat",
+            "stats",
+            "statistic",
+            "statistics",
+            "statistical",
+            "data",
+            "percentage",
+            "percent",
+            "average",
+            "comparison",
+            "compare",
+            "population",
+            "affected group",
+            "affected groups",
+            "profile",
+            "profiles",
+            "predictor",
+            "predictors",
+            "regional",
+            "national",
+        }
+        return any(term in normalized for term in stats_terms)
 
     async def _question_knowledge_context(
         self, session: ChatSession, question: str
@@ -438,7 +509,28 @@ class ChatGroundedQuestionStepsMixin:
         user_message: str,
         history: list[dict[str, str]] | None = None,
     ) -> tuple[str, list[dict[str, str]]]:
-        context, messages = await self._build_deep_dive_messages(session, user_message)
+        sector_context = await self._sector_prompt_rag_context(
+            session,
+            f"{session.selected_hazard or ''} {format_all_dgs(session)} {user_message}",
+            limit=8,
+        )
+        context = render_prompt_template(
+            "llm/stats_deep_dive_context.txt",
+            scope_instruction=self._scope_instruction(session),
+            sector_context=sector_context,
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": render_prompt_template(
+                    "llm/stats_deep_dive_user.txt",
+                    country=session.country,
+                    region=session.region,
+                    sector=session.sector,
+                    user_message=user_message,
+                ),
+            }
+        ]
         history = list((session.stats_conversation or []) if history is None else history)
         if not history:
             return context, messages

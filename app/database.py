@@ -170,6 +170,8 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                       reason TEXT NULL,
                       evidence TEXT NULL,
                       source VARCHAR(40) NOT NULL DEFAULT 'user',
+                      validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
+                      is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,
                       created_by_user_id INT NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       CONSTRAINT fk_custom_hazards_country
@@ -185,6 +187,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                       INDEX ix_custom_hazards_country_id (country_id),
                       INDEX ix_custom_hazards_sector_id (sector_id),
                       INDEX ix_custom_hazards_region_id (region_id),
+                      INDEX ix_custom_hazards_visibility (validation_mode, is_crowd_sourced),
                       INDEX ix_custom_hazards_created_by_user_id (created_by_user_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                     """
@@ -212,6 +215,40 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     """
                 )
             )
+
+        inspector = inspect(engine)
+        if "custom_hazards" in inspector.get_table_names():
+            custom_hazard_columns = {
+                column["name"] for column in inspector.get_columns("custom_hazards")
+            }
+            custom_hazard_indexes = {
+                index["name"] for index in inspector.get_indexes("custom_hazards")
+            }
+            with engine.begin() as connection:
+                if "validation_mode" not in custom_hazard_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE custom_hazards "
+                            "ADD COLUMN validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict' "
+                            "AFTER source"
+                        )
+                    )
+                if "is_crowd_sourced" not in custom_hazard_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE custom_hazards "
+                            "ADD COLUMN is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE "
+                            "AFTER validation_mode"
+                        )
+                    )
+                if "ix_custom_hazards_visibility" not in custom_hazard_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE custom_hazards "
+                            "ADD INDEX ix_custom_hazards_visibility "
+                            "(validation_mode, is_crowd_sourced)"
+                        )
+                    )
 
         inspector = inspect(engine)
         table_names = inspector.get_table_names()
@@ -501,6 +538,22 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD COLUMN target_groups_json TEXT NULL AFTER conclusion"
                         )
                     )
+                if "validation_mode" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict' "
+                            "AFTER target_groups_json"
+                        )
+                    )
+                if "is_crowd_sourced" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE "
+                            "AFTER validation_mode"
+                        )
+                    )
                 if "ix_user_mitigation_measures_system_hazard_id" not in mitigation_indexes:
                     connection.execute(
                         text(
@@ -520,6 +573,14 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                         text(
                             "ALTER TABLE user_mitigation_measures "
                             "ADD INDEX ix_user_mitigation_measures_user_session_id (user_session_id)"
+                        )
+                    )
+                if "ix_user_mitigation_measures_visibility" not in mitigation_indexes:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD INDEX ix_user_mitigation_measures_visibility "
+                            "(validation_mode, is_crowd_sourced)"
                         )
                     )
                 if "fk_user_mitigation_measures_session" not in mitigation_foreign_keys:
@@ -591,6 +652,20 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 connection.execute(
                     text("ALTER TABLE user_hazards ADD COLUMN region_id INT NULL AFTER sector_id")
                 )
+            if "validation_mode" not in columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE user_hazards "
+                        "ADD COLUMN validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict' AFTER source"
+                    )
+                )
+            if "is_crowd_sourced" not in columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE user_hazards "
+                        "ADD COLUMN is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE AFTER validation_mode"
+                    )
+                )
             if "ix_user_hazards_system_hazard_id" not in indexes:
                 connection.execute(
                     text("ALTER TABLE user_hazards ADD INDEX ix_user_hazards_system_hazard_id (system_hazard_id)")
@@ -602,6 +677,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
             if "ix_user_hazards_region_id" not in indexes:
                 connection.execute(
                     text("ALTER TABLE user_hazards ADD INDEX ix_user_hazards_region_id (region_id)")
+                )
+            if "ix_user_hazards_visibility" not in indexes:
+                connection.execute(
+                    text(
+                        "ALTER TABLE user_hazards "
+                        "ADD INDEX ix_user_hazards_visibility (validation_mode, is_crowd_sourced)"
+                    )
                 )
             if "fk_user_hazards_system_hazard" not in foreign_keys:
                 connection.execute(

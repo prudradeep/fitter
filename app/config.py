@@ -1,4 +1,5 @@
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -7,12 +8,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _env_files() -> tuple[Path, ...]:
-    candidates = [Path(".env")]
-    for env_name in ("PROGRAMDATA", "LOCALAPPDATA"):
-        base = os.getenv(env_name)
-        if base:
-            candidates.append(Path(base) / "DrTransition" / ".env")
-    return tuple(candidates)
+    if getattr(sys, "frozen", False):
+        base = os.getenv("PROGRAMDATA")
+        return (Path(base) / "DrTransition" / ".env",) if base else tuple()
+    return (Path.cwd() / ".env",)
 
 
 class Settings(BaseSettings):

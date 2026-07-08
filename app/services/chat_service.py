@@ -155,9 +155,11 @@ class ChatService(
         message: str,
         session_id: str | None,
         validation_mode: str = "strict",
+        crowd_sourcing_enabled: bool = False,
     ) -> ChatResponse:
         clean_message = message.strip()
         validation_mode = self._validation_mode(validation_mode)
+        crowd_sourcing_enabled = bool(crowd_sourcing_enabled)
 
         if clean_message == "/reset":
             if not self._session_belongs_to_current_user(session_id):
@@ -175,6 +177,7 @@ class ChatService(
             current_session_id, session = session_store.reset(session_id)
             session.session_key = current_session_id
             session.validation_mode = validation_mode
+            session.crowd_sourcing_enabled = crowd_sourcing_enabled
             response = self._country_step(
                 current_session_id,
                 session,
@@ -191,6 +194,7 @@ class ChatService(
         current_session_id, session = session_store.get_or_create(session_id)
         session.session_key = current_session_id
         session.validation_mode = validation_mode
+        session.crowd_sourcing_enabled = crowd_sourcing_enabled
         self._ensure_user_session(current_session_id, session)
 
         response = await self._chat_response(current_session_id, session, clean_message)
@@ -213,15 +217,18 @@ class ChatService(
         message: str,
         session_id: str | None,
         validation_mode: str = "strict",
+        crowd_sourcing_enabled: bool = False,
     ) -> ChatResponse:
         clean_message = message.strip()
         validation_mode = self._validation_mode(validation_mode)
+        crowd_sourcing_enabled = bool(crowd_sourcing_enabled)
         if not self._session_belongs_to_current_user(session_id):
             session_id = None
         self._hydrate_session_from_db(session_id)
         current_session_id, session = session_store.get_or_create(session_id)
         session.session_key = current_session_id
         session.validation_mode = validation_mode
+        session.crowd_sourcing_enabled = crowd_sourcing_enabled
         self._ensure_user_session(current_session_id, session)
 
         if session.sector is None:
@@ -261,14 +268,17 @@ class ChatService(
         self,
         session_id: str | None,
         validation_mode: str = "strict",
+        crowd_sourcing_enabled: bool = False,
     ) -> dict[str, object]:
         validation_mode = self._validation_mode(validation_mode)
+        crowd_sourcing_enabled = bool(crowd_sourcing_enabled)
         if not self._session_belongs_to_current_user(session_id):
             session_id = None
         self._hydrate_session_from_db(session_id)
         current_session_id, session = session_store.get_or_create(session_id)
         session.session_key = current_session_id
         session.validation_mode = validation_mode
+        session.crowd_sourcing_enabled = crowd_sourcing_enabled
         self._ensure_user_session(current_session_id, session)
 
         current_response = self._repeat_current_options(current_session_id, session, "", False)

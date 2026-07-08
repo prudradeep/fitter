@@ -240,6 +240,8 @@ class CustomHazard(Base):
     reason: Mapped[str | None] = mapped_column(Text)
     evidence: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="user", server_default="user")
+    validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict", server_default="strict")
+    is_crowd_sourced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_users.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
@@ -274,6 +276,8 @@ class UserHazard(Base):
     region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="custom")
+    validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict", server_default="strict")
+    is_crowd_sourced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     reason: Mapped[str | None] = mapped_column(Text)
     evidence: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
@@ -365,6 +369,8 @@ class UserMitigationMeasure(Base):
     target_population: Mapped[str | None] = mapped_column(Text)
     conclusion: Mapped[str | None] = mapped_column(Text)
     target_groups_json: Mapped[str | None] = mapped_column(Text)
+    validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict", server_default="strict")
+    is_crowd_sourced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

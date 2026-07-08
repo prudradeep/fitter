@@ -158,7 +158,10 @@ class ChatHazardStepsMixin:
         )
 
     def _stats_deep_dive_dialog_step(
-        self, session_id: str, session: ChatSession
+        self,
+        session_id: str,
+        session: ChatSession,
+        initial_question: str | None = None,
     ) -> ChatResponse:
         session.phase = "stats_deep_dive"
         return ChatResponse(
@@ -167,6 +170,7 @@ class ChatHazardStepsMixin:
             bot_message="",
             options=POST_SECTOR_OPTIONS,
             session=session.summary(),
+            input_values={"stats_question": str(initial_question or "").strip()},
             error=False,
         )
 

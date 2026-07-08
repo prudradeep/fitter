@@ -187,6 +187,8 @@ CREATE TABLE IF NOT EXISTS user_hazards (
   region_id INT NULL,
   name VARCHAR(255) NOT NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'custom',
+  validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
+  is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,
   reason TEXT NULL,
   evidence TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -198,7 +200,8 @@ CREATE TABLE IF NOT EXISTS user_hazards (
   INDEX ix_user_hazards_session_id (user_session_id),
   INDEX ix_user_hazards_system_hazard_id (system_hazard_id),
   INDEX ix_user_hazards_sector_id (sector_id),
-  INDEX ix_user_hazards_region_id (region_id)
+  INDEX ix_user_hazards_region_id (region_id),
+  INDEX ix_user_hazards_visibility (validation_mode, is_crowd_sourced)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_hazard_socio_demographics (
@@ -268,9 +271,12 @@ CREATE TABLE IF NOT EXISTS user_mitigation_measures (
   target_population TEXT NULL,
   conclusion TEXT NULL,
   target_groups_json TEXT NULL,
+  validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
+  is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_user_mitigations_hazard FOREIGN KEY (user_hazard_id) REFERENCES user_hazards(id) ON DELETE CASCADE,
-  INDEX ix_user_mitigation_measures_hazard_id (user_hazard_id)
+  INDEX ix_user_mitigation_measures_hazard_id (user_hazard_id),
+  INDEX ix_user_mitigation_measures_visibility (validation_mode, is_crowd_sourced)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mitigation_measure_examples (

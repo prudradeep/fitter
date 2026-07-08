@@ -84,6 +84,16 @@
                 </label>
                 <label class="settings-row">
                   <span>
+                    <strong>Crowd Sourcing</strong>
+                    <small>Share strictly checked co-created hazards and mitigation measures.</small>
+                  </span>
+                  <span class="voice-switch">
+                    <input id="crowdSourcingToggle" type="checkbox" />
+                    <span class="switch-track" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="settings-row">
+                  <span>
                     <strong>Auto conversation</strong>
                     <small>Let the LLM simulate user replies for flow testing.</small>
                   </span>
@@ -279,6 +289,9 @@
         </button>
         <div class="stage-progress" aria-label="Analysis step progress">
           <p class="stage-eyebrow">Analysis Stage</p>
+          <div class="stage-progress-bar">
+            <span id="stageProgressFill"></span>
+          </div>
           <ol class="stage-steps">
             <li data-stage-key="country">Country</li>
             <li data-stage-key="region">Region</li>
@@ -287,9 +300,6 @@
             <li data-stage-key="mitigation">Mitigation</li>
             <li data-stage-key="evaluation">Evaluation</li>
           </ol>
-          <div class="stage-progress-bar">
-            <span id="stageProgressFill"></span>
-          </div>
         </div>
       </section>
 
@@ -527,6 +537,56 @@
           loading="lazy"
           tabindex="0"
         ></iframe>
+      </section>
+    </dialog>
+
+    <dialog id="surveyResultsDialog" class="survey-results-dialog">
+      <section class="survey-results-panel" aria-label="Survey methodology results image">
+        <header class="survey-results-header">
+          <div>
+            <h2>Survey Results</h2>
+            <p>Hazard identification and affected profile mapping overview.</p>
+          </div>
+          <div class="survey-results-tools" aria-label="Image zoom controls">
+            <button id="surveyResultsZoomOut" type="button" aria-label="Zoom out">-</button>
+            <button id="surveyResultsZoomReset" type="button">Reset</button>
+            <button id="surveyResultsZoomIn" type="button" aria-label="Zoom in">+</button>
+            <button id="closeSurveyResultsButton" type="button" aria-label="Close survey results">×</button>
+          </div>
+        </header>
+        <div id="surveyResultsViewport" class="survey-results-viewport">
+          <img
+            id="surveyResultsImage"
+            class="survey-results-image"
+            src="{{ url_for('static', path='/mehotdologyResults.png') }}"
+            alt="Survey methodology results"
+          />
+        </div>
+      </section>
+    </dialog>
+
+    <dialog id="platformUsersDialog" class="survey-results-dialog">
+      <section class="survey-results-panel" aria-label="Platform users crowd sourcing image">
+        <header class="survey-results-header">
+          <div>
+            <h2>Platform Users</h2>
+            <p>Crowd sourcing and shared co-created hazard visibility overview.</p>
+          </div>
+          <div class="survey-results-tools" aria-label="Image zoom controls">
+            <button id="platformUsersZoomOut" type="button" aria-label="Zoom out">-</button>
+            <button id="platformUsersZoomReset" type="button">Reset</button>
+            <button id="platformUsersZoomIn" type="button" aria-label="Zoom in">+</button>
+            <button id="closePlatformUsersButton" type="button" aria-label="Close platform users image">×</button>
+          </div>
+        </header>
+        <div id="platformUsersViewport" class="survey-results-viewport">
+          <img
+            id="platformUsersImage"
+            class="survey-results-image"
+            src="{{ url_for('static', path='/crowdsourcing.png') }}"
+            alt="Crowd sourcing platform users"
+          />
+        </div>
       </section>
     </dialog>
 

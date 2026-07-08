@@ -4,7 +4,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from app.llm import ask_llm_chat
 from app.models import (
@@ -195,6 +195,13 @@ class ChatHazardCreationMixin:
                         CustomHazard.country_id == session.country_id,
                         CustomHazard.sector_id == session.sector_id,
                         CustomHazard.region_scope_key == region_scope_key,
+                        or_(
+                            CustomHazard.created_by_user_id == self.user_id,
+                            and_(
+                                CustomHazard.validation_mode == "strict",
+                                CustomHazard.is_crowd_sourced.is_(True),
+                            ),
+                        ),
                     )
                 ).all()
             )
@@ -213,6 +220,13 @@ class ChatHazardCreationMixin:
                         UserSession.region_id.is_(None)
                         if session.region_id is None
                         else UserSession.region_id == session.region_id,
+                        or_(
+                            UserSession.user_id == self.user_id,
+                            and_(
+                                UserHazard.validation_mode == "strict",
+                                UserHazard.is_crowd_sourced.is_(True),
+                            ),
+                        ),
                     )
                 ).all()
             )
@@ -3244,6 +3258,13 @@ class ChatHazardCreationMixin:
                 CustomHazard.country_id == session.country_id,
                 CustomHazard.sector_id == session.sector_id,
                 CustomHazard.region_scope_key == (session.region_id or 0),
+                or_(
+                    CustomHazard.created_by_user_id == self.user_id,
+                    and_(
+                        CustomHazard.validation_mode == "strict",
+                        CustomHazard.is_crowd_sourced.is_(True),
+                    ),
+                ),
             )
             .order_by(CustomHazard.name)
         ).all()
@@ -3257,6 +3278,13 @@ class ChatHazardCreationMixin:
                 if session.region_id is None
                 else UserHazard.region_id == session.region_id,
                 UserHazard.source == "custom",
+                or_(
+                    UserSession.user_id == self.user_id,
+                    and_(
+                        UserHazard.validation_mode == "strict",
+                        UserHazard.is_crowd_sourced.is_(True),
+                    ),
+                ),
             )
             .order_by(UserHazard.name)
         ).all()
@@ -4116,6 +4144,13 @@ class ChatHazardCreationMixin:
                     CustomHazard.sector_id == session.sector_id,
                     CustomHazard.region_scope_key == (session.region_id or 0),
                     CustomHazard.name_key == self._custom_hazard_name_key(hazard),
+                    or_(
+                        CustomHazard.created_by_user_id == self.user_id,
+                        and_(
+                            CustomHazard.validation_mode == "strict",
+                            CustomHazard.is_crowd_sourced.is_(True),
+                        ),
+                    ),
                 )
             )
             return int(hazard_id) if isinstance(hazard_id, int) else None
@@ -4143,6 +4178,13 @@ class ChatHazardCreationMixin:
                     CustomHazard.sector_id == session.sector_id,
                     CustomHazard.region_scope_key == (session.region_id or 0),
                     CustomHazard.name_key == name_key,
+                    or_(
+                        CustomHazard.created_by_user_id == self.user_id,
+                        and_(
+                            CustomHazard.validation_mode == "strict",
+                            CustomHazard.is_crowd_sourced.is_(True),
+                        ),
+                    ),
                 )
             )
             if hazard is None:
@@ -4164,6 +4206,10 @@ class ChatHazardCreationMixin:
                 hazard.reason = reason.strip() or None
             if evidence is not None:
                 hazard.evidence = evidence.strip() or None
+            hazard.validation_mode = session.validation_mode if session.validation_mode in {"strict", "easy"} else "strict"
+            hazard.is_crowd_sourced = (
+                hazard.validation_mode == "strict" and bool(session.crowd_sourcing_enabled)
+            )
             self.db.commit()
             self.db.refresh(hazard)
             return hazard
@@ -4263,6 +4309,10 @@ class ChatHazardCreationMixin:
                 hazard.reason = reason
             if evidence is not None:
                 hazard.evidence = evidence
+            hazard.validation_mode = session.validation_mode if session.validation_mode in {"strict", "easy"} else "strict"
+            hazard.is_crowd_sourced = (
+                hazard.validation_mode == "strict" and bool(session.crowd_sourcing_enabled)
+            )
             self.db.commit()
             self.db.refresh(hazard)
             return hazard

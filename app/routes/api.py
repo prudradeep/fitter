@@ -40,6 +40,7 @@ async def chat(
         payload.message,
         payload.session_id,
         payload.validation_mode,
+        payload.crowd_sourcing_enabled,
     )
 
 
@@ -54,6 +55,7 @@ async def stats_deep_dive(
         payload.message,
         payload.session_id,
         _validation_mode(payload.validation_mode),
+        payload.crowd_sourcing_enabled,
     )
 
 
@@ -67,6 +69,7 @@ async def auto_user_message(
     return await service.generate_auto_user_message(
         payload.session_id,
         _validation_mode(payload.validation_mode),
+        payload.crowd_sourcing_enabled,
     )
 
 
@@ -427,6 +430,7 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
     message = str(form.get("message") or "")
     session_id = str(form.get("session_id") or "") or None
     validation_mode = _validation_mode(str(form.get("validation_mode") or ""))
+    crowd_sourcing_enabled = _truthy(form.get("crowd_sourcing_enabled"))
     evidence_parts: list[str] = []
 
     evidence_url = str(form.get("evidence_url") or "").strip()
@@ -478,11 +482,16 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
         message=message,
         session_id=session_id,
         validation_mode=validation_mode,
+        crowd_sourcing_enabled=crowd_sourcing_enabled,
     )
 
 
 def _validation_mode(value: object) -> str:
     return "easy" if str(value or "").strip().casefold() == "easy" else "strict"
+
+
+def _truthy(value: object) -> bool:
+    return str(value or "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def _knowledge_urls_from_payload(payload: dict[str, object]) -> list[str]:

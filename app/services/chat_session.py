@@ -75,6 +75,7 @@ class ChatSession:
     pending_fuzzy_option: str | None = None
     stats_dialog_conversation: list[dict[str, str]] | None = None
     validation_mode: str = "strict"
+    crowd_sourcing_enabled: bool = False
 
     def summary(self) -> SessionSummary:
         system_hazard_count = len(
@@ -143,6 +144,7 @@ class ChatSession:
             validation_mode=(
                 self.validation_mode if self.validation_mode in {"strict", "easy"} else "strict"
             ),
+            crowd_sourcing_enabled=bool(self.crowd_sourcing_enabled),
         )
 
     def eligible_hazard_profile_count(self) -> int:

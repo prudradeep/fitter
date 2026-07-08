@@ -30,6 +30,5 @@ Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Install-DrTra
 Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Test-SystemCompatibility.ps1") -Destination $scriptsPayload -Force
 Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Get-ModelRecommendation.ps1") -Destination $scriptsPayload -Force
 Copy-Item -LiteralPath (Join-Path $root "schema.sql") -Destination $payload -Force
-Copy-Item -LiteralPath (Join-Path $root ".env.example") -Destination $payload -Force
 
 Write-Host "Installer payload assembled at $payload"

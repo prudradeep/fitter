@@ -44,7 +44,13 @@ ALLOWED_TAGS = [
 ALLOWED_ATTRIBUTES = {
     "a": ["href", "rel", "target", "title"],
     "article": ["class"],
-    "button": ["class", "type", "data-open-methodology"],
+    "button": [
+        "class",
+        "type",
+        "data-open-methodology",
+        "data-open-survey-results",
+        "data-open-platform-users",
+    ],
     "details": ["class", "open"],
     "div": [
         "class", "data-affected", "data-categories", "data-labels",

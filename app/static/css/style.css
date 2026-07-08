@@ -711,7 +711,8 @@
 
 .stats-dialog,
 .target-dialog,
-.methodology-dialog {
+.methodology-dialog,
+.survey-results-dialog {
   width: min(860px, calc(100vw - 32px));
   height: min(760px, calc(100vh - 32px));
   border: 1px solid var(--line);
@@ -730,15 +731,22 @@
   height: min(860px, calc(100vh - 28px));
 }
 
+.survey-results-dialog {
+  width: min(1120px, calc(100vw - 28px));
+  height: min(820px, calc(100vh - 28px));
+}
+
 .stats-dialog::backdrop,
 .target-dialog::backdrop,
-.methodology-dialog::backdrop {
+.methodology-dialog::backdrop,
+.survey-results-dialog::backdrop {
   background: rgba(15, 23, 42, 0.42);
 }
 
 .stats-dialog-panel,
 .target-dialog-panel,
-.methodology-dialog-panel {
+.methodology-dialog-panel,
+.survey-results-panel {
   height: 100%;
   min-height: 0;
   display: grid;
@@ -763,6 +771,75 @@
   min-height: 0;
   border: 0;
   background: #eef5fb;
+}
+
+.survey-results-panel {
+  grid-template-rows: auto 1fr;
+  background: #f8fafc;
+}
+
+.survey-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 14px 16px;
+  background: #ffffff;
+}
+
+.survey-results-header h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1rem;
+}
+
+.survey-results-header p {
+  margin: 3px 0 0;
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.survey-results-tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.survey-results-tools button {
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.survey-results-tools button:hover,
+.survey-results-tools button:focus-visible {
+  border-color: #7c3aed;
+  color: #5b21b6;
+  outline: none;
+}
+
+.survey-results-viewport {
+  overflow: auto;
+  min-height: 0;
+  padding: 18px;
+  background: #e5edf6;
+}
+
+.survey-results-image {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: 8px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.22);
+  transition: width 150ms ease;
 }
 
 .methodology-dialog-panel > .methodology-hero,
@@ -1954,6 +2031,34 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   text-transform: uppercase;
 }
 
+.stage-hazard-table-heading .population-comparison-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stage-hazard-table-heading .population-comparison-info {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid #c4b5fd;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6d28d9;
+  cursor: help;
+  font-size: 0.66rem;
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: none;
+}
+
+.stage-hazard-table-heading .population-comparison-info:focus-visible {
+  outline: 2px solid #8b5cf6;
+  outline-offset: 2px;
+}
+
 .stage-hazard-table-heading h3 {
   margin: 0;
   color: #111827;
@@ -3022,14 +3127,30 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   margin-top: 0;
 }
 
-.bubble .hazard-group-heading > span {
+.bubble .hazard-group-heading > span,
+.bubble .hazard-group-heading > button {
   border-radius: 999px;
+  border: 0;
   background: #f1f5f9;
   color: #64748b;
+  cursor: default;
   padding: 4px 8px;
   font-size: 0.66rem;
   font-weight: 800;
   letter-spacing: 0.04em;
+}
+
+.bubble .hazard-group-heading > button {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.bubble .hazard-group-heading > button:hover,
+.bubble .hazard-group-heading > button:focus-visible {
+  background: #ede9fe;
+  color: #5b21b6;
+  outline: 2px solid #c4b5fd;
+  outline-offset: 2px;
 }
 
 .bubble .hazard-group-heading--with-info {
@@ -3274,9 +3395,23 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 }
 
 .bubble .hazard-card-heading > strong {
+  flex: 1 1 auto;
   color: #111827;
   font-size: 0.9rem;
   line-height: 1.45;
+}
+
+.bubble .hazard-visibility-label {
+  flex: 0 0 auto;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 4px 8px;
+  font-size: 0.64rem;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .bubble .hazard-metrics {

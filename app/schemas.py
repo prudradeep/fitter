@@ -5,6 +5,7 @@ class ChatRequest(BaseModel):
     message: str = Field(default="", max_length=16000)
     session_id: str | None = Field(default=None, max_length=64)
     validation_mode: str = Field(default="strict", max_length=16)
+    crowd_sourcing_enabled: bool = False
 
 
 class Option(BaseModel):
@@ -36,6 +37,7 @@ class SessionSummary(BaseModel):
     custom_hazards: list[str] = Field(default_factory=list)
     custom_hazard: dict[str, object] | None = None
     validation_mode: str = "strict"
+    crowd_sourcing_enabled: bool = False
 
 
 class ChatResponse(BaseModel):

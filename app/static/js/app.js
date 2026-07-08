@@ -5,6 +5,7 @@ const voicePreferenceKey = "dr_transition_voice_preference";
 const typingEffectKey = "dr_transition_typing_effect_enabled";
 const autoConversationKey = "dr_transition_auto_conversation_enabled";
 const validationModeKey = "dr_transition_validation_mode";
+const crowdSourcingKey = "dr_transition_crowd_sourcing_enabled";
 const teacherAvatarPath = "/static/img/teacher.png";
 const collapsibleMessageWordLimit = 100;
 
@@ -53,6 +54,7 @@ const typingEffectToggle = document.querySelector("#typingEffectToggle");
 const autoConversationToggle = document.querySelector("#autoConversationToggle");
 const validationModeToggle = document.querySelector("#validationModeToggle");
 const validationModeLabel = document.querySelector("#validationModeLabel");
+const crowdSourcingToggle = document.querySelector("#crowdSourcingToggle");
 const voicePreferenceSelect = document.querySelector("#voicePreferenceSelect");
 const voiceAnalyzerElement = document.querySelector("#voiceAnalyzer");
 const sessionsButton = document.querySelector("#sessionsButton");
@@ -99,6 +101,20 @@ const resetTargetPopulationButton = document.querySelector("#resetTargetPopulati
 const methodologyDialog = document.querySelector("#methodologyDialog");
 const closeMethodologyButton = document.querySelector("#closeMethodologyButton");
 const methodologyFrame = document.querySelector("#methodologyFrame");
+const surveyResultsDialog = document.querySelector("#surveyResultsDialog");
+const surveyResultsImage = document.querySelector("#surveyResultsImage");
+const surveyResultsViewport = document.querySelector("#surveyResultsViewport");
+const closeSurveyResultsButton = document.querySelector("#closeSurveyResultsButton");
+const surveyResultsZoomIn = document.querySelector("#surveyResultsZoomIn");
+const surveyResultsZoomOut = document.querySelector("#surveyResultsZoomOut");
+const surveyResultsZoomReset = document.querySelector("#surveyResultsZoomReset");
+const platformUsersDialog = document.querySelector("#platformUsersDialog");
+const platformUsersImage = document.querySelector("#platformUsersImage");
+const platformUsersViewport = document.querySelector("#platformUsersViewport");
+const closePlatformUsersButton = document.querySelector("#closePlatformUsersButton");
+const platformUsersZoomIn = document.querySelector("#platformUsersZoomIn");
+const platformUsersZoomOut = document.querySelector("#platformUsersZoomOut");
+const platformUsersZoomReset = document.querySelector("#platformUsersZoomReset");
 const sessionEmpty = document.querySelector("#sessionEmpty");
 const selectedHazardContext = document.querySelector("#selectedHazardContext");
 const selectedContextLabel = document.querySelector("#selectedContextLabel");
@@ -160,6 +176,8 @@ let currentOtherOptions = [];
 let currentTargetPopulationQuestion = null;
 let targetPopulationQuestions = [];
 let targetPopulationAnswers = [];
+let surveyResultsZoom = 1;
+let platformUsersZoom = 1;
 let autoConversationTimer = null;
 let autoConversationTurns = 0;
 const autoConversationTurnLimit = 80;
@@ -896,10 +914,17 @@ function renderHazardPopulationTable(session = {}) {
     <details class="stage-hazard-table stage-collapsible-section" aria-label="Top three hazard population comparison" open>
       <summary class="stage-hazard-table-heading">
         <div>
-          <span>Population comparison</span>
+          <span class="population-comparison-label">
+            Population comparison
+            <span
+              class="population-comparison-info"
+              tabindex="0"
+              title="For each hazard, Regional and National values are the arithmetic mean of the mapped affected-profile percentages: sum of available profile percentages divided by number of mapped profiles, rounded to 1 decimal."
+              aria-label="For each hazard, Regional and National values are the arithmetic mean of the mapped affected-profile percentages: sum of available profile percentages divided by number of mapped profiles, rounded to 1 decimal."
+            >i</span>
+          </span>
           <h3>Top 3 hazards</h3>
         </div>
-        <small>Average across mapped affected profiles</small>
         <span class="stage-collapse-icon" aria-hidden="true"></span>
       </summary>
       <div class="stage-hazard-table-scroll">
@@ -1174,6 +1199,15 @@ function configureValidationModeControl() {
   if (validationModeLabel) {
     validationModeLabel.textContent = mode === "strict" ? "Strict" : "Easy";
   }
+}
+
+function crowdSourcingEnabled() {
+  return localStorage.getItem(crowdSourcingKey) === "true";
+}
+
+function configureCrowdSourcingControl() {
+  if (!crowdSourcingToggle) return;
+  crowdSourcingToggle.checked = crowdSourcingEnabled();
 }
 
 function ensureVoiceAnalyzer() {
@@ -1598,6 +1632,30 @@ chatScrollBottomButton?.addEventListener("click", () => {
 });
 
 chatLog?.addEventListener("click", (event) => {
+  const platformUsersButton = event.target.closest("[data-open-platform-users], .platform-users-source-button");
+  if (platformUsersButton) {
+    event.preventDefault();
+    openPlatformUsersDialog();
+    return;
+  }
+  const surveyResultsButton = event.target.closest("[data-open-survey-results], .survey-source-button");
+  if (surveyResultsButton) {
+    event.preventDefault();
+    openSurveyResultsDialog();
+    return;
+  }
+  const headingLabel = event.target.closest(".hazard-group-heading > span");
+  const headingLabelText = normalizeForMatch(headingLabel?.textContent || "");
+  if (headingLabelText === "platform users") {
+    event.preventDefault();
+    openPlatformUsersDialog();
+    return;
+  }
+  if (headingLabelText === "from the survey") {
+    event.preventDefault();
+    openSurveyResultsDialog();
+    return;
+  }
   const methodologyButton = event.target.closest("[data-open-methodology]");
   if (!methodologyButton) return;
   event.preventDefault();
@@ -3102,15 +3160,18 @@ function showStatsDeepDiveDialog() {
   statsDialogInput?.focus();
 }
 
-async function openStatsDeepDiveDialog() {
+async function openStatsDeepDiveDialog(initialMessage = "", echoInitial = true) {
   showStatsDeepDiveDialog();
-  if (statsDialogStarted) return;
+  const message = String(initialMessage || "").trim();
+  if (statsDialogStarted) {
+    if (message) await sendStatsDialogMessage(message, echoInitial);
+    return;
+  }
   statsDialogStarted = true;
   if (statsDialogLog) statsDialogLog.innerHTML = "";
-  await sendStatsDialogMessage(
-    "Dive deeper into the statistical findings for the listed hazards. Summarise the most important results and affected groups.",
-    false,
-  );
+  const firstMessage = message
+    || "Dive deeper into the statistical findings for the listed hazards. Summarise the most important results and affected groups.";
+  await sendStatsDialogMessage(firstMessage, Boolean(message) ? echoInitial : false);
 }
 
 function closeStatsDeepDiveDialog() {
@@ -3158,6 +3219,78 @@ function closeMethodologyDialog() {
     methodologyDialog.close();
   } else {
     methodologyDialog.setAttribute("hidden", "");
+  }
+  messageInput?.focus();
+}
+
+function syncSurveyResultsZoom() {
+  if (!surveyResultsImage) return;
+  surveyResultsImage.style.width = `${surveyResultsZoom * 100}%`;
+  surveyResultsImage.style.maxWidth = surveyResultsZoom > 1 ? "none" : "100%";
+}
+
+function setSurveyResultsZoom(value) {
+  surveyResultsZoom = Math.min(3, Math.max(0.5, Number(value) || 1));
+  syncSurveyResultsZoom();
+}
+
+function openSurveyResultsDialog() {
+  if (!surveyResultsDialog) return;
+  setSurveyResultsZoom(1);
+  if (surveyResultsViewport) {
+    surveyResultsViewport.scrollTop = 0;
+    surveyResultsViewport.scrollLeft = 0;
+  }
+  if (typeof surveyResultsDialog.showModal === "function") {
+    if (!surveyResultsDialog.open) surveyResultsDialog.showModal();
+  } else {
+    surveyResultsDialog.removeAttribute("hidden");
+  }
+  surveyResultsZoomIn?.focus();
+}
+
+function closeSurveyResultsDialog() {
+  if (!surveyResultsDialog) return;
+  if (typeof surveyResultsDialog.close === "function") {
+    surveyResultsDialog.close();
+  } else {
+    surveyResultsDialog.setAttribute("hidden", "");
+  }
+  messageInput?.focus();
+}
+
+function syncPlatformUsersZoom() {
+  if (!platformUsersImage) return;
+  platformUsersImage.style.width = `${platformUsersZoom * 100}%`;
+  platformUsersImage.style.maxWidth = platformUsersZoom > 1 ? "none" : "100%";
+}
+
+function setPlatformUsersZoom(value) {
+  platformUsersZoom = Math.min(3, Math.max(0.5, Number(value) || 1));
+  syncPlatformUsersZoom();
+}
+
+function openPlatformUsersDialog() {
+  if (!platformUsersDialog) return;
+  setPlatformUsersZoom(1);
+  if (platformUsersViewport) {
+    platformUsersViewport.scrollTop = 0;
+    platformUsersViewport.scrollLeft = 0;
+  }
+  if (typeof platformUsersDialog.showModal === "function") {
+    if (!platformUsersDialog.open) platformUsersDialog.showModal();
+  } else {
+    platformUsersDialog.removeAttribute("hidden");
+  }
+  platformUsersZoomIn?.focus();
+}
+
+function closePlatformUsersDialog() {
+  if (!platformUsersDialog) return;
+  if (typeof platformUsersDialog.close === "function") {
+    platformUsersDialog.close();
+  } else {
+    platformUsersDialog.setAttribute("hidden", "");
   }
   messageInput?.focus();
 }
@@ -3247,6 +3380,7 @@ async function sendStatsDialogMessage(message, echoUser = true) {
         message: cleanMessage,
         session_id: sessionId,
         validation_mode: currentValidationMode(),
+        crowd_sourcing_enabled: crowdSourcingEnabled(),
       }),
     });
 
@@ -3807,6 +3941,7 @@ async function requestAutoConversationTurn() {
         message: "",
         session_id: sessionId,
         validation_mode: currentValidationMode(),
+        crowd_sourcing_enabled: crowdSourcingEnabled(),
       }),
     });
     if (response.status === 401) {
@@ -3903,6 +4038,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
               message: cleanMessage,
               session_id: sessionId,
               validation_mode: currentValidationMode(),
+              crowd_sourcing_enabled: crowdSourcingEnabled(),
             }),
           }),
     });
@@ -3926,7 +4062,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
       setInputMode(data.input_mode || "text", currentStep, data.options || [], data.session);
       updateSessionCard(data.session);
       renderOptions(data.options || [], data.other_options || []);
-      await openStatsDeepDiveDialog();
+      await openStatsDeepDiveDialog(data.input_values?.stats_question || "", true);
       loadSessions();
       return;
     }
@@ -3964,6 +4100,7 @@ function buildChatFormData(message, extras = {}) {
   const formData = new FormData();
   formData.append("message", message);
   formData.append("validation_mode", currentValidationMode());
+  formData.append("crowd_sourcing_enabled", String(crowdSourcingEnabled()));
   if (sessionId) formData.append("session_id", sessionId);
   if (extras.evidenceUrl) formData.append("evidence_url", extras.evidenceUrl);
   if (extras.evidenceFile instanceof File && extras.evidenceFile.size > 0) {
@@ -4073,6 +4210,10 @@ typingEffectToggle?.addEventListener("change", () => {
 validationModeToggle?.addEventListener("change", () => {
   localStorage.setItem(validationModeKey, validationModeToggle.checked ? "strict" : "easy");
   configureValidationModeControl();
+});
+
+crowdSourcingToggle?.addEventListener("change", () => {
+  localStorage.setItem(crowdSourcingKey, String(crowdSourcingToggle.checked));
 });
 
 autoConversationToggle?.addEventListener("change", () => {
@@ -4297,6 +4438,20 @@ closeMethodologyButton?.addEventListener("click", closeMethodologyDialog);
 methodologyDialog?.addEventListener("click", (event) => {
   if (event.target === methodologyDialog) closeMethodologyDialog();
 });
+closeSurveyResultsButton?.addEventListener("click", closeSurveyResultsDialog);
+surveyResultsDialog?.addEventListener("click", (event) => {
+  if (event.target === surveyResultsDialog) closeSurveyResultsDialog();
+});
+surveyResultsZoomIn?.addEventListener("click", () => setSurveyResultsZoom(surveyResultsZoom + 0.25));
+surveyResultsZoomOut?.addEventListener("click", () => setSurveyResultsZoom(surveyResultsZoom - 0.25));
+surveyResultsZoomReset?.addEventListener("click", () => setSurveyResultsZoom(1));
+closePlatformUsersButton?.addEventListener("click", closePlatformUsersDialog);
+platformUsersDialog?.addEventListener("click", (event) => {
+  if (event.target === platformUsersDialog) closePlatformUsersDialog();
+});
+platformUsersZoomIn?.addEventListener("click", () => setPlatformUsersZoom(platformUsersZoom + 0.25));
+platformUsersZoomOut?.addEventListener("click", () => setPlatformUsersZoom(platformUsersZoom - 0.25));
+platformUsersZoomReset?.addEventListener("click", () => setPlatformUsersZoom(1));
 targetAllGeneralPopulationButton?.addEventListener("click", () => {
   targetPopulationDialogBody
     ?.querySelectorAll("[data-quick-target-option='true']")
@@ -4397,6 +4552,7 @@ document.addEventListener("DOMContentLoaded", () => {
   configureVoiceControls();
   configureTypingEffectControl();
   configureValidationModeControl();
+  configureCrowdSourcingControl();
   configureMic();
   configureWorkspaceResizer();
   clearCurrentInputState();

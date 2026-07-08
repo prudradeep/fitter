@@ -3,7 +3,7 @@ import logging
 import re
 from html import escape
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 
 from app.llm import ask_llm_chat
 from app.models import (
@@ -16,6 +16,7 @@ from app.models import (
     SystemHazard,
     SystemHazardSocioDemographic,
     SystemHazardSocioDemographicTargetPopulation,
+    UserHazard,
     UserMitigationMeasure,
     UserQuestionResponse,
     UserSession,
@@ -1307,6 +1308,10 @@ class ChatMitigationCreationMixin:
             mitigation_measure=session.mitigation_measure or "",
             reason=session.mitigation_reason or "",
             target_population=session.mitigation_target_population,
+            validation_mode=session.validation_mode,
+            is_crowd_sourced=(
+                session.validation_mode == "strict" and bool(session.crowd_sourcing_enabled)
+            ),
         )
         self._record_activity(
             session_id,
@@ -2354,6 +2359,8 @@ class ChatMitigationCreationMixin:
         mitigation_measure: str,
         reason: str,
         target_population: list[str] | None = None,
+        validation_mode: str = "strict",
+        is_crowd_sourced: bool = False,
     ) -> int | None:
         if (
             user_hazard_id is None
@@ -2375,6 +2382,10 @@ class ChatMitigationCreationMixin:
                     json.dumps(target_population, ensure_ascii=False)
                     if target_population
                     else None
+                ),
+                validation_mode=self._validation_mode(validation_mode),
+                is_crowd_sourced=(
+                    self._validation_mode(validation_mode) == "strict" and bool(is_crowd_sourced)
                 ),
             )
             self.db.add(row)
@@ -3797,7 +3808,15 @@ class ChatMitigationCreationMixin:
                     .order_by(UserMitigationMeasure.id)
                 )
             if self.user_id is not None:
-                query = query.where(UserSession.user_id == self.user_id)
+                query = query.where(
+                    or_(
+                        UserSession.user_id == self.user_id,
+                        and_(
+                            UserMitigationMeasure.validation_mode == "strict",
+                            UserMitigationMeasure.is_crowd_sourced.is_(True),
+                        ),
+                    )
+                )
             rows = self.db.scalars(query).all()
         except Exception:
             logger.exception("Failed to load mitigation measures for duplicate check")

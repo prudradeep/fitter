@@ -19,10 +19,8 @@ ADDITIONAL_HAZARDS_INFO_TOOLTIP = (
 )
 
 CUSTOM_HAZARDS_INFO_TOOLTIP = (
-    "All the hazards co-created on the platform get validated by the AI through "
-    "a strict validation check. Once validated, the co-created hazards belonging "
-    "to a specific country, region and sector combination are available for all "
-    "the platform users."
+    "Co-created hazards accepted in strict mode can be shared when Crowd Sourcing "
+    "is enabled. Easy-mode hazards remain private to the creator."
 )
 
 
@@ -76,15 +74,32 @@ def _custom_hazards_info_icon() -> str:
     )
 
 
+def _platform_users_source_button() -> str:
+    return (
+        '<button class="platform-users-source-button" type="button" '
+        'data-open-platform-users="true">Platform users</button>'
+    )
+
+
+def _custom_hazard_visibility_label(session: ChatSession) -> str:
+    if session.validation_mode == "strict" and session.crowd_sourcing_enabled:
+        return "Global Visibility"
+    return "Private Visibility"
+
+
 def format_hazards(session: ChatSession) -> str:
     survey_hazards = [
         hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
     ]
+    survey_source_button = (
+        '<button class="survey-source-button" type="button" '
+        'data-open-survey-results="true">From the survey</button>'
+    )
     sections = [
-        '<h3 class="hazard-group-heading">Top 3 <span>From the survey</span></h3>',
+        f'<h3 class="hazard-group-heading">Top 3 {survey_source_button}</h3>',
         format_system_hazards(session, survey_hazards[:3]),
         "",
-        '<h3 class="hazard-group-heading">Other hazards <span>From the survey</span></h3>',
+        f'<h3 class="hazard-group-heading">Other hazards {survey_source_button}</h3>',
         format_system_hazards(session, survey_hazards[3:]),
     ]
     if any(
@@ -96,7 +111,7 @@ def format_hazards(session: ChatSession) -> str:
                 "",
                 '<h3 class="hazard-group-heading hazard-group-heading--with-info">'
                 "Co-Created hazards "
-                "<span>Platform users</span>"
+                f"{_platform_users_source_button()}"
                 f"{_custom_hazards_info_icon()}"
                 "</h3>",
                 format_custom_hazards(session),
@@ -156,6 +171,7 @@ def format_custom_hazards(session: ChatSession) -> str:
             '<div class="hazard-card-heading">'
             '<span class="hazard-alert-icon" aria-hidden="true">!</span>'
             f"<strong>{escape(str(hazard))}</strong>"
+            f'<span class="hazard-visibility-label">{escape(_custom_hazard_visibility_label(session))}</span>'
             "</div>"
         )
         _append_hazard_profiles(lines, session, hazard)

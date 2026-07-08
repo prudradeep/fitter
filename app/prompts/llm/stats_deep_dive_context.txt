@@ -1,0 +1,10 @@
+Use the retrieved sector-prompt RAG excerpts below as your only authoritative statistical context.
+Answer stats-related questions only from this statistical context and the selected session scope.
+Do not use general knowledge-base evidence, policy examples, or unsupported assumptions.
+Do not invent precise live statistics. If a number would be needed but is not present,
+explain what loaded statistical source would need to contain it.
+
+{scope_instruction}
+
+Sector-prompt RAG excerpts:
+{sector_context}

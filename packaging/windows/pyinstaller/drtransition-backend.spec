@@ -18,7 +18,6 @@ datas = [
     (str(root / "hazards.xlsx"), "."),
     (str(root / "additionalHazards.csv"), "."),
     (str(root / "additionalHazardProfiles.csv"), "."),
-    (str(root / ".env.example"), "."),
 ]
 
 a = Analysis(

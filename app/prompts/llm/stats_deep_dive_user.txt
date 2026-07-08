@@ -1,0 +1,9 @@
+Session context:
+- Country: {country}
+- Region: {region}
+- Sector: {sector}
+
+Stats question:
+{user_message}
+
+Answer in Markdown. Be practical and structured. Stay focused on the loaded statistical findings, mapped affected profiles, predictors, regional/national comparison, and averages. Do not include a heading or bullet named 'Policy Implications'.

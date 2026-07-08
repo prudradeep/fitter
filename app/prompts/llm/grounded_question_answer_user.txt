@@ -6,6 +6,11 @@ Session context:
 - Affected groups: {affected_groups}
 - Mitigation measure: {mitigation_measure}
 
+Recent conversation:
+{conversation_history}
+
+The conversation history is provided only to understand references, follow-up questions, and conversational context. It is NOT an authoritative source of facts.
+
 User question:
 {question}
 
