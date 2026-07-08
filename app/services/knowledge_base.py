@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
+from time import perf_counter
 
 import httpx
 from sqlalchemy import delete, select
@@ -17,6 +18,7 @@ from app.services.document_text import (
     html_to_text,
 )
 from app.services.grounding_models import GroundingModelService
+from app.services.llm_logging import log_llm_exchange, new_llm_request_id
 
 try:
     import faiss
@@ -434,20 +436,88 @@ class KnowledgeBaseService:
         return embeddings
 
     async def _embed(self, text: str) -> list[float]:
+        payload = {"model": self.settings.ollama_embedding_model, "prompt": text}
+        request_id = new_llm_request_id()
+        started_at = perf_counter()
         async with httpx.AsyncClient(
             base_url=self.settings.ollama_base_url,
             timeout=self.settings.ollama_timeout_seconds,
         ) as client:
-            response = await client.post(
-                "/api/embeddings",
-                json={"model": self.settings.ollama_embedding_model, "prompt": text},
-            )
-            response.raise_for_status()
-        data = response.json()
+            try:
+                response = await client.post("/api/embeddings", json=payload)
+                response.raise_for_status()
+                data = response.json()
+            except httpx.HTTPStatusError as exc:
+                log_llm_exchange(
+                    self.settings,
+                    request_id=request_id,
+                    provider="ollama",
+                    endpoint="/api/embeddings",
+                    model=self.settings.ollama_embedding_model,
+                    request=payload,
+                    response=exc.response.text,
+                    status_code=exc.response.status_code,
+                    duration_ms=(perf_counter() - started_at) * 1000,
+                    error=f"HTTP {exc.response.status_code}",
+                )
+                raise
+            except (httpx.HTTPError, ValueError) as exc:
+                log_llm_exchange(
+                    self.settings,
+                    request_id=request_id,
+                    provider="ollama",
+                    endpoint="/api/embeddings",
+                    model=self.settings.ollama_embedding_model,
+                    request=payload,
+                    response=response.text if "response" in locals() else None,
+                    status_code=response.status_code if "response" in locals() else None,
+                    duration_ms=(perf_counter() - started_at) * 1000,
+                    error=repr(exc),
+                )
+                raise
         embedding = data.get("embedding")
         if not isinstance(embedding, list) or not embedding:
+            log_llm_exchange(
+                self.settings,
+                request_id=request_id,
+                provider="ollama",
+                endpoint="/api/embeddings",
+                model=self.settings.ollama_embedding_model,
+                request=payload,
+                response=data,
+                status_code=response.status_code,
+                duration_ms=(perf_counter() - started_at) * 1000,
+                error="Ollama returned an empty embedding.",
+            )
             raise ValueError("Ollama returned an empty embedding.")
-        return [float(value) for value in embedding]
+        try:
+            values = [float(value) for value in embedding]
+        except (TypeError, ValueError) as exc:
+            log_llm_exchange(
+                self.settings,
+                request_id=request_id,
+                provider="ollama",
+                endpoint="/api/embeddings",
+                model=self.settings.ollama_embedding_model,
+                request=payload,
+                response=data,
+                status_code=response.status_code,
+                duration_ms=(perf_counter() - started_at) * 1000,
+                error=repr(exc),
+            )
+            raise
+        log_llm_exchange(
+            self.settings,
+            request_id=request_id,
+            provider="ollama",
+            endpoint="/api/embeddings",
+            model=self.settings.ollama_embedding_model,
+            request=payload,
+            response=data,
+            status_code=response.status_code,
+            duration_ms=(perf_counter() - started_at) * 1000,
+        )
+        return values
 
     def _add_vectors(self, chunk_ids: list[int], embeddings: list[list[float]]) -> None:
         vectors = normalize_vectors(embeddings)

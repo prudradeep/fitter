@@ -520,6 +520,25 @@ CREATE TABLE IF NOT EXISTS user_activities (
   INDEX ix_user_activities_activity_type (activity_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS llm_exchange_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  request_id VARCHAR(64) NOT NULL,
+  provider VARCHAR(80) NOT NULL,
+  endpoint VARCHAR(255) NOT NULL,
+  model VARCHAR(255) NOT NULL,
+  status_code INT NULL,
+  duration_ms DOUBLE NULL,
+  request_payload LONGTEXT NOT NULL,
+  response_payload LONGTEXT NULL,
+  error TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX ix_llm_exchange_logs_request_id (request_id),
+  INDEX ix_llm_exchange_logs_provider (provider),
+  INDEX ix_llm_exchange_logs_endpoint (endpoint),
+  INDEX ix_llm_exchange_logs_model (model),
+  INDEX ix_llm_exchange_logs_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 INSERT INTO countries (name, map_code, map_path) VALUES
   ('Germany', 'DE', 'countries/de/de-all.geo.json'),
   ('Hungary', 'HU', 'countries/hu/hu-all.geo.json'),

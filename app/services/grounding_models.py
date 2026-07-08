@@ -1,8 +1,10 @@
 import logging
+from time import perf_counter
 
 import httpx
 
 from app.config import get_settings
+from app.services.llm_logging import log_llm_exchange, new_llm_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -54,18 +56,48 @@ class GroundingModelService:
                     indexed_documents,
                     self.max_reranker_documents_per_request,
                 ):
+                    payload = {
+                        "query": query_text,
+                        "documents": [document for _, document in chunk],
+                    }
+                    request_id = new_llm_request_id()
+                    started_at = perf_counter()
                     response = await client.post(
                         self.settings.reranker_url,
-                        json={
-                            "query": query_text,
-                            "documents": [document for _, document in chunk],
-                        },
+                        json=payload,
                     )
                     response.raise_for_status()
-                    chunk_scores = self._reranker_scores(response.json(), len(chunk))
+                    response_payload = response.json()
+                    log_llm_exchange(
+                        self.settings,
+                        request_id=request_id,
+                        provider="dr-transition-grounding",
+                        endpoint=self.settings.reranker_url,
+                        model=self.settings.reranker_model,
+                        request=payload,
+                        response=response_payload,
+                        status_code=response.status_code,
+                        duration_ms=(perf_counter() - started_at) * 1000,
+                    )
+                    chunk_scores = self._reranker_scores(response_payload, len(chunk))
                     for (index, _), score in zip(chunk, chunk_scores, strict=True):
                         scores_by_index[index] = score
         except (httpx.HTTPError, ValueError, TypeError) as exc:
+            if "request_id" in locals() and "payload" in locals():
+                log_llm_exchange(
+                    self.settings,
+                    request_id=request_id,
+                    provider="dr-transition-grounding",
+                    endpoint=self.settings.reranker_url,
+                    model=self.settings.reranker_model,
+                    request=payload,
+                    response=response.text if "response" in locals() else None,
+                    status_code=response.status_code if "response" in locals() else None,
+                    duration_ms=(perf_counter() - started_at) * 1000
+                    if "started_at" in locals()
+                    else None,
+                    error=repr(exc),
+                )
             self.reranker_status = "RETRIEVAL_SCORE_FALLBACK"
             logger.warning(
                 "Dedicated reranker unavailable; using retrieval scores: %s",
@@ -167,15 +199,45 @@ class GroundingModelService:
                         }
                         for pair in chunk
                     ]
+                    payload = {"pairs": request_pairs}
+                    request_id = new_llm_request_id()
+                    started_at = perf_counter()
                     response = await client.post(
                         self.settings.nli_url,
-                        json={"pairs": request_pairs},
+                        json=payload,
                     )
                     response.raise_for_status()
-                    chunk_verdicts = self._nli_verdicts(response.json(), len(chunk))
+                    response_payload = response.json()
+                    log_llm_exchange(
+                        self.settings,
+                        request_id=request_id,
+                        provider="dr-transition-grounding",
+                        endpoint=self.settings.nli_url,
+                        model=self.settings.nli_model,
+                        request=payload,
+                        response=response_payload,
+                        status_code=response.status_code,
+                        duration_ms=(perf_counter() - started_at) * 1000,
+                    )
+                    chunk_verdicts = self._nli_verdicts(response_payload, len(chunk))
                     for pair, verdict in zip(chunk, chunk_verdicts, strict=True):
                         verdicts[int(pair["__index"])] = verdict
         except (httpx.HTTPError, ValueError, TypeError) as exc:
+            if "request_id" in locals() and "payload" in locals():
+                log_llm_exchange(
+                    self.settings,
+                    request_id=request_id,
+                    provider="dr-transition-grounding",
+                    endpoint=self.settings.nli_url,
+                    model=self.settings.nli_model,
+                    request=payload,
+                    response=response.text if "response" in locals() else None,
+                    status_code=response.status_code if "response" in locals() else None,
+                    duration_ms=(perf_counter() - started_at) * 1000
+                    if "started_at" in locals()
+                    else None,
+                    error=repr(exc),
+                )
             self.nli_status = "STRICT_LLM_FALLBACK"
             logger.warning(
                 "Dedicated NLI unavailable; using strict LLM verification: %s",

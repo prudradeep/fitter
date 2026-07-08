@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     ollama_model: str = "mistral-nemo"
     ollama_embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: int = 1200
+    llm_log_enabled: bool = True
+    llm_log_to_file: bool = True
+    llm_log_to_db: bool = True
+    llm_log_path: str = "data/service-runtime/logs/llm_requests.jsonl"
 
     faiss_index_path: str = "data/knowledge.faiss"
     reranker_url: str = ""

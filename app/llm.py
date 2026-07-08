@@ -1,9 +1,11 @@
 import logging
+from time import perf_counter
 from typing import Any
 
 import httpx
 
 from app.config import get_settings
+from app.services.llm_logging import log_llm_exchange, new_llm_request_id
 from app.services.prompt_loader import load_nested_prompt_file
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,8 @@ async def ask_llm_chat(
             "num_predict": max_tokens,
         },
     }
+    request_id = new_llm_request_id()
+    started_at = perf_counter()
 
     try:
         async with httpx.AsyncClient(
@@ -47,10 +51,34 @@ async def ask_llm_chat(
             response.raise_for_status()
             data = response.json()
             answer = _extract_chat_content(data).strip()
+            log_llm_exchange(
+                settings,
+                request_id=request_id,
+                provider="ollama",
+                endpoint="/api/chat",
+                model=settings.ollama_model,
+                request=payload,
+                response=data,
+                status_code=response.status_code,
+                duration_ms=(perf_counter() - started_at) * 1000,
+            )
             if answer:
                 return answer
             logger.warning("Ollama returned an empty response")
     except httpx.TimeoutException:
+        log_llm_exchange(
+            settings,
+            request_id=request_id,
+            provider="ollama",
+            endpoint="/api/chat",
+            model=settings.ollama_model,
+            request=payload,
+            duration_ms=(perf_counter() - started_at) * 1000,
+            error=(
+                f"Timeout after {settings.ollama_timeout_seconds} seconds "
+                f"for model {settings.ollama_model}"
+            ),
+        )
         logger.warning(
             "Ollama request timed out after %s seconds for model %s",
             settings.ollama_timeout_seconds,
@@ -62,18 +90,52 @@ async def ask_llm_chat(
             "or use a smaller/faster Ollama model for this workflow."
         )
     except httpx.HTTPStatusError as exc:
+        log_llm_exchange(
+            settings,
+            request_id=request_id,
+            provider="ollama",
+            endpoint="/api/chat",
+            model=settings.ollama_model,
+            request=payload,
+            response=exc.response.text,
+            status_code=exc.response.status_code,
+            duration_ms=(perf_counter() - started_at) * 1000,
+            error=f"HTTP {exc.response.status_code}",
+        )
         logger.warning("Ollama returned HTTP %s: %s", exc.response.status_code, exc.response.text)
         return (
             f"Ollama returned HTTP {exc.response.status_code} for model "
             f"`{settings.ollama_model}`. Check that the model is installed and available."
         )
     except httpx.HTTPError as exc:
+        log_llm_exchange(
+            settings,
+            request_id=request_id,
+            provider="ollama",
+            endpoint="/api/chat",
+            model=settings.ollama_model,
+            request=payload,
+            duration_ms=(perf_counter() - started_at) * 1000,
+            error=repr(exc),
+        )
         logger.exception("Ollama request failed")
         return (
             f"I cannot reach Ollama at `{settings.ollama_base_url}` right now. "
             "Please make sure the Ollama service is running."
         )
-    except ValueError:
+    except ValueError as exc:
+        log_llm_exchange(
+            settings,
+            request_id=request_id,
+            provider="ollama",
+            endpoint="/api/chat",
+            model=settings.ollama_model,
+            request=payload,
+            response=response.text if "response" in locals() else None,
+            status_code=response.status_code if "response" in locals() else None,
+            duration_ms=(perf_counter() - started_at) * 1000,
+            error=repr(exc),
+        )
         logger.exception("Ollama returned invalid JSON")
         return "Ollama returned an invalid response. Please try the request again."
 

@@ -106,6 +106,17 @@ http://localhost:11434
 
 The guided wizard works even if Ollama is not running; `app/llm.py` returns a graceful fallback message when the local model is unavailable.
 
+LLM request/response logging is enabled by default. Chat and embedding calls are appended as JSON Lines to:
+
+```env
+LLM_LOG_ENABLED=true
+LLM_LOG_TO_FILE=true
+LLM_LOG_TO_DB=true
+LLM_LOG_PATH="data/service-runtime/logs/llm_requests.jsonl"
+```
+
+The same audit payload is also stored in the `llm_exchange_logs` database table when `LLM_LOG_TO_DB` is enabled. Logging failures are reported to the normal app logs and do not block model workflows.
+
 ## FAISS Knowledge Base
 
 The app stores knowledge-base document metadata and chunk text/source/page records in MySQL. It stores vector embeddings in a local FAISS index file. Configure the index path and embedding model in `.env` when needed:
