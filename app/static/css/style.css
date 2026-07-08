@@ -318,6 +318,17 @@
   background: #334155;
 }
 
+.settings-export-panel {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-export-panel small {
+  color: #64748b;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
 .reset-button {
   position: relative;
   overflow: hidden;

@@ -56,6 +56,10 @@ const validationModeToggle = document.querySelector("#validationModeToggle");
 const validationModeLabel = document.querySelector("#validationModeLabel");
 const crowdSourcingToggle = document.querySelector("#crowdSourcingToggle");
 const voicePreferenceSelect = document.querySelector("#voicePreferenceSelect");
+const exportSessionButton = document.querySelector("#exportSessionButton");
+const importSessionButton = document.querySelector("#importSessionButton");
+const importSessionInput = document.querySelector("#importSessionInput");
+const exportSessionStatus = document.querySelector("#exportSessionStatus");
 const voiceAnalyzerElement = document.querySelector("#voiceAnalyzer");
 const sessionsButton = document.querySelector("#sessionsButton");
 const sessionsPanel = document.querySelector("#sessionsPanel");
@@ -3518,6 +3522,138 @@ function renderSessions(sessions) {
   });
 }
 
+function selectedFileInfo(input) {
+  return Array.from(input?.files || []).map((file) => ({
+    name: file.name,
+    size: file.size,
+    type: file.type || "",
+    last_modified: file.lastModified ? new Date(file.lastModified).toISOString() : null,
+  }));
+}
+
+function currentInputExportValues() {
+  const savedState = inputStateKey() ? localStorage.getItem(inputStateKey()) : null;
+  return {
+    session_id: sessionId,
+    step: currentStep,
+    input_mode: inputMode,
+    validation_mode: currentValidationMode(),
+    crowd_sourcing_enabled: crowdSourcingEnabled(),
+    visible_session: currentSession,
+    visible_options: currentOptions,
+    visible_other_options: currentOtherOptions,
+    text_message: messageInput?.value || "",
+    textarea_message: textareaInput?.value || "",
+    reason: reasonInput?.value || "",
+    secondary_reason: secondaryReasonInput?.value || "",
+    evidence_url: evidenceInput?.value || "",
+    evidence_files: selectedFileInfo(evidenceFileInput),
+    evaluation_score: scoreInput?.value || "",
+    evaluation_reason: evaluationReasonInput?.value || "",
+    evaluation_evidence_url: evaluationEvidenceInput?.value || "",
+    evaluation_evidence_files: selectedFileInfo(evaluationEvidenceFileInput),
+    stats_dialog_input: statsDialogInput?.value || "",
+    saved_local_input_state: savedState,
+  };
+}
+
+function downloadJson(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportFilename(title = "session") {
+  const safeTitle = String(title || "session")
+    .trim()
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "session";
+  return `dr-transition-${safeTitle}-${new Date().toISOString().slice(0, 10)}.json`;
+}
+
+async function exportCurrentSession() {
+  if (!exportSessionButton || !exportSessionStatus) return;
+  if (!sessionId) {
+    exportSessionStatus.textContent = "No active session to export.";
+    exportSessionStatus.hidden = false;
+    return;
+  }
+  exportSessionButton.disabled = true;
+  exportSessionStatus.textContent = "Preparing export...";
+  exportSessionStatus.hidden = false;
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/export`);
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || "Could not export session.");
+    }
+    data.client_input_values = currentInputExportValues();
+    data.export_notes = {
+      evidence_file_contents: "Browser export includes selected file names and metadata, not local file bytes.",
+    };
+    downloadJson(exportFilename(data.session?.title), data);
+    exportSessionStatus.textContent = "Session export downloaded.";
+  } catch (error) {
+    exportSessionStatus.textContent = error.message || "Could not export session.";
+  } finally {
+    exportSessionButton.disabled = false;
+  }
+}
+
+function chooseSessionImportFile() {
+  importSessionInput?.click();
+}
+
+async function importSessionFile() {
+  if (!importSessionInput || !exportSessionStatus) return;
+  const file = importSessionInput.files?.[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".json")) {
+    exportSessionStatus.textContent = "Please choose an exported session JSON file.";
+    exportSessionStatus.hidden = false;
+    importSessionInput.value = "";
+    return;
+  }
+  if (importSessionButton) importSessionButton.disabled = true;
+  exportSessionStatus.textContent = "Importing session...";
+  exportSessionStatus.hidden = false;
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch("/api/sessions/import", {
+      method: "POST",
+      body: formData,
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || "Could not import session.");
+    }
+    exportSessionStatus.textContent = `Imported session with ${Number(data.messages || 0)} message(s).`;
+    await loadSessions();
+    await restoreSession(data.session_id);
+  } catch (error) {
+    exportSessionStatus.textContent = error.message || "Could not import session.";
+  } finally {
+    importSessionInput.value = "";
+    if (importSessionButton) importSessionButton.disabled = false;
+  }
+}
+
 function showKnowledgeMessage(message, isError = true) {
   if (!knowledgeMessage) return;
   knowledgeMessage.textContent = message;
@@ -4242,6 +4378,9 @@ settingsButton?.addEventListener("click", () => {
 });
 
 closeSettingsButton?.addEventListener("click", closeSettingsDrawer);
+exportSessionButton?.addEventListener("click", exportCurrentSession);
+importSessionButton?.addEventListener("click", chooseSessionImportFile);
+importSessionInput?.addEventListener("change", importSessionFile);
 
 document.addEventListener("click", (event) => {
   if (

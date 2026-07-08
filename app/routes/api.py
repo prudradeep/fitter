@@ -1,7 +1,9 @@
 import json
 import re
 import zipfile
+from datetime import datetime
 from xml.etree import ElementTree
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, Request
 import httpx
@@ -62,7 +64,7 @@ async def stats_deep_dive(
 @router.post("/auto-user-message")
 async def auto_user_message(
     payload: ChatRequest,
-    current_user: AppUser = Depends(require_current_user),
+    current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     service = ChatService(db, user_id=current_user.id)
@@ -204,6 +206,142 @@ async def restore_session(
             }
             for message in messages
         ],
+    }
+
+
+@router.get("/sessions/{session_key}/export")
+async def export_session(
+    session_key: str,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    user_session = db.scalar(
+        select(UserSession).where(
+            UserSession.session_key == session_key,
+            UserSession.user_id == current_user.id,
+        )
+    )
+    if user_session is None:
+        return {"error": True, "detail": "Session not found."}
+
+    session_data: dict[str, object] = {}
+    if user_session.session_data:
+        try:
+            parsed = json.loads(user_session.session_data)
+            if isinstance(parsed, dict):
+                session_data = parsed
+        except json.JSONDecodeError:
+            session_data = {}
+
+    service = ChatService(db, user_id=current_user.id)
+    rows = db.scalars(
+        select(UserChatMessage)
+        .where(UserChatMessage.user_session_id == user_session.id)
+        .order_by(UserChatMessage.created_at, UserChatMessage.id)
+    ).all()
+    return {
+        "error": False,
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "session": {
+            "session_id": user_session.session_key,
+            "title": user_session.title or "New policy session",
+            "country_id": user_session.country_id,
+            "region_id": user_session.region_id,
+            "sector_id": user_session.sector_id,
+            "created_at": user_session.created_at.isoformat() if user_session.created_at else None,
+            "updated_at": user_session.updated_at.isoformat() if user_session.updated_at else None,
+            "data": session_data,
+        },
+        "messages": [
+            {
+                "id": message.id,
+                "role": message.role,
+                "content": service._chat_message_display_content(message.content),
+                "raw_content": message.content,
+                "is_error": message.is_error,
+                "created_at": message.created_at.isoformat() if message.created_at else None,
+            }
+            for message in rows
+        ],
+    }
+
+
+@router.post("/sessions/import")
+async def import_session(
+    request: Request,
+    current_user: AppUser = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    form = await request.form()
+    upload = form.get("file")
+    filename = str(getattr(upload, "filename", "") or "").strip()
+    if not filename.casefold().endswith(".json") or not hasattr(upload, "read"):
+        return {"error": True, "detail": "Please choose an exported session JSON file."}
+
+    content = await upload.read()
+    if len(content) > 10 * 1024 * 1024:
+        return {"error": True, "detail": "Session export is too large to import."}
+    try:
+        payload = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {"error": True, "detail": "Could not read exported session JSON."}
+    if not isinstance(payload, dict):
+        return {"error": True, "detail": "Invalid session export format."}
+
+    exported_session = payload.get("session")
+    if not isinstance(exported_session, dict):
+        return {"error": True, "detail": "Export does not include session data."}
+    session_data = exported_session.get("data")
+    if not isinstance(session_data, dict):
+        session_data = {}
+
+    new_session_key = str(uuid4())
+    session_data["session_key"] = new_session_key
+    title = str(exported_session.get("title") or "Imported session").strip()[:220]
+    user_session = UserSession(
+        session_key=new_session_key,
+        title=title or "Imported session",
+        title_is_manual=True,
+        session_data=json.dumps(session_data, default=str),
+        user_id=current_user.id,
+        country_id=_optional_int(exported_session.get("country_id") or session_data.get("country_id")),
+        region_id=_optional_int(exported_session.get("region_id") or session_data.get("region_id")),
+        sector_id=_optional_int(exported_session.get("sector_id") or session_data.get("sector_id")),
+    )
+    db.add(user_session)
+    db.flush()
+
+    imported_messages = 0
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            content_value = str(item.get("raw_content") or item.get("content") or "").strip()
+            if not content_value:
+                continue
+            role = str(item.get("role") or "user").strip().casefold()
+            if role == "assistant":
+                role = "bot"
+            if role not in {"user", "bot", "assistant", "system"}:
+                role = "user"
+            db.add(
+                UserChatMessage(
+                    user_session_id=user_session.id,
+                    role=role[:20],
+                    content=content_value,
+                    is_error=bool(item.get("is_error")),
+                )
+            )
+            imported_messages += 1
+
+    db.commit()
+    session_store.put(new_session_key, session_data)
+    return {
+        "error": False,
+        "session_id": new_session_key,
+        "title": user_session.title,
+        "messages": imported_messages,
     }
 
 
@@ -379,7 +517,7 @@ async def knowledge_search(
 
 @router.post("/sector-prompts/reindex")
 async def sector_prompts_reindex(
-    current_user: AppUser = Depends(require_current_user),
+    current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     _ = current_user
@@ -393,7 +531,7 @@ async def sector_prompts_reindex(
 @router.post("/sector-prompts/search")
 async def sector_prompts_search(
     request: Request,
-    current_user: AppUser = Depends(require_current_user),
+    current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     _ = current_user
@@ -497,6 +635,15 @@ def _validation_mode(value: object) -> str:
 
 def _truthy(value: object) -> bool:
     return str(value or "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _knowledge_urls_from_payload(payload: dict[str, object]) -> list[str]:

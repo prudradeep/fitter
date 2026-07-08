@@ -65,8 +65,6 @@ class ChatPersistenceMixin:
         self, session_id: str, session: ChatSession, response: ChatResponse
     ) -> None:
         self._ensure_user_session(session_id, session)
-        if response.error:
-            return
         self._record_chat_message(
             session_id,
             session,

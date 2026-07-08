@@ -200,8 +200,9 @@ class ChatService(
         response = await self._chat_response(current_session_id, session, clean_message)
         self._attach_persisted_session_counts(current_session_id, session, response)
         self._attach_other_options(response, session)
-        if clean_message and not response.error:
-            self._record_activity(current_session_id, session, "message_received", clean_message)
+        if clean_message:
+            if not response.error:
+                self._record_activity(current_session_id, session, "message_received", clean_message)
             self._record_chat_message(
                 current_session_id,
                 session,
