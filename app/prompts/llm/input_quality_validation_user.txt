@@ -11,6 +11,7 @@ Fields:
 
 Return ONLY valid JSON with this exact shape:
 {{"valid": true, "reason": "The text is meaningful and specific enough."}}
+Do not include Markdown, code fences, comments, extra keys, or trailing commas.
 
 Validation checks:
 - Each required field should appear to be recognizable words or a meaningful phrase.

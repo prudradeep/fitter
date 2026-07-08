@@ -1,8 +1,8 @@
 Classify the user's intent in a country-region-sector selection wizard.
 
-Return JSON only:
+Return one valid JSON object only:
 {
-  "intent": "change_country | change_region | change_sector | selection | question | unclear",
+  "intent": "selection | multi_selection | question | confirmation_yes | confirmation_no | change_country | change_region | change_sector | restart_selection | unclear",
   "confidence": "high",
   "reason": "Brief reason."
 }
@@ -23,6 +23,7 @@ Rules:
 - Do not answer questions.
 - Do not select options.
 - Classify intent only.
+- Return one valid JSON object only, with no Markdown, code fences, comments, or extra keys.
 - confidence must be "high", "medium", or "low".
 - If uncertain, use intent="unclear" and confidence="low".
 - Exact option labels in the provided context usually mean selection.

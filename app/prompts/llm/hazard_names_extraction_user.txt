@@ -6,6 +6,9 @@ List all the hazards perceived for the selected sector. Return ONLY valid JSON, 
 
 Rules:
 - Use only hazards named in the sector prompt.
+- Preserve each hazard name as closely as possible while removing numbering,
+  bullets, and duplicated whitespace.
 - Each item must be only the hazard name.
-- Do not include profiles, explanations, Markdown, or code fences.
+- Return a JSON array only. Do not include profiles, explanations, Markdown,
+  code fences, comments, or trailing commas.
 - If the sector analysis is unavailable, return ["Analysis not available"].

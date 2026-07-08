@@ -198,6 +198,7 @@ class ChatService(
         self._ensure_user_session(current_session_id, session)
 
         response = await self._chat_response(current_session_id, session, clean_message)
+        self._attach_persisted_session_counts(current_session_id, session, response)
         self._attach_other_options(response, session)
         if clean_message and not response.error:
             self._record_activity(current_session_id, session, "message_received", clean_message)
@@ -254,6 +255,7 @@ class ChatService(
             history=session.stats_dialog_conversation or [],
             persist_history=False,
         )
+        self._attach_persisted_session_counts(current_session_id, session, response)
         response.other_options = []
         await self._attach_voice_summary(response)
         return response

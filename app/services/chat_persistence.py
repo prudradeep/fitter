@@ -2,9 +2,9 @@ import json
 import logging
 from dataclasses import asdict
 
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, func, or_, select
 
-from app.models import UserActivity, UserChatMessage, UserSession
+from app.models import UserActivity, UserChatMessage, UserHazard, UserMitigationMeasure, UserSession
 from app.schemas import ChatResponse
 from app.services.chat_session import ChatSession, session_store
 
@@ -74,6 +74,71 @@ class ChatPersistenceMixin:
             response.bot_message,
             is_error=response.error,
         )
+
+    def _attach_persisted_session_counts(
+        self,
+        session_id: str,
+        session: ChatSession,
+        response: ChatResponse,
+    ) -> None:
+        response.session.mitigation_measure_count = max(
+            int(response.session.mitigation_measure_count or 0),
+            self._persisted_mitigation_measure_count(session_id, session),
+        )
+
+    def _persisted_mitigation_measure_count(
+        self,
+        session_id: str,
+        session: ChatSession,
+    ) -> int:
+        _ = session_id
+        if session.country_id is None or session.sector_id is None:
+            return 0
+
+        try:
+            scope_filters = [
+                UserSession.country_id == session.country_id,
+                UserSession.region_id.is_(None)
+                if session.region_id is None
+                else UserSession.region_id == session.region_id,
+                UserSession.sector_id == session.sector_id,
+            ]
+            visibility_filters = self._visible_mitigation_measure_filters()
+            direct_count = self.db.scalar(
+                select(func.count(UserMitigationMeasure.id))
+                .join(UserSession, UserSession.id == UserMitigationMeasure.user_session_id)
+                .where(
+                    *scope_filters,
+                    *visibility_filters,
+                )
+            ) or 0
+            linked_count = self.db.scalar(
+                select(func.count(UserMitigationMeasure.id))
+                .join(UserHazard, UserHazard.id == UserMitigationMeasure.user_hazard_id)
+                .join(UserSession, UserSession.id == UserHazard.user_session_id)
+                .where(
+                    UserMitigationMeasure.user_session_id.is_(None),
+                    *scope_filters,
+                    *visibility_filters,
+                )
+            ) or 0
+            return int(direct_count) + int(linked_count)
+        except Exception:
+            logger.exception("Failed to count persisted mitigation measures")
+            return 0
+
+    def _visible_mitigation_measure_filters(self) -> list[object]:
+        if self.user_id is None:
+            return []
+        return [
+            or_(
+                UserSession.user_id == self.user_id,
+                and_(
+                    UserMitigationMeasure.validation_mode == "strict",
+                    UserMitigationMeasure.is_crowd_sourced.is_(True),
+                ),
+            )
+        ]
 
     def _record_chat_message(
         self,

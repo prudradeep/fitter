@@ -15,5 +15,6 @@ Rules:
 - Include protective/lower-concern confirmed predictors too, labelled plainly in the explanation as lower concern or protective.
 - Keep profile names concise and explanations under 24 words.
 - Explanations should be plain-language, hazard-specific, and grounded in the prompt context.
-- Do not include statistical basis, model metrics, caveats, Markdown, or code fences.
+- Return a JSON array only. Do not include model metrics, caveats, Markdown,
+  code fences, comments, extra keys, or trailing commas.
 - If no profiles are clearly supported for this hazard, return [].

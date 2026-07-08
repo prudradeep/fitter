@@ -6,4 +6,4 @@ Session context:
 Stats question:
 {user_message}
 
-Answer in Markdown. Be practical and structured. Stay focused on the loaded statistical findings, mapped affected profiles, predictors, regional/national comparison, and averages. Do not include a heading or bullet named 'Policy Implications'.
+Answer in Markdown. Be practical and structured. Stay focused on the loaded statistical findings, mapped affected profiles, predictors, regional/national comparison, and averages. If the question is not statistical, briefly say this dialog is limited to statistical findings. Do not include a heading or bullet named 'Policy Implications'.
