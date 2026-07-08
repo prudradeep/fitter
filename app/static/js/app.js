@@ -75,6 +75,7 @@ const knowledgeProgressSection = document.querySelector("#knowledgeProgressSecti
 const knowledgeProgressList = document.querySelector("#knowledgeProgressList");
 const knowledgeDocuments = document.querySelector("#knowledgeDocuments");
 const knowledgeResults = document.querySelector("#knowledgeResults");
+const canManageMainKnowledge = knowledgeDialog?.dataset.canManageMainKb === "true";
 const sectorPromptReindexButton = document.querySelector("#sectorPromptReindexButton");
 const sectorPromptSearchForm = document.querySelector("#sectorPromptSearchForm");
 const sectorPromptSectorInput = document.querySelector("#sectorPromptSectorInput");
@@ -3632,7 +3633,7 @@ function renderKnowledgeDocuments(documents) {
   if (!knowledgeDocuments) return;
   knowledgeDocuments.innerHTML = "";
   if (!documents.length) {
-    knowledgeDocuments.innerHTML = `<p class="sessions-empty">No knowledge documents yet.</p>`;
+    knowledgeDocuments.innerHTML = `<p class="sessions-empty">No main knowledge documents yet.</p>`;
     return;
   }
   documents.forEach((documentItem) => {
@@ -3644,14 +3645,16 @@ function renderKnowledgeDocuments(documents) {
         <small>${escapeHtml(documentItem.source_type || "document")}</small>
       </div>
     `;
-    const deleteButton = document.createElement("button");
-    deleteButton.type = "button";
-    deleteButton.className = "knowledge-delete-button";
-    deleteButton.textContent = "×";
-    deleteButton.setAttribute("aria-label", `Delete ${documentItem.title}`);
-    deleteButton.title = "Delete document";
-    deleteButton.addEventListener("click", () => deleteKnowledgeDocument(documentItem.id));
-    row.appendChild(deleteButton);
+    if (canManageMainKnowledge) {
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "knowledge-delete-button";
+      deleteButton.textContent = "×";
+      deleteButton.setAttribute("aria-label", `Delete ${documentItem.title}`);
+      deleteButton.title = "Delete document";
+      deleteButton.addEventListener("click", () => deleteKnowledgeDocument(documentItem.id));
+      row.appendChild(deleteButton);
+    }
     knowledgeDocuments.appendChild(row);
   });
 }

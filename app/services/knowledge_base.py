@@ -6,7 +6,7 @@ from threading import Lock
 from time import perf_counter
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -32,6 +32,11 @@ CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 180
 FAISS_LOCK = Lock()
 LEXICAL_WEIGHT = 0.55
+MAIN_KB_SCOPE = "main"
+TEMPORARY_KB_SCOPE = "temporary"
+VALIDATED_EVIDENCE_SCOPE = "validated_evidence"
+SECTOR_PROMPT_SCOPE = "sector_prompt"
+QUARANTINED_SCOPE = "quarantined"
 
 
 @dataclass(frozen=True)
@@ -54,13 +59,19 @@ class KnowledgeBaseService:
         self,
         db: Session,
         user_id: int | None,
-        scope: str = "main",
+        scope: str = MAIN_KB_SCOPE,
         session_key: str | None = None,
+        country_id: int | None = None,
+        region_id: int | None = None,
+        sector_id: int | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
         self.scope = scope
         self.session_key = session_key
+        self.country_id = country_id
+        self.region_id = region_id
+        self.sector_id = sector_id
         self.settings = get_settings()
         self.grounding_models = GroundingModelService()
 
@@ -121,7 +132,14 @@ class KnowledgeBaseService:
             source_type=source_type,
             source_uri=source_uri,
             scope=self.scope,
-            session_key=self.session_key if self.scope in {"temporary", "quarantined"} else None,
+            session_key=(
+                self.session_key
+                if self.scope in {TEMPORARY_KB_SCOPE, QUARANTINED_SCOPE}
+                else None
+            ),
+            country_id=self.country_id if self.scope == VALIDATED_EVIDENCE_SCOPE else None,
+            region_id=self.region_id if self.scope == VALIDATED_EVIDENCE_SCOPE else None,
+            sector_id=self.sector_id if self.scope == VALIDATED_EVIDENCE_SCOPE else None,
         )
         self.db.add(document)
         self.db.flush()
@@ -174,7 +192,7 @@ class KnowledgeBaseService:
         rows = self.db.scalars(
             select(KnowledgeDocument)
             .where(
-                KnowledgeDocument.user_id == self.user_id,
+                *self._document_access_filters(),
                 KnowledgeDocument.scope == self.scope,
             )
             .order_by(KnowledgeDocument.created_at.desc(), KnowledgeDocument.id.desc())
@@ -196,7 +214,7 @@ class KnowledgeBaseService:
             .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
             .where(
                 KnowledgeDocument.id == document_id,
-                KnowledgeDocument.user_id == self.user_id,
+                *self._document_access_filters(),
                 KnowledgeDocument.scope == self.scope,
             )
         ).all()
@@ -204,7 +222,7 @@ class KnowledgeBaseService:
             row = self.db.scalar(
                 select(KnowledgeDocument).where(
                     KnowledgeDocument.id == document_id,
-                    KnowledgeDocument.user_id == self.user_id,
+                    *self._document_access_filters(),
                     KnowledgeDocument.scope == self.scope,
                 )
             )
@@ -215,7 +233,7 @@ class KnowledgeBaseService:
         result = self.db.execute(
             delete(KnowledgeDocument).where(
                 KnowledgeDocument.id == document_id,
-                KnowledgeDocument.user_id == self.user_id,
+                *self._document_access_filters(),
                 KnowledgeDocument.scope == self.scope,
             )
         )
@@ -287,11 +305,25 @@ class KnowledgeBaseService:
         chunk_ids: list[int] | None = None,
     ) -> list[tuple[KnowledgeChunk, KnowledgeDocument]]:
         filters = [
-            KnowledgeDocument.user_id == self.user_id,
             KnowledgeDocument.scope == self.scope,
+            *self._document_access_filters(),
         ]
-        if self.scope == "temporary":
+        if self.scope == TEMPORARY_KB_SCOPE:
             filters.append(KnowledgeDocument.session_key == self.session_key)
+        if self.scope == VALIDATED_EVIDENCE_SCOPE:
+            if self.country_id is not None:
+                filters.append(KnowledgeDocument.country_id == self.country_id)
+            if self.sector_id is not None:
+                filters.append(KnowledgeDocument.sector_id == self.sector_id)
+            if self.region_id is not None:
+                filters.append(
+                    or_(
+                        KnowledgeDocument.region_id == self.region_id,
+                        KnowledgeDocument.region_id.is_(None),
+                    )
+                )
+            else:
+                filters.append(KnowledgeDocument.region_id.is_(None))
         if source_uri_filter:
             filters.append(KnowledgeDocument.source_uri.in_(source_uri_filter))
         if chunk_ids is not None:
@@ -333,18 +365,18 @@ class KnowledgeBaseService:
         return results
 
     def delete_temporary_documents(self, document_ids: list[int] | None = None) -> int:
-        if self.scope != "temporary" or not self.session_key:
+        if self.scope != TEMPORARY_KB_SCOPE or not self.session_key:
             return 0
         query = select(KnowledgeChunk.id).join(
             KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id
         ).where(
             KnowledgeDocument.user_id == self.user_id,
-            KnowledgeDocument.scope == "temporary",
+            KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
             KnowledgeDocument.session_key == self.session_key,
         )
         document_query = delete(KnowledgeDocument).where(
             KnowledgeDocument.user_id == self.user_id,
-            KnowledgeDocument.scope == "temporary",
+            KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
             KnowledgeDocument.session_key == self.session_key,
         )
         if document_ids:
@@ -384,15 +416,18 @@ class KnowledgeBaseService:
     def promote_temporary_documents(
         self,
         *,
-        target_scope: str = "main",
+        target_scope: str = MAIN_KB_SCOPE,
         provenance: str | None = None,
+        country_id: int | None = None,
+        region_id: int | None = None,
+        sector_id: int | None = None,
     ) -> int:
-        if self.scope != "temporary" or not self.session_key:
+        if self.scope != TEMPORARY_KB_SCOPE or not self.session_key:
             return 0
         documents = self.db.scalars(
             select(KnowledgeDocument).where(
                 KnowledgeDocument.user_id == self.user_id,
-                KnowledgeDocument.scope == "temporary",
+                KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
                 KnowledgeDocument.session_key == self.session_key,
             )
         ).all()
@@ -407,7 +442,14 @@ class KnowledgeBaseService:
         vectors = self._reconstruct_vectors(chunk_ids)
         self._remove_vectors(chunk_ids)
         if vectors:
-            target_service = KnowledgeBaseService(self.db, self.user_id, scope=target_scope)
+            target_service = KnowledgeBaseService(
+                self.db,
+                self.user_id,
+                scope=target_scope,
+                country_id=country_id,
+                region_id=region_id,
+                sector_id=sector_id,
+            )
             target_service._add_vectors(list(vectors), list(vectors.values()))
         validated_at = datetime.now(timezone.utc).isoformat()
         for document in documents:
@@ -425,9 +467,22 @@ class KnowledgeBaseService:
                 for chunk in chunks:
                     chunk.source_type = provenance[:40]
             document.scope = target_scope
-            document.session_key = self.session_key if target_scope == "quarantined" else None
+            document.session_key = self.session_key if target_scope == QUARANTINED_SCOPE else None
+            if target_scope == VALIDATED_EVIDENCE_SCOPE:
+                document.country_id = country_id
+                document.region_id = region_id
+                document.sector_id = sector_id
         self.db.commit()
         return len(documents)
+
+    def _document_access_filters(self) -> list[object]:
+        if self.scope == MAIN_KB_SCOPE:
+            return [KnowledgeDocument.user_id.is_(None)]
+        if self.scope == SECTOR_PROMPT_SCOPE:
+            return [KnowledgeDocument.user_id.is_(None)]
+        if self.scope == VALIDATED_EVIDENCE_SCOPE:
+            return []
+        return [KnowledgeDocument.user_id == self.user_id]
 
     async def _embed_many(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []
@@ -571,7 +626,7 @@ class KnowledgeBaseService:
         return faiss.read_index(str(self._index_path))
 
     def _save_index(self, index) -> None:
-        if self.scope == "temporary" and index.ntotal == 0:
+        if self.scope == TEMPORARY_KB_SCOPE and index.ntotal == 0:
             try:
                 self._index_path.unlink(missing_ok=True)
                 return
@@ -588,11 +643,15 @@ class KnowledgeBaseService:
     @property
     def _index_path(self) -> Path:
         main_path = Path(self.settings.faiss_index_path)
-        if self.scope == "temporary":
+        if self.scope == MAIN_KB_SCOPE:
+            return main_path.with_name(f"{main_path.stem}.main{main_path.suffix}")
+        if self.scope == TEMPORARY_KB_SCOPE:
             return main_path.with_name(f"{main_path.stem}.temporary{main_path.suffix}")
-        if self.scope == "sector_prompt":
+        if self.scope == SECTOR_PROMPT_SCOPE:
             return main_path.with_name(f"{main_path.stem}.sector_prompts{main_path.suffix}")
-        if self.scope == "quarantined":
+        if self.scope == VALIDATED_EVIDENCE_SCOPE:
+            return main_path.with_name(f"{main_path.stem}.validated_evidence{main_path.suffix}")
+        if self.scope == QUARANTINED_SCOPE:
             return main_path.with_name(f"{main_path.stem}.quarantined{main_path.suffix}")
         return main_path
 

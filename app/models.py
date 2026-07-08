@@ -146,6 +146,7 @@ class AppUser(Base):
     designation: Mapped[str] = mapped_column(String(160), nullable=False)
     organisation_type: Mapped[str] = mapped_column(String(160), nullable=False)
     organisation_name: Mapped[str] = mapped_column(String(220), nullable=False)
+    role: Mapped[str] = mapped_column(String(40), nullable=False, default="user", server_default="user")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -534,6 +535,9 @@ class KnowledgeDocument(Base):
     source_uri: Mapped[str | None] = mapped_column(Text)
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="main", index=True)
     session_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

@@ -35,6 +35,9 @@ def ensure_default_app_user(
     with SessionLocal() as db:
         existing = db.scalar(select(AppUser).where(AppUser.email == normalized_email))
         if existing is not None:
+            if existing.role != "admin":
+                existing.role = "admin"
+                db.commit()
             logging.getLogger(__name__).info(
                 "Default app user already exists: %s", normalized_email
             )
@@ -48,6 +51,7 @@ def ensure_default_app_user(
                 designation=designation,
                 organisation_type=organisation_type,
                 organisation_name=organisation_name,
+                role="admin",
             )
         )
         db.commit()

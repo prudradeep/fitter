@@ -111,7 +111,7 @@
                   </select>
                 </label>
                 <button id="knowledgeButton" class="settings-action-button" type="button">
-                  Knowledge Base
+                  Main Knowledge Base
                 </button>
               </div>
             </aside>
@@ -141,6 +141,10 @@
                 <div>
                   <dt>Organisation</dt>
                   <dd>{{ current_user.organisation_name }}</dd>
+                </div>
+                <div>
+                  <dt>Role</dt>
+                  <dd>{{ current_user.role | title }}</dd>
                 </div>
               </dl>
               <button id="changePasswordLink" class="profile-link-button" type="button">
@@ -590,12 +594,16 @@
       </section>
     </dialog>
 
-    <dialog id="knowledgeDialog" class="target-dialog">
+    <dialog
+      id="knowledgeDialog"
+      class="target-dialog"
+      data-can-manage-main-kb="{{ 'true' if current_user.role == 'admin' else 'false' }}"
+    >
       <section class="target-dialog-panel" aria-label="Knowledge base">
         <header class="stats-dialog-header">
           <div>
-            <h2>Knowledge base</h2>
-            <p>Ingest documents or URLs into the local vector store, then search them.</p>
+            <h2>Main knowledge base</h2>
+            <p>Admin-managed core knowledge available to all users.</p>
           </div>
           <button id="closeKnowledgeButton" type="button" aria-label="Close knowledge base">×</button>
         </header>
@@ -605,6 +613,7 @@
             <div id="knowledgeDocuments" class="knowledge-list"></div>
           </aside>
           <div class="knowledge-body">
+            {% if current_user.role == 'admin' %}
             <section class="knowledge-panel">
               <form id="knowledgeUploadForm" class="knowledge-form">
                 <label>
@@ -626,11 +635,14 @@
               <h3>Ingestion progress</h3>
               <div id="knowledgeProgressList" class="knowledge-progress-list"></div>
             </section>
+            {% else %}
+            <p id="knowledgeMessage" class="dialog-message" hidden></p>
+            {% endif %}
             <section class="knowledge-panel">
               <form id="knowledgeSearchForm" class="knowledge-form">
                 <label>
-                  <span>Search knowledge base</span>
-                  <input id="knowledgeSearchInput" type="search" placeholder="Search uploaded knowledge..." />
+                  <span>Search main knowledge base</span>
+                  <input id="knowledgeSearchInput" type="search" placeholder="Search main knowledge..." />
                 </label>
                 <button type="submit">Search</button>
               </form>

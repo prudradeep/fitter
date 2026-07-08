@@ -110,6 +110,21 @@ def require_current_user(
     return user
 
 
+def is_admin_user(user: AppUser | None) -> bool:
+    return bool(user and str(user.role or "").strip().casefold() == "admin")
+
+
+def require_admin_user(
+    user: Annotated[AppUser, Depends(require_current_user)],
+) -> AppUser:
+    if not is_admin_user(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user
+
+
 def redirect_if_authenticated(request: Request, db: Session) -> RedirectResponse | None:
     user_id = user_id_from_token(request.cookies.get(AUTH_COOKIE_NAME))
     if user_id is None:

@@ -99,7 +99,7 @@ from app.services.evidence_contradiction_service import EvidenceContradictionSer
 from app.services.grounding_models import GroundingModelService
 from app.services.hazard_effect_size import hazard_predictor_effect_rows
 from app.services.hazard_ranking_service import HazardRankingService, slugify_hazard
-from app.services.knowledge_base import KnowledgeBaseService
+from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.profile_metadata import compact_profile_metadata
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
@@ -2018,7 +2018,7 @@ class ChatValidationServiceMixin:
         if evidence_branch:
             self._promote_temporary_evidence(
                 session,
-                target_scope="quarantined",
+                target_scope=VALIDATED_EVIDENCE_SCOPE,
                 provenance="validated_user_evidence",
             )
             await self._admit_inline_evidence_to_quarantine(
@@ -2604,8 +2604,11 @@ class ChatValidationServiceMixin:
             await KnowledgeBaseService(
                 self.db,
                 self.user_id,
-                scope="quarantined",
+                scope=VALIDATED_EVIDENCE_SCOPE,
                 session_key=session.session_key,
+                country_id=session.country_id,
+                region_id=session.region_id,
+                sector_id=session.sector_id,
             ).ingest_text(
                 inline_evidence,
                 title[:255],

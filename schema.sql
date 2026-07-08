@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS app_users (
   designation VARCHAR(160) NOT NULL,
   organisation_type VARCHAR(160) NOT NULL,
   organisation_name VARCHAR(220) NOT NULL,
+  role VARCHAR(40) NOT NULL DEFAULT 'user',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX ix_app_users_email (email)
@@ -410,11 +411,20 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   source_uri TEXT NULL,
   scope VARCHAR(20) NOT NULL DEFAULT 'main',
   session_key VARCHAR(64) NULL,
+  country_id INT NULL,
+  region_id INT NULL,
+  sector_id INT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_knowledge_documents_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_knowledge_documents_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
+  CONSTRAINT fk_knowledge_documents_region FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL,
+  CONSTRAINT fk_knowledge_documents_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
   INDEX ix_knowledge_documents_user_id (user_id),
   INDEX ix_knowledge_documents_scope (scope),
-  INDEX ix_knowledge_documents_session_key (session_key)
+  INDEX ix_knowledge_documents_session_key (session_key),
+  INDEX ix_knowledge_documents_country_id (country_id),
+  INDEX ix_knowledge_documents_region_id (region_id),
+  INDEX ix_knowledge_documents_sector_id (sector_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (

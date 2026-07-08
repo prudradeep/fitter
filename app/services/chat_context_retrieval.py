@@ -5,7 +5,12 @@ from sqlalchemy import select
 
 from app.models import KnowledgeChunk, KnowledgeDocument, MitigationMeasureExample
 from app.services.chat_session import ChatSession
-from app.services.knowledge_base import KnowledgeBaseService
+from app.services.knowledge_base import (
+    MAIN_KB_SCOPE,
+    TEMPORARY_KB_SCOPE,
+    VALIDATED_EVIDENCE_SCOPE,
+    KnowledgeBaseService,
+)
 from app.services.sector_prompt_rag import SectorPromptRagService
 
 logger = logging.getLogger(__name__)
@@ -19,11 +24,7 @@ class ChatContextRetrievalMixin:
         reason: str,
     ) -> str:
         query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
-        try:
-            results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=8)
-        except Exception:
-            logger.exception("Main knowledge-base lookup failed during mitigation validation")
-            results = []
+        results = await self._shared_knowledge_results(session, query, main_limit=8, evidence_limit=6)
         return self._format_knowledge_results(results)
 
     async def _user_evidence_context_for_contradiction_check(
@@ -103,27 +104,56 @@ class ChatContextRetrievalMixin:
         reason: str,
     ) -> str:
         query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
-        try:
-            main_results = await KnowledgeBaseService(self.db, self.user_id).search(query, limit=5)
-        except Exception:
-            logger.exception("Main knowledge-base lookup failed during mitigation validation")
-            main_results = []
+        shared_results = await self._shared_knowledge_results(session, query, main_limit=5, evidence_limit=4)
         temporary_results: list[dict[str, object]] = []
         if session.session_key:
             try:
                 temporary_results = await KnowledgeBaseService(
                     self.db,
                     self.user_id,
-                    scope="temporary",
+                    scope=TEMPORARY_KB_SCOPE,
                     session_key=session.session_key,
                 ).search(query, limit=4)
             except Exception:
                 logger.exception("Temporary evidence lookup failed during mitigation validation")
         results = await self.grounding_models.ground_results(
             query,
-            [*temporary_results, *main_results],
+            [*temporary_results, *shared_results],
         )
         return self._format_knowledge_results(results)
+
+    async def _shared_knowledge_results(
+        self,
+        session: ChatSession,
+        query: str,
+        *,
+        main_limit: int,
+        evidence_limit: int,
+    ) -> list[dict[str, object]]:
+        try:
+            main_results = await KnowledgeBaseService(
+                self.db,
+                None,
+                scope=MAIN_KB_SCOPE,
+            ).search(query, limit=main_limit)
+        except Exception:
+            logger.exception("Main knowledge-base lookup failed")
+            main_results = []
+
+        validated_results: list[dict[str, object]] = []
+        if session.country_id is not None and session.sector_id is not None:
+            try:
+                validated_results = await KnowledgeBaseService(
+                    self.db,
+                    None,
+                    scope=VALIDATED_EVIDENCE_SCOPE,
+                    country_id=session.country_id,
+                    region_id=session.region_id,
+                    sector_id=session.sector_id,
+                ).search(query, limit=evidence_limit)
+            except Exception:
+                logger.exception("Validated evidence lookup failed")
+        return [*main_results, *validated_results]
 
     def _mitigation_retrieval_query(
         self,

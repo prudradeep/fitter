@@ -68,7 +68,7 @@ from app.services.custom_hazard_validation import (
     validate_custom_hazard_dimensions,
 )
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
-from app.services.knowledge_base import KnowledgeBaseService
+from app.services.knowledge_base import TEMPORARY_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.profile_metadata import compact_profile_metadata
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
@@ -666,7 +666,7 @@ class ChatHazardCreationMixin:
         if session.accepted_custom_hazard_evidence != "Not provided":
             self._promote_temporary_evidence(
                 session,
-                target_scope="quarantined",
+                target_scope=VALIDATED_EVIDENCE_SCOPE,
                 provenance="validated_user_evidence",
             )
         return await self._custom_hazard_added_step(session_id, session)
@@ -1275,7 +1275,7 @@ class ChatHazardCreationMixin:
         if evidence:
             self._promote_temporary_evidence(
                 session,
-                target_scope="quarantined",
+                target_scope=VALIDATED_EVIDENCE_SCOPE,
                 provenance="validated_user_evidence",
             )
 
@@ -2021,7 +2021,7 @@ class ChatHazardCreationMixin:
             KnowledgeBaseService(
                 self.db,
                 self.user_id,
-                scope="temporary",
+                scope=TEMPORARY_KB_SCOPE,
                 session_key=session.session_key,
             ).delete_temporary_documents(document_ids)
         except Exception:
@@ -2031,7 +2031,7 @@ class ChatHazardCreationMixin:
         self,
         session: ChatSession,
         *,
-        target_scope: str = "main",
+        target_scope: str = VALIDATED_EVIDENCE_SCOPE,
         provenance: str | None = None,
     ) -> None:
         if not session.session_key:
@@ -2040,11 +2040,14 @@ class ChatHazardCreationMixin:
             KnowledgeBaseService(
                 self.db,
                 self.user_id,
-                scope="temporary",
+                scope=TEMPORARY_KB_SCOPE,
                 session_key=session.session_key,
             ).promote_temporary_documents(
                 target_scope=target_scope,
                 provenance=provenance,
+                country_id=session.country_id,
+                region_id=session.region_id,
+                sector_id=session.sector_id,
             )
         except Exception:
             logger.exception("Failed to promote temporary evidence")

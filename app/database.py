@@ -133,6 +133,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                       designation VARCHAR(160) NOT NULL,
                       organisation_type VARCHAR(160) NOT NULL,
                       organisation_name VARCHAR(220) NOT NULL,
+                      role VARCHAR(40) NOT NULL DEFAULT 'user',
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                       INDEX ix_app_users_email (email)
@@ -140,6 +141,27 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     """
                 )
             )
+            inspector = inspect(engine)
+            if "app_users" in inspector.get_table_names():
+                user_columns = {
+                    column["name"] for column in inspector.get_columns("app_users")
+                }
+                if "role" not in user_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE app_users ADD COLUMN role "
+                            "VARCHAR(40) NOT NULL DEFAULT 'user' AFTER organisation_name"
+                        )
+                    )
+                connection.execute(
+                    text(
+                        """
+                        UPDATE app_users
+                        SET role = 'admin'
+                        WHERE LOWER(email) = 'admin@drtransition.local'
+                        """
+                    )
+                )
             connection.execute(
                 text(
                     """
@@ -449,6 +471,20 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "VARCHAR(64) NULL AFTER scope"
                         )
                     )
+                new_scope_columns = {
+                    "country_id": "INT NULL AFTER session_key",
+                    "region_id": "INT NULL AFTER country_id",
+                    "sector_id": "INT NULL AFTER region_id",
+                }
+                for column_name, column_definition in new_scope_columns.items():
+                    if column_name not in document_columns:
+                        connection.execute(
+                            text(
+                                "ALTER TABLE knowledge_documents "
+                                f"ADD COLUMN {column_name} {column_definition}"
+                            )
+                        )
+                        document_columns.add(column_name)
                 if "ix_knowledge_documents_scope" not in document_indexes:
                     connection.execute(
                         text(
@@ -456,6 +492,18 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD INDEX ix_knowledge_documents_scope (scope)"
                         )
                     )
+                for index_name, column_name in (
+                    ("ix_knowledge_documents_country_id", "country_id"),
+                    ("ix_knowledge_documents_region_id", "region_id"),
+                    ("ix_knowledge_documents_sector_id", "sector_id"),
+                ):
+                    if index_name not in document_indexes:
+                        connection.execute(
+                            text(
+                                "ALTER TABLE knowledge_documents "
+                                f"ADD INDEX {index_name} ({column_name})"
+                            )
+                        )
                 if "ix_knowledge_documents_session_key" not in document_indexes:
                     connection.execute(
                         text(

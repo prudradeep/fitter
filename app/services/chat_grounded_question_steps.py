@@ -8,7 +8,12 @@ from app.schemas import ChatResponse
 from app.services.chat_formatters import format_all_dgs
 from app.services.chat_options import STATS_DEEP_DIVE_OPTIONS, normalize_for_match
 from app.services.chat_session import ChatSession
-from app.services.knowledge_base import KnowledgeBaseService
+from app.services.knowledge_base import (
+    MAIN_KB_SCOPE,
+    TEMPORARY_KB_SCOPE,
+    VALIDATED_EVIDENCE_SCOPE,
+    KnowledgeBaseService,
+)
 from app.services.message_renderer import markdown_to_html
 from app.services.prompt_loader import render_prompt_template
 from app.services.question_intent import detect_user_question_intent
@@ -235,7 +240,7 @@ class ChatGroundedQuestionStepsMixin:
         )
         contexts: list[str] = []
         try:
-            main_results = await KnowledgeBaseService(self.db, self.user_id).search(
+            main_results = await KnowledgeBaseService(self.db, None, scope=MAIN_KB_SCOPE).search(
                 query,
                 limit=6,
             )
@@ -254,12 +259,37 @@ class ChatGroundedQuestionStepsMixin:
         if main_context:
             contexts.append("Main Knowledge Base:\n" + main_context)
 
+        validated_results: list[dict[str, object]] = []
+        if session.country_id is not None and session.sector_id is not None:
+            try:
+                validated_results = await KnowledgeBaseService(
+                    self.db,
+                    None,
+                    scope=VALIDATED_EVIDENCE_SCOPE,
+                    country_id=session.country_id,
+                    region_id=session.region_id,
+                    sector_id=session.sector_id,
+                ).search(query, limit=4)
+            except Exception:
+                logger.exception("Validated evidence lookup failed during anytime question")
+                validated_results = []
+            validated_context, validated_sources = self._format_grounded_question_sources(
+                validated_results,
+                prefix="S",
+                source_label="Validated evidence",
+                start_index=next_index,
+            )
+            sources.update(validated_sources)
+            next_index += len(validated_sources)
+            if validated_context:
+                contexts.append("Validated evidence:\n" + validated_context)
+
         if session.session_key:
             try:
                 temporary_results = await KnowledgeBaseService(
                     self.db,
                     self.user_id,
-                    scope="temporary",
+                    scope=TEMPORARY_KB_SCOPE,
                     session_key=session.session_key,
                 ).search(query, limit=4)
             except Exception:

@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.auth import hash_password, password_rule_errors, require_current_user, verify_password
+from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, verify_password
 from app.database import get_db
 from app.models import AppUser, Country, Region, Sector, UserChatMessage, UserSession
 from app.schemas import ChatRequest, ChatResponse
@@ -22,7 +22,7 @@ from app.services.document_text import (
 )
 from app.services.hazard_effect_size import hazard_effect_size_rows
 from app.services.hazard_ranking_service import HazardRankingService
-from app.services.knowledge_base import KnowledgeBaseService
+from app.services.knowledge_base import MAIN_KB_SCOPE, KnowledgeBaseService
 from app.services.hazard_salience import country_hazard_salience
 from app.services.sector_prompt_rag import SectorPromptRagService
 
@@ -273,14 +273,15 @@ async def knowledge_documents(
     current_user: AppUser = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    service = KnowledgeBaseService(db, current_user.id)
+    _ = current_user
+    service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
     return {"documents": service.list_documents()}
 
 
 @router.post("/knowledge/upload")
 async def knowledge_upload(
     request: Request,
-    current_user: AppUser = Depends(require_current_user),
+    current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     form = await request.form()
@@ -288,7 +289,8 @@ async def knowledge_upload(
     if not files:
         return {"error": True, "detail": "Please choose one or more PDF, DOCX, MD, or TXT files."}
 
-    service = KnowledgeBaseService(db, current_user.id)
+    _ = current_user
+    service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
     results: list[dict[str, object]] = []
     failures: list[dict[str, str]] = []
     total_chunks = 0
@@ -324,7 +326,7 @@ async def knowledge_upload(
 @router.post("/knowledge/url")
 async def knowledge_url(
     request: Request,
-    current_user: AppUser = Depends(require_current_user),
+    current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     payload = await request.json()
@@ -332,7 +334,8 @@ async def knowledge_url(
     title = str(payload.get("title") or "").strip() or None
     if not urls:
         return {"error": True, "detail": "At least one URL is required."}
-    service = KnowledgeBaseService(db, current_user.id)
+    _ = current_user
+    service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
     results: list[dict[str, object]] = []
     failures: list[dict[str, str]] = []
     total_chunks = 0
@@ -366,7 +369,8 @@ async def knowledge_search(
     query = str(payload.get("query") or "").strip()
     if not query:
         return {"error": True, "detail": "Search query is required.", "results": []}
-    service = KnowledgeBaseService(db, current_user.id)
+    _ = current_user
+    service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
     try:
         return {"error": False, "results": await service.search(query, 10)}
     except (httpx.HTTPError, ValueError) as exc:
@@ -408,10 +412,11 @@ async def sector_prompts_search(
 @router.delete("/knowledge/{document_id}")
 async def knowledge_delete(
     document_id: int,
-    current_user: AppUser = Depends(require_current_user),
+    current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    service = KnowledgeBaseService(db, current_user.id)
+    _ = current_user
+    service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
     try:
         deleted = await service.delete_document(document_id)
     except (httpx.HTTPError, ValueError) as exc:
