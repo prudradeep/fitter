@@ -538,6 +538,15 @@ class KnowledgeDocument(Base):
     country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
     region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    sync_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    sync_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0", index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
@@ -675,6 +684,44 @@ class UserActivity(Base):
     step: Mapped[str | None] = mapped_column(String(120))
     details: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class SyncState(Base):
+    __tablename__ = "sync_state"
+    __table_args__ = (UniqueConstraint("scope", "country_id", "region_id", "sector_id", name="uq_sync_state_scope_context"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    scope: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    country_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    region_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    sector_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_sync_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class EvidenceSubmission(Base):
+    __tablename__ = "evidence_submissions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    submitter_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_users.id", ondelete="SET NULL"), index=True
+    )
+    session_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_uri: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="pending", server_default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
 
 class LlmExchangeLog(Base):

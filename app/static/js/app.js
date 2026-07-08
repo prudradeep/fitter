@@ -82,6 +82,11 @@ const sectorPromptSectorInput = document.querySelector("#sectorPromptSectorInput
 const sectorPromptSearchInput = document.querySelector("#sectorPromptSearchInput");
 const sectorPromptMessage = document.querySelector("#sectorPromptMessage");
 const sectorPromptResults = document.querySelector("#sectorPromptResults");
+const refreshEvidenceSubmissionsButton = document.querySelector("#refreshEvidenceSubmissionsButton");
+const evidenceReviewMessage = document.querySelector("#evidenceReviewMessage");
+const evidenceSubmissionsList = document.querySelector("#evidenceSubmissionsList");
+const syncNowButton = document.querySelector("#syncNowButton");
+const syncStatusText = document.querySelector("#syncStatusText");
 const renameSessionDialog = document.querySelector("#renameSessionDialog");
 const renameSessionForm = document.querySelector("#renameSessionForm");
 const renameSessionInput = document.querySelector("#renameSessionInput");
@@ -3532,6 +3537,13 @@ function showSectorPromptMessage(message, isError = true) {
   sectorPromptMessage.classList.toggle("success", !isError);
 }
 
+function showEvidenceReviewMessage(message, isError = true) {
+  if (!evidenceReviewMessage) return;
+  evidenceReviewMessage.textContent = message;
+  evidenceReviewMessage.hidden = false;
+  evidenceReviewMessage.classList.toggle("success", !isError);
+}
+
 function resetKnowledgeProgress() {
   if (!knowledgeProgressSection || !knowledgeProgressList) return;
   knowledgeProgressList.innerHTML = "";
@@ -3604,6 +3616,7 @@ async function openKnowledgeDialog() {
     knowledgeDialog.removeAttribute("hidden");
   }
   await loadKnowledgeDocuments();
+  await loadEvidenceSubmissions();
 }
 
 function closeKnowledgeDialog() {
@@ -3703,6 +3716,138 @@ function renderSectorPromptResults(results) {
     `;
     sectorPromptResults.appendChild(row);
   });
+}
+
+async function loadEvidenceSubmissions() {
+  if (!evidenceSubmissionsList) return;
+  evidenceSubmissionsList.innerHTML = `<p class="sessions-empty">Loading pending evidence...</p>`;
+  try {
+    const response = await fetch("/api/sync/evidence/submissions?status=pending");
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    renderEvidenceSubmissions(data.submissions || []);
+  } catch (error) {
+    evidenceSubmissionsList.innerHTML = `<p class="sessions-empty">Could not load evidence submissions.</p>`;
+    console.error("Evidence submissions failed", error);
+  }
+}
+
+function renderEvidenceSubmissions(submissions) {
+  if (!evidenceSubmissionsList) return;
+  evidenceSubmissionsList.innerHTML = "";
+  if (!submissions.length) {
+    evidenceSubmissionsList.innerHTML = `<p class="sessions-empty">No pending evidence submissions.</p>`;
+    return;
+  }
+  submissions.forEach((submission) => {
+    const row = document.createElement("article");
+    row.className = "knowledge-item";
+    const scopeParts = [
+      submission.country_id ? `country ${submission.country_id}` : "",
+      submission.region_id ? `region ${submission.region_id}` : "",
+      submission.sector_id ? `sector ${submission.sector_id}` : "",
+    ].filter(Boolean);
+    row.innerHTML = `
+      <strong>${escapeHtml(submission.title || "Submitted evidence")}</strong>
+      <small>${escapeHtml([submission.source_type || "evidence", ...scopeParts].join(" · "))}</small>
+      <p>${escapeHtml(submission.source_uri || "Inline/file evidence")}</p>
+    `;
+    const actions = document.createElement("div");
+    actions.className = "knowledge-form";
+    const approveButton = document.createElement("button");
+    approveButton.type = "button";
+    approveButton.textContent = "Approve";
+    approveButton.addEventListener("click", () => reviewEvidenceSubmission(submission.id, "approve"));
+    const rejectButton = document.createElement("button");
+    rejectButton.type = "button";
+    rejectButton.textContent = "Reject";
+    rejectButton.addEventListener("click", () => reviewEvidenceSubmission(submission.id, "reject"));
+    actions.appendChild(approveButton);
+    actions.appendChild(rejectButton);
+    row.appendChild(actions);
+    evidenceSubmissionsList.appendChild(row);
+  });
+}
+
+async function reviewEvidenceSubmission(submissionId, action) {
+  if (!submissionId) return;
+  try {
+    const response = await fetch(`/api/sync/evidence/submissions/${encodeURIComponent(submissionId)}/${action}`, {
+      method: "POST",
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || `Could not ${action} submission.`);
+    }
+    showEvidenceReviewMessage(`Evidence submission ${action}d.`, false);
+    await loadEvidenceSubmissions();
+  } catch (error) {
+    showEvidenceReviewMessage(error.message || `Could not ${action} submission.`, true);
+  }
+}
+
+function currentSyncPayload() {
+  const payload = {};
+  ["country_id", "region_id", "sector_id"].forEach((key) => {
+    const value = Number(currentSession?.[key]);
+    if (Number.isFinite(value) && value > 0) {
+      payload[key] = value;
+    }
+  });
+  return payload;
+}
+
+function syncStatusLabel(status = {}) {
+  if (status.running) {
+    return `Sync running${status.scope ? `: ${status.scope}` : ""}.`;
+  }
+  if (status.last_error) {
+    return `Last sync failed: ${status.last_error}`;
+  }
+  if (status.last_finished_at) {
+    const finished = new Date(status.last_finished_at);
+    const when = Number.isNaN(finished.getTime()) ? status.last_finished_at : finished.toLocaleString();
+    const result = status.last_result || {};
+    const pages = result.pages ? ` · ${result.pages} page(s)` : "";
+    return `Last sync: ${when}${pages}`;
+  }
+  return "No sync has run in this session.";
+}
+
+async function loadSyncStatus() {
+  if (!syncStatusText) return;
+  try {
+    const response = await fetch("/api/sync/status");
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    syncStatusText.textContent = syncStatusLabel(data.status || {});
+  } catch (error) {
+    syncStatusText.textContent = "Could not load sync status.";
+    console.error("Sync status failed", error);
+  }
+}
+
+async function runSyncNow() {
+  if (!syncNowButton || !syncStatusText) return;
+  syncNowButton.disabled = true;
+  syncStatusText.textContent = "Sync running...";
+  try {
+    const response = await fetch("/api/sync/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(currentSyncPayload()),
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || "Sync failed.");
+    }
+    syncStatusText.textContent = "Sync complete.";
+    await loadSyncStatus();
+  } catch (error) {
+    syncStatusText.textContent = error.message || "Sync failed.";
+  } finally {
+    syncNowButton.disabled = false;
+  }
 }
 
 function sectorPromptReindexDetail(data) {
@@ -4236,6 +4381,7 @@ voicePreferenceSelect?.addEventListener("change", () => {
 settingsButton?.addEventListener("click", () => {
   if (settingsDrawer?.hidden) {
     openSettingsDrawer();
+    loadSyncStatus();
   } else {
     closeSettingsDrawer();
   }
@@ -4394,6 +4540,8 @@ knowledgeSearchForm?.addEventListener("submit", async (event) => {
 });
 
 sectorPromptReindexButton?.addEventListener("click", reindexSectorPrompts);
+refreshEvidenceSubmissionsButton?.addEventListener("click", loadEvidenceSubmissions);
+syncNowButton?.addEventListener("click", runSyncNow);
 
 sectorPromptSearchForm?.addEventListener("submit", async (event) => {
   event.preventDefault();

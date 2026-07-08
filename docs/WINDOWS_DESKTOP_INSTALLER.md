@@ -184,6 +184,17 @@ Default runtime ports:
 - NLI: `8082`
 - Ollama: `11434`
 
+The installer asks for a deployment mode:
+
+- `Local mode` writes `APP_MODE=local` and uses only the local runtime database.
+- `Cloud sync client mode` writes `APP_MODE=cloud_client`,
+  `CENTRAL_API_BASE_URL`, `CENTRAL_SYNC_TOKEN`, and
+  `CENTRAL_EVIDENCE_TOKEN`.
+
+Cloud sync client mode still provisions a local runtime database because KB
+chunks and FAISS indexes are rebuilt locally. The installed app never stores
+cloud MySQL credentials; it talks only to the central API.
+
 ## Grounding Services
 
 The reranker and NLI services are packaged as separate executables and started by `DrTransition.exe` when `grounding.enabled` is `true`.

@@ -318,6 +318,17 @@
   background: #334155;
 }
 
+.settings-sync-panel {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-sync-panel small {
+  color: #64748b;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
 .reset-button {
   position: relative;
   overflow: hidden;

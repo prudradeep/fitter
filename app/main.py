@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from time import perf_counter
 
 from fastapi import Depends, FastAPI, Request, status
@@ -12,6 +13,7 @@ from app.auth import get_current_user
 from app.config import get_settings
 from app.database import (
     Base,
+    SessionLocal,
     engine,
     ensure_runtime_schema,
     validate_database_connection,
@@ -20,6 +22,8 @@ from app.models import AppUser
 from app.resource_paths import resource_path
 from app.routes.api import router as api_router
 from app.routes.auth import router as auth_router
+from app.services.knowledge_base import MAIN_KB_SCOPE, SECTOR_PROMPT_SCOPE
+from app.services.knowledge_sync import KnowledgeSyncService
 from app.services.coverage import get_coverage_rows
 
 settings = get_settings()
@@ -78,6 +82,31 @@ async def startup() -> None:
     validate_database_connection()
     Base.metadata.create_all(bind=engine)
     ensure_runtime_schema()
+    if settings.app_mode.strip().casefold() == "cloud_client":
+        asyncio.create_task(_cloud_sync_loop())
+
+
+async def _cloud_sync_loop() -> None:
+    while True:
+        await _sync_global_knowledge()
+        interval = max(0, int(settings.sync_interval_seconds or 0))
+        if interval <= 0:
+            return
+        await asyncio.sleep(interval)
+
+
+async def _sync_global_knowledge() -> None:
+    if not settings.central_api_base_url.strip():
+        logger.info("Cloud client startup sync skipped; CENTRAL_API_BASE_URL is not configured")
+        return
+    try:
+        with SessionLocal() as db:
+            service = KnowledgeSyncService(db)
+            await service.pull_scope(MAIN_KB_SCOPE)
+            await service.pull_scope(SECTOR_PROMPT_SCOPE)
+        logger.info("Cloud client startup sync completed")
+    except Exception:
+        logger.exception("Cloud client startup sync failed")
 
 
 @app.exception_handler(SQLAlchemyError)
@@ -101,6 +130,7 @@ async def index(
         "index.html",
         {
             "app_name": settings.app_name,
+            "app_mode": settings.app_mode.strip().casefold(),
             "coverage_rows": coverage_rows,
             "current_user": current_user,
         },

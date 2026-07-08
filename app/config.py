@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     app_name: str = "Dr Transition"
     app_env: str = "development"
     app_debug: bool = False
+    app_mode: str = "local"
     secret_key: str = Field(default="development-only-secret")
 
     database_url: str = "mysql+pymysql://dr_transition:dr_transition_password@localhost:3306/dr_transition"
@@ -32,6 +33,16 @@ class Settings(BaseSettings):
     llm_log_path: str = "data/service-runtime/logs/llm_requests.jsonl"
 
     faiss_index_path: str = "data/knowledge.faiss"
+    central_api_base_url: str = ""
+    central_api_token: str = ""
+    central_sync_token: str = ""
+    central_evidence_token: str = ""
+    central_client_id: str = ""
+    sync_timeout_seconds: int = 120
+    sync_interval_seconds: int = 3600
+    sync_batch_size: int = 100
+    sync_rate_limit_per_minute: int = 120
+    evidence_rate_limit_per_minute: int = 30
     reranker_url: str = ""
     reranker_timeout_seconds: int = 60
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"

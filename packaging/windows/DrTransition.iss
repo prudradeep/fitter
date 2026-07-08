@@ -44,6 +44,8 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch Dr Transition"; Flags: n
 [Code]
 var
   CompatibilityPage: TOutputMsgWizardPage;
+  DeploymentModePage: TInputOptionWizardPage;
+  CloudPage: TInputQueryWizardPage;
   DatabasePage: TInputQueryWizardPage;
   EditDatabaseDefaultsCheck: TNewCheckBox;
   ModelPage: TInputQueryWizardPage;
@@ -87,8 +89,30 @@ begin
     MessageText
   );
 
-  DatabasePage := CreateInputQueryPage(
+  DeploymentModePage := CreateInputOptionPage(
     CompatibilityPage.ID,
+    'Deployment Mode',
+    'Choose how this installation connects to shared data.',
+    'Local mode uses only this machine. Cloud mode syncs Main KB, Validated Evidences, and Sector Prompts through a central API while keeping LLM retrieval local.',
+    True,
+    False
+  );
+  DeploymentModePage.Add('Local mode');
+  DeploymentModePage.Add('Cloud sync client mode');
+  DeploymentModePage.Values[0] := True;
+
+  CloudPage := CreateInputQueryPage(
+    DeploymentModePage.ID,
+    'Central Sync API',
+    'Configure the central API used by cloud sync client mode.',
+    'These settings do not include cloud MySQL credentials. The installed app talks only to the central API.'
+  );
+  CloudPage.Add('Central API base URL:', False);
+  CloudPage.Add('Central sync token:', True);
+  CloudPage.Add('Central evidence token:', True);
+
+  DatabasePage := CreateInputQueryPage(
+    CloudPage.ID,
     'Database Setup',
     'Create or reuse the local Dr Transition database.',
     'Enter the MySQL administrator credentials and the application database to create. If MySQL is missing, the installer will attempt to install it first.'
@@ -180,6 +204,38 @@ begin
       Exit;
     end;
   end;
+  if CurPageID = CloudPage.ID then
+  begin
+    if DeploymentModePage.Values[1] then
+    begin
+      if CloudPage.Values[0] = '' then
+      begin
+        MsgBox('Enter the central API base URL for cloud sync client mode.', mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+      if CloudPage.Values[1] = '' then
+      begin
+        MsgBox('Enter the central sync token for cloud sync client mode.', mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+      if CloudPage.Values[2] = '' then
+      begin
+        MsgBox('Enter the central evidence token for cloud sync client mode.', mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+    end;
+  end;
+end;
+
+function DeploymentAppMode(): String;
+begin
+  if DeploymentModePage.Values[1] then
+    Result := 'cloud_client'
+  else
+    Result := 'local';
 end;
 
 function DependencyConfigJson(): String;
@@ -200,6 +256,10 @@ begin
     '  "OllamaModel": "' + JsonEscape(ModelPage.Values[0]) + '",' + #13#10 +
     '  "OllamaEmbeddingModel": "' + JsonEscape(ModelPage.Values[1]) + '",' + #13#10 +
     '  "OllamaBaseUrl": "http://127.0.0.1:11434",' + #13#10 +
+    '  "AppMode": "' + DeploymentAppMode() + '",' + #13#10 +
+    '  "CentralApiBaseUrl": "' + JsonEscape(CloudPage.Values[0]) + '",' + #13#10 +
+    '  "CentralSyncToken": "' + JsonEscape(CloudPage.Values[1]) + '",' + #13#10 +
+    '  "CentralEvidenceToken": "' + JsonEscape(CloudPage.Values[2]) + '",' + #13#10 +
     '  "InstallMySql": true,' + #13#10 +
     '  "InstallOllama": true,' + #13#10 +
     '  "PullModels": true,' + #13#10 +

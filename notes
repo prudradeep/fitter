@@ -303,3 +303,6 @@ Settings => Toggle for enable crowd sourcing -> Strictly Validated hazards and M
 
 Strict check passed only visible to all, easy - visible to the same user only
 Add label [easy check(Private visibility)/strict check(Global visibility)]
+
+
+Give option to export the chat in csv/excel/jsonl for the session. It should include errors also

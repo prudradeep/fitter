@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260703-hazard-ellipsis" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260708-sync-ui" />
   </head>
   <body>
     <header class="topbar">
@@ -113,6 +113,14 @@
                 <button id="knowledgeButton" class="settings-action-button" type="button">
                   Main Knowledge Base
                 </button>
+                {% if app_mode == 'cloud_client' %}
+                <div class="settings-sync-panel">
+                  <button id="syncNowButton" class="settings-action-button" type="button">
+                    Sync now
+                  </button>
+                  <small id="syncStatusText">Sync status unavailable.</small>
+                </div>
+                {% endif %}
               </div>
             </aside>
           </div>
@@ -654,7 +662,9 @@
                   <h3>Sector prompt RAG</h3>
                   <p>Search the indexed Energy, Housing, or Transport sector prompt chunks.</p>
                 </div>
+                {% if current_user.role == 'admin' %}
                 <button id="sectorPromptReindexButton" class="knowledge-action-button" type="button">Reindex sector prompts</button>
+                {% endif %}
               </div>
               <form id="sectorPromptSearchForm" class="knowledge-form sector-prompt-search-form">
                 <label>
@@ -674,6 +684,19 @@
               <p id="sectorPromptMessage" class="dialog-message" hidden></p>
               <div id="sectorPromptResults" class="knowledge-list knowledge-results"></div>
             </section>
+            {% if current_user.role == 'admin' %}
+            <section class="knowledge-panel">
+              <div class="knowledge-panel-heading">
+                <div>
+                  <h3>Evidence review</h3>
+                  <p>Approve validated user evidence into the shared scoped evidence KB.</p>
+                </div>
+                <button id="refreshEvidenceSubmissionsButton" class="knowledge-action-button" type="button">Refresh</button>
+              </div>
+              <p id="evidenceReviewMessage" class="dialog-message" hidden></p>
+              <div id="evidenceSubmissionsList" class="knowledge-list knowledge-results"></div>
+            </section>
+            {% endif %}
           </div>
         </div>
       </section>
@@ -712,6 +735,6 @@
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/highcharts-more.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/modules/venn.js"></script>
     <script src="{{ url_for('static', path='/js/app-utils.js') }}?v=20260703-voice-summary"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260703-stage-map-retry"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260708-sync-ui"></script>
   </body>
 </html>

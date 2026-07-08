@@ -1,4 +1,5 @@
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,6 +141,8 @@ class KnowledgeBaseService:
             country_id=self.country_id if self.scope == VALIDATED_EVIDENCE_SCOPE else None,
             region_id=self.region_id if self.scope == VALIDATED_EVIDENCE_SCOPE else None,
             sector_id=self.sector_id if self.scope == VALIDATED_EVIDENCE_SCOPE else None,
+            sync_id=uuid.uuid4().hex,
+            sync_version=new_sync_version(),
         )
         self.db.add(document)
         self.db.flush()
@@ -194,6 +197,7 @@ class KnowledgeBaseService:
             .where(
                 *self._document_access_filters(),
                 KnowledgeDocument.scope == self.scope,
+                KnowledgeDocument.deleted_at.is_(None),
             )
             .order_by(KnowledgeDocument.created_at.desc(), KnowledgeDocument.id.desc())
         ).all()
@@ -216,6 +220,7 @@ class KnowledgeBaseService:
                 KnowledgeDocument.id == document_id,
                 *self._document_access_filters(),
                 KnowledgeDocument.scope == self.scope,
+                KnowledgeDocument.deleted_at.is_(None),
             )
         ).all()
         if not chunk_ids:
@@ -224,21 +229,27 @@ class KnowledgeBaseService:
                     KnowledgeDocument.id == document_id,
                     *self._document_access_filters(),
                     KnowledgeDocument.scope == self.scope,
+                    KnowledgeDocument.deleted_at.is_(None),
                 )
             )
             if row is None:
                 return False
 
-        self._remove_vectors(chunk_ids)
-        result = self.db.execute(
-            delete(KnowledgeDocument).where(
+        row = self.db.scalar(
+            select(KnowledgeDocument).where(
                 KnowledgeDocument.id == document_id,
                 *self._document_access_filters(),
                 KnowledgeDocument.scope == self.scope,
             )
         )
+        if row is None:
+            return False
+        self._remove_vectors(chunk_ids)
+        self.db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document_id))
+        row.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        row.sync_version = new_sync_version()
         self.db.commit()
-        return bool(result.rowcount)
+        return True
 
     async def search(
         self,
@@ -306,6 +317,7 @@ class KnowledgeBaseService:
     ) -> list[tuple[KnowledgeChunk, KnowledgeDocument]]:
         filters = [
             KnowledgeDocument.scope == self.scope,
+            KnowledgeDocument.deleted_at.is_(None),
             *self._document_access_filters(),
         ]
         if self.scope == TEMPORARY_KB_SCOPE:
@@ -399,6 +411,7 @@ class KnowledgeBaseService:
                 KnowledgeDocument.user_id == self.user_id,
                 KnowledgeDocument.scope == self.scope,
                 KnowledgeDocument.source_uri.in_(source_uris),
+                KnowledgeDocument.deleted_at.is_(None),
             )
         )
         chunk_ids = list(self.db.scalars(query).all())
@@ -408,6 +421,7 @@ class KnowledgeBaseService:
                 KnowledgeDocument.user_id == self.user_id,
                 KnowledgeDocument.scope == self.scope,
                 KnowledgeDocument.source_uri.in_(source_uris),
+                KnowledgeDocument.deleted_at.is_(None),
             )
         )
         self.db.commit()
@@ -468,12 +482,34 @@ class KnowledgeBaseService:
                     chunk.source_type = provenance[:40]
             document.scope = target_scope
             document.session_key = self.session_key if target_scope == QUARANTINED_SCOPE else None
+            document.sync_id = document.sync_id or uuid.uuid4().hex
+            document.sync_version = new_sync_version()
             if target_scope == VALIDATED_EVIDENCE_SCOPE:
                 document.country_id = country_id
                 document.region_id = region_id
                 document.sector_id = sector_id
         self.db.commit()
         return len(documents)
+
+    async def rebuild_index_from_db(self) -> dict[str, object]:
+        rows = self.db.execute(
+            select(KnowledgeChunk)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(
+                KnowledgeDocument.scope == self.scope,
+                KnowledgeDocument.deleted_at.is_(None),
+                *self._document_access_filters(),
+            )
+            .order_by(KnowledgeChunk.id)
+        ).scalars().all()
+        if self._index_path.exists():
+            self._index_path.unlink()
+        if not rows:
+            return {"rebuilt": True, "chunks": 0}
+        self._require_faiss()
+        embeddings = await self._embed_many([row.content for row in rows])
+        self._add_vectors([row.id for row in rows], embeddings)
+        return {"rebuilt": True, "chunks": len(rows)}
 
     def _document_access_filters(self) -> list[object]:
         if self.scope == MAIN_KB_SCOPE:
@@ -661,6 +697,10 @@ def normalize_vectors(embeddings: list[list[float]]):
     norms = np.linalg.norm(array, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     return array / norms
+
+
+def new_sync_version() -> int:
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
 def build_query_features(query: str) -> QueryFeatures:

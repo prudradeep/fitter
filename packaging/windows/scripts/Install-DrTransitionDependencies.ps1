@@ -18,6 +18,11 @@ param(
     [string]$OllamaModel = "",
     [string]$OllamaEmbeddingModel = "nomic-embed-text",
     [string]$OllamaBaseUrl = "http://127.0.0.1:11434",
+    [string]$AppMode = "local",
+    [string]$CentralApiBaseUrl = "",
+    [string]$CentralApiToken = "",
+    [string]$CentralSyncToken = "",
+    [string]$CentralEvidenceToken = "",
     [switch]$InstallMySql,
     [switch]$InstallOllama,
     [switch]$PullModels,
@@ -54,6 +59,11 @@ if (-not [string]::IsNullOrWhiteSpace($ConfigPath) -and (Test-Path -LiteralPath 
             "OllamaModel" { $OllamaModel = [string]$property.Value }
             "OllamaEmbeddingModel" { $OllamaEmbeddingModel = [string]$property.Value }
             "OllamaBaseUrl" { $OllamaBaseUrl = [string]$property.Value }
+            "AppMode" { $AppMode = [string]$property.Value }
+            "CentralApiBaseUrl" { $CentralApiBaseUrl = [string]$property.Value }
+            "CentralApiToken" { $CentralApiToken = [string]$property.Value }
+            "CentralSyncToken" { $CentralSyncToken = [string]$property.Value }
+            "CentralEvidenceToken" { $CentralEvidenceToken = [string]$property.Value }
             "InstallMySql" { if ([bool]$property.Value) { $InstallMySql = $true } }
             "InstallOllama" { if ([bool]$property.Value) { $InstallOllama = $true } }
             "PullModels" { if ([bool]$property.Value) { $PullModels = $true } }
@@ -584,7 +594,12 @@ try {
 
     $databaseUrl = "mysql+pymysql://$AppDbUser`:$AppDbPassword@localhost:3306/$DbName"
     Update-RuntimeEnv -Updates @{
+        APP_MODE = $AppMode
         DATABASE_URL = $databaseUrl
+        CENTRAL_API_BASE_URL = $CentralApiBaseUrl
+        CENTRAL_API_TOKEN = $CentralApiToken
+        CENTRAL_SYNC_TOKEN = $CentralSyncToken
+        CENTRAL_EVIDENCE_TOKEN = $CentralEvidenceToken
         OLLAMA_BASE_URL = $OllamaBaseUrl
         OLLAMA_MODEL = $OllamaModel
         OLLAMA_EMBEDDING_MODEL = $OllamaEmbeddingModel

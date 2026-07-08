@@ -475,6 +475,10 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     "country_id": "INT NULL AFTER session_key",
                     "region_id": "INT NULL AFTER country_id",
                     "sector_id": "INT NULL AFTER region_id",
+                    "sync_id": "VARCHAR(64) NULL AFTER sector_id",
+                    "sync_version": "INT NOT NULL DEFAULT 0 AFTER sync_id",
+                    "updated_at": "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER sync_version",
+                    "deleted_at": "DATETIME NULL AFTER updated_at",
                 }
                 for column_name, column_definition in new_scope_columns.items():
                     if column_name not in document_columns:
@@ -496,6 +500,9 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     ("ix_knowledge_documents_country_id", "country_id"),
                     ("ix_knowledge_documents_region_id", "region_id"),
                     ("ix_knowledge_documents_sector_id", "sector_id"),
+                    ("ix_knowledge_documents_sync_id", "sync_id"),
+                    ("ix_knowledge_documents_sync_version", "sync_version"),
+                    ("ix_knowledge_documents_deleted_at", "deleted_at"),
                 ):
                     if index_name not in document_indexes:
                         connection.execute(
@@ -504,13 +511,43 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                                 f"ADD INDEX {index_name} ({column_name})"
                             )
                         )
+                connection.execute(
+                    text(
+                        """
+                        UPDATE knowledge_documents
+                        SET sync_id = REPLACE(UUID(), '-', '')
+                        WHERE sync_id IS NULL OR sync_id = ''
+                        """
+                    )
+                )
+                connection.execute(
+                    text(
+                        """
+                        UPDATE knowledge_documents
+                        SET sync_version = CAST(UNIX_TIMESTAMP(NOW(3)) * 1000 AS UNSIGNED)
+                        WHERE sync_version IS NULL OR sync_version = 0
+                        """
+                    )
+                )
+                connection.execute(
+                    text(
+                        """
+                        UPDATE knowledge_documents documents
+                        JOIN app_users users ON users.id = documents.user_id
+                        SET documents.user_id = NULL
+                        WHERE documents.scope = 'main'
+                          AND users.role = 'admin'
+                          AND documents.deleted_at IS NULL
+                        """
+                    )
+                )
                 if "ix_knowledge_documents_session_key" not in document_indexes:
                     connection.execute(
                         text(
                             "ALTER TABLE knowledge_documents "
                             "ADD INDEX ix_knowledge_documents_session_key (session_key)"
                         )
-                    )
+                        )
 
         inspector = inspect(engine)
         if "knowledge_chunks" in inspector.get_table_names():
@@ -540,6 +577,61 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     connection.execute(
                         text("ALTER TABLE knowledge_chunks ADD INDEX ix_knowledge_chunks_user_id (user_id)")
                     )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS sync_state (
+                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      scope VARCHAR(40) NOT NULL,
+                      country_id INT NOT NULL DEFAULT 0,
+                      region_id INT NOT NULL DEFAULT 0,
+                      sector_id INT NOT NULL DEFAULT 0,
+                      last_sync_version INT NOT NULL DEFAULT 0,
+                      last_synced_at DATETIME NULL,
+                      CONSTRAINT uq_sync_state_scope_context
+                        UNIQUE (scope, country_id, region_id, sector_id),
+                      INDEX ix_sync_state_scope (scope)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS evidence_submissions (
+                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      submitter_user_id INT NULL,
+                      session_key VARCHAR(64) NULL,
+                      country_id INT NULL,
+                      region_id INT NULL,
+                      sector_id INT NULL,
+                      source_type VARCHAR(40) NOT NULL,
+                      source_uri TEXT NULL,
+                      title VARCHAR(255) NOT NULL,
+                      content TEXT NULL,
+                      status VARCHAR(40) NOT NULL DEFAULT 'pending',
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                      CONSTRAINT fk_evidence_submissions_user
+                        FOREIGN KEY (submitter_user_id) REFERENCES app_users(id) ON DELETE SET NULL,
+                      CONSTRAINT fk_evidence_submissions_country
+                        FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
+                      CONSTRAINT fk_evidence_submissions_region
+                        FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL,
+                      CONSTRAINT fk_evidence_submissions_sector
+                        FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
+                      INDEX ix_evidence_submissions_user_id (submitter_user_id),
+                      INDEX ix_evidence_submissions_session_key (session_key),
+                      INDEX ix_evidence_submissions_country_id (country_id),
+                      INDEX ix_evidence_submissions_region_id (region_id),
+                      INDEX ix_evidence_submissions_sector_id (sector_id),
+                      INDEX ix_evidence_submissions_status (status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    """
+                )
+            )
 
         if seed_reference_data:
             ensure_additional_hazards()

@@ -414,6 +414,10 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   country_id INT NULL,
   region_id INT NULL,
   sector_id INT NULL,
+  sync_id VARCHAR(64) NULL UNIQUE,
+  sync_version INT NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_knowledge_documents_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
   CONSTRAINT fk_knowledge_documents_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
@@ -424,7 +428,10 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   INDEX ix_knowledge_documents_session_key (session_key),
   INDEX ix_knowledge_documents_country_id (country_id),
   INDEX ix_knowledge_documents_region_id (region_id),
-  INDEX ix_knowledge_documents_sector_id (sector_id)
+  INDEX ix_knowledge_documents_sector_id (sector_id),
+  INDEX ix_knowledge_documents_sync_id (sync_id),
+  INDEX ix_knowledge_documents_sync_version (sync_version),
+  INDEX ix_knowledge_documents_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
@@ -528,6 +535,44 @@ CREATE TABLE IF NOT EXISTS user_activities (
   CONSTRAINT fk_user_activities_session FOREIGN KEY (user_session_id) REFERENCES user_sessions(id) ON DELETE CASCADE,
   INDEX ix_user_activities_session_id (user_session_id),
   INDEX ix_user_activities_activity_type (activity_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS sync_state (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  scope VARCHAR(40) NOT NULL,
+  country_id INT NOT NULL DEFAULT 0,
+  region_id INT NOT NULL DEFAULT 0,
+  sector_id INT NOT NULL DEFAULT 0,
+  last_sync_version INT NOT NULL DEFAULT 0,
+  last_synced_at DATETIME NULL,
+  CONSTRAINT uq_sync_state_scope_context UNIQUE (scope, country_id, region_id, sector_id),
+  INDEX ix_sync_state_scope (scope)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS evidence_submissions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  submitter_user_id INT NULL,
+  session_key VARCHAR(64) NULL,
+  country_id INT NULL,
+  region_id INT NULL,
+  sector_id INT NULL,
+  source_type VARCHAR(40) NOT NULL,
+  source_uri TEXT NULL,
+  title VARCHAR(255) NOT NULL,
+  content TEXT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'pending',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_evidence_submissions_user FOREIGN KEY (submitter_user_id) REFERENCES app_users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_evidence_submissions_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
+  CONSTRAINT fk_evidence_submissions_region FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL,
+  CONSTRAINT fk_evidence_submissions_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
+  INDEX ix_evidence_submissions_user_id (submitter_user_id),
+  INDEX ix_evidence_submissions_session_key (session_key),
+  INDEX ix_evidence_submissions_country_id (country_id),
+  INDEX ix_evidence_submissions_region_id (region_id),
+  INDEX ix_evidence_submissions_sector_id (sector_id),
+  INDEX ix_evidence_submissions_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS llm_exchange_logs (
