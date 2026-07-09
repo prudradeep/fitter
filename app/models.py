@@ -535,6 +535,7 @@ class KnowledgeDocument(Base):
     source_uri: Mapped[str | None] = mapped_column(Text)
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="main", index=True)
     session_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="global", server_default="global", index=True)
     country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
     region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
@@ -556,6 +557,10 @@ class KnowledgeChunk(Base):
     source_type: Mapped[str] = mapped_column(String(40), nullable=False)
     source_uri: Mapped[str | None] = mapped_column(Text)
     page_number: Mapped[int | None] = mapped_column(Integer)
+    scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="global", server_default="global", index=True)
+    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

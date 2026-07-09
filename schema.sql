@@ -411,6 +411,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   source_uri TEXT NULL,
   scope VARCHAR(20) NOT NULL DEFAULT 'main',
   session_key VARCHAR(64) NULL,
+  scope_level VARCHAR(20) NOT NULL DEFAULT 'global',
   country_id INT NULL,
   region_id INT NULL,
   sector_id INT NULL,
@@ -422,6 +423,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   INDEX ix_knowledge_documents_user_id (user_id),
   INDEX ix_knowledge_documents_scope (scope),
   INDEX ix_knowledge_documents_session_key (session_key),
+  INDEX ix_knowledge_documents_scope_level (scope_level),
   INDEX ix_knowledge_documents_country_id (country_id),
   INDEX ix_knowledge_documents_region_id (region_id),
   INDEX ix_knowledge_documents_sector_id (sector_id)
@@ -436,11 +438,22 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
   source_type VARCHAR(40) NOT NULL,
   source_uri TEXT NULL,
   page_number INT NULL,
+  scope_level VARCHAR(20) NOT NULL DEFAULT 'global',
+  country_id INT NULL,
+  region_id INT NULL,
+  sector_id INT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_knowledge_chunks_document FOREIGN KEY (document_id) REFERENCES knowledge_documents(id) ON DELETE CASCADE,
   CONSTRAINT fk_knowledge_chunks_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_knowledge_chunks_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
+  CONSTRAINT fk_knowledge_chunks_region FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL,
+  CONSTRAINT fk_knowledge_chunks_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE SET NULL,
   INDEX ix_knowledge_chunks_document_id (document_id),
-  INDEX ix_knowledge_chunks_user_id (user_id)
+  INDEX ix_knowledge_chunks_user_id (user_id),
+  INDEX ix_knowledge_chunks_scope_level (scope_level),
+  INDEX ix_knowledge_chunks_country_id (country_id),
+  INDEX ix_knowledge_chunks_region_id (region_id),
+  INDEX ix_knowledge_chunks_sector_id (sector_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS eurostat_population_cache (

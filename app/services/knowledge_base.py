@@ -32,6 +32,7 @@ CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 180
 FAISS_LOCK = Lock()
 LEXICAL_WEIGHT = 0.55
+SCOPE_MATCH_WEIGHT = 0.35
 MAIN_KB_SCOPE = "main"
 TEMPORARY_KB_SCOPE = "temporary"
 VALIDATED_EVIDENCE_SCOPE = "validated_evidence"
@@ -126,12 +127,14 @@ class KnowledgeBaseService:
 
         if not allow_lexical_only:
             self._require_faiss()
+        scope_level = self._scope_level()
         document = KnowledgeDocument(
             user_id=self.user_id,
             title=title[:255] or "Knowledge document",
             source_type=source_type,
             source_uri=source_uri,
             scope=self.scope,
+            scope_level=scope_level,
             session_key=(
                 self.session_key
                 if self.scope in {TEMPORARY_KB_SCOPE, QUARANTINED_SCOPE}
@@ -154,6 +157,10 @@ class KnowledgeBaseService:
                 source_type=source_type,
                 source_uri=source_uri,
                 page_number=chunk.page_number,
+                scope_level=scope_level,
+                country_id=document.country_id,
+                region_id=document.region_id,
+                sector_id=document.sector_id,
             )
             self.db.add(row)
             chunk_rows.append(row)
@@ -203,6 +210,10 @@ class KnowledgeBaseService:
                 "title": row.title,
                 "source_type": row.source_type,
                 "source_uri": row.source_uri,
+                "scope_level": row.scope_level,
+                "country_id": row.country_id,
+                "region_id": row.region_id,
+                "sector_id": row.sector_id,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
             }
             for row in rows
@@ -274,11 +285,25 @@ class KnowledgeBaseService:
 
         ranked = sorted(
             candidates.values(),
-            key=lambda row: row[2] + (LEXICAL_WEIGHT * lexical_scores.get(row[0].id, 0.0)),
+            key=lambda row: (
+                row[2]
+                + (LEXICAL_WEIGHT * lexical_scores.get(row[0].id, 0.0))
+                + (SCOPE_MATCH_WEIGHT * self._scope_relevance_score(row[1]))
+            ),
             reverse=True,
         )
         results = self._search_results(ranked, lexical_scores, limit)
-        return await self.grounding_models.ground_results(query, results)
+        grounded = await self.grounding_models.ground_results(query, results)
+        if self.scope == VALIDATED_EVIDENCE_SCOPE:
+            return sorted(
+                grounded,
+                key=lambda result: (
+                    float(result.get("scope_score") or 0.0),
+                    float(result.get("score") or 0.0),
+                ),
+                reverse=True,
+            )
+        return grounded
 
     async def _vector_search_scores(self, query: str, overfetch: int) -> dict[int, float]:
         if faiss is None or np is None or not self._index_path.exists():
@@ -312,7 +337,12 @@ class KnowledgeBaseService:
             filters.append(KnowledgeDocument.session_key == self.session_key)
         if self.scope == VALIDATED_EVIDENCE_SCOPE:
             if self.country_id is not None:
-                filters.append(KnowledgeDocument.country_id == self.country_id)
+                filters.append(
+                    or_(
+                        KnowledgeDocument.country_id == self.country_id,
+                        KnowledgeDocument.scope_level == "global",
+                    )
+                )
             if self.sector_id is not None:
                 filters.append(KnowledgeDocument.sector_id == self.sector_id)
             if self.region_id is not None:
@@ -320,10 +350,16 @@ class KnowledgeBaseService:
                     or_(
                         KnowledgeDocument.region_id == self.region_id,
                         KnowledgeDocument.region_id.is_(None),
+                        KnowledgeDocument.scope_level == "global",
                     )
                 )
             else:
-                filters.append(KnowledgeDocument.region_id.is_(None))
+                filters.append(
+                    or_(
+                        KnowledgeDocument.region_id.is_(None),
+                        KnowledgeDocument.scope_level == "global",
+                    )
+                )
         if source_uri_filter:
             filters.append(KnowledgeDocument.source_uri.in_(source_uri_filter))
         if chunk_ids is not None:
@@ -339,8 +375,8 @@ class KnowledgeBaseService:
             if not is_index_page_text(chunk.content)
         ]
 
-    @staticmethod
     def _search_results(
+        self,
         ranked: list[tuple[KnowledgeChunk, KnowledgeDocument, float]],
         lexical_scores: dict[int, float],
         limit: int,
@@ -348,7 +384,8 @@ class KnowledgeBaseService:
         results: list[dict[str, object]] = []
         for chunk, document, vector_score in ranked[:limit]:
             lexical = lexical_scores.get(chunk.id, 0.0)
-            combined_score = vector_score + (LEXICAL_WEIGHT * lexical)
+            scope_score = self._scope_relevance_score(document)
+            combined_score = vector_score + (LEXICAL_WEIGHT * lexical) + (SCOPE_MATCH_WEIGHT * scope_score)
             results.append(
                 {
                     "document_id": document.id,
@@ -359,6 +396,11 @@ class KnowledgeBaseService:
                     "score": round(float(combined_score), 4),
                     "vector_score": round(float(vector_score), 4),
                     "lexical_score": round(float(lexical), 4),
+                    "scope_score": round(float(scope_score), 4),
+                    "scope_level": document.scope_level,
+                    "country_id": document.country_id,
+                    "region_id": document.region_id,
+                    "sector_id": document.sector_id,
                     "content": chunk.content,
                 }
             )
@@ -453,6 +495,7 @@ class KnowledgeBaseService:
             target_service._add_vectors(list(vectors), list(vectors.values()))
         validated_at = datetime.now(timezone.utc).isoformat()
         for document in documents:
+            scope_level = validated_scope_level(country_id, region_id)
             if provenance:
                 original_source_type = document.source_type
                 document.title = (
@@ -472,6 +515,16 @@ class KnowledgeBaseService:
                 document.country_id = country_id
                 document.region_id = region_id
                 document.sector_id = sector_id
+                document.scope_level = scope_level
+            chunks = self.db.scalars(
+                select(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id)
+            ).all()
+            for chunk in chunks:
+                if target_scope == VALIDATED_EVIDENCE_SCOPE:
+                    chunk.country_id = country_id
+                    chunk.region_id = region_id
+                    chunk.sector_id = sector_id
+                    chunk.scope_level = scope_level
         self.db.commit()
         return len(documents)
 
@@ -483,6 +536,32 @@ class KnowledgeBaseService:
         if self.scope == VALIDATED_EVIDENCE_SCOPE:
             return []
         return [KnowledgeDocument.user_id == self.user_id]
+
+    def _scope_level(self) -> str:
+        if self.scope == VALIDATED_EVIDENCE_SCOPE:
+            return validated_scope_level(self.country_id, self.region_id)
+        if self.scope == MAIN_KB_SCOPE:
+            return "global"
+        return "session" if self.session_key else "global"
+
+    def _scope_relevance_score(self, document: KnowledgeDocument) -> float:
+        if self.scope != VALIDATED_EVIDENCE_SCOPE:
+            return 0.0
+        score = 0.0
+        if document.sector_id is not None and document.sector_id == self.sector_id:
+            score += 1.0
+        if document.country_id is not None and document.country_id == self.country_id:
+            score += 0.8
+        elif document.scope_level == "global":
+            score += 0.2
+        if self.region_id is not None:
+            if document.region_id == self.region_id:
+                score += 1.0
+            elif document.region_id is None and document.country_id == self.country_id:
+                score += 0.45
+        elif document.region_id is None and document.country_id == self.country_id:
+            score += 0.45
+        return score
 
     async def _embed_many(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []
@@ -661,6 +740,14 @@ def normalize_vectors(embeddings: list[list[float]]):
     norms = np.linalg.norm(array, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     return array / norms
+
+
+def validated_scope_level(country_id: int | None, region_id: int | None) -> str:
+    if region_id is not None:
+        return "region"
+    if country_id is not None:
+        return "country"
+    return "global"
 
 
 def build_query_features(query: str) -> QueryFeatures:

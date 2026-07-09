@@ -472,6 +472,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                         )
                     )
                 new_scope_columns = {
+                    "scope_level": "VARCHAR(20) NOT NULL DEFAULT 'global' AFTER session_key",
                     "country_id": "INT NULL AFTER session_key",
                     "region_id": "INT NULL AFTER country_id",
                     "sector_id": "INT NULL AFTER region_id",
@@ -493,6 +494,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                         )
                     )
                 for index_name, column_name in (
+                    ("ix_knowledge_documents_scope_level", "scope_level"),
                     ("ix_knowledge_documents_country_id", "country_id"),
                     ("ix_knowledge_documents_region_id", "region_id"),
                     ("ix_knowledge_documents_sector_id", "sector_id"),
@@ -511,6 +513,22 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD INDEX ix_knowledge_documents_session_key (session_key)"
                         )
                     )
+                connection.execute(
+                    text(
+                        """
+                        UPDATE knowledge_documents
+                        SET scope_level = CASE
+                          WHEN scope = 'validated_evidence' AND region_id IS NOT NULL THEN 'region'
+                          WHEN scope = 'validated_evidence' AND country_id IS NOT NULL THEN 'country'
+                          WHEN scope = 'temporary' THEN 'session'
+                          ELSE 'global'
+                        END
+                        WHERE scope_level IS NULL
+                           OR scope_level = ''
+                           OR (scope = 'validated_evidence' AND scope_level = 'global' AND country_id IS NOT NULL)
+                        """
+                    )
+                )
 
         inspector = inspect(engine)
         if "knowledge_chunks" in inspector.get_table_names():
@@ -536,10 +554,54 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     connection.execute(
                         text("ALTER TABLE knowledge_chunks ADD COLUMN page_number INT NULL AFTER source_uri")
                     )
+                new_chunk_scope_columns = {
+                    "scope_level": "VARCHAR(20) NOT NULL DEFAULT 'global' AFTER page_number",
+                    "country_id": "INT NULL AFTER scope_level",
+                    "region_id": "INT NULL AFTER country_id",
+                    "sector_id": "INT NULL AFTER region_id",
+                }
+                for column_name, column_definition in new_chunk_scope_columns.items():
+                    if column_name not in chunk_columns:
+                        connection.execute(
+                            text(
+                                "ALTER TABLE knowledge_chunks "
+                                f"ADD COLUMN {column_name} {column_definition}"
+                            )
+                        )
+                        chunk_columns.add(column_name)
                 if "ix_knowledge_chunks_user_id" not in chunk_indexes:
                     connection.execute(
                         text("ALTER TABLE knowledge_chunks ADD INDEX ix_knowledge_chunks_user_id (user_id)")
                     )
+                for index_name, column_name in (
+                    ("ix_knowledge_chunks_scope_level", "scope_level"),
+                    ("ix_knowledge_chunks_country_id", "country_id"),
+                    ("ix_knowledge_chunks_region_id", "region_id"),
+                    ("ix_knowledge_chunks_sector_id", "sector_id"),
+                ):
+                    if index_name not in chunk_indexes:
+                        connection.execute(
+                            text(
+                                "ALTER TABLE knowledge_chunks "
+                                f"ADD INDEX {index_name} ({column_name})"
+                            )
+                        )
+                connection.execute(
+                    text(
+                        """
+                        UPDATE knowledge_chunks kc
+                        JOIN knowledge_documents kd ON kd.id = kc.document_id
+                        SET kc.scope_level = kd.scope_level,
+                            kc.country_id = kd.country_id,
+                            kc.region_id = kd.region_id,
+                            kc.sector_id = kd.sector_id
+                        WHERE NOT (kc.scope_level <=> kd.scope_level)
+                           OR NOT (kc.country_id <=> kd.country_id)
+                           OR NOT (kc.region_id <=> kd.region_id)
+                           OR NOT (kc.sector_id <=> kd.sector_id)
+                        """
+                    )
+                )
 
         if seed_reference_data:
             ensure_additional_hazards()
