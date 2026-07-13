@@ -5086,17 +5086,3 @@ class ChatHazardCreationMixin:
             "housing": "Housing",
             "transport": "Transport",
         }.get(sector_family, sector_family.title())
-
-
-
-
-
-
-
-
-
-
-
-
-
-

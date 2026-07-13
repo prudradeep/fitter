@@ -105,6 +105,91 @@ function Join-ProcessArguments {
     return ($Arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
 }
 
+function Normalize-OllamaModelName {
+    param([string]$Model)
+
+    if ($null -eq $Model) {
+        return ""
+    }
+
+    return ([string]$Model -replace '^(?:\uFEFF|\u00EF\u00BB\u00BF)+', '').Trim()
+}
+
+function Convert-DisplayRegistryValueToUInt64 {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return [uint64]0
+    }
+    if ($Value -is [byte[]]) {
+        if ($Value.Length -ge 8) {
+            return [BitConverter]::ToUInt64($Value, 0)
+        }
+        if ($Value.Length -ge 4) {
+            return [uint64][BitConverter]::ToUInt32($Value, 0)
+        }
+        return [uint64]0
+    }
+    try {
+        return [uint64]$Value
+    } catch {
+        return [uint64]0
+    }
+}
+
+function Convert-DisplayRegistryString {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+    if ($Value -is [byte[]]) {
+        return ([Text.Encoding]::Unicode.GetString($Value)).Trim([char]0)
+    }
+    return [string]$Value
+}
+
+function Get-VideoControllerDedicatedVramGb {
+    param([object]$Gpu)
+
+    if ($null -eq $Gpu) {
+        return 0
+    }
+
+    $adapterRamBytes = Convert-DisplayRegistryValueToUInt64 -Value $Gpu.AdapterRAM
+    $registryBytes = [uint64]0
+    $gpuName = [string]$Gpu.Name
+    $displayClassPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+
+    if (Test-Path -LiteralPath $displayClassPath) {
+        foreach ($key in Get-ChildItem -LiteralPath $displayClassPath -ErrorAction SilentlyContinue) {
+            $props = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue
+            if ($null -eq $props) {
+                continue
+            }
+            $driverDesc = [string]$props.DriverDesc
+            $adapterString = Convert-DisplayRegistryString -Value $props.'HardwareInformation.AdapterString'
+            if ($driverDesc -ne $gpuName -and $adapterString -ne $gpuName) {
+                continue
+            }
+
+            $candidateBytes = Convert-DisplayRegistryValueToUInt64 -Value $props.'HardwareInformation.qwMemorySize'
+            if ($candidateBytes -eq 0) {
+                $candidateBytes = Convert-DisplayRegistryValueToUInt64 -Value $props.'HardwareInformation.MemorySize'
+            }
+            if ($candidateBytes -gt $registryBytes) {
+                $registryBytes = $candidateBytes
+            }
+        }
+    }
+
+    $dedicatedBytes = if ($registryBytes -gt $adapterRamBytes) { $registryBytes } else { $adapterRamBytes }
+    if ($dedicatedBytes -eq 0) {
+        return 0
+    }
+    return [math]::Round($dedicatedBytes / 1GB, 1)
+}
+
 function Assert-Identifier {
     param([string]$Name, [string]$Value)
     if ($Value -notmatch '^[A-Za-z0-9_]+$') {
@@ -382,28 +467,25 @@ function Ensure-Ollama {
     return $ollama
 }
 
-function Get-RecommendedOllamaModel {
+function Get-OllamaModelRecommendation {
     try {
         $computer = Get-CimInstance Win32_ComputerSystem
         $gpu = Get-CimInstance Win32_VideoController | Sort-Object AdapterRAM -Descending | Select-Object -First 1
         $ramGb = [math]::Round($computer.TotalPhysicalMemory / 1GB, 1)
-        $gpuVramGb = if ($gpu.AdapterRAM) { [math]::Round($gpu.AdapterRAM / 1GB, 1) } else { 0 }
+        $gpuVramGb = Get-VideoControllerDedicatedVramGb -Gpu $gpu
+        $gpuName = if ($gpu.Name) { [string]$gpu.Name } else { "" }
+        $recommendationScript = Join-Path $InstallDir "scripts\Get-ModelRecommendation.ps1"
+        if (-not (Test-Path -LiteralPath $recommendationScript)) {
+            throw "Model recommendation script was not found: $recommendationScript"
+        }
 
-        if ($ramGb -lt 8) {
-            return "llama3.2:3b"
+        $json = & $recommendationScript -RamGb $ramGb -GpuVramGb $gpuVramGb -GpuName $gpuName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Model recommendation script exited with code $LASTEXITCODE"
         }
-        if ($gpuVramGb -ge 12 -and $ramGb -ge 32) {
-            return "qwen2.5:14b"
-        }
-        if ($ramGb -ge 32) {
-            return "mistral-nemo"
-        }
-        if ($ramGb -ge 16) {
-            return "mistral"
-        }
-        return "llama3.2:3b"
+        return ($json | ConvertFrom-Json)
     } catch {
-        return "llama3.2:3b"
+        throw "Could not determine a supported local LLM model. $($_.Exception.Message)"
     }
 }
 
@@ -558,6 +640,7 @@ function Get-OllamaModels {
 
 function Ensure-OllamaModel {
     param([string]$OllamaExe, [string]$Model)
+    $Model = Normalize-OllamaModelName -Model $Model
     if ([string]::IsNullOrWhiteSpace($Model)) {
         return
     }
@@ -582,10 +665,16 @@ function Ensure-OllamaModel {
 
 try {
     Write-SetupLog "Starting Dr Transition dependency setup"
+    $OllamaModel = Normalize-OllamaModelName -Model $OllamaModel
+    $OllamaEmbeddingModel = Normalize-OllamaModelName -Model $OllamaEmbeddingModel
 
     if ([string]::IsNullOrWhiteSpace($OllamaModel) -or $OllamaModel -eq "auto" -or $OllamaModel -eq "none") {
-        $OllamaModel = Get-RecommendedOllamaModel
-        Write-SetupLog "Recommended Ollama model selected: $OllamaModel"
+        $recommendation = Get-OllamaModelRecommendation
+        if ([string]$recommendation.recommendedModel -eq "none") {
+            throw "Local LLM setup is not supported on this computer. $($recommendation.reason)"
+        }
+        $OllamaModel = Normalize-OllamaModelName -Model ([string]$recommendation.recommendedModel)
+        Write-SetupLog "Recommended Ollama model selected: $OllamaModel ($($recommendation.tier))"
     }
 
     $databaseUrl = "mysql+pymysql://$AppDbUser`:$AppDbPassword@localhost:3306/$DbName"

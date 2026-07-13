@@ -723,6 +723,7 @@ JOIN (
   UNION ALL SELECT 'Spain', 'Energy'
   UNION ALL SELECT 'Spain', 'Transport'
   UNION ALL SELECT 'Portugal', 'Energy'
+  UNION ALL SELECT 'Portugal', 'Housing'
 ) country_sector_rows ON country_sector_rows.country_name = c.name
 JOIN sectors s ON s.name = country_sector_rows.sector_name
 ON DUPLICATE KEY UPDATE country_id = VALUES(country_id);
