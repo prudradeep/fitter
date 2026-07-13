@@ -3,6 +3,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from app.services.chat_mitigation_creation import ChatMitigationCreationMixin
 from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_session import ChatSession
 from app.services.validation_service import ChatValidationServiceMixin
@@ -163,6 +164,30 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertFalse(response.error)
         self.assertEqual(response.step, "mitigation_reason")
         self.assertEqual(session.pending_mitigation_measure, "Introduce grants")
+
+    def test_practical_considerations_ignore_schema_placeholder_heading(self):
+        payload = {
+            "title": "# Practical Considerations",
+            "themes": [
+                {
+                    "heading": "## <Dynamic Theme Heading>",
+                    "summary": "Placeholder text should not become a checklist item.",
+                    "concerns": ["- Placeholder concern."],
+                },
+                {
+                    "heading": "## Targeted Mobility Access",
+                    "summary": "Real theme summary.",
+                    "concerns": ["- Real implementation concern."],
+                },
+            ],
+        }
+
+        markdown, panel_items = ChatMitigationCreationMixin._practical_considerations_json_to_markdown(
+            json.dumps(payload)
+        )
+
+        self.assertEqual(panel_items, ["Targeted Mobility Access"])
+        self.assertNotIn("Dynamic Theme Heading", markdown)
 
 
 if __name__ == "__main__":

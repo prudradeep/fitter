@@ -94,12 +94,24 @@ from app.services.custom_hazard_validation import (
     normalize_custom_group,
     validate_custom_hazard_dimensions,
 )
+from app.services.custom_hazard_text_rules import (
+    custom_hazard_sector_mismatch_reason,
+    custom_hazard_sector_rewrite_suggestion,
+    plain_custom_hazard_rejection_reason,
+    sector_signal_scores,
+)
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.evidence_contradiction_service import EvidenceContradictionService
 from app.services.grounding_models import GroundingModelService
 from app.services.hazard_effect_size import hazard_predictor_effect_rows
 from app.services.hazard_ranking_service import HazardRankingService, slugify_hazard
 from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
+from app.services.mitigation_text_rules import (
+    local_mitigation_field_error,
+    local_mitigation_measure_error,
+    local_mitigation_reason_error,
+    mitigations_are_similar,
+)
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.profile_metadata import compact_profile_metadata
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
@@ -542,6 +554,7 @@ class ChatValidationServiceMixin:
                     "hazard_validation_failed.md",
                     sector=session.sector,
                     reason="`Reason:` is required. Evidence URL and evidence file are optional.",
+                    rewrite_suggestion="",
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
@@ -584,6 +597,7 @@ class ChatValidationServiceMixin:
                     "hazard_validation_failed.md",
                     sector=session.sector,
                     reason=str(input_review["reason"]),
+                    rewrite_suggestion="",
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
@@ -613,6 +627,7 @@ class ChatValidationServiceMixin:
                     "hazard_validation_failed.md",
                     sector=session.sector,
                     reason=plain_rejection_reason,
+                    rewrite_suggestion="",
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
@@ -643,6 +658,12 @@ class ChatValidationServiceMixin:
                     "hazard_validation_failed.md",
                     sector=session.sector,
                     reason=sector_mismatch_reason,
+                    rewrite_suggestion=self._custom_hazard_sector_rewrite_suggestion(
+                        session,
+                        session.pending_hazard or "",
+                        reason,
+                        evidence or "",
+                    ),
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
@@ -685,6 +706,7 @@ class ChatValidationServiceMixin:
                     "hazard_validation_failed.md",
                     sector=session.sector,
                     reason=validation["reason"],
+                    rewrite_suggestion="",
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
@@ -735,6 +757,7 @@ class ChatValidationServiceMixin:
                     "hazard_validation_failed.md",
                     sector=session.sector,
                     reason=str(context_review["reason"]),
+                    rewrite_suggestion="",
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
@@ -880,44 +903,26 @@ class ChatValidationServiceMixin:
         reason: str = "",
         evidence: str = "",
     ) -> str | None:
-        selected_family = cls._sector_family(session.sector)
-        if selected_family not in {"energy", "housing", "transport"}:
-            return None
-
-        text = " ".join(
-            part.strip()
-            for part in (hazard, reason, evidence)
-            if isinstance(part, str) and part.strip()
+        return custom_hazard_sector_mismatch_reason(
+            selected_sector=session.sector,
+            hazard=hazard,
+            reason=reason,
+            evidence=evidence,
         )
-        if not text.strip():
-            return None
 
-        scores = cls._sector_signal_scores(text)
-        selected_score = scores.get(selected_family, 0)
-        other_scores = {
-            sector: score
-            for sector, score in scores.items()
-            if sector != selected_family and score > 0
-        }
-        if not other_scores:
-            return None
-
-        strongest_other, strongest_score = max(
-            other_scores.items(),
-            key=lambda item: item[1],
-        )
-        if selected_score == 0:
-            if strongest_score < 1:
-                return None
-        elif strongest_score < selected_score + 2:
-            return None
-
-        return (
-            f"This appears to be mainly a {cls._sector_display_name(strongest_other)} "
-            f"hazard, but the selected sector is "
-            f"{session.sector or cls._sector_display_name(selected_family)}. "
-            "Please rewrite it so the hazard clearly belongs to the selected sector, "
-            "or choose the matching sector before adding it."
+    @classmethod
+    def _custom_hazard_sector_rewrite_suggestion(
+        cls,
+        session: ChatSession,
+        hazard: str,
+        reason: str = "",
+        evidence: str = "",
+    ) -> str:
+        return custom_hazard_sector_rewrite_suggestion(
+            selected_sector=session.sector,
+            hazard=hazard,
+            reason=reason,
+            evidence=evidence,
         )
 
     @classmethod
@@ -928,176 +933,16 @@ class ChatValidationServiceMixin:
         reason: str = "",
         evidence: str = "",
     ) -> str | None:
-        text = " ".join(
-            part.strip()
-            for part in (hazard, reason, evidence)
-            if isinstance(part, str) and part.strip()
+        return plain_custom_hazard_rejection_reason(
+            selected_sector=session.sector,
+            hazard=hazard,
+            reason=reason,
+            evidence=evidence,
         )
-        normalized = normalize_for_match(text)
-        if not normalized:
-            return None
-
-        has_transition_mechanism = any(
-            phrase in normalized
-            for phrase in (
-                "green transition",
-                "digital transition",
-                "twin transition",
-                "transition policy",
-                "climate policy",
-                "decarbonisation",
-                "decarbonization",
-                "net zero",
-                "renewable",
-                "electrification",
-                "retrofit",
-                "renovation policy",
-                "heating replacement",
-                "heat pump",
-                "gas boiler ban",
-                "gas phase out",
-                "fossil fuel phase out",
-                "energy efficiency",
-                "carbon price",
-                "carbon tax",
-                "smart meter",
-                "digitalisation",
-                "digitalization",
-            )
-        )
-        if has_transition_mechanism:
-            return None
-
-        household_safety_signals = (
-            "carbon monoxide",
-            "co poisoning",
-            "gas leak",
-            "fire hazard",
-            "burn injury",
-        )
-        domestic_source_signals = (
-            "domestic heating",
-            "home heating",
-            "household heating",
-            "cooking",
-            "stove",
-            "boiler",
-            "heater",
-            "oven",
-            "gas appliance",
-        )
-        if any(signal in normalized for signal in household_safety_signals) and any(
-            signal in normalized for signal in domestic_source_signals
-        ):
-            sector_text = f" in the {session.sector} sector" if session.sector else ""
-            return (
-                "Carbon monoxide poisoning from domestic heating or cooking is a "
-                f"general household safety risk{sector_text}. To add it as a hazard, "
-                "please rewrite it to show the green or digital transition policy "
-                "that creates or increases the risk, such as a heating-replacement, "
-                "retrofit, electrification, or energy-efficiency policy."
-            )
-
-        return None
 
     @staticmethod
     def _sector_signal_scores(text: str) -> dict[str, int]:
-        normalized = f" {normalize_for_match(text)} "
-        phrase_groups: dict[str, tuple[str, ...]] = {
-            "transport": (
-                "transport",
-                "mobility",
-                "public transport",
-                "public transit",
-                "transit",
-                "bus",
-                "buses",
-                "rail",
-                "train",
-                "trains",
-                "tram",
-                "metro",
-                "vehicle",
-                "vehicles",
-                "electric vehicle",
-                "ev",
-                "charging station",
-                "charging stations",
-                "road",
-                "roads",
-                "traffic",
-                "car",
-                "cars",
-                "cycling",
-                "bicycle",
-                "bike",
-                "pedestrian",
-                "freight",
-                "aviation",
-            ),
-            "energy": (
-                "energy",
-                "electricity",
-                "electric",
-                "power",
-                "grid",
-                "renewable",
-                "renewables",
-                "solar",
-                "wind",
-                "utility bill",
-                "utility bills",
-                "utility arrears",
-                "energy bill",
-                "energy bills",
-                "tariff",
-                "tariffs",
-                "fuel poverty",
-                "energy poverty",
-                "heat pump",
-                "heat pumps",
-                "clean heating",
-            ),
-            "housing": (
-                "housing",
-                "home",
-                "homes",
-                "house",
-                "houses",
-                "building",
-                "buildings",
-                "dwelling",
-                "dwellings",
-                "apartment",
-                "apartments",
-                "residential",
-                "retrofit",
-                "retrofits",
-                "renovation",
-                "renovations",
-                "insulation",
-                "tenant",
-                "tenants",
-                "renter",
-                "renters",
-                "landlord",
-                "landlords",
-                "rent",
-                "rents",
-                "housing cost",
-                "housing costs",
-                "energy inefficient homes",
-                "poorly insulated",
-            ),
-        }
-        return {
-            sector: sum(
-                1
-                for phrase in phrases
-                if f" {normalize_for_match(phrase)} " in normalized
-            )
-            for sector, phrases in phrase_groups.items()
-        }
+        return sector_signal_scores(text)
 
     async def _review_custom_hazard_input(
         self, session: ChatSession, hazard: str
@@ -1503,6 +1348,20 @@ class ChatValidationServiceMixin:
         if is_llm_unavailable_response(response):
             return None
         parsed = parse_validation_response(response)
+        if (
+            session.validation_mode == "easy"
+            and self._fields_are_locally_meaningful(cleaned_fields)
+            and (
+                not parsed.get("valid")
+                or str(parsed.get("reason") or "").strip()
+                == "The text is meaningful and specific enough."
+            )
+            and not self._is_hard_validation_rejection(str(parsed.get("reason") or ""))
+        ):
+            return {
+                "valid": True,
+                "reason": "Easy validation accepted locally meaningful input.",
+            }
         if (
             not parsed.get("valid")
             and self._is_style_only_validation_rejection(str(parsed.get("reason") or ""))
@@ -2945,125 +2804,17 @@ class ChatValidationServiceMixin:
         return f"{prefix} {reason}".strip() + suffix
 
     def _local_mitigation_measure_error(self, mitigation_measure: str) -> str | None:
-        if self._is_invalid_user_text(mitigation_measure):
-            return (
-                "The mitigation measure appears to contain gibberish, keyboard mashing, "
-                "or text that is not meaningful. Please rewrite it as a clear policy action."
-            )
-        if len(compact_for_match(mitigation_measure)) < 8:
-            return "The mitigation measure is too short. Please write a clearer policy action."
-        return None
+        return local_mitigation_measure_error(mitigation_measure, self._is_invalid_user_text)
 
     def _local_mitigation_field_error(self, mitigation_measure: str, reason: str) -> str | None:
-        if self._is_invalid_user_text(mitigation_measure):
-            return (
-                "The mitigation measure appears to contain gibberish, keyboard mashing, "
-                "or text that is not meaningful. Please rewrite it as a clear policy action."
-            )
-        if self._is_invalid_user_text(reason):
-            return (
-                "The reason appears to contain gibberish, keyboard mashing, or text that "
-                "is not meaningful. Please explain why this measure would reduce the "
-                "selected hazard for the affected groups."
-            )
-        if len(compact_for_match(mitigation_measure)) < 8:
-            return "The mitigation measure is too short. Please write a clearer policy action."
-        reason_error = self._local_mitigation_reason_error(reason)
-        if reason_error:
-            return reason_error
-        return None
+        return local_mitigation_field_error(
+            mitigation_measure,
+            reason,
+            self._is_invalid_user_text,
+        )
 
     def _local_mitigation_reason_error(self, reason: str) -> str | None:
-        if self._is_invalid_user_text(reason):
-            return (
-                "The reason appears to contain gibberish, keyboard mashing, or text that "
-                "is not meaningful. Please explain why this measure would reduce the "
-                "selected hazard for the affected groups."
-            )
-
-        normalized = normalize_for_match(reason)
-        compact = compact_for_match(reason)
-        if len(compact) < 8:
-            return "The reason is too short. Please explain the mechanism in a little more detail."
-
-        non_answer_patterns = (
-            r"\b(?:i\s+)?don\s*t\s+know\b",
-            r"\b(?:i\s+)?do\s+not\s+know\b",
-            r"\bno\s+idea\b",
-            r"\bnot\s+sure\b",
-            r"\bunsure\b",
-            r"\bcan(?:not|t)\s+say\b",
-            r"\bdon\s*t\s+have\s+(?:a\s+)?reason\b",
-            r"\bno\s+reason\b",
-            r"\bnot\s+applicable\b",
-            r"\bn/?a\b",
-        )
-        if any(re.search(pattern, normalized) for pattern in non_answer_patterns):
-            return (
-                "The reason is ambiguous. Please explain how the mitigation measure "
-                "would reduce the selected hazard for the affected groups."
-            )
-
-        mechanism_terms = {
-            "reduce",
-            "reduces",
-            "reducing",
-            "lower",
-            "lowers",
-            "lowering",
-            "prevent",
-            "prevents",
-            "preventing",
-            "avoid",
-            "avoids",
-            "avoiding",
-            "support",
-            "supports",
-            "supporting",
-            "help",
-            "helps",
-            "helping",
-            "improve",
-            "improves",
-            "improving",
-            "increase",
-            "increases",
-            "increasing",
-            "provide",
-            "provides",
-            "providing",
-            "protect",
-            "protects",
-            "protecting",
-            "enable",
-            "enables",
-            "enabling",
-            "ensure",
-            "ensures",
-            "ensuring",
-            "address",
-            "addresses",
-            "addressing",
-            "mitigate",
-            "mitigates",
-            "mitigating",
-            "target",
-            "targets",
-            "targeting",
-            "because",
-            "by",
-            "through",
-            "so",
-        }
-        tokens = set(normalized.split())
-        if len(tokens) < 4 or not tokens & mechanism_terms:
-            return (
-                "The reason is too vague or unrelated to the mitigation context. "
-                "Please describe the mechanism, for example how the measure lowers "
-                "exposure, cost, exclusion, or vulnerability for the affected groups."
-            )
-
-        return None
+        return local_mitigation_reason_error(reason, self._is_invalid_user_text)
 
     def _local_mitigation_duplicate_check(
         self, session: ChatSession, mitigation_measure: str
@@ -3081,22 +2832,7 @@ class ChatValidationServiceMixin:
 
     @classmethod
     def _mitigations_are_similar(cls, left: str, right: str) -> bool:
-        left_key = normalize_for_match(left)
-        right_key = normalize_for_match(right)
-        if not left_key or not right_key:
-            return False
-        if left_key == right_key:
-            return True
-        left_compact = compact_for_match(left)
-        right_compact = compact_for_match(right)
-        if left_compact in right_compact or right_compact in left_compact:
-            return True
-        left_words = cls._hazard_similarity_words(left_key)
-        right_words = cls._hazard_similarity_words(right_key)
-        overlap = len(left_words & right_words)
-        smaller_overlap = overlap / max(1, min(len(left_words), len(right_words)))
-        larger_overlap = overlap / max(1, max(len(left_words), len(right_words)))
-        return smaller_overlap >= 0.8 or (smaller_overlap >= 0.65 and larger_overlap >= 0.45)
+        return mitigations_are_similar(left, right)
 
     async def _semantic_mitigation_duplicate_check(
         self, session: ChatSession, mitigation_measure: str

@@ -3,6 +3,7 @@ import logging
 from dataclasses import asdict
 
 from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.models import UserActivity, UserChatMessage, UserHazard, UserMitigationMeasure, UserSession
 from app.schemas import ChatResponse
@@ -33,9 +34,9 @@ class ChatPersistenceMixin:
             self.db.commit()
             self.db.refresh(user_session)
             return user_session
-        except Exception:
+        except SQLAlchemyError:
             self.db.rollback()
-            logger.exception("Failed to persist user session")
+            logger.exception("Failed to persist user session session_id=%s", session_id)
             return None
 
     def _session_belongs_to_current_user(self, session_id: str | None) -> bool:
@@ -121,8 +122,11 @@ class ChatPersistenceMixin:
                 )
             ) or 0
             return int(direct_count) + int(linked_count)
-        except Exception:
-            logger.exception("Failed to count persisted mitigation measures")
+        except SQLAlchemyError:
+            logger.exception(
+                "Failed to count persisted mitigation measures session_id=%s",
+                session_id,
+            )
             return 0
 
     def _visible_mitigation_measure_filters(self) -> list[object]:
@@ -161,9 +165,13 @@ class ChatPersistenceMixin:
                 )
             )
             self.db.commit()
-        except Exception:
+        except SQLAlchemyError:
             self.db.rollback()
-            logger.exception("Failed to persist chat message")
+            logger.exception(
+                "Failed to persist chat message session_id=%s role=%s",
+                session_id,
+                role,
+            )
 
     @staticmethod
     def _chat_message_display_content(content: str) -> str:
@@ -186,8 +194,11 @@ class ChatPersistenceMixin:
                 .order_by(desc(UserChatMessage.created_at), desc(UserChatMessage.id))
                 .limit(limit)
             ).all()
-        except Exception:
-            logger.exception("Failed to load chat messages for auto conversation")
+        except SQLAlchemyError:
+            logger.exception(
+                "Failed to load chat messages for auto conversation session_id=%s",
+                session_id,
+            )
             return []
         return [
             {"role": row.role, "content": row.content}
@@ -223,9 +234,13 @@ class ChatPersistenceMixin:
                 )
             )
             self.db.commit()
-        except Exception:
+        except SQLAlchemyError:
             self.db.rollback()
-            logger.exception("Failed to persist user activity")
+            logger.exception(
+                "Failed to persist user activity session_id=%s activity_type=%s",
+                session_id,
+                activity_type,
+            )
 
     @staticmethod
     def _activity_step(session: ChatSession) -> str:

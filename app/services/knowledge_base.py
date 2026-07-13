@@ -1,9 +1,12 @@
+import ipaddress
 import re
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from sqlalchemy import delete, or_, select
@@ -83,7 +86,7 @@ class KnowledgeBaseService:
         *,
         allow_lexical_only: bool = False,
     ) -> dict[str, object]:
-        drafts = await extract_url_chunks(url)
+        drafts = await extract_url_chunks(url, self.settings.max_url_ingest_bytes)
         return await self.ingest_chunks(
             drafts,
             title or url,
@@ -99,6 +102,14 @@ class KnowledgeBaseService:
         *,
         allow_lexical_only: bool = False,
     ) -> dict[str, object]:
+        if len(content) > self.settings.max_upload_bytes:
+            return {
+                "error": True,
+                "detail": (
+                    f"File is too large. Maximum size is "
+                    f"{self.settings.max_upload_bytes // (1024 * 1024)} MB."
+                ),
+            }
         drafts = extract_file_chunks(filename, content)
         return await self.ingest_chunks(
             drafts,
@@ -891,25 +902,95 @@ def extract_file_chunks(filename: str, content: bytes) -> list[ChunkDraft]:
     return []
 
 
-async def extract_url_chunks(url: str) -> list[ChunkDraft]:
+async def extract_url_chunks(url: str, max_bytes: int | None = None) -> list[ChunkDraft]:
     if not url.casefold().startswith(("http://", "https://")):
         return []
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-    content_type = response.headers.get("content-type", "").casefold()
-    content = response.content
-    if "pdf" in content_type or url.casefold().split("?", 1)[0].endswith(".pdf"):
+    response_url, content_type, encoding, content = await _fetch_public_url(url, max_bytes)
+    lookup_url = response_url or url
+    if "pdf" in content_type or lookup_url.casefold().split("?", 1)[0].endswith(".pdf"):
         return extract_pdf_chunks(content)
     if (
         "wordprocessingml.document" in content_type
-        or url.casefold().split("?", 1)[0].endswith(".docx")
+        or lookup_url.casefold().split("?", 1)[0].endswith(".docx")
     ):
         return chunk_text(compact_text(extract_docx_text(content)))
-    text = content.decode(response.encoding or "utf-8", errors="ignore")
+    text = content.decode(encoding or "utf-8", errors="ignore")
     if "html" in content_type or "<html" in text[:500].casefold():
         text = html_to_text(text)
     return chunk_text(compact_text(text))
+
+
+async def _fetch_public_url(
+    url: str,
+    max_bytes: int | None = None,
+    *,
+    max_redirects: int = 5,
+) -> tuple[str, str, str | None, bytes]:
+    current_url = url
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+        for _ in range(max_redirects + 1):
+            _validate_public_http_url(current_url)
+            async with client.stream("GET", current_url) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ValueError("URL redirect did not include a target location.")
+                    current_url = urljoin(str(response.url), location)
+                    continue
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                if max_bytes is not None and content_length:
+                    try:
+                        declared_size = int(content_length)
+                    except ValueError:
+                        declared_size = None
+                    if declared_size is not None and declared_size > max_bytes:
+                        raise ValueError(
+                            f"URL content is too large. Maximum size is {max_bytes // (1024 * 1024)} MB."
+                        )
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if max_bytes is not None and total > max_bytes:
+                        raise ValueError(
+                            f"URL content is too large. Maximum size is {max_bytes // (1024 * 1024)} MB."
+                        )
+                    chunks.append(chunk)
+                return (
+                    str(response.url),
+                    response.headers.get("content-type", "").casefold(),
+                    response.encoding,
+                    b"".join(chunks),
+                )
+    raise ValueError("URL redirected too many times.")
+
+
+def _validate_public_http_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("URL must start with http:// or https://.")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL host is required.")
+    try:
+        addresses = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ValueError(f"Could not resolve URL host: {host}") from exc
+    for _, _, _, _, sockaddr in addresses:
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            continue
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise ValueError("URL must resolve to a public network address.")
 
 
 def extract_pdf_chunks(content: bytes) -> list[ChunkDraft]:

@@ -43,6 +43,12 @@ from app.services.chat_parsers import (
 from app.services.chat_session import ChatSession
 from app.services.hazard_effect_size import hazard_predictor_effect_rows
 from app.services.message_renderer import markdown_to_html, render_message
+from app.services.mitigation_policy_formatting import (
+    format_mitigation_reference_links,
+    mitigation_reference_link_values,
+    normalize_current_policy_measure_title,
+    simplify_mitigation_implementation_summary,
+)
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 
 logger = logging.getLogger(__name__)
@@ -2857,12 +2863,7 @@ class ChatMitigationCreationMixin:
 
     @staticmethod
     def _normalize_current_policy_measure_title(title: str) -> str:
-        cleaned = normalize_markdown_text(str(title or "")).strip()
-        cleaned = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", cleaned)
-        cleaned = re.sub(r"\s+", " ", cleaned).strip(" .:-")
-        if not cleaned:
-            return "Current implementation example"
-        return cleaned[:1].upper() + cleaned[1:]
+        return normalize_current_policy_measure_title(title)
 
     @staticmethod
     def _new_policy_proposals_intro() -> str:
@@ -2937,7 +2938,7 @@ class ChatMitigationCreationMixin:
                 continue
             heading = cls._clean_practical_json_text(theme.get("heading"))
             heading_title = cls._markdown_heading_title(heading)
-            if not heading_title:
+            if not heading_title or cls._is_practical_placeholder_text(heading_title):
                 continue
             heading = f"## {heading_title}"
             panel_key = normalize_for_match(heading_title)
@@ -2986,6 +2987,20 @@ class ChatMitigationCreationMixin:
         cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
         cleaned = re.sub(r"\*(.*?)\*", r"\1", cleaned)
         return cleaned.strip(" -#:\t\r\n")
+
+    @staticmethod
+    def _is_practical_placeholder_text(value: object) -> bool:
+        normalized = normalize_for_match(str(value or ""))
+        return normalized in {
+            "dynamic theme heading",
+            "markdown paragraph summarising the theme",
+            "markdown paragraph summarizing the theme",
+            "markdown bullet point",
+        } or (
+            "dynamic theme heading" in normalized
+            or normalized.startswith("markdown paragraph")
+            or normalized.startswith("markdown bullet")
+        )
 
     @classmethod
     def _extract_practical_consideration_items(cls, markdown: str) -> list[str]:
@@ -3719,38 +3734,15 @@ class ChatMitigationCreationMixin:
 
     @staticmethod
     def _mitigation_reference_link_values(reference_links: str) -> list[str]:
-        links = re.findall(r"https?://[^\s;,]+", reference_links)
-        if links:
-            return links
-        cleaned = re.sub(r"\s+", " ", reference_links or "").strip()
-        return [cleaned] if cleaned else []
+        return mitigation_reference_link_values(reference_links)
 
     @staticmethod
     def _simplify_mitigation_implementation_summary(summary: str) -> str:
-        cleaned = normalize_markdown_text(str(summary or "")).strip()
-        if not cleaned:
-            return ""
-        cleaned = re.sub(
-            r'(?i)^for\s+the\s+profile\s+["“][^"”]+["”]\s*,?\s*',
-            "",
-            cleaned,
-        )
-        cleaned = re.sub(
-            r"(?i)^for\s+the\s+profile\s+[^,]+,\s*",
-            "",
-            cleaned,
-        )
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        if not cleaned:
-            return ""
-        return cleaned[:1].upper() + cleaned[1:]
+        return simplify_mitigation_implementation_summary(summary)
 
     @staticmethod
     def _format_mitigation_reference_links(reference_links: str) -> str:
-        links = re.findall(r"https?://[^\s;,]+", reference_links)
-        if not links:
-            return reference_links.strip()
-        return "; ".join(f"[Reference {index}]({link})" for index, link in enumerate(links, start=1))
+        return format_mitigation_reference_links(reference_links)
 
 
 

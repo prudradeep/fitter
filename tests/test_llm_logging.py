@@ -1,8 +1,6 @@
 import json
-import tempfile
 import unittest
-from unittest.mock import patch
-from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from app.config import Settings
 from app.services.llm_logging import log_llm_exchange
@@ -10,10 +8,15 @@ from app.services.llm_logging import log_llm_exchange
 
 class LlmLoggingTests(unittest.TestCase):
     def test_log_llm_exchange_writes_jsonl_record(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            log_path = Path(temp_dir) / "llm.jsonl"
-            settings = Settings(llm_log_path=str(log_path), llm_log_to_db=False)
+        writes: list[str] = []
+        handle = MagicMock()
+        handle.__enter__.return_value.write.side_effect = writes.append
+        settings = Settings(llm_log_path="unused/llm.jsonl", llm_log_to_db=False)
 
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch("pathlib.Path.open", return_value=handle),
+        ):
             log_llm_exchange(
                 settings,
                 request_id="request-1",
@@ -26,10 +29,7 @@ class LlmLoggingTests(unittest.TestCase):
                 duration_ms=12.345,
             )
 
-            records = [
-                json.loads(line)
-                for line in log_path.read_text(encoding="utf-8").splitlines()
-            ]
+        records = [json.loads(line) for line in "".join(writes).splitlines()]
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["request_id"], "request-1")
@@ -39,14 +39,13 @@ class LlmLoggingTests(unittest.TestCase):
         self.assertEqual(records[0]["duration_ms"], 12.35)
 
     def test_log_llm_exchange_respects_disabled_setting(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            log_path = Path(temp_dir) / "llm.jsonl"
-            settings = Settings(
-                llm_log_enabled=False,
-                llm_log_path=str(log_path),
-                llm_log_to_db=False,
-            )
+        settings = Settings(
+            llm_log_enabled=False,
+            llm_log_path="unused/llm.jsonl",
+            llm_log_to_db=False,
+        )
 
+        with patch("pathlib.Path.open") as open_mock:
             log_llm_exchange(
                 settings,
                 request_id="request-1",
@@ -57,7 +56,42 @@ class LlmLoggingTests(unittest.TestCase):
                 response={},
             )
 
-            self.assertFalse(log_path.exists())
+        open_mock.assert_not_called()
+
+    def test_production_log_redacts_payloads_by_default(self):
+        writes: list[str] = []
+        handle = MagicMock()
+        handle.__enter__.return_value.write.side_effect = writes.append
+        settings = Settings(
+            app_env="production",
+            app_debug=False,
+            secret_key="strong-production-secret",
+            database_url="mysql+pymysql://user:strong-password@db.example/app",
+            llm_log_enabled=True,
+            llm_log_to_file=True,
+            llm_log_path="unused/llm.jsonl",
+            llm_log_to_db=False,
+        )
+
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch("pathlib.Path.open", return_value=handle),
+        ):
+            log_llm_exchange(
+                settings,
+                request_id="request-3",
+                provider="ollama",
+                endpoint="/api/chat",
+                model="mistral-nemo",
+                request={"messages": [{"role": "user", "content": "Sensitive prompt"}]},
+                response={"message": {"content": "Sensitive answer"}},
+            )
+
+        record = json.loads("".join(writes).splitlines()[0])
+
+        self.assertTrue(record["request"]["redacted"])
+        self.assertTrue(record["response"]["redacted"])
+        self.assertNotIn("Sensitive prompt", json.dumps(record))
 
     def test_log_llm_exchange_can_write_database_record(self):
         class FakeSession:
@@ -78,7 +112,7 @@ class LlmLoggingTests(unittest.TestCase):
         session = FakeSession()
         settings = Settings(llm_log_to_file=False, llm_log_to_db=True)
 
-        with patch("app.database.SessionLocal", return_value=session):
+        with patch("app.db.session.SessionLocal", return_value=session):
             log_llm_exchange(
                 settings,
                 request_id="request-2",

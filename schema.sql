@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS app_users (
   email VARCHAR(255) NOT NULL UNIQUE,
   name VARCHAR(160) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
+  session_version INT NOT NULL DEFAULT 1,
   designation VARCHAR(160) NOT NULL,
   organisation_type VARCHAR(160) NOT NULL,
   organisation_name VARCHAR(220) NOT NULL,
@@ -82,6 +83,14 @@ CREATE TABLE IF NOT EXISTS app_users (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX ix_app_users_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS app_rate_limits (
+  rate_limit_key VARCHAR(255) NOT NULL PRIMARY KEY,
+  attempts INT NOT NULL DEFAULT 0,
+  window_started_at DOUBLE NOT NULL DEFAULT 0,
+  locked_until DOUBLE NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_sessions (
@@ -541,6 +550,27 @@ CREATE TABLE IF NOT EXISTS user_activities (
   CONSTRAINT fk_user_activities_session FOREIGN KEY (user_session_id) REFERENCES user_sessions(id) ON DELETE CASCADE,
   INDEX ix_user_activities_session_id (user_session_id),
   INDEX ix_user_activities_activity_type (activity_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NULL,
+  action VARCHAR(120) NOT NULL,
+  status VARCHAR(40) NOT NULL DEFAULT 'success',
+  target_type VARCHAR(80) NULL,
+  target_id VARCHAR(160) NULL,
+  request_id VARCHAR(64) NULL,
+  ip_address VARCHAR(80) NULL,
+  user_agent VARCHAR(255) NULL,
+  details TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_audit_logs_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE SET NULL,
+  INDEX ix_audit_logs_user_id (user_id),
+  INDEX ix_audit_logs_action (action),
+  INDEX ix_audit_logs_target_type (target_type),
+  INDEX ix_audit_logs_target_id (target_id),
+  INDEX ix_audit_logs_request_id (request_id),
+  INDEX ix_audit_logs_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS llm_exchange_logs (

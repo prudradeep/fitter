@@ -22,11 +22,11 @@ Use the following JSON schema exactly:
   "context": "European twin-transition policy implementation",
   "themes": [
     {{
-      "heading": "## <Dynamic Theme Heading>",
-      "summary": "<Markdown paragraph summarising the theme>",
+      "heading": "## Targeted Access And Delivery Barriers",
+      "summary": "Write a Markdown paragraph summarising the evidence-based theme for this specific hazard and affected profiles.",
       "concerns": [
-        "- <Markdown bullet point>",
-        "- <Markdown bullet point>"
+        "- Write one concise evidence-based implementation concern.",
+        "- Write another concise evidence-based implementation concern."
       ]
     }}
   ]

@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .uv-cache/
+.tmp/
 data/*.faiss
 data/grounding-logs/
 data/service-runtime/
@@ -15,3 +16,4 @@ build/
 dist/
 desktop/tauri/node_modules/
 desktop/tauri/src-tauri/target/
+points

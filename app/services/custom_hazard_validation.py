@@ -1,12 +1,18 @@
 import json
 import re
-from difflib import SequenceMatcher
 from typing import Any
 
 from app.llm import ask_llm_chat
 from app.services.chat_json import parse_json_object
-from app.services.chat_options import compact_for_match, normalize_for_match
+from app.services.chat_options import normalize_for_match
 from app.services.chat_parsers import is_llm_unavailable_response
+from app.services.custom_hazard_matching import (
+    coerce_group as _coerce_group,
+    dedupe_groups as _dedupe_groups,
+    duplicate_candidates as _duplicate_candidates,
+    extract_affected_groups as _extract_affected_groups,
+    group_is_allowed as _group_is_allowed,
+)
 from app.services.enums import (
     ConfidenceLevel,
     CustomHazardAction,
@@ -59,59 +65,6 @@ SCORE_STRONG = 8
 SCORE_PARTIAL = 6
 SCORE_WEAK = 4
 SCORE_POOR = 3
-
-DUPLICATE_SEQUENCE_THRESHOLD = 0.86
-DUPLICATE_TOKEN_THRESHOLD = 0.72
-DUPLICATE_SEMANTIC_THRESHOLD = 0.70
-
-ANSWER_ONLY_VALUES = {
-    "yes",
-    "no",
-    "yes once",
-    "yes twice or more",
-    "twice or more",
-    "once",
-    "higher",
-    "lower",
-}
-GENERIC_GROUPS = {
-    "people",
-    "communities",
-    "citizens",
-    "residents",
-    "households",
-    "consumers",
-    "public",
-    "society",
-    "stakeholders",
-}
-POLICY_GROUPS = {
-    "energy communities",
-    "renewable energy communities",
-    "older adults",
-    "disabled people",
-    "tenants",
-    "taxi drivers",
-    "households in energy poverty",
-    "low-income households",
-    "middle-income households",
-    "high-income households",
-    "rural communities",
-    "urban residents",
-    "suburban residents",
-    "tenant households",
-    "homeowner households",
-    "older homeowners",
-    "young renters",
-    "disabled commuters",
-    "families relying on buses",
-    "residents of apartment buildings",
-    "people with poor digital skills",
-    "energy-sector workers",
-    "workers in fossil-fuel-dependent regions",
-    "workers in fossil fuel dependent regions",
-}
-
 
 def default_custom_hazard_state() -> dict[str, Any]:
     return {
@@ -606,10 +559,10 @@ def _recommended_action(
     if result.get("affected_groups") and not state.get("confirmed_affected_groups"):
         return CustomHazardAction.REVIEW_GROUPS
 
-    if score >= ready_score:
+    if score >= ready_score or flattened or str(validation_mode or "").strip().casefold() == "easy":
         return CustomHazardAction.VALIDATE
 
-    return CustomHazardAction.REJECT if flattened else CustomHazardAction.ASK_CLARIFICATION
+    return CustomHazardAction.ASK_CLARIFICATION
 
 
 def _validation_thresholds(validation_mode: str) -> dict[str, int]:
@@ -633,160 +586,6 @@ def _status_for_action(action: str | CustomHazardAction) -> CustomHazardStatus:
         CustomHazardAction.VALIDATE.value: CustomHazardStatus.READY,
         CustomHazardAction.REJECT.value: CustomHazardStatus.REJECTED,
     }.get(action_value, CustomHazardStatus.NEEDS_CLARIFICATION)
-
-
-def _duplicate_candidates(
-    hazard_text: str,
-    known_hazards: list[str],
-    llm_candidates: list[Any],
-) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-    for item in llm_candidates:
-        if not isinstance(item, dict):
-            continue
-        existing = str(item.get("existing_hazard") or item.get("match") or "").strip()
-        if existing:
-            candidates.append(
-                {
-                    "existing_hazard": existing,
-                    "similarity_score": _clamp_percent(item.get("similarity_score")),
-                    "confidence": _confidence_for_percent(
-                        _clamp_percent(item.get("similarity_score"))
-                    ).value,
-                    "reason": str(item.get("reason") or "The hazards appear similar.").strip(),
-                }
-            )
-    for existing in known_hazards:
-        scores = _duplicate_similarity_scores(hazard_text, existing)
-        score = max(scores.values())
-        if (
-            scores["sequence"] >= DUPLICATE_SEQUENCE_THRESHOLD
-            or scores["token"] >= DUPLICATE_TOKEN_THRESHOLD
-            or scores["semantic"] >= DUPLICATE_SEMANTIC_THRESHOLD
-        ):
-            candidates.append(
-                {
-                    "existing_hazard": existing,
-                    "similarity_score": round(score * 100),
-                    "confidence": _confidence_for_percent(round(score * 100)).value,
-                    "reason": _duplicate_reason(scores),
-                }
-            )
-    seen: set[str] = set()
-    unique: list[dict[str, Any]] = []
-    for candidate in sorted(candidates, key=lambda item: item.get("similarity_score") or 0, reverse=True):
-        key = normalize_for_match(str(candidate.get("existing_hazard") or ""))
-        if key and key not in seen:
-            seen.add(key)
-            unique.append(candidate)
-    return unique[:3]
-
-
-def _extract_affected_groups(text: str) -> list[dict[str, Any]]:
-    groups: list[dict[str, Any]] = []
-    value = re.sub(r"\s+", " ", str(text or "")).strip()
-    if not value:
-        return []
-
-    # Deterministic aliases catch common profile terms before regex extraction.
-    alias_map: tuple[tuple[tuple[str, ...], str], ...] = (
-        (("low-income", "low income", "income poor"), "Low-income households"),
-        (("middle-income", "medium income", "middle income"), "Middle-income households"),
-        (("high-income", "high income"), "High-income households"),
-        (("tenant", "tenants", "renters", "renting"), "Tenant households"),
-        (("homeowner", "homeowners", "owner occupiers", "owner-occupiers"), "Homeowner households"),
-        (("older adults", "elderly", "pensioners", "retirees"), "Older adults"),
-        (("disabled", "disability", "long-term condition", "long term condition"), "People with disabilities or long-term conditions"),
-        (("poor digital skills", "low digital skills", "digital exclusion"), "People with poor digital skills"),
-        (("taxi drivers", "cab drivers"), "Taxi drivers"),
-        (("rural communities", "rural residents", "rural households"), "Rural residents"),
-        (("urban communities", "urban residents", "urban households"), "Urban residents"),
-        (("families relying on buses", "bus-dependent families"), "Families relying on buses"),
-        (("apartment dwellers", "residents of apartment buildings", "flat residents"), "Residents of apartment buildings"),
-        (("energy poverty", "fuel poverty", "utility arrears", "energy affordability"), "Households experiencing energy affordability challenges"),
-        (("energy-sector workers", "energy sector workers", "energy workers"), "Energy-sector workers"),
-        (("fossil-fuel-dependent regions", "fossil fuel dependent regions", "coal regions", "oil and gas regions"), "Workers in fossil-fuel-dependent regions"),
-    )
-    value_key = normalize_for_match(value)
-    for aliases, canonical in alias_map:
-        if _contains_any_term(value_key, aliases):
-            groups.append(_group_payload(canonical, canonical, "Matched a known affected-group expression."))
-
-    patterns = [
-        r"\b(?:low[- ]income|middle[- ]income|high[- ]income|rural|urban|suburban|older|young|disabled|tenant|homeowner|taxi|bus[- ]dependent|car[- ]dependent)\s+(?:households|communities|adults|people|drivers|residents|tenants|families|commuters)\b",
-        r"\bhouseholds\s+(?:in|with|experiencing)\s+(?:energy poverty|fuel poverty|utility arrears|energy affordability challenges)\b",
-        r"\bpeople\s+with\s+[^,.]{3,80}",
-        r"\bresidents\s+of\s+[^,.]{3,80}",
-        r"\bcommunities\s+affected\s+by\s+[^,.]{3,80}",
-    ]
-    for pattern in patterns:
-        for match in re.finditer(pattern, value, flags=re.IGNORECASE):
-            label = re.sub(r"\s+", " ", match.group(0)).strip(" ,.;:")
-            if _group_is_allowed(label):
-                groups.append(_group_payload(label[:120], match.group(0), "Explicitly named in the hazard or clarification text."))
-    return _dedupe_groups(groups)
-
-
-def _group_payload(label: str, source_text: str, reason: str) -> dict[str, Any]:
-    return {
-        "group": label[:120],
-        "source_text": str(source_text or label).strip()[:240],
-        "reason": reason,
-        "confidence": (
-            ConfidenceLevel.HIGH
-            if normalize_for_match(label) in POLICY_GROUPS
-            else ConfidenceLevel.MEDIUM
-        ).value,
-        "needs_review": True,
-    }
-
-
-def _dedupe_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[str] = set()
-    deduped: list[dict[str, Any]] = []
-    for group in groups:
-        item = _coerce_group(group)
-        key = normalize_for_match(str(item.get("group") or ""))
-        if key and key not in seen and _group_is_allowed(str(item.get("group") or "")):
-            seen.add(key)
-            deduped.append(item)
-    return deduped
-
-
-def _coerce_group(group: dict[str, Any]) -> dict[str, Any]:
-    label = _clean_group_label(str(group.get("group") or group.get("name") or group.get("profile") or ""))
-    return {
-        "group": label[:120],
-        "source_text": str(group.get("source_text") or label).strip()[:240],
-        "reason": str(group.get("reason") or group.get("explanation") or "").strip(),
-        "confidence": _coerce_confidence(group.get("confidence")).value,
-        "needs_review": bool(group.get("needs_review", True)),
-        **({"source": group.get("source")} if group.get("source") else {}),
-        **({"confirmed": group.get("confirmed")} if "confirmed" in group else {}),
-    }
-
-
-def _clean_group_label(value: str) -> str:
-    label = re.sub(r"\s+", " ", value).strip(" `*_#.-")
-    match = re.match(r"^(.+?)\s*:\s*Add\s+\1\s*$", label, flags=re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    match = re.match(r"^(.+?)\s*:\s*Add\s+(.+)$", label, flags=re.IGNORECASE)
-    if match and normalize_for_match(match.group(1)) == normalize_for_match(match.group(2)):
-        return match.group(1).strip()
-    return label
-
-
-def _group_is_allowed(group: str) -> bool:
-    key = normalize_for_match(group)
-    if not key or key in GENERIC_GROUPS or key in ANSWER_ONLY_VALUES:
-        return False
-    if any(key == value or key.endswith(f" {value}") for value in ANSWER_ONLY_VALUES):
-        return False
-    if key in POLICY_GROUPS:
-        return True
-    words = key.split()
-    return len(words) > 1 and not all(word in GENERIC_GROUPS for word in words)
 
 
 def _dimension_card(key: str, dimensions: dict[str, Any]) -> dict[str, Any]:
@@ -991,135 +790,6 @@ def _sector_terms(sector: str) -> set[str]:
         if key in lower:
             return values
     return set(lower.split())
-
-
-def _similarity(left: str, right: str) -> float:
-    scores = _duplicate_similarity_scores(left, right)
-    return max(scores.values())
-
-
-def _duplicate_similarity_scores(left: str, right: str) -> dict[str, float]:
-    left_key = compact_for_match(left)
-    right_key = compact_for_match(right)
-    if not left_key or not right_key:
-        return {"sequence": 0.0, "token": 0.0, "semantic": 0.0}
-    if left_key in right_key or right_key in left_key:
-        return {"sequence": 0.95, "token": 0.95, "semantic": 0.95}
-
-    return {
-        "sequence": SequenceMatcher(None, left_key, right_key).ratio(),
-        "token": _token_similarity(left, right),
-        "semantic": _semantic_duplicate_similarity(left, right),
-    }
-
-
-def _token_similarity(left: str, right: str) -> float:
-    left_tokens = _content_tokens(left)
-    right_tokens = _content_tokens(right)
-    if not left_tokens or not right_tokens:
-        return 0.0
-    intersection = left_tokens & right_tokens
-    union = left_tokens | right_tokens
-    return len(intersection) / len(union) if union else 0.0
-
-
-def _semantic_duplicate_similarity(left: str, right: str) -> float:
-    """
-    Lightweight semantic duplicate check for hazard names.
-
-    This catches common paraphrases such as:
-    - employment shock / job losses / workforce decline
-    - green transition / renewable energy transition / decarbonisation
-    - fossil-fuel-dependent / coal, oil, and gas dependent
-
-    It is intentionally conservative and only supports duplicate detection; it
-    should not be used as a general semantic classifier.
-    """
-    left_terms = _canonical_duplicate_terms(left)
-    right_terms = _canonical_duplicate_terms(right)
-    if not left_terms or not right_terms:
-        return 0.0
-
-    intersection = left_terms & right_terms
-    overlap = len(intersection) / min(len(left_terms), len(right_terms))
-    jaccard = len(intersection) / len(left_terms | right_terms)
-
-    # Overlap catches shorter paraphrases; Jaccard prevents very broad matches.
-    return max(jaccard, overlap * 0.92)
-
-
-def _content_tokens(value: str) -> set[str]:
-    stop_words = {
-        "the", "and", "for", "with", "from", "during", "driven",
-        "caused", "because", "into", "onto", "that", "this", "those",
-        "these", "are", "may", "can", "due", "resulting", "results",
-    }
-    return {
-        token
-        for token in normalize_for_match(value).split()
-        if len(token) > 2 and token not in stop_words
-    }
-
-
-def _canonical_duplicate_terms(value: str) -> set[str]:
-    key = normalize_for_match(value)
-    tokens = _content_tokens(value)
-    terms: set[str] = set()
-
-    phrase_aliases: tuple[tuple[tuple[str, ...], str], ...] = (
-        (("employment shock", "employment shocks", "job losses", "job loss", "employment decline", "workforce decline", "labour market shock", "labor market shock"), "employment_loss"),
-        (("fossil fuel", "fossil fuels", "fossil-fuel", "coal", "oil", "gas", "coal oil gas"), "fossil_fuel"),
-        (("energy region", "energy regions", "regional", "regions", "region"), "region"),
-        (("energy industry", "energy industries", "energy sector", "power generation", "conventional power"), "energy_industry"),
-        (("green energy transition", "green transition", "renewable energy transition", "transition to renewable energy", "decarbonisation", "decarbonization", "clean energy transition"), "green_transition"),
-        (("renewable", "renewables", "renewable energy"), "renewable_energy"),
-        (("economic disruption", "economic decline", "left behind", "left-behind"), "regional_economic_disruption"),
-    )
-
-    for aliases, canonical in phrase_aliases:
-        if _contains_any_term(key, aliases):
-            terms.add(canonical)
-
-    token_aliases = {
-        "jobs": "employment",
-        "job": "employment",
-        "employment": "employment",
-        "workers": "workers",
-        "worker": "workers",
-        "decline": "loss",
-        "declining": "loss",
-        "losses": "loss",
-        "loss": "loss",
-        "shock": "shock",
-        "shocks": "shock",
-        "fossil": "fossil_fuel",
-        "coal": "fossil_fuel",
-        "oil": "fossil_fuel",
-        "gas": "fossil_fuel",
-        "energy": "energy",
-        "renewable": "renewable_energy",
-        "renewables": "renewable_energy",
-        "transition": "transition",
-        "green": "green_transition",
-        "regional": "region",
-        "region": "region",
-        "regions": "region",
-        "industries": "industry",
-        "industry": "industry",
-        "sector": "industry",
-    }
-    for token in tokens:
-        terms.add(token_aliases.get(token, token))
-
-    return terms
-
-
-def _duplicate_reason(scores: dict[str, float]) -> str:
-    if scores.get("semantic", 0.0) >= DUPLICATE_SEMANTIC_THRESHOLD:
-        return "The proposed hazard appears to describe the same underlying hazard using different wording."
-    if scores.get("token", 0.0) >= DUPLICATE_TOKEN_THRESHOLD:
-        return "The proposed hazard substantially overlaps with an existing hazard."
-    return "The proposed hazard is the same as, or very similar to, an existing hazard."
 
 
 def _clamp_score(value: Any) -> int:

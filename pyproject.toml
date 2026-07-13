@@ -1,6 +1,6 @@
 [project]
 name = "dr-transition"
-version = "0.1.0"
+version = "0.1.1"
 description = "A digital coach for Twin-Transition policy analysis"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -28,6 +28,17 @@ dependencies = [
 [project.optional-dependencies]
 grounding = [
     "sentence-transformers>=3.4.0",
+]
+test = [
+    "ruff>=0.8.0",
+]
+browser = [
+    "playwright>=1.49.0",
+]
+dev = [
+    "ruff>=0.8.0",
+    "playwright>=1.49.0",
+    "mypy>=1.13.0",
 ]
 
 [tool.uv]

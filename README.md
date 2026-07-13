@@ -35,7 +35,51 @@ cp .env.example .env
 Example database URL:
 
 ```env
-DATABASE_URL="mysql+pymysql://drtransition:drtransition_password@localhost:3306/drtransition"
+DATABASE_URL="mysql+pymysql://drtransition:<choose-a-strong-local-password>@localhost:3306/drtransition"
+```
+
+The password placeholder is local setup guidance only. Choose a unique password
+for each installation; do not reuse old sample passwords from earlier docs.
+
+For production, set at least:
+
+```env
+APP_ENV=production
+APP_DEBUG=false
+SECRET_KEY="<strong unique random secret>"
+AUTH_COOKIE_SECURE=true
+CSRF_PROTECTION_ENABLED=true
+DATABASE_AUTO_MIGRATE=false
+STRUCTURED_LOGS=true
+LLM_LOG_ENABLED=false
+LLM_LOG_TO_FILE=false
+LLM_LOG_TO_DB=false
+LLM_LOG_INCLUDE_PAYLOADS=false
+CORS_ORIGINS="https://your-production-host.example"
+```
+
+`DATABASE_AUTO_MIGRATE` must stay false outside development. Apply schema
+changes deliberately through the migration/seed commands during deployment,
+after taking a database backup.
+
+Apply production migrations explicitly:
+
+```bash
+uv run python scripts/apply_migrations.py
+```
+
+For a brand-new database, apply the base schema first:
+
+```bash
+uv run python scripts/apply_migrations.py --apply-base-schema
+```
+
+The legacy schema repair path is intentionally separate from production
+migrations. Use it only for controlled local or installer recovery after a
+database backup:
+
+```bash
+uv run python scripts/repair_legacy_schema.py --seed-reference-data
 ```
 
 ## MySQL Setup
@@ -50,7 +94,7 @@ Alternatively, create a database and user manually, then apply the SQL file:
 
 ```sql
 CREATE DATABASE drtransition CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'drtransition'@'localhost' IDENTIFIED BY 'drtransition_password';
+CREATE USER 'drtransition'@'localhost' IDENTIFIED BY '<choose-a-strong-local-password>';
 GRANT ALL PRIVILEGES ON drtransition.* TO 'drtransition'@'localhost';
 FLUSH PRIVILEGES;
 ```
@@ -62,8 +106,8 @@ mysql -u drtransition -p drtransition < schema.sql
 ## Seed Reference Data
 
 The application no longer applies `schema.sql` or reloads CSV/XLSX reference data
-on every startup. Run the seed command only when setting up the database or after
-changing the source files such as `mm.csv`, `additionalHazards.csv`,
+on every startup. Run migrations first, then run the seed command only when
+setting up the database or after changing the source files such as `mm.csv`, `additionalHazards.csv`,
 `additionalHazardProfiles.csv`, `MM Target group.xlsx`, `sectoral_challenges.xlsx`,
 or `hazards.xlsx`.
 
@@ -85,9 +129,123 @@ If the schema is already up to date and you only want to reload CSV/XLSX data:
 .\scripts\seed_database.ps1 -SkipSchema
 ```
 
-```bash
-uv run python -m app.seed_data --skip-schema
+The old runtime schema-repair path is intentionally not part of normal
+startup/deployment anymore. If you are recovering a local installer database
+that predates the current migration files, use the explicit recovery flag only
+after backing up the database:
+
+```powershell
+.\scripts\seed_database.ps1 -LegacySchemaRepair
 ```
+
+Production deployments should keep this flag off and rely on `schema.sql` for
+fresh installs plus versioned files under `app/db/migrations/` for changes.
+
+## Production Operations
+
+Health endpoints:
+
+```http
+GET /health/live
+GET /health/ready
+```
+
+`/health/ready` validates the database connection and should be used by process
+managers or load balancers before routing traffic to an instance.
+
+Admin-only metrics are available at:
+
+```http
+GET /metrics
+```
+
+Security headers are applied by middleware on every response. Override
+`CONTENT_SECURITY_POLICY`, `REFERRER_POLICY`, `PERMISSIONS_POLICY`, or
+`STRICT_TRANSPORT_SECURITY` only when a deployment has a known proxy/CDN policy
+that should take precedence. HSTS is only sent for HTTPS requests or when
+`X-Forwarded-Proto: https` is present.
+
+Request access logs can be reduced for noisy deployments:
+
+```env
+ACCESS_LOG_ENABLED=true
+ACCESS_LOG_SUPPRESSED_PATHS="/health,/health/live,/health/ready"
+ACCESS_LOG_SAMPLE_RATE=1.0
+```
+
+Run retention cleanup from a scheduled task or cron:
+
+```bash
+uv run python scripts/cleanup_retained_data.py
+```
+
+This removes expired rate-limit rows, old temporary knowledge documents, and old
+LLM exchange logs according to `RATE_LIMIT_RETENTION_DAYS`,
+`TEMPORARY_KNOWLEDGE_RETENTION_HOURS`, and `LLM_LOG_RETENTION_DAYS`.
+
+Windows Task Scheduler example:
+
+```powershell
+schtasks /Create /TN "Dr Transition Retention Cleanup" /SC DAILY /ST 02:30 /TR "cmd /c cd /d F:\Dr Transition && uv run python scripts\cleanup_retained_data.py"
+```
+
+systemd timer example:
+
+```ini
+# /etc/systemd/system/dr-transition-cleanup.service
+[Unit]
+Description=Dr Transition retention cleanup
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/dr-transition
+ExecStart=/usr/bin/uv run python scripts/cleanup_retained_data.py
+```
+
+```ini
+# /etc/systemd/system/dr-transition-cleanup.timer
+[Unit]
+Description=Run Dr Transition retention cleanup daily
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now dr-transition-cleanup.timer
+```
+
+cron example:
+
+```cron
+30 2 * * * cd /opt/dr-transition && uv run python scripts/cleanup_retained_data.py >> /var/log/dr-transition-cleanup.log 2>&1
+```
+
+Tune database connections for the deployment size:
+
+```env
+DATABASE_POOL_SIZE=5
+DATABASE_MAX_OVERFLOW=10
+DATABASE_POOL_TIMEOUT_SECONDS=30
+DATABASE_POOL_RECYCLE_SECONDS=3600
+DATABASE_CONNECT_TIMEOUT_SECONDS=10
+```
+
+Recommended production flow:
+
+1. Back up the database.
+2. Deploy the new application files.
+3. Run `uv run python scripts/apply_migrations.py`.
+4. Restart the app processes.
+5. Check `/health/ready`.
+6. Run `.\scripts\seed_database.ps1 -SkipSchema` only when reference CSV/XLSX
+   source files changed.
+7. Confirm the retention cleanup schedule is enabled.
 
 ## Ollama Setup
 
@@ -106,7 +264,9 @@ http://localhost:11434
 
 The guided wizard works even if Ollama is not running; `app/llm.py` returns a graceful fallback message when the local model is unavailable.
 
-LLM request/response logging is enabled by default. Chat and embedding calls are appended as JSON Lines to:
+LLM request/response logging is enabled by default in development and disabled
+by default outside development. When enabled, chat and embedding calls are
+appended as JSON Lines to:
 
 ```env
 LLM_LOG_ENABLED=true
@@ -115,7 +275,12 @@ LLM_LOG_TO_DB=true
 LLM_LOG_PATH="data/service-runtime/logs/llm_requests.jsonl"
 ```
 
-The same audit payload is also stored in the `llm_exchange_logs` database table when `LLM_LOG_TO_DB` is enabled. Logging failures are reported to the normal app logs and do not block model workflows.
+The same audit payload is also stored in the `llm_exchange_logs` database table
+when `LLM_LOG_TO_DB` is enabled. Production logs redact prompt/response payloads
+unless `LLM_LOG_INCLUDE_PAYLOADS=true` and
+`LLM_LOG_ALLOW_PRODUCTION_PAYLOADS=true` are both set deliberately. Protect the
+log file path and database table with the same access controls as user data, and
+run retention cleanup with `LLM_LOG_RETENTION_DAYS`.
 
 ## FAISS Knowledge Base
 
@@ -253,6 +418,38 @@ uv run python tests/generate_open_conversation_selection_test_cases.py
 uv run python tests/run_open_conversation_selection_cases.py
 ```
 
+## CI Checks
+
+Install test/dev tools when needed:
+
+```bash
+uv sync --extra test
+```
+
+Run the local CI check script:
+
+```powershell
+.\scripts\ci_check.ps1
+```
+
+The script runs Python compilation, `unittest`, `ruff`, and JavaScript syntax
+checks for the frontend entry files. Use `-SkipRuff` only when the lint extra
+has not been installed yet.
+
+Optional browser smoke tests cover login, chat, option selection, knowledge
+dialog/search, and session restore/export/import. Start the app first, install
+the browser extra, then opt in:
+
+```powershell
+uv sync --extra browser
+uv run playwright install chromium
+$env:DR_TRANSITION_BROWSER_TESTS = "1"
+$env:DR_TRANSITION_BASE_URL = "http://127.0.0.1:8000"
+$env:DR_TRANSITION_TEST_EMAIL = "admin@example.com"
+$env:DR_TRANSITION_TEST_PASSWORD = "local-admin-password"
+.\scripts\ci_check.ps1
+```
+
 ## API
 
 The full chat flow uses one endpoint:
@@ -301,22 +498,80 @@ Reset a session:
 
 ```text
 app/
-  main.py
-  database.py
-  models.py
-  llm.py
-  config.py
-  schemas.py
+  main.py                 FastAPI app, middleware, health, metrics
+  config.py               Pydantic settings and production safety checks
+  auth.py                 Login/session cookie helpers
+  security.py             CSRF and response security headers
+  observability.py        Request IDs, structured logging, in-process metrics
+  models.py               SQLAlchemy ORM models
+  llm.py                  Ollama chat/embedding client helpers
+  schemas.py              API request/response models
+  db/
+    session.py            SQLAlchemy engine/session setup
+    migrations_runtime.py Legacy/local schema repair helpers
+    versioned_migrations.py
+    migrations/           Versioned SQL migrations
+    reference_schema.py   Reference-data schema checks
+  seed/
+    reference_data.py     CSV/XLSX reference-data loading
+    xlsx_readers.py       Spreadsheet readers
+  grounding_servers/
+    reranker.py           Local reranker service
+    nli.py                Local NLI service
+    model_runtime.py      Shared model runtime helpers
   routes/
-    api.py
+    api.py                Chat, session, knowledge, admin APIs
+    auth.py               Login/signup/logout routes
+    request_limits.py     Upload/body size guardrails
   services/
-    chat_service.py
+    chat_service.py       Conversation orchestration
+    chat_*                Flow-specific chat modules
+    custom_hazard_*       Custom hazard validation/matching/rules
+    mitigation_*          Mitigation validation and formatting helpers
+    knowledge_base.py     Knowledge document ingestion/search/delete
+    sector_prompt_rag.py  Sector prompt retrieval index
+    maintenance.py        Retention cleanup logic
+    audit_log.py          Admin/sensitive action audit records
+    rate_limit.py         Login/signup/password rate limits
+    llm_logging.py        LLM exchange logging
   templates/
-    index.html
+    index.html            Main chat shell
+    login.html
+    signup.html
+    chat/                 Markdown response templates
   static/
-    css/style.css
-    js/app.js
+    css/
+      base.css
+      shell-layout.css
+      chat.css
+      dialogs.css
+      knowledge.css
+      stage-visual.css
+      auth.css
+      responsive.css
+      style.css           Aggregator/legacy shared styles
+    js/
+      app.js              Main UI controller
+      app-utils.js        Shared fetch/CSRF/util helpers
+      app-settings.js     Frontend settings helpers
+      app-session-export.js
+      app-dom-icons.js
+      auth.js
+      auth-map.js
     img/
+scripts/
+  apply_migrations.py     Explicit production migration runner
+  seed_database.ps1       Reference-data seeding entry point
+  cleanup_retained_data.py
+  ci_check.ps1
+  start_grounding_services.ps1
+  stop_all_services.ps1
+packaging/
+  python/                 PyInstaller service entry points
+  windows/                Inno Setup, Tauri, and release scripts
+tests/
+  browser/                Optional Playwright smoke tests
+  test_*.py               Unit and integration tests
 schema.sql
 .env.example
 pyproject.toml
@@ -325,6 +580,13 @@ README.md
 
 ## Notes
 
-- Session state is stored in memory using UUID keys, while reference data is stored in MySQL.
-- Restarting the server clears in-memory sessions.
-- The first three progress stages are active now: Country, Region, and Sector. Hazards, Mitigation, and Evaluation are displayed as future workflow stages.
+- Persistent session records, chat messages, reference data, knowledge metadata,
+  audit logs, rate limits, and LLM exchange logs are stored in MySQL.
+- `app.services.chat_session.session_store` still keeps live in-memory flow state
+  for active conversations; persisted sessions can be restored through the UI.
+- Schema changes should go through `schema.sql` for fresh installs and
+  `app/db/migrations/` plus `scripts/apply_migrations.py` for production updates.
+- Reference-data loading is explicit. Use `scripts/seed_database.ps1` during setup
+  or after changing source CSV/XLSX files, not as a normal app startup step.
+- Retention cleanup is handled by `scripts/cleanup_retained_data.py`; schedule it
+  with Task Scheduler, systemd timers, or cron in production.

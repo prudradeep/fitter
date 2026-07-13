@@ -4,6 +4,44 @@ function plainTextFromHtml(html) {
   return element.textContent.replace(/\s+/g, " ").trim();
 }
 
+function clearElement(element) {
+  if (element) element.replaceChildren();
+}
+
+function renderTrustedHtml(element, html) {
+  if (!element) return;
+  // Use only for server-sanitized chat HTML or escaped template fragments.
+  element.innerHTML = html;
+}
+
+function trustedHtmlFragment(html) {
+  const template = document.createElement("template");
+  renderTrustedHtml(template, html);
+  return template.content;
+}
+
+function createElement(tagName, options = {}, children = []) {
+  const element = document.createElement(tagName);
+  if (options.className) element.className = options.className;
+  if (options.text !== undefined) element.textContent = options.text;
+  if (options.html !== undefined) renderTrustedHtml(element, options.html);
+  Object.entries(options.attrs || {}).forEach(([name, value]) => {
+    if (value !== null && value !== undefined) {
+      element.setAttribute(name, String(value));
+    }
+  });
+  children.forEach((child) => {
+    element.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
+  });
+  return element;
+}
+
+function renderEmptyState(container, message, className = "sessions-empty") {
+  if (!container) return;
+  clearElement(container);
+  container.appendChild(createElement("p", { className, text: message }));
+}
+
 function voiceSummaryFromHtml(html) {
   const text = plainTextFromHtml(html);
   if (!text) return "";
@@ -44,6 +82,31 @@ function normalizeForMatch(value) {
 
 function compactForMatch(value) {
   return normalizeForMatch(value).replace(/\s+/g, "");
+}
+
+function cookieValue(name) {
+  const prefix = `${name}=`;
+  return document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+    ?.slice(prefix.length) || "";
+}
+
+function csrfHeaders(headers = {}) {
+  const token = cookieValue("dr_transition_csrf");
+  return token ? { ...headers, "X-CSRF-Token": token } : { ...headers };
+}
+
+function csrfFetch(url, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    return fetch(url, options);
+  }
+  return fetch(url, {
+    ...options,
+    headers: csrfHeaders(options.headers || {}),
+  });
 }
 
 function levenshteinDistance(a, b) {

@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.1.1"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 
@@ -101,7 +101,7 @@ begin
   DatabasePage.Values[0] := 'dr_transition';
   DatabasePage.Values[1] := 'root';
   DatabasePage.Values[3] := 'dr_transition';
-  DatabasePage.Values[4] := 'dr_transition_password';
+  DatabasePage.Values[4] := '';
   SetDatabaseDefaultsEditable(False);
 
   EditDatabaseDefaultsCheck := TNewCheckBox.Create(DatabasePage);
@@ -175,7 +175,13 @@ begin
     end;
     if DatabasePage.Values[4] = '' then
     begin
-      MsgBox('Enter an application DB password.', mbError, MB_OK);
+      MsgBox('Enter a strong application DB password. Do not reuse the old sample password.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if (DatabasePage.Values[4] = 'dr_transition_password') or (DatabasePage.Values[4] = 'drtransition_password') then
+    begin
+      MsgBox('Choose a unique application DB password. The sample password is local documentation only and cannot be used by setup.', mbError, MB_OK);
       Result := False;
       Exit;
     end;

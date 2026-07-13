@@ -1,0 +1,379 @@
+:root {
+        --navy: #0b376d;
+        --blue: #166bb6;
+        --teal: #008d93;
+        --green: #16854e;
+        --orange: #ed6b1c;
+        --purple: #7b3faf;
+        --light: #f8fbff;
+        --line: #cbddeb;
+        --text: #10233f;
+        --muted: #476078;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #eef5fb;
+        font-family: Arial, Helvetica, sans-serif;
+        color: var(--text);
+      }
+      .poster {
+        width: 1180px;
+        max-width: 96vw;
+        margin: 22px auto;
+        background: #ffffff;
+        border-radius: 18px;
+        padding: 26px 26px 30px;
+        box-shadow: 0 18px 45px rgba(9, 43, 89, 0.16);
+      }
+      h1 {
+        margin: 0;
+        text-align: center;
+        font-size: 43px;
+        line-height: 1.05;
+        color: var(--navy);
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: -1px;
+      }
+      h2 {
+        margin: 12px 0 18px;
+        text-align: center;
+        font-size: 26px;
+        color: var(--teal);
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+      .intro {
+        display: grid;
+        grid-template-columns: 1fr 330px;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: linear-gradient(90deg, #fff, #f5fbff);
+        padding: 22px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+      }
+      .intro .card p {
+        font-size: 19px;
+        line-height: 1.55;
+        margin: 0;
+      }
+      .bigicon {
+        width: 70px;
+        height: 70px;
+        color: var(--teal);
+        min-width: 70px;
+        text-align: center;
+        display: grid;
+        place-items: center;
+      }
+      .bigicon svg {
+        width: 58px;
+        height: 58px;
+      }
+      .sectors {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: #f6fbff;
+        padding: 14px;
+        text-align: center;
+      }
+      .sectors b {
+        display: inline-block;
+        background: #0b376d;
+        color: white;
+        border-radius: 16px;
+        padding: 8px 28px;
+        margin-bottom: 12px;
+      }
+      .sector-icons {
+        display: flex;
+        justify-content: space-around;
+      }
+      .sector .sector-badge {
+        width: 62px;
+        height: 62px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: white;
+        margin: auto;
+      }
+      .sector svg {
+        width: 34px;
+        height: 34px;
+      }
+      .sector small {
+        display: block;
+        margin-top: 7px;
+        font-weight: 800;
+        color: #0b376d;
+      }
+      .energy i {
+        background: #54a842;
+      }
+      .housing i {
+        background: #f36d21;
+      }
+      .transport i {
+        background: #1d7ac4;
+      }
+      .steps {
+        position: relative;
+      }
+      .step {
+        display: grid;
+        grid-template-columns: 78px 135px 1fr 70px 260px;
+        align-items: center;
+        gap: 18px;
+        margin: 9px 0;
+        padding: 12px 18px;
+        border: 1.5px solid var(--line);
+        border-radius: 16px;
+        background: linear-gradient(90deg, #fff, #f7fbff);
+        min-height: 112px;
+        transition: 0.25s ease;
+        cursor: pointer;
+      }
+      .step:hover,
+      .step.active {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 24px rgba(20, 77, 137, 0.14);
+        border-color: currentColor;
+      }
+      .num {
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: white !important;
+        font-weight: 900;
+        font-size: 28px;
+      }
+      .iconwrap {
+        width: 92px;
+        height: 92px;
+        border-radius: 50%;
+        background: rgba(13, 82, 150, 0.06);
+        display: grid;
+        place-items: center;
+      }
+      .iconwrap svg {
+        width: 54px;
+        height: 54px;
+      }
+      .txt h3 {
+        margin: 0 0 6px;
+        font-size: 22px;
+        text-transform: uppercase;
+      }
+      .txt p {
+        margin: 0;
+        font-size: 16px;
+        line-height: 1.35;
+      }
+      .arrow {
+        font-size: 35px;
+        color: #c6d8e8;
+      }
+      .output {
+        border-radius: 15px;
+        background: rgba(255, 255, 255, 0.6);
+        padding: 18px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .output svg {
+        width: 46px;
+        height: 46px;
+        flex: 0 0 46px;
+      }
+      .output span {
+        font-size: 16px;
+        line-height: 1.25;
+      }
+      .output b {
+        display: block;
+        margin-bottom: 4px;
+      }
+      .blue {
+        color: #0d68b1;
+      }
+      .green {
+        color: #12834b;
+      }
+      .orange {
+        color: #e96518;
+      }
+      .purple {
+        color: #7941aa;
+      }
+      .teal {
+        color: #008c94;
+      }
+      .blue .num,
+      .blue.num {
+        background: #0d68b1;
+      }
+      .green .num,
+      .green.num {
+        background: #12834b;
+      }
+      .orange .num,
+      .orange.num {
+        background: #e96518;
+      }
+      .purple .num,
+      .purple.num {
+        background: #7941aa;
+      }
+      .teal .num,
+      .teal.num {
+        background: #008c94;
+      }
+      .details {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.28s ease;
+        font-size: 15px;
+        color: #40566b;
+      }
+      .step.active .details {
+        max-height: 90px;
+        margin-top: 8px;
+      }
+      .step.active .details ul {
+        margin: 6px 0 0 18px;
+        padding: 0;
+      }
+      .down {
+        width: 100%;
+        text-align: center;
+        color: var(--navy);
+        font-size: 25px;
+        line-height: 8px;
+      }
+      .final {
+        margin-top: 18px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .final-title {
+        background: var(--navy);
+        color: white;
+        text-align: center;
+        font-size: 20px;
+        font-weight: 900;
+        padding: 9px;
+        text-transform: uppercase;
+      }
+      .final-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        background: #fff;
+      }
+      .final-item {
+        text-align: center;
+        padding: 16px 10px;
+        border-right: 1px solid var(--line);
+        font-weight: 700;
+        font-size: 13px;
+      }
+      .final-item:last-child {
+        border-right: 0;
+      }
+      .final-item .mini-icon {
+        width: 38px;
+        height: 38px;
+        display: block;
+        margin: 0 auto 7px;
+      }
+      .final-item svg {
+        width: 38px;
+        height: 38px;
+      }
+      .note {
+        margin-top: 14px;
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: #f4fbff;
+        padding: 15px 22px;
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        color: #0a6170;
+        font-size: 16px;
+      }
+      .note svg {
+        width: 44px;
+        height: 44px;
+        flex: 0 0 44px;
+      }
+      .controls {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        margin: 12px 0 6px;
+      }
+      .controls button {
+        border: 0;
+        border-radius: 20px;
+        background: #0b376d;
+        color: white;
+        padding: 9px 16px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .controls button:hover {
+        background: #166bb6;
+      }
+      @media (max-width: 900px) {
+        .poster {
+          padding: 16px;
+        }
+        h1 {
+          font-size: 28px;
+        }
+        h2 {
+          font-size: 18px;
+        }
+        .intro {
+          grid-template-columns: 1fr;
+        }
+        .step {
+          grid-template-columns: 50px 70px 1fr;
+        }
+        .arrow,
+        .output {
+          display: none;
+        }
+        .iconwrap {
+          width: 65px;
+          height: 65px;
+        }
+        .iconwrap svg {
+          width: 36px;
+          height: 36px;
+        }
+        .txt h3 {
+          font-size: 17px;
+        }
+        .txt p {
+          font-size: 14px;
+        }
+        .final-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+

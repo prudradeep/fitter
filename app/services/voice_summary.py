@@ -6,7 +6,7 @@ from app.llm import ask_llm_chat
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.document_text import compact_text, html_to_text
 
-VOICE_SUMMARY_CLOSING = ""
+VOICE_SUMMARY_CLOSING = "More detail is available on screen."
 
 
 async def generate_voice_summary(message_html: str) -> str:
@@ -52,12 +52,13 @@ def _message_text(message_html: str) -> str:
 
 def _clean_voice_summary(value: str, *, original_text: str = "") -> str:
     text = compact_text(str(value or ""))
-    text = re.sub(
-        re.escape(VOICE_SUMMARY_CLOSING) + r"\s*$",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    ).strip()
+    if VOICE_SUMMARY_CLOSING:
+        text = re.sub(
+            re.escape(VOICE_SUMMARY_CLOSING) + r"\s*$",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        ).strip()
     sentences = _sentences(text)
     if sentences:
         text = " ".join(sentences[:2])

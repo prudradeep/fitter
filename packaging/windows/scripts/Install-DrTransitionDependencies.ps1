@@ -8,7 +8,7 @@ param(
     [string]$MySqlAdminUser = "root",
     [string]$MySqlAdminPassword = "",
     [string]$AppDbUser = "dr_transition",
-    [string]$AppDbPassword = "dr_transition_password",
+    [string]$AppDbPassword = "",
     [string]$DefaultAppUserEmail = "admin@drtransition.local",
     [string]$DefaultAppUserPassword = "DrTransition@123",
     [string]$DefaultAppUserName = "Dr Transition Admin",
@@ -479,6 +479,12 @@ function Ensure-Database {
     Write-SetupLog "Creating/updating database '$DbName' and application user '$AppDbUser'"
     Assert-Identifier -Name "Database name" -Value $DbName
     Assert-Identifier -Name "Application DB user" -Value $AppDbUser
+    if ([string]::IsNullOrWhiteSpace($AppDbPassword)) {
+        throw "Application DB password is required. Choose a strong local password during setup."
+    }
+    if ($AppDbPassword -eq "dr_transition_password" -or $AppDbPassword -eq "drtransition_password") {
+        throw "Application DB password must not use the sample local-only password from older documentation."
+    }
 
     $quotedPassword = Quote-SqlString $AppDbPassword
     $sql = @"

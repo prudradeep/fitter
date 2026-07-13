@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS app_rate_limits (
+  rate_limit_key VARCHAR(255) NOT NULL PRIMARY KEY,
+  attempts INT NOT NULL DEFAULT 0,
+  window_started_at DOUBLE NOT NULL DEFAULT 0,
+  locked_until DOUBLE NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

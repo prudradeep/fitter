@@ -1,13 +1,15 @@
-const sessionKey = "dr_transition_session_id";
-const inputStateKeyPrefix = "dr_transition_input_state_";
-const voiceEnabledKey = "dr_transition_voice_enabled";
-const voicePreferenceKey = "dr_transition_voice_preference";
-const typingEffectKey = "dr_transition_typing_effect_enabled";
-const autoConversationKey = "dr_transition_auto_conversation_enabled";
-const validationModeKey = "dr_transition_validation_mode";
-const crowdSourcingKey = "dr_transition_crowd_sourcing_enabled";
-const teacherAvatarPath = "/static/img/teacher.png";
-const collapsibleMessageWordLimit = 100;
+const appSettings = window.DrTransitionSettings || {};
+const storageKeys = appSettings.storageKeys || {};
+const sessionKey = storageKeys.session || "dr_transition_session_id";
+const inputStateKeyPrefix = storageKeys.inputStatePrefix || "dr_transition_input_state_";
+const voiceEnabledKey = storageKeys.voiceEnabled || "dr_transition_voice_enabled";
+const voicePreferenceKey = storageKeys.voicePreference || "dr_transition_voice_preference";
+const typingEffectKey = storageKeys.typingEffect || "dr_transition_typing_effect_enabled";
+const autoConversationKey = storageKeys.autoConversation || "dr_transition_auto_conversation_enabled";
+const validationModeKey = storageKeys.validationMode || "dr_transition_validation_mode";
+const crowdSourcingKey = storageKeys.crowdSourcing || "dr_transition_crowd_sourcing_enabled";
+const teacherAvatarPath = appSettings.assets?.teacherAvatarPath || "/static/img/teacher.png";
+const collapsibleMessageWordLimit = appSettings.chat?.collapsibleMessageWordLimit || 100;
 
 const chatLog = document.querySelector("#chatLog");
 const chatScrollBottomButton = document.querySelector("#chatScrollBottomButton");
@@ -154,12 +156,19 @@ const sessionFields = {
   sector: document.querySelector("#sessionSector"),
 };
 
+const appState = {
+  inputMode: "text",
+  highlightedOptionLabel: "",
+  currentStep: "",
+  currentSession: {},
+  currentOptions: [],
+  currentOtherOptions: [],
+};
+
 let sessionId = localStorage.getItem(sessionKey);
 let loading = false;
 let statsDialogLoading = false;
 let statsDialogStarted = false;
-let inputMode = "text";
-let highlightedOptionLabel = "";
 let pendingRenameSessionId = "";
 let pendingRenameTitleElement = null;
 let availableVoices = [];
@@ -174,10 +183,6 @@ let voiceAnalyzerLevel = 0;
 let voiceAnalyzerTarget = 0;
 let voiceAnalyzerLastBoundaryAt = 0;
 let voiceAnalyzerProgress = 0;
-let currentStep = "";
-let currentSession = {};
-let currentOptions = [];
-let currentOtherOptions = [];
 let currentTargetPopulationQuestion = null;
 let targetPopulationQuestions = [];
 let targetPopulationAnswers = [];
@@ -185,7 +190,7 @@ let surveyResultsZoom = 1;
 let platformUsersZoom = 1;
 let autoConversationTimer = null;
 let autoConversationTurns = 0;
-const autoConversationTurnLimit = 80;
+const autoConversationTurnLimit = appSettings.chat?.autoConversationTurnLimit || 80;
 let renderedVisualKey = "";
 let renderedStageCardsKey = "";
 let stageVisualRenderId = 0;
@@ -197,10 +202,10 @@ let optionTooltipTarget = null;
 let listedHazardOptions = [];
 
 const defaultPlaceholder = "Type a country, region, or sector...";
-const panelWidthKey = "dr_transition_visual_panel_width";
-const defaultVisualPanelPercent = 43;
-const visualPanelMinPercent = 30;
-const visualPanelMaxPercent = 62;
+const panelWidthKey = storageKeys.panelWidth || "dr_transition_visual_panel_width";
+const defaultVisualPanelPercent = appSettings.stagePanel?.defaultVisualPanelPercent || 43;
+const visualPanelMinPercent = appSettings.stagePanel?.minPercent || 30;
+const visualPanelMaxPercent = appSettings.stagePanel?.maxPercent || 62;
 const hazardOptionActionLabels = new Set([
   "show hazards added by experts",
   "show co-created hazards",
@@ -325,7 +330,7 @@ const stageVisuals = {
   },
 };
 
-function stageKeyForStep(step = "", mode = inputMode) {
+function stageKeyForStep(step = "", mode = appState.inputMode) {
   if (mode === "mitigation_measure") return "hazards";
   if (["country", "national_scope"].includes(step)) return "country";
   if (["region"].includes(step)) return "region";
@@ -354,7 +359,7 @@ function stageKeyForStep(step = "", mode = inputMode) {
   return "country";
 }
 
-function shouldShowHazardContextOnly(step = currentStep, mode = inputMode) {
+function shouldShowHazardContextOnly(step = appState.currentStep, mode = appState.inputMode) {
   return (
     mode === "mitigation_measure"
     || [
@@ -367,11 +372,11 @@ function shouldShowHazardContextOnly(step = currentStep, mode = inputMode) {
   );
 }
 
-function updateStageVisual(step = "", session = {}, options = currentOptions) {
-  currentStep = step;
-  currentOptions = options || [];
+function updateStageVisual(step = "", session = {}, options = appState.currentOptions) {
+  appState.currentStep = step;
+  appState.currentOptions = options || [];
   renderSelectedHazardContext(session);
-  const key = stageKeyForStep(step, inputMode);
+  const key = stageKeyForStep(step, appState.inputMode);
   const visual = stageVisuals[key] || stageVisuals.country;
   const showingPracticalConsiderations = shouldShowPracticalConsiderationsVisual(step, session);
   if (stageVisualTitle) {
@@ -383,7 +388,7 @@ function updateStageVisual(step = "", session = {}, options = currentOptions) {
     stageVisualText.hidden = showingPracticalConsiderations;
     stageVisualText.textContent = showingPracticalConsiderations
       ? ""
-      : key === "sector" ? sectorStageText(session, currentOptions) : visual.text;
+      : key === "sector" ? sectorStageText(session, appState.currentOptions) : visual.text;
   }
   if (stageProgressFill) {
     const percent = (visual.index / Math.max(1, stageSteps.length - 1)) * 100;
@@ -394,11 +399,11 @@ function updateStageVisual(step = "", session = {}, options = currentOptions) {
     item.classList.toggle("current", item.dataset.stageKey === key);
   });
   document.body.dataset.analysisStage = key;
-  renderDynamicStageVisual(key, currentSession, currentOptions);
+  renderDynamicStageVisual(key, appState.currentSession, appState.currentOptions);
   updateFloatingStatsButton();
 }
 
-function sectorStageText(session = {}, options = currentOptions) {
+function sectorStageText(session = {}, options = appState.currentOptions) {
   const sectors = sectorItemsForSession(session, options)
     .map((item) => item.title)
     .filter(Boolean);
@@ -414,8 +419,8 @@ function formatReadableList(items = []) {
 
 function updateFloatingStatsButton() {
   if (!floatingStatsButton) return;
-  const hasSector = Boolean(currentSession?.sector);
-  const canOpen = hasSector && !["country", "national_scope", "region", "sector"].includes(currentStep);
+  const hasSector = Boolean(appState.currentSession?.sector);
+  const canOpen = hasSector && !["country", "national_scope", "region", "sector"].includes(appState.currentStep);
   floatingStatsButton.hidden = !canOpen;
 }
 
@@ -500,10 +505,10 @@ function scheduleStageMapRetry(expectedStageKey, visualKey, reason = "") {
   stageMapRetryAttempts.set(visualKey, attempts + 1);
   window.clearTimeout(stageMapRetryTimer);
   stageMapRetryTimer = window.setTimeout(() => {
-    if (stageKeyForStep(currentStep, inputMode) !== expectedStageKey) return;
+    if (stageKeyForStep(appState.currentStep, appState.inputMode) !== expectedStageKey) return;
     if (reason) console.warn(`Retrying ${visualKey}: ${reason}`);
     renderedVisualKey = "";
-    renderDynamicStageVisual(expectedStageKey, currentSession, currentOptions);
+    renderDynamicStageVisual(expectedStageKey, appState.currentSession, appState.currentOptions);
   }, 220 * (attempts + 1));
 }
 
@@ -580,7 +585,7 @@ async function fetchMapTopology(path) {
   return topology;
 }
 
-async function renderDynamicStageVisual(key, session = {}, options = currentOptions) {
+async function renderDynamicStageVisual(key, session = {}, options = appState.currentOptions) {
   if (session?.selected_hazard) {
     renderStageIcons(key, session, options);
     return;
@@ -722,7 +727,7 @@ async function renderCountrySelectionMap() {
 async function renderRegionMap(country, region, { keepCards = false } = {}) {
   const countryMapPath = countryMapData.get(country);
   const visualKey = `region-map-${country}-${region || ""}`;
-  const expectedStageKey = stageKeyForStep(currentStep, inputMode);
+  const expectedStageKey = stageKeyForStep(appState.currentStep, appState.inputMode);
   if (!stageMap || !window.Highcharts || !countryMapPath) {
     showStageMap();
     scheduleStageMapRetry(expectedStageKey, visualKey, "map dependencies were not ready");
@@ -846,16 +851,90 @@ function populationPercentage(value) {
   return Number.isFinite(percentage) ? `${percentage.toFixed(1)}%` : "—";
 }
 
-function populationTrend(regionalValue, nationalValue) {
+function populationTrendElement(regionalValue, nationalValue) {
   const regional = Number(regionalValue);
   const national = Number(nationalValue);
-  if (!Number.isFinite(regional) || !Number.isFinite(national)) return "";
+  if (!Number.isFinite(regional) || !Number.isFinite(national)) return null;
   const difference = regional - national;
   if (Math.abs(difference) < 0.05) {
-    return '<span class="population-trend is-equal" title="Equal to national" aria-label="equal to national">•</span>';
+    return createElement("span", {
+      className: "population-trend is-equal",
+      text: "•",
+      attrs: {
+        title: "Equal to national",
+        "aria-label": "equal to national",
+      },
+    });
   }
   const higher = difference > 0;
-  return `<span class="population-trend ${higher ? "is-up" : "is-down"}" title="${higher ? "Higher" : "Lower"} than national" aria-label="${higher ? "higher" : "lower"} than national">${higher ? "↑" : "↓"}</span>`;
+  return createElement("span", {
+    className: `population-trend ${higher ? "is-up" : "is-down"}`,
+    text: higher ? "↑" : "↓",
+    attrs: {
+      title: `${higher ? "Higher" : "Lower"} than national`,
+      "aria-label": `${higher ? "higher" : "lower"} than national`,
+    },
+  });
+}
+
+function stageCollapseIcon() {
+  return createElement("span", {
+    className: "stage-collapse-icon",
+    attrs: { "aria-hidden": "true" },
+  });
+}
+
+function appendStageTableHeader(table) {
+  table.appendChild(
+    createElement("thead", {}, [
+      createElement("tr", {}, [
+        createElement("th", { text: "Hazard", attrs: { scope: "col" } }),
+        createElement("th", { text: "Regional", attrs: { scope: "col" } }),
+        createElement("th", { text: "National", attrs: { scope: "col" } }),
+      ]),
+    ]),
+  );
+}
+
+function stageHazardPopulationRow(hazard, index) {
+  const hazardLabel = String(hazard.hazard || "Hazard");
+  const regionalCell = createElement("td", { text: populationPercentage(hazard.regional_population_pct) });
+  const trend = populationTrendElement(hazard.regional_population_pct, hazard.national_population_pct);
+  if (trend) regionalCell.appendChild(trend);
+  return createElement("tr", {}, [
+    createElement("td", {}, [
+      createElement("span", { className: "stage-hazard-rank", text: String(index + 1) }),
+      createElement("span", {
+        className: "stage-hazard-name",
+        text: hazardLabel,
+        attrs: { title: hazardLabel },
+      }),
+    ]),
+    regionalCell,
+    createElement("td", { text: populationPercentage(hazard.national_population_pct) }),
+  ]);
+}
+
+function stageHazardTableDetails({ className, ariaLabel, label, title, rows }) {
+  const tbody = createElement("tbody");
+  rows.forEach((hazard, index) => tbody.appendChild(stageHazardPopulationRow(hazard, index)));
+  const table = createElement("table");
+  appendStageTableHeader(table);
+  table.appendChild(tbody);
+  return createElement(
+    "details",
+    { className: `${className} stage-collapsible-section`, attrs: { "aria-label": ariaLabel, open: "" } },
+    [
+      createElement("summary", { className: `${className}-heading` }, [
+        createElement("div", {}, [
+          createElement("span", { text: label }),
+          createElement("h3", { text: title }),
+        ]),
+        stageCollapseIcon(),
+      ]),
+      createElement("div", { className: `${className}-scroll` }, [table]),
+    ],
+  );
 }
 
 function renderHazardPopulationTable(session = {}) {
@@ -866,111 +945,56 @@ function renderHazardPopulationTable(session = {}) {
     ["Affected profiles", session.affected_profile_count],
     ["Mitigation measures", session.mitigation_measure_count],
   ];
-  const countCards = counts
-    .map(
-      ([label, value]) => `
-        <article>
-          <strong>${Number(value) || 0}</strong>
-          <span>${label}</span>
-        </article>
-      `,
-    )
-    .join("");
-  const rows = hazards
-    .map(
-      (hazard, index) => {
-        const hazardLabel = String(hazard.hazard || "Hazard");
-        return `
-        <tr>
-          <td>
-            <span class="stage-hazard-rank">${index + 1}</span>
-            <span class="stage-hazard-name" title="${escapeHtml(hazardLabel)}">${escapeHtml(hazardLabel)}</span>
-          </td>
-          <td>${populationPercentage(hazard.regional_population_pct)}${populationTrend(hazard.regional_population_pct, hazard.national_population_pct)}</td>
-          <td>${populationPercentage(hazard.national_population_pct)}</td>
-        </tr>
-      `;
+  clearElement(stageIconGrid);
+  if (!session.selected_hazard) {
+    stageIconGrid.appendChild(
+      createElement(
+        "div",
+        { className: "stage-hazard-summary", attrs: { "aria-label": "Sector analysis totals" } },
+        counts.map(([label, value]) =>
+          createElement("article", {}, [
+            createElement("strong", { text: String(Number(value) || 0) }),
+            createElement("span", { text: label }),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  const topHazards = stageHazardTableDetails({
+    className: "stage-hazard-table",
+    ariaLabel: "Top three hazard population comparison",
+    label: "Population comparison",
+    title: "Top 3 hazards",
+    rows: hazards,
+  });
+  topHazards.querySelector(".stage-hazard-table-heading > div > span")?.appendChild(
+    createElement("span", {
+      className: "population-comparison-info",
+      text: "i",
+      attrs: {
+        tabindex: "0",
+        title:
+          "For each hazard, Regional and National values are the arithmetic mean of the mapped affected-profile percentages: sum of available profile percentages divided by number of mapped profiles, rounded to 1 decimal.",
+        "aria-label":
+          "For each hazard, Regional and National values are the arithmetic mean of the mapped affected-profile percentages: sum of available profile percentages divided by number of mapped profiles, rounded to 1 decimal.",
       },
-    )
-    .join("");
-  const additionalHazardsList = additionalHazards
-    .map(
-      (hazard, index) => {
-        const hazardLabel = String(hazard.hazard || "Hazard");
-        return `
-        <tr>
-          <td>
-            <span class="stage-hazard-rank">${index + 1}</span>
-            <span class="stage-hazard-name" title="${escapeHtml(hazardLabel)}">${escapeHtml(hazardLabel)}</span>
-          </td>
-          <td>${populationPercentage(hazard.regional_population_pct)}${populationTrend(hazard.regional_population_pct, hazard.national_population_pct)}</td>
-          <td>${populationPercentage(hazard.national_population_pct)}</td>
-        </tr>
-      `;
-      },
-    )
-    .join("");
-  stageIconGrid.innerHTML = `
-    ${
-      session.selected_hazard
-        ? ""
-        : `<div class="stage-hazard-summary" aria-label="Sector analysis totals">${countCards}</div>`
-    }
-    <details class="stage-hazard-table stage-collapsible-section" aria-label="Top three hazard population comparison" open>
-      <summary class="stage-hazard-table-heading">
-        <div>
-          <span class="population-comparison-label">
-            Population comparison
-            <span
-              class="population-comparison-info"
-              tabindex="0"
-              title="For each hazard, Regional and National values are the arithmetic mean of the mapped affected-profile percentages: sum of available profile percentages divided by number of mapped profiles, rounded to 1 decimal."
-              aria-label="For each hazard, Regional and National values are the arithmetic mean of the mapped affected-profile percentages: sum of available profile percentages divided by number of mapped profiles, rounded to 1 decimal."
-            >i</span>
-          </span>
-          <h3>Top 3 hazards</h3>
-        </div>
-        <span class="stage-collapse-icon" aria-hidden="true"></span>
-      </summary>
-      <div class="stage-hazard-table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Hazard</th>
-              <th scope="col">Regional</th>
-              <th scope="col">National</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </details>
-    ${
-      additionalHazards.length
-        ? `<details class="stage-additional-hazards stage-collapsible-section" aria-label="Hazards added by experts">
-            <summary class="stage-additional-hazards-heading">
-              <div>
-                <span>Additional hazards</span>
-                <h3>Hazards added by experts</h3>
-              </div>
-              <span class="stage-collapse-icon" aria-hidden="true"></span>
-            </summary>
-            <div class="stage-additional-hazards-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Hazard</th>
-                    <th scope="col">Regional</th>
-                    <th scope="col">National</th>
-                  </tr>
-                </thead>
-                <tbody>${additionalHazardsList}</tbody>
-              </table>
-            </div>
-          </details>`
-        : ""
-    }
-  `;
+    }),
+  );
+  topHazards.querySelector(".stage-hazard-table-heading > div > span")?.classList.add("population-comparison-label");
+  stageIconGrid.appendChild(topHazards);
+
+  if (additionalHazards.length) {
+    stageIconGrid.appendChild(
+      stageHazardTableDetails({
+        className: "stage-additional-hazards",
+        ariaLabel: "Hazards added by experts",
+        label: "Additional hazards",
+        title: "Hazards added by experts",
+        rows: additionalHazards,
+      }),
+    );
+  }
 }
 
 function additionalHazardPopulationRows(session = {}) {
@@ -994,7 +1018,7 @@ function additionalHazardPopulationRows(session = {}) {
     : [];
 }
 
-function shouldShowPracticalConsiderationsVisual(step = currentStep, session = currentSession) {
+function shouldShowPracticalConsiderationsVisual(step = appState.currentStep, session = appState.currentSession) {
   const targetPopulationIdentified =
     Array.isArray(session?.benefited_profiles)
     && session.benefited_profiles.some((profile) => String(profile || "").trim());
@@ -1021,32 +1045,55 @@ function renderPracticalConsiderationsVisual(session = {}) {
         .filter(Boolean)
     : [];
   if (!items.length) return;
-  const displayItems = items.map((item) => practicalConsiderationTitle(item));
-  stageIconGrid.innerHTML = `
-    <section class="practical-considerations-visual" aria-label="General considerations to mitigate the negative effects">
-      <div class="practical-visual-orbit" aria-hidden="true">
-        <span></span>
-        <span></span>
-        <span></span>
-      </div>
-      <div class="practical-visual-heading">
-        <span>Design checklist</span>
-        <h3>${items.length} general ${items.length === 1 ? "consideration" : "considerations"} to mitigate the negative effects</h3>
-      </div>
-      <ol class="practical-consideration-list">
-        ${displayItems
-          .map(
-            (item, index) => `
-              <li style="--practical-index: ${index}" title="${escapeHtml(items[index] || item)}">
-                <span class="practical-step">${index + 1}</span>
-                <p>${escapeHtml(item)}</p>
-              </li>
-            `,
-          )
-          .join("")}
-      </ol>
-    </section>
-  `;
+  const displayItems = items
+    .map((item) => ({
+      raw: item,
+      title: practicalConsiderationTitle(item),
+    }))
+    .filter((item) => item.title && !isPracticalPlaceholderText(item.title));
+  if (!displayItems.length) return;
+  clearElement(stageIconGrid);
+  stageIconGrid.appendChild(
+    createElement(
+      "section",
+      {
+        className: "practical-considerations-visual",
+        attrs: { "aria-label": "General considerations to mitigate the negative effects" },
+      },
+      [
+        createElement(
+          "div",
+          { className: "practical-visual-orbit", attrs: { "aria-hidden": "true" } },
+          [createElement("span"), createElement("span"), createElement("span")],
+        ),
+        createElement("div", { className: "practical-visual-heading" }, [
+          createElement("span", { text: "Design checklist" }),
+          createElement("h3", {
+            text: `${displayItems.length} general ${displayItems.length === 1 ? "consideration" : "considerations"} to mitigate the negative effects`,
+          }),
+        ]),
+        createElement(
+          "ol",
+          { className: "practical-consideration-list" },
+          displayItems.map((item, index) =>
+            createElement(
+              "li",
+              {
+                attrs: {
+                  style: `--practical-index: ${index}`,
+                  title: item.raw || item.title,
+                },
+              },
+              [
+                createElement("span", { className: "practical-step", text: String(index + 1) }),
+                createElement("p", { text: item.title }),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 function practicalConsiderationTitle(value) {
@@ -1065,13 +1112,26 @@ function practicalConsiderationTitle(value) {
   return text.replace(/^[\s\-–—:]+|[\s\-–—:.]+$/g, "") || "Practical consideration";
 }
 
-function renderStageIcons(key, session = {}, options = currentOptions, { keepMap = false } = {}) {
+function isPracticalPlaceholderText(value) {
+  const normalized = normalizeForMatch(value);
+  return (
+    normalized === "dynamic theme heading"
+    || normalized === "markdown paragraph summarising the theme"
+    || normalized === "markdown paragraph summarizing the theme"
+    || normalized === "markdown bullet point"
+    || normalized.includes("dynamic theme heading")
+    || normalized.startsWith("markdown paragraph")
+    || normalized.startsWith("markdown bullet")
+  );
+}
+
+function renderStageIcons(key, session = {}, options = appState.currentOptions, { keepMap = false } = {}) {
   if (!stageIconGrid) return;
   const hazardContextOnly = key === "hazards" && shouldShowHazardContextOnly();
-  const practicalVisible = shouldShowPracticalConsiderationsVisual(currentStep, session);
+  const practicalVisible = shouldShowPracticalConsiderationsVisual(appState.currentStep, session);
   if (key === "mitigation") {
     renderedStageCardsKey = `icons-${key}-hidden`;
-    stageIconGrid.innerHTML = "";
+    clearElement(stageIconGrid);
     stageIconGrid.hidden = true;
     if (!keepMap && stageMap) stageMap.hidden = true;
     stageMap?.parentElement?.classList.toggle("has-map-summary", false);
@@ -1084,12 +1144,12 @@ function renderStageIcons(key, session = {}, options = currentOptions, { keepMap
     .map((hazard) => `${hazard.hazard}:${hazard.regional_population_pct}:${hazard.national_population_pct}`)
     .join("|");
   const practicalKey = (session.practical_considerations || []).join("|");
-  const visualKey = `icons-${key}-${hazardContextOnly && !practicalVisible ? "context-only" : "summary"}-${currentStep}-${session.country || ""}-${session.selected_hazard || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${additionalHazardKey}-${practicalKey}-${options.map((option) => option.label).join("|")}`;
+  const visualKey = `icons-${key}-${hazardContextOnly && !practicalVisible ? "context-only" : "summary"}-${appState.currentStep}-${session.country || ""}-${session.selected_hazard || ""}-${session.hazard_count || 0}-${session.affected_profile_count || 0}-${session.mitigation_measure_count || 0}-${topHazardKey}-${additionalHazardKey}-${practicalKey}-${options.map((option) => option.label).join("|")}`;
   if (renderedStageCardsKey === visualKey) return;
   renderedStageCardsKey = visualKey;
   if (!keepMap) stageVisualRenderId += 1;
   if (hazardContextOnly && !practicalVisible) {
-    stageIconGrid.innerHTML = "";
+    clearElement(stageIconGrid);
     stageIconGrid.hidden = true;
     if (!keepMap && stageMap) stageMap.hidden = true;
     stageMap?.parentElement?.classList.toggle("has-map-summary", false);
@@ -1131,25 +1191,22 @@ function renderStageIcons(key, session = {}, options = currentOptions, { keepMap
       },
     ];
 
-  stageIconGrid.innerHTML = items
-    .map(
-      (item, index) => `
-        <article class="stage-icon-card${item.stat ? " stage-stat-card" : ""}" style="--stage-card-index: ${index}">
-          ${
-            item.stat
-              ? ""
-              : `<span class="stage-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24">
-                    <path d="${item.icon}"></path>
-                  </svg>
-                </span>`
-          }
-          <p${item.stat ? ' class="stage-stat-value"' : ""}>${item.text}</p>
-          <h3>${item.title}</h3>
-        </article>
-      `,
-    )
-    .join("");
+  clearElement(stageIconGrid);
+  items.forEach((item, index) => {
+    const article = createElement("article", {
+      className: `stage-icon-card${item.stat ? " stage-stat-card" : ""}`,
+      attrs: { style: `--stage-card-index: ${index}` },
+    });
+    if (!item.stat) article.appendChild(stageIconElement(item.icon));
+    article.appendChild(
+      createElement("p", {
+        className: item.stat ? "stage-stat-value" : "",
+        text: String(item.text || ""),
+      }),
+    );
+    article.appendChild(createElement("h3", { text: String(item.title || "") }));
+    stageIconGrid.appendChild(article);
+  });
 }
 
 function loadVoices() {
@@ -1486,11 +1543,11 @@ function configureMic() {
   };
 }
 
-function hasPendingCustomProfileReason(session = currentSession) {
+function hasPendingCustomProfileReason(session = appState.currentSession) {
   return Boolean(String(session?.custom_hazard?.pending_profile_reason_group || "").trim());
 }
 
-function placeholderForStep(step, options = [], session = currentSession) {
+function placeholderForStep(step, options = [], session = appState.currentSession) {
   if (step === "custom_hazard_profile_reason" || hasPendingCustomProfileReason(session)) {
     const group = String(session?.custom_hazard?.pending_profile_reason_group || "").trim();
     return group
@@ -1591,12 +1648,12 @@ function isTargetPopulationActionLabel(label) {
 }
 
 function updateOptionHighlight() {
-  highlightedOptionLabel = "";
+  appState.highlightedOptionLabel = "";
   const query = messageInput.value.trim();
   const buttons = Array.from(optionTray.querySelectorAll("button"));
   buttons.forEach((button) => button.classList.remove("fuzzy-match"));
 
-  if (!query || inputMode !== "text" || !buttons.length) return;
+  if (!query || appState.inputMode !== "text" || !buttons.length) return;
 
   const best = buttons.reduce(
     (match, button) => {
@@ -1608,7 +1665,7 @@ function updateOptionHighlight() {
 
   if (best.button && best.score >= 0.45) {
     best.button.classList.add("fuzzy-match");
-    highlightedOptionLabel = best.button.textContent;
+    appState.highlightedOptionLabel = best.button.textContent;
   }
 }
 
@@ -2172,7 +2229,7 @@ function addMessage(role, text, isError = false, targetLog = chatLog) {
   const content = document.createElement("div");
   content.className = "bubble-content";
   if (role === "bot") {
-    content.innerHTML = text;
+    renderTrustedHtml(content, text);
     normalizePracticalConsiderationLists(content);
   } else {
     content.textContent = text;
@@ -2213,7 +2270,7 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
   content.textContent = "";
 
   if (!typingEffectEnabled()) {
-    content.innerHTML = html;
+    renderTrustedHtml(content, html);
     normalizePracticalConsiderationLists(content);
     initializeHighcharts(content);
     bubble.appendChild(timestamp);
@@ -2224,7 +2281,7 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
   }
 
   const template = document.createElement("template");
-  template.innerHTML = html;
+  renderTrustedHtml(template, html);
 
   async function typeNode(node, parent) {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -2525,17 +2582,18 @@ function formatValidationMetric(name, value) {
 }
 
 function addTyping(targetLog = chatLog) {
-  const row = document.createElement("div");
-  row.className = "message-row bot";
+  const row = createElement("div", { className: "message-row bot" });
   row.dataset.typing = "true";
-  row.innerHTML = `
-    <img class="chat-avatar teacher-avatar" src="${teacherAvatarPath}" alt="Dr Transition" />
-    <div class="bubble">
-      <span class="typing" aria-label="Dr Transition is typing">
-        <span></span><span></span><span></span>
-      </span>
-    </div>
-  `;
+  const avatar = createElement("img", {
+    className: "chat-avatar teacher-avatar",
+    attrs: { src: teacherAvatarPath, alt: "Dr Transition" },
+  });
+  const typing = createElement(
+    "span",
+    { className: "typing", attrs: { "aria-label": "Dr Transition is typing" } },
+    [createElement("span"), createElement("span"), createElement("span")],
+  );
+  row.append(avatar, createElement("div", { className: "bubble" }, [typing]));
   targetLog.appendChild(row);
   scrollToBottom(targetLog);
   return row;
@@ -2554,18 +2612,18 @@ function setLoading(value) {
   evaluationEvidenceInput.disabled = value;
   evaluationEvidenceFileInput.disabled = value;
   sendButton.disabled = value;
-  micButton.disabled = value || !micSupported || inputMode !== "text";
+  micButton.disabled = value || !micSupported || appState.inputMode !== "text";
   optionTray.querySelectorAll("button").forEach((button) => {
     button.disabled = value || button.dataset.used === "true";
   });
 }
 
-function setInputMode(mode = "text", step = "", options = [], session = currentSession) {
+function setInputMode(mode = "text", step = "", options = [], session = appState.currentSession) {
   const effectiveMode = hasPendingCustomProfileReason(session) ? "textarea" : mode;
-  inputMode = effectiveMode;
-  currentOptions = options || [];
-  syncTargetPopulationQuestion(step, currentOptions);
-  updateStageVisual(step, session || currentSession, currentOptions);
+  appState.inputMode = effectiveMode;
+  appState.currentOptions = options || [];
+  syncTargetPopulationQuestion(step, appState.currentOptions);
+  updateStageVisual(step, session || appState.currentSession, appState.currentOptions);
   const reasonEvidenceMode = effectiveMode === "reason_evidence" || effectiveMode === "mitigation_measure";
   const evaluationMode = effectiveMode === "evaluation_question";
   const textareaMode = effectiveMode === "textarea";
@@ -2608,7 +2666,7 @@ function setInputMode(mode = "text", step = "", options = [], session = currentS
 }
 
 function updateSessionCard(session) {
-  currentSession = session || {};
+  appState.currentSession = session || {};
   targetPopulationQuestions = Array.isArray(session?.target_population_questions)
     ? session.target_population_questions
     : [];
@@ -2629,7 +2687,7 @@ function updateSessionCard(session) {
   document.querySelector(".stage-selection")?.classList.toggle("has-session", hasSession);
   updateNewSessionButton();
   renderSelectedHazardContext(session);
-  updateStageVisual(currentStep, currentSession, currentOptions);
+  updateStageVisual(appState.currentStep, appState.currentSession, appState.currentOptions);
 }
 
 function applyInputValues(values = {}) {
@@ -2659,9 +2717,9 @@ function renderSelectedHazardContext(session = {}) {
   ]);
   const mitigationMeasure = String(session.mitigation_measure || "").trim();
   const showMitigationReviewPanel =
-    (mitigationContextSteps.has(currentStep) && mitigationMeasure)
-    || (currentStep === "complete" && hasMitigationReview)
-    || (currentStep === "mitigation" && hasMitigationReview);
+    (mitigationContextSteps.has(appState.currentStep) && mitigationMeasure)
+    || (appState.currentStep === "complete" && hasMitigationReview)
+    || (appState.currentStep === "mitigation" && hasMitigationReview);
   const hazard = String(session.selected_hazard || "").trim();
   const profileDetails = Array.isArray(session.affected_profile_details)
     ? session.affected_profile_details
@@ -2691,17 +2749,13 @@ function renderSelectedHazardContext(session = {}) {
     renderMitigationReviewContext(session);
     return;
   }
-  affectedProfileList.innerHTML = "";
+  clearElement(affectedProfileList);
   profiles.forEach((profile) => {
     const item = document.createElement("li");
-    const icon = document.createElement("span");
-    icon.className = "affected-profile-item-icon";
-    icon.setAttribute("aria-hidden", "true");
-    icon.innerHTML = `
-      <svg viewBox="0 0 24 24">
-        <path d="M15 8a3 3 0 10-6 0 3 3 0 006 0zM5 20a7 7 0 0114 0"></path>
-      </svg>
-    `;
+    const icon = svgPathIconElement(
+      "affected-profile-item-icon",
+      "M15 8a3 3 0 10-6 0 3 3 0 006 0zM5 20a7 7 0 0114 0",
+    );
     const label = document.createElement("span");
     label.textContent = profile.name;
     if (profile.variableType === "macro" || profile.variableName.startsWith("macro_")) {
@@ -2725,17 +2779,10 @@ function renderMitigationReviewContext(session = {}) {
     : [];
 
   if (benefitedProfileList) {
-    benefitedProfileList.innerHTML = "";
+    clearElement(benefitedProfileList);
     profiles.forEach((profile) => {
       const item = document.createElement("li");
-      const icon = document.createElement("span");
-      icon.className = "affected-profile-item-icon";
-      icon.setAttribute("aria-hidden", "true");
-      icon.innerHTML = `
-        <svg viewBox="0 0 24 24">
-          <path d="M20 6L9 17l-5-5"></path>
-        </svg>
-      `;
+      const icon = svgPathIconElement("affected-profile-item-icon", "M20 6L9 17l-5-5");
       const label = document.createElement("span");
       label.textContent = profile;
       item.append(icon, label);
@@ -2765,7 +2812,7 @@ function renderMitigationReviewContext(session = {}) {
   } */
   if (mitigationSupportedDimensions) {
     const dimensions = supportedDimensions;
-    mitigationSupportedDimensions.innerHTML = "";
+    clearElement(mitigationSupportedDimensions);
     dimensions.forEach((dimension) => {
       const name = String(dimension?.name || "").trim();
       if (!name) return;
@@ -2797,7 +2844,7 @@ mitigationGroundingStatus?.addEventListener("click", () => {
   mitigationGroundingStatus.setAttribute("aria-expanded", String(expanded));
   mitigationGroundingStatus.textContent = expanded
     ? explanation
-    : validationLabel(currentSession?.mitigation_review?.grounding_status || "Supported");
+    : validationLabel(appState.currentSession?.mitigation_review?.grounding_status || "Supported");
 });
 
 function syncTargetPopulationQuestion(step, options = []) {
@@ -2898,15 +2945,15 @@ window.addEventListener("resize", positionOptionTooltip);
 document.addEventListener("scroll", positionOptionTooltip, true);
 
 function renderOptions(options, otherOptions = []) {
-  currentOptions = options || [];
-  currentOtherOptions = otherOptions || [];
-  if (currentStep === "hazard_profile_selection" && hasListedHazardActions(currentOptions)) {
-    listedHazardOptions = [...currentOptions];
+  appState.currentOptions = options || [];
+  appState.currentOtherOptions = otherOptions || [];
+  if (appState.currentStep === "hazard_profile_selection" && hasListedHazardActions(appState.currentOptions)) {
+    listedHazardOptions = [...appState.currentOptions];
   }
-  optionTray.innerHTML = "";
-  highlightedOptionLabel = "";
-  if (inputMode === "target_population_multi") {
-    renderTargetPopulationOptions(currentOptions);
+  clearElement(optionTray);
+  appState.highlightedOptionLabel = "";
+  if (appState.inputMode === "target_population_multi") {
+    renderTargetPopulationOptions(appState.currentOptions);
     renderOtherOptionsMenu();
     return;
   }
@@ -2927,7 +2974,7 @@ function renderOptions(options, otherOptions = []) {
 }
 
 function shouldCollapseHazardOptions(options = []) {
-  if (currentStep !== "hazard_profile_selection") return false;
+  if (appState.currentStep !== "hazard_profile_selection") return false;
   const hazardOptions = options.filter((option) => !isHazardOptionActionLabel(option.label));
   return hazardOptions.length > 3;
 }
@@ -3000,23 +3047,23 @@ function hazardOptionObjectsFromLabels(labels = [], actionLabel = "Show listed h
 function localHazardListForAction(label = "") {
   const normalized = normalizeForMatch(label);
   if (normalized === "show hazards added by experts") {
-    return Array.isArray(currentSession?.additional_hazards)
-      ? currentSession.additional_hazards
+    return Array.isArray(appState.currentSession?.additional_hazards)
+      ? appState.currentSession.additional_hazards
       : [];
   }
   if (normalized === "show co created hazards") {
-    return Array.isArray(currentSession?.custom_hazards)
-      ? currentSession.custom_hazards
+    return Array.isArray(appState.currentSession?.custom_hazards)
+      ? appState.currentSession.custom_hazards
       : [];
   }
   return [];
 }
 
 function handleLocalHazardAction(label = "") {
-  if (currentStep !== "hazard_profile_selection") return false;
+  if (appState.currentStep !== "hazard_profile_selection") return false;
   const normalized = normalizeForMatch(label);
   if (normalized === "show listed hazards" && listedHazardOptions.length) {
-    renderOptions(listedHazardOptions, currentOtherOptions);
+    renderOptions(listedHazardOptions, appState.currentOtherOptions);
     return true;
   }
   if (
@@ -3027,7 +3074,7 @@ function handleLocalHazardAction(label = "") {
   }
   const labels = localHazardListForAction(label);
   if (!labels.length) return false;
-  renderOptions(hazardOptionObjectsFromLabels(labels), currentOtherOptions);
+  renderOptions(hazardOptionObjectsFromLabels(labels), appState.currentOtherOptions);
   return true;
 }
 
@@ -3117,7 +3164,7 @@ function createOptionButton(label, extraClass = "") {
 }
 
 function renderOtherOptionsMenu() {
-  const navOptions = currentOtherOptions || [];
+  const navOptions = appState.currentOtherOptions || [];
   if (!navOptions.length) return;
 
   const toggle = document.createElement("button");
@@ -3173,7 +3220,7 @@ async function openStatsDeepDiveDialog(initialMessage = "", echoInitial = true) 
     return;
   }
   statsDialogStarted = true;
-  if (statsDialogLog) statsDialogLog.innerHTML = "";
+  clearElement(statsDialogLog);
   const firstMessage = message
     || "Dive deeper into the statistical findings for the listed hazards. Summarise the most important results and affected groups.";
   await sendStatsDialogMessage(firstMessage, Boolean(message) ? echoInitial : false);
@@ -3321,7 +3368,7 @@ function openTargetPopulationDialog() {
     : currentTargetPopulationQuestion
       ? [currentTargetPopulationQuestion]
       : [];
-  targetPopulationDialogBody.innerHTML = "";
+  clearElement(targetPopulationDialogBody);
   questions.forEach((question) => {
     const previouslySelected = selectedTargetPopulationLabels(question.id);
     const section = document.createElement("fieldset");
@@ -3378,7 +3425,7 @@ async function sendStatsDialogMessage(message, echoUser = true) {
   setStatsDialogLoading(true);
 
   try {
-    const response = await fetch("/api/stats-deep-dive", {
+    const response = await csrfFetch("/api/stats-deep-dive", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -3422,7 +3469,7 @@ function saveCurrentInputState() {
   const key = inputStateKey();
   if (!key) return;
   const state = {
-    inputMode,
+    inputMode: appState.inputMode,
     message: messageInput.value,
     textareaMessage: textareaInput.value,
     reason: reasonInput.value,
@@ -3448,7 +3495,7 @@ function applySavedInputState() {
 
   try {
     const state = JSON.parse(saved);
-    if (state.inputMode && state.inputMode !== inputMode) return;
+    if (state.inputMode && state.inputMode !== appState.inputMode) return;
     messageInput.value = state.message || "";
     textareaInput.value = state.textareaMessage || "";
     reasonInput.value = state.reason || "";
@@ -3465,7 +3512,7 @@ function applySavedInputState() {
 
 async function loadSessions() {
   if (!sessionsList) return;
-  sessionsList.innerHTML = `<p class="sessions-empty">Loading sessions...</p>`;
+    renderEmptyState(sessionsList, "Loading sessions...");
   try {
     const response = await fetch("/api/sessions");
     if (response.status === 401) {
@@ -3476,16 +3523,16 @@ async function loadSessions() {
     const data = await response.json();
     renderSessions(data.sessions || []);
   } catch (error) {
-    sessionsList.innerHTML = `<p class="sessions-empty">Could not load sessions.</p>`;
+    renderEmptyState(sessionsList, "Could not load sessions.");
     console.error("Sessions request failed", error);
   }
 }
 
 function renderSessions(sessions) {
   if (!sessionsList) return;
-  sessionsList.innerHTML = "";
+  clearElement(sessionsList);
   if (!sessions.length) {
-    sessionsList.innerHTML = `<p class="sessions-empty">No saved sessions yet.</p>`;
+    renderEmptyState(sessionsList, "No saved sessions yet.");
     return;
   }
 
@@ -3535,13 +3582,13 @@ function currentInputExportValues() {
   const savedState = inputStateKey() ? localStorage.getItem(inputStateKey()) : null;
   return {
     session_id: sessionId,
-    step: currentStep,
-    input_mode: inputMode,
+    step: appState.currentStep,
+    input_mode: appState.inputMode,
     validation_mode: currentValidationMode(),
     crowd_sourcing_enabled: crowdSourcingEnabled(),
-    visible_session: currentSession,
-    visible_options: currentOptions,
-    visible_other_options: currentOtherOptions,
+    visible_session: appState.currentSession,
+    visible_options: appState.currentOptions,
+    visible_other_options: appState.currentOtherOptions,
     text_message: messageInput?.value || "",
     textarea_message: textareaInput?.value || "",
     reason: reasonInput?.value || "",
@@ -3555,27 +3602,6 @@ function currentInputExportValues() {
     stats_dialog_input: statsDialogInput?.value || "",
     saved_local_input_state: savedState,
   };
-}
-
-function downloadJson(filename, payload) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-function exportFilename(title = "session") {
-  const safeTitle = String(title || "session")
-    .trim()
-    .replace(/[^a-z0-9_-]+/gi, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "session";
-  return `dr-transition-${safeTitle}-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
 async function exportCurrentSession() {
@@ -3602,10 +3628,19 @@ async function exportCurrentSession() {
     data.export_notes = {
       evidence_file_contents: "Browser export includes selected file names and metadata, not local file bytes.",
     };
-    downloadJson(exportFilename(data.session?.title), data);
-    exportSessionStatus.textContent = "Session export downloaded.";
+    const filename = window.DrTransitionSessionExport.exportFilename(data.session?.title);
+    exportSessionStatus.textContent = "Choose where to save the session export...";
+    const saveMode = await window.DrTransitionSessionExport.saveJsonFile(filename, data);
+    exportSessionStatus.textContent =
+      saveMode === "saved"
+        ? "Session export saved."
+        : "Session export downloaded.";
   } catch (error) {
-    exportSessionStatus.textContent = error.message || "Could not export session.";
+    if (error?.name === "AbortError") {
+      exportSessionStatus.textContent = "Session export cancelled.";
+    } else {
+      exportSessionStatus.textContent = error.message || "Could not export session.";
+    }
   } finally {
     exportSessionButton.disabled = false;
   }
@@ -3631,7 +3666,7 @@ async function importSessionFile() {
   try {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch("/api/sessions/import", {
+    const response = await csrfFetch("/api/sessions/import", {
       method: "POST",
       body: formData,
     });
@@ -3670,20 +3705,20 @@ function showSectorPromptMessage(message, isError = true) {
 
 function resetKnowledgeProgress() {
   if (!knowledgeProgressSection || !knowledgeProgressList) return;
-  knowledgeProgressList.innerHTML = "";
+  clearElement(knowledgeProgressList);
   knowledgeProgressSection.hidden = true;
 }
 
 function addKnowledgeProgressRow(label, status = "Queued") {
   if (!knowledgeProgressSection || !knowledgeProgressList) return null;
   knowledgeProgressSection.hidden = false;
-  const row = document.createElement("article");
-  row.className = "knowledge-progress-row";
-  row.innerHTML = `
-    <strong title="${escapeHtml(label)}">${escapeHtml(label)}</strong>
-    <small>${escapeHtml(status)}</small>
-    <div class="knowledge-progress-track" aria-hidden="true"><span></span></div>
-  `;
+  const row = createElement("article", { className: "knowledge-progress-row" }, [
+    createElement("strong", { text: label, attrs: { title: label } }),
+    createElement("small", { text: status }),
+    createElement("div", { className: "knowledge-progress-track", attrs: { "aria-hidden": "true" } }, [
+      createElement("span"),
+    ]),
+  ]);
   knowledgeProgressList.appendChild(row);
   return row;
 }
@@ -3753,40 +3788,39 @@ function closeKnowledgeDialog() {
 
 async function loadKnowledgeDocuments() {
   if (!knowledgeDocuments) return;
-  knowledgeDocuments.innerHTML = `<p class="sessions-empty">Loading documents...</p>`;
+  renderEmptyState(knowledgeDocuments, "Loading documents...");
   try {
     const response = await fetch("/api/knowledge");
     if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
     const data = await response.json();
     renderKnowledgeDocuments(data.documents || []);
   } catch (error) {
-    knowledgeDocuments.innerHTML = `<p class="sessions-empty">Could not load documents.</p>`;
+    renderEmptyState(knowledgeDocuments, "Could not load documents.");
     console.error("Knowledge documents failed", error);
   }
 }
 
 function renderKnowledgeDocuments(documents) {
   if (!knowledgeDocuments) return;
-  knowledgeDocuments.innerHTML = "";
+  clearElement(knowledgeDocuments);
   if (!documents.length) {
-    knowledgeDocuments.innerHTML = `<p class="sessions-empty">No main knowledge documents yet.</p>`;
+    renderEmptyState(knowledgeDocuments, "No main knowledge documents yet.");
     return;
   }
   documents.forEach((documentItem) => {
-    const row = document.createElement("article");
-    row.className = "knowledge-item knowledge-document-row";
-    row.innerHTML = `
-      <div class="knowledge-document-main">
-        <strong title="${escapeHtml(documentItem.title)}">${escapeHtml(documentItem.title)}</strong>
-        <small>${escapeHtml(documentItem.source_type || "document")}</small>
-      </div>
-    `;
+    const title = String(documentItem.title || "");
+    const row = createElement("article", { className: "knowledge-item knowledge-document-row" }, [
+      createElement("div", { className: "knowledge-document-main" }, [
+        createElement("strong", { text: title, attrs: { title } }),
+        createElement("small", { text: documentItem.source_type || "document" }),
+      ]),
+    ]);
     if (canManageMainKnowledge) {
       const deleteButton = document.createElement("button");
       deleteButton.type = "button";
       deleteButton.className = "knowledge-delete-button";
       deleteButton.textContent = "×";
-      deleteButton.setAttribute("aria-label", `Delete ${documentItem.title}`);
+      deleteButton.setAttribute("aria-label", `Delete ${title}`);
       deleteButton.title = "Delete document";
       deleteButton.addEventListener("click", () => deleteKnowledgeDocument(documentItem.id));
       row.appendChild(deleteButton);
@@ -3797,46 +3831,42 @@ function renderKnowledgeDocuments(documents) {
 
 function renderKnowledgeResults(results) {
   if (!knowledgeResults) return;
-  knowledgeResults.innerHTML = "";
+  clearElement(knowledgeResults);
   if (!results.length) {
-    knowledgeResults.innerHTML = `<p class="sessions-empty">No matching chunks found.</p>`;
+    renderEmptyState(knowledgeResults, "No matching chunks found.");
     return;
   }
   results.forEach((result) => {
-    const row = document.createElement("article");
-    row.className = "knowledge-item";
     const sourceParts = [result.source_type || "document"];
     if (result.page_number) sourceParts.push(`page ${result.page_number}`);
-    row.innerHTML = `
-      <strong>${escapeHtml(result.title)}</strong>
-      <small>${escapeHtml(sourceParts.join(" · "))} · Score: ${escapeHtml(result.score)}</small>
-      <p>${escapeHtml(result.content)}</p>
-    `;
+    const row = createElement("article", { className: "knowledge-item" }, [
+      createElement("strong", { text: result.title || "" }),
+      createElement("small", { text: `${sourceParts.join(" - ")} - Score: ${result.score}` }),
+      createElement("p", { text: result.content || "" }),
+    ]);
     knowledgeResults.appendChild(row);
   });
 }
 
 function renderSectorPromptResults(results) {
   if (!sectorPromptResults) return;
-  sectorPromptResults.innerHTML = "";
+  clearElement(sectorPromptResults);
   if (!results.length) {
-    sectorPromptResults.innerHTML = `<p class="sessions-empty">No matching sector prompt chunks found.</p>`;
+    renderEmptyState(sectorPromptResults, "No matching sector prompt chunks found.");
     return;
   }
   results.forEach((result) => {
-    const row = document.createElement("article");
-    row.className = "knowledge-item";
     const sourceParts = [result.source_type || "sector_prompt"];
     if (result.source_uri) sourceParts.push(result.source_uri.replace("sector-prompt://", ""));
     const scoreLabel =
       result.score === null || typeof result.score === "undefined"
         ? "lexical/DB"
-        : escapeHtml(result.score);
-    row.innerHTML = `
-      <strong>${escapeHtml(result.title || "Sector prompt")}</strong>
-      <small>${escapeHtml(sourceParts.join(" · "))} · Score: ${scoreLabel}</small>
-      <p>${escapeHtml(result.content || "")}</p>
-    `;
+        : result.score;
+    const row = createElement("article", { className: "knowledge-item" }, [
+      createElement("strong", { text: result.title || "Sector prompt" }),
+      createElement("small", { text: `${sourceParts.join(" - ")} - Score: ${scoreLabel}` }),
+      createElement("p", { text: result.content || "" }),
+    ]);
     sectorPromptResults.appendChild(row);
   });
 }
@@ -3871,7 +3901,7 @@ async function reindexSectorPrompts() {
   sectorPromptReindexButton.disabled = true;
   showSectorPromptMessage("Reindexing sector prompts...", false);
   try {
-    const response = await fetch("/api/sector-prompts/reindex", { method: "POST" });
+    const response = await csrfFetch("/api/sector-prompts/reindex", { method: "POST" });
     if (response.status === 401) {
       window.location.href = "/login";
       return;
@@ -3898,10 +3928,10 @@ async function searchSectorPrompts() {
     return;
   }
   if (sectorPromptResults) {
-    sectorPromptResults.innerHTML = `<p class="sessions-empty">Searching sector prompts...</p>`;
+    renderEmptyState(sectorPromptResults, "Searching sector prompts...");
   }
   try {
-    const response = await fetch("/api/sector-prompts/search", {
+    const response = await csrfFetch("/api/sector-prompts/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sector, query }),
@@ -3927,7 +3957,7 @@ async function searchSectorPrompts() {
 }
 
 async function deleteKnowledgeDocument(documentId) {
-  const response = await fetch(`/api/knowledge/${encodeURIComponent(documentId)}`, {
+  const response = await csrfFetch(`/api/knowledge/${encodeURIComponent(documentId)}`, {
     method: "DELETE",
   });
   const data = await response.json();
@@ -3964,7 +3994,7 @@ async function renameSession(targetSessionId, titleElement, nextTitle) {
   if (!cleanTitle) return;
 
   try {
-    const response = await fetch(`/api/sessions/${encodeURIComponent(targetSessionId)}`, {
+    const response = await csrfFetch(`/api/sessions/${encodeURIComponent(targetSessionId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: cleanTitle }),
@@ -4013,10 +4043,10 @@ async function restoreSession(nextSessionId) {
 
     sessionId = data.session_id;
     localStorage.setItem(sessionKey, sessionId);
-    chatLog.innerHTML = "";
-    optionTray.innerHTML = "";
+    clearElement(chatLog);
+    clearElement(optionTray);
     statsDialogStarted = false;
-    if (statsDialogLog) statsDialogLog.innerHTML = "";
+    clearElement(statsDialogLog);
     (data.messages || []).forEach((message) => {
       addMessage(message.role, message.content, Boolean(message.is_error));
     });
@@ -4031,8 +4061,8 @@ async function restoreSession(nextSessionId) {
     if (nextSessionId === sessionId) {
       localStorage.removeItem(sessionKey);
       sessionId = null;
-      chatLog.innerHTML = "";
-      optionTray.innerHTML = "";
+      clearElement(chatLog);
+      clearElement(optionTray);
       shouldStartFresh = true;
     }
   } finally {
@@ -4073,7 +4103,7 @@ async function requestAutoConversationTurn() {
   if (!autoConversationEnabled() || loading || !sessionId) return;
 
   try {
-    const response = await fetch("/api/auto-user-message", {
+    const response = await csrfFetch("/api/auto-user-message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -4111,40 +4141,40 @@ function normalizeAutoConversationMessage(message) {
     "textarea",
     "evaluation_question",
   ]);
-  if (!fieldModes.has(inputMode)) return message;
-  const optionLabels = [...currentOptions, ...currentOtherOptions].map((option) =>
+  if (!fieldModes.has(appState.inputMode)) return message;
+  const optionLabels = [...appState.currentOptions, ...appState.currentOtherOptions].map((option) =>
     typeof option === "string" ? option : option.label,
   );
   const isOption = optionLabels.some((label) => normalizeForMatch(label) === normalizeForMatch(message));
   if (!isOption) {
     if (
-      inputMode === "reason_evidence" &&
+      appState.inputMode === "reason_evidence" &&
       !/^reason\s*:/i.test(message) &&
       !/^evidence\s*:/i.test(message)
     ) {
       return `Reason: ${message}`;
     }
     if (
-      inputMode === "mitigation_measure" &&
+      appState.inputMode === "mitigation_measure" &&
       !/^mitigation(?:\s+measure)?\s*:/i.test(message)
     ) {
       return `Mitigation measure: ${message}`;
     }
-    if (inputMode === "evaluation_question" && !/^score\s*:/i.test(message)) {
+    if (appState.inputMode === "evaluation_question" && !/^score\s*:/i.test(message)) {
       return `Score: 7\nReason: ${message}`;
     }
     return message;
   }
-  if (inputMode === "mitigation_measure") {
+  if (appState.inputMode === "mitigation_measure") {
     return "Mitigation measure: Provide targeted financial support and advisory services for affected groups.";
   }
-  if (inputMode === "reason_evidence") {
+  if (appState.inputMode === "reason_evidence") {
     return "Reason: This reduces the hazard by lowering costs, improving access, and supporting affected groups through the transition.";
   }
-  if (inputMode === "textarea") {
+  if (appState.inputMode === "textarea") {
     return "The cost coverage applies to the affected target groups by paying or reimbursing upfront adaptation costs directly for them, with guidance and implementation support so they can use the measure in practice.";
   }
-  if (inputMode === "evaluation_question") {
+  if (appState.inputMode === "evaluation_question") {
     return "Score: 7\nReason: The mitigation is relevant and feasible, but it needs stronger targeting and monitoring.";
   }
   return message;
@@ -4165,7 +4195,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     const hasEvidenceFile = extras.evidenceFile instanceof File && extras.evidenceFile.size > 0;
     const hasEvidenceUrl = Boolean(extras.evidenceUrl);
     const useMultipart = hasEvidenceFile || hasEvidenceUrl;
-    const response = await fetch("/api/chat", {
+    const response = await csrfFetch("/api/chat", {
       method: "POST",
       ...(useMultipart
         ? {
@@ -4196,9 +4226,9 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     localStorage.setItem(sessionKey, sessionId);
 
     typing.remove();
-    currentStep = data.step;
+    appState.currentStep = data.step;
     if (data.step === "stats_deep_dive_dialog") {
-      setInputMode(data.input_mode || "text", currentStep, data.options || [], data.session);
+      setInputMode(data.input_mode || "text", appState.currentStep, data.options || [], data.session);
       updateSessionCard(data.session);
       renderOptions(data.options || [], data.other_options || []);
       await openStatsDeepDiveDialog(data.input_values?.stats_question || "", true);
@@ -4220,11 +4250,11 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     console.error("Chat request failed", error);
   } finally {
     setLoading(false);
-    if (inputMode === "reason_evidence" || inputMode === "mitigation_measure") {
+    if (appState.inputMode === "reason_evidence" || appState.inputMode === "mitigation_measure") {
       reasonInput.focus();
-    } else if (inputMode === "evaluation_question") {
+    } else if (appState.inputMode === "evaluation_question") {
       scoreInput.focus();
-    } else if (inputMode === "textarea") {
+    } else if (appState.inputMode === "textarea") {
       textareaInput.focus();
     } else {
       messageInput.focus();
@@ -4258,12 +4288,12 @@ function evidenceSummary(url, file) {
 chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
 
-  if (inputMode === "reason_evidence" || inputMode === "mitigation_measure") {
+  if (appState.inputMode === "reason_evidence" || appState.inputMode === "mitigation_measure") {
     const primaryValue = reasonInput.value.trim();
     const evidenceUrl = evidenceInput.value.trim();
     const evidenceFile = evidenceFileInput.files[0];
 
-    if (inputMode === "mitigation_measure") {
+    if (appState.inputMode === "mitigation_measure") {
       if (!primaryValue) {
         flashRequiredField(reasonInput);
         return;
@@ -4276,7 +4306,7 @@ chatForm.addEventListener("submit", (event) => {
       return;
     }
 
-    const reasonOptional = currentStep === "socio_demographic_review";
+    const reasonOptional = appState.currentStep === "socio_demographic_review";
     if (!primaryValue && !reasonOptional) {
       flashRequiredField(reasonInput);
       return;
@@ -4292,7 +4322,7 @@ chatForm.addEventListener("submit", (event) => {
     return;
   }
 
-  if (inputMode === "evaluation_question") {
+  if (appState.inputMode === "evaluation_question") {
     const score = scoreInput.value.trim();
     const reason = evaluationReasonInput.value.trim();
     const evidenceUrl = evaluationEvidenceInput.value.trim();
@@ -4313,14 +4343,14 @@ chatForm.addEventListener("submit", (event) => {
     return;
   }
 
-  const freeTextInput = inputMode === "textarea" ? textareaInput : messageInput;
+  const freeTextInput = appState.inputMode === "textarea" ? textareaInput : messageInput;
   const value = freeTextInput.value.trim();
   if (!value) {
     flashRequiredField(freeTextInput);
     return;
   }
   freeTextInput.value = "";
-  highlightedOptionLabel = "";
+  appState.highlightedOptionLabel = "";
   disableOldOptions();
   collapseExpandedMessages();
   addMessage("user", value);
@@ -4398,7 +4428,7 @@ floatingStatsButton?.addEventListener("click", () => {
 });
 
 micButton?.addEventListener("click", () => {
-  if (!recognition || inputMode !== "text") return;
+  if (!recognition || appState.inputMode !== "text") return;
   if (listening) {
     recognition.stop();
     return;
@@ -4420,9 +4450,9 @@ resetButton.addEventListener("click", async () => {
   localStorage.removeItem(sessionKey);
   sessionId = null;
   statsDialogStarted = false;
-  if (statsDialogLog) statsDialogLog.innerHTML = "";
-  chatLog.innerHTML = "";
-  optionTray.innerHTML = "";
+  clearElement(statsDialogLog);
+  clearElement(chatLog);
+  clearElement(optionTray);
   updateSessionCard({ country: null, region: null, sector: null });
   setInputMode("text");
   await sendMessage("/reset", false);
@@ -4492,7 +4522,7 @@ knowledgeUrlForm?.addEventListener("submit", async (event) => {
   for (const [index, url] of urls.entries()) {
     const row = rows[index];
     updateKnowledgeProgressRow(row, "Fetching and ingesting...", 35);
-    const response = await fetch("/api/knowledge/url", {
+    const response = await csrfFetch("/api/knowledge/url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ urls: [url] }),
@@ -4523,7 +4553,7 @@ knowledgeSearchForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const query = knowledgeSearchInput.value.trim();
   if (!query) return;
-  const response = await fetch("/api/knowledge/search", {
+  const response = await csrfFetch("/api/knowledge/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
@@ -4658,7 +4688,7 @@ changePasswordForm?.addEventListener("submit", async (event) => {
   }
 
   try {
-    const response = await fetch("/api/profile/password", {
+    const response = await csrfFetch("/api/profile/password", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -4705,3 +4735,5 @@ document.addEventListener("DOMContentLoaded", () => {
     sendMessage("", false);
   }
 });
+
+

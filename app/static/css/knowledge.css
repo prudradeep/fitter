@@ -1,0 +1,233 @@
+.knowledge-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.knowledge-sidebar {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  border-right: 1px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 18px;
+}
+
+.knowledge-body {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 18px 22px;
+  overflow-y: auto;
+}
+
+.knowledge-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.knowledge-panel-heading {
+  display: flex;
+  gap: 12px;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.knowledge-panel-heading p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.sector-prompt-search-form {
+  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr) auto;
+}
+
+.knowledge-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.knowledge-form label {
+  display: grid;
+  gap: 6px;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.knowledge-form input,
+.knowledge-form select,
+.knowledge-form textarea {
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.knowledge-form button,
+.knowledge-action-button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 8px;
+  background: #6d28d9;
+  color: #ffffff;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.knowledge-body h3,
+.knowledge-sidebar h3 {
+  margin: 4px 0 8px;
+  color: #111827;
+  font-size: 0.92rem;
+}
+
+.knowledge-list {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.knowledge-progress-list {
+  display: grid;
+  gap: 8px;
+}
+
+.knowledge-progress-row {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.knowledge-progress-row strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-progress-row small {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.knowledge-progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.knowledge-progress-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: #6d28d9;
+  transition: width 160ms ease;
+}
+
+.knowledge-progress-row.done .knowledge-progress-track span {
+  background: #059669;
+}
+
+.knowledge-progress-row.failed .knowledge-progress-track span {
+  background: #dc2626;
+}
+
+.knowledge-item {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.knowledge-document-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  background: #ffffff;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.knowledge-document-row:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
+}
+
+.knowledge-document-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.knowledge-document-main strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-delete-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff7f7;
+  color: #991b1b;
+  cursor: pointer;
+  font-size: 1.2rem;
+  line-height: 1;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.knowledge-delete-button:hover {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  transform: scale(1.04);
+}
+
+.knowledge-item small {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.knowledge-item p {
+  margin: 0;
+  color: #334155;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.knowledge-results {
+  max-height: 260px;
+}
+

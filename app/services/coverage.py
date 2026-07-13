@@ -1,7 +1,7 @@
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import selectinload
 
-from app.database import SessionLocal
+from app.db.session import SessionLocal
 from app.models import Country, CountrySector, SystemHazard, UserSession
 from app.services.hazard_salience import top_hazard_salience_by_country
 

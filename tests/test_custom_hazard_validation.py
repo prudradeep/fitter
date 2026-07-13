@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services import custom_hazard_validation as validator
+from app.schemas import ChatResponse
 from app.services.chat_formatters import format_hazards
 from app.services.chat_options import HAZARD_POPULATION_REVIEW_OPTIONS
 from app.services.chat_service import ChatService
@@ -274,6 +275,50 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
         self.assertEqual(duplicate_card["status"], "WARNING")
         self.assertIn("Regional employment shock", duplicate_card["reason"])
+
+    def test_hazard_creation_input_is_not_routed_to_grounded_questions(self):
+        service = ChatService.__new__(ChatService)
+        service._handle_other_nav_action = AsyncMock(return_value=None)
+        service._is_invalid_user_text = MagicMock(return_value=False)
+        service._open_selection_response_from_any_step = AsyncMock(return_value=None)
+        service._handle_anytime_grounded_question = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="custom_hazard_input",
+                bot_message="Grounded answer",
+                options=[],
+                session={},
+                error=False,
+            )
+        )
+        service._capture_custom_hazard = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="custom_hazard_validation",
+                bot_message="Hazard validation",
+                options=[],
+                session={},
+                error=False,
+            )
+        )
+        session = ChatSession(
+            country="Italy",
+            region="Abruzzo",
+            sector="Transport",
+            phase="custom_hazard_input",
+        )
+
+        response = _run(
+            service._chat_response(
+                "session-1",
+                session,
+                "EV home-charging disadvantage for renters and apartment dwellers",
+            )
+        )
+
+        self.assertEqual(response.bot_message, "Hazard validation")
+        service._capture_custom_hazard.assert_awaited_once()
+        service._handle_anytime_grounded_question.assert_not_awaited()
 
     def test_early_invalid_custom_hazard_still_updates_duplicate_status(self):
         service = ChatService.__new__(ChatService)
@@ -632,6 +677,32 @@ class CustomHazardValidationTests(unittest.TestCase):
             for card in response.custom_hazard_grounding_status
         }
         self.assertEqual(status_cards["Sector fit"]["status"], "REJECTED")
+
+    def test_sector_mismatch_suggests_rewrite_for_selected_sector(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            country="Italy",
+            region="Abruzzo",
+            sector="Transport",
+            phase="custom_hazard_input",
+        )
+        service._review_custom_hazard_input = AsyncMock(
+            return_value={"valid": True, "reason": "The hazard is meaningful."}
+        )
+
+        response = _run(
+            service._capture_custom_hazard(
+                "session-1",
+                session,
+                "Households lose access to affordable clean heating",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertIn("Suggested rewrite direction", response.bot_message)
+        self.assertIn("For Transport", response.bot_message)
+        self.assertIn("Keep the affected group and harm", response.bot_message)
+        self.assertIn("selected-sector transition policy", response.bot_message)
 
     def test_transition_policy_rejection_maps_to_policy_fit_dimension(self):
         reason = (

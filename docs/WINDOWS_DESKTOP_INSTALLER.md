@@ -109,6 +109,20 @@ missing.
 
 ## Build Installer
 
+For release builds, prefer the full release script. It increments the patch
+version by default, keeps all Windows packaging version files in sync, then
+builds the bundled services, desktop launcher, and installer:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1
+```
+
+Use `-VersionPart Minor` or `-VersionPart Major` when needed. Use `-Version
+1.2.3` to set an exact version, or `-NoVersionBump` when rerunning the same
+release build after a packaging failure.
+
+To package the current already-built payload without changing the version:
+
 ```powershell
 .\packaging\windows\scripts\build-installer.ps1
 ```
@@ -122,13 +136,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionSetup-0.1.0.exe
-```
-
-To run all build steps in order:
-
-```powershell
-.\packaging\windows\scripts\build-release.ps1
+build/windows-installer/DrTransitionSetup-0.1.1.exe
 ```
 
 If you only run `build-python-services.ps1`, you will get the service executables

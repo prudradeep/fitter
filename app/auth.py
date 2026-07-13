@@ -6,17 +6,18 @@ import secrets
 from typing import Annotated
 
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.database import get_db
+from app.db.session import get_db
 from app.models import AppUser
 
 AUTH_COOKIE_NAME = "dr_transition_auth"
-AUTH_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
+CSRF_COOKIE_NAME = "dr_transition_csrf"
+DEFAULT_AUTH_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
 HASH_ITERATIONS = 210_000
 PASSWORD_RULES = (
     "At least 8 characters",
@@ -74,29 +75,48 @@ def auth_serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(settings.secret_key, salt="dr-transition-auth")
 
 
-def create_auth_token(user_id: int) -> str:
-    return auth_serializer().dumps({"user_id": user_id})
+def create_auth_token(user_id: int, session_version: int = 1) -> str:
+    return auth_serializer().dumps(
+        {"user_id": user_id, "session_version": int(session_version or 1)}
+    )
 
 
-def user_id_from_token(token: str | None) -> int | None:
+def auth_payload_from_token(token: str | None) -> dict[str, int] | None:
     if not token:
         return None
     try:
-        data = auth_serializer().loads(token, max_age=AUTH_MAX_AGE_SECONDS)
+        data = auth_serializer().loads(token, max_age=get_settings().auth_cookie_max_age_seconds)
     except (BadSignature, SignatureExpired):
         return None
-    user_id = data.get("user_id") if isinstance(data, dict) else None
-    return user_id if isinstance(user_id, int) else None
+    if not isinstance(data, dict):
+        return None
+    user_id = data.get("user_id")
+    session_version = data.get("session_version")
+    if not isinstance(user_id, int):
+        return None
+    if not isinstance(session_version, int):
+        return None
+    return {"user_id": user_id, "session_version": session_version}
+
+
+def user_id_from_token(token: str | None) -> int | None:
+    payload = auth_payload_from_token(token)
+    return payload["user_id"] if payload else None
 
 
 def get_current_user(
     db: Annotated[Session, Depends(get_db)],
     auth_cookie: Annotated[str | None, Cookie(alias=AUTH_COOKIE_NAME)] = None,
 ) -> AppUser | None:
-    user_id = user_id_from_token(auth_cookie)
-    if user_id is None:
+    payload = auth_payload_from_token(auth_cookie)
+    if payload is None:
         return None
-    return db.scalar(select(AppUser).where(AppUser.id == user_id))
+    user = db.scalar(select(AppUser).where(AppUser.id == payload["user_id"]))
+    if user is None:
+        return None
+    if int(user.session_version or 1) != payload["session_version"]:
+        return None
+    return user
 
 
 def require_current_user(
@@ -126,25 +146,29 @@ def require_admin_user(
 
 
 def redirect_if_authenticated(request: Request, db: Session) -> RedirectResponse | None:
-    user_id = user_id_from_token(request.cookies.get(AUTH_COOKIE_NAME))
-    if user_id is None:
+    payload = auth_payload_from_token(request.cookies.get(AUTH_COOKIE_NAME))
+    if payload is None:
         return None
-    user = db.scalar(select(AppUser.id).where(AppUser.id == user_id))
+    user = db.scalar(select(AppUser).where(AppUser.id == payload["user_id"]))
     if user is None:
+        return None
+    if int(user.session_version or 1) != payload["session_version"]:
         return None
     return RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
 
 
-def set_auth_cookie(response: RedirectResponse, user_id: int) -> None:
+def set_auth_cookie(response: Response, user: AppUser) -> None:
+    settings = get_settings()
     response.set_cookie(
         AUTH_COOKIE_NAME,
-        create_auth_token(user_id),
-        max_age=AUTH_MAX_AGE_SECONDS,
+        create_auth_token(user.id, int(user.session_version or 1)),
+        max_age=settings.auth_cookie_max_age_seconds or DEFAULT_AUTH_MAX_AGE_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=settings.use_secure_auth_cookie,
     )
 
 
 def clear_auth_cookie(response: RedirectResponse) -> None:
     response.delete_cookie(AUTH_COOKIE_NAME)
+    response.delete_cookie(CSRF_COOKIE_NAME)

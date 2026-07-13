@@ -6,21 +6,38 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if ($RamGb -lt 8) {
+# Minimum requirement: 8 GB RAM and 2 GB GPU VRAM
+
+# Minimum requirement: 8 GB RAM and 2 GB GPU VRAM
+
+if ($RamGb -lt 8 -or $GpuVramGb -lt 2) {
     $model = "none"
-    $reason = "Less than 8 GB RAM is available, so a local LLM is not recommended."
-} elseif ($GpuVramGb -ge 12 -and $RamGb -ge 32) {
-    $model = "qwen2.5:14b"
-    $reason = "This PC has at least 32 GB RAM and high GPU VRAM, so a larger local model is reasonable."
-} elseif ($RamGb -ge 32) {
+    $reason = "This system does not meet the minimum requirement of 8 GB RAM and 2 GB GPU VRAM."
+}
+elseif ($RamGb -ge 48 -and $GpuVramGb -ge 12) {
+    $model = "ministral:8b"
+    $reason = "Excellent hardware detected. Ministral 8B is recommended for maximum quality and performance."
+}
+elseif ($RamGb -ge 32 -and $GpuVramGb -ge 8) {
     $model = "mistral-nemo"
-    $reason = "This PC has at least 32 GB RAM, which is suitable for the default higher-quality model."
-} elseif ($RamGb -ge 16) {
-    $model = "mistral"
-    $reason = "This PC has at least 16 GB RAM, which is suitable for a balanced local model."
-} else {
-    $model = "llama3.2:3b"
-    $reason = "This PC has 8-15 GB RAM, so a smaller local model is recommended."
+    $reason = "High-end hardware detected. Mistral Nemo provides excellent reasoning and RAG performance."
+}
+elseif ($RamGb -ge 24 -and $GpuVramGb -ge 6) {
+    $model = "qwen2.5:7b"
+    $reason = "Upper mid-range hardware detected. Qwen 2.5 7B provides strong reasoning and structured output."
+}
+elseif ($RamGb -ge 16 -and $GpuVramGb -ge 4) {
+    $model = "ministral:3b"
+    $reason = "Mid-range hardware detected. Ministral 3B offers excellent performance while remaining efficient."
+}
+elseif ($RamGb -ge 8 -and $GpuVramGb -ge 2) {
+    $model = "qwen2.5:3b"
+    $reason = "Entry-level hardware detected. Qwen 2.5 3B is optimized for limited resources."
+}
+else {
+    # Fallback (should rarely be reached)
+    $model = "qwen2.5:3b"
+    $reason = "Using the smallest supported model due to hardware limitations."
 }
 
 [ordered]@{

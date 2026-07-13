@@ -54,6 +54,21 @@ from app.services.chat_parsers import (
     is_llm_unavailable_response,
     parse_llm_hazard_list,
 )
+from app.services.chat_hazard_duplicates import (
+    dedupe_hazard_names,
+    hazard_duplicate_payloads,
+    hazard_similarity_words,
+    local_similar_hazards,
+    same_scope_custom_hazard_names,
+    same_sector_hazard_names,
+)
+from app.services.hazard_profile_parsing import (
+    clean_hazard_profile_item,
+    extract_socio_demographic_profiles,
+    humanize_predictor_label,
+    parse_hazard_profile_items,
+    profile_from_predictor_entry,
+)
 from app.services.chat_population_edits import (
     clean_affected_group_label,
     parse_custom_affected_group_edit_message,
@@ -70,7 +85,6 @@ from app.services.custom_hazard_validation import (
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.knowledge_base import TEMPORARY_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html, render_message
-from app.services.profile_metadata import compact_profile_metadata
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 from app.services.sector_prompt_rag import (
     SectorPromptRagService,
@@ -131,7 +145,12 @@ class ChatHazardCreationMixin:
             session.sector or "",
             session.country or "",
             session.region or "",
-            self._same_scope_custom_hazard_names_for_duplicate_check(session),
+            self._dedupe_hazard_names(
+                [
+                    *self._same_sector_hazard_names_for_duplicate_check(session),
+                    *self._same_scope_custom_hazard_names_for_duplicate_check(session),
+                ]
+            ),
             state,
             session.validation_mode,
         )
@@ -139,113 +158,20 @@ class ChatHazardCreationMixin:
         return await self._route_custom_hazard_next_action(session_id, session)
 
     def _same_sector_hazard_names_for_duplicate_check(self, session: ChatSession) -> list[str]:
-        names: list[str] = [
-            *(session.hazards or []),
-            *(session.custom_hazards or []),
-            *(session.additional_hazards or []),
-            *hazard_names(session),
-        ]
-        if session.sector_id is not None:
-            try:
-                names.extend(
-                    self.db.scalars(
-                        select(SystemHazard.name).where(
-                            SystemHazard.sector_id == session.sector_id
-                        )
-                    ).all()
-                )
-                names.extend(
-                    self.db.scalars(
-                        select(AdditionalHazard.name).where(
-                            AdditionalHazard.sector_id == session.sector_id
-                        )
-                    ).all()
-                )
-                names.extend(
-                    self.db.scalars(
-                        select(CustomHazard.name).where(
-                            CustomHazard.sector_id == session.sector_id
-                        )
-                    ).all()
-                )
-                names.extend(
-                    self.db.scalars(
-                        select(UserHazard.name).where(
-                            UserHazard.sector_id == session.sector_id
-                        )
-                    ).all()
-                )
-            except Exception:
-                logger.exception("Failed to load same-sector hazards for duplicate check")
-
-        return self._dedupe_hazard_names(names)
+        return same_sector_hazard_names(getattr(self, "db", None), session)
 
     def _same_scope_custom_hazard_names_for_duplicate_check(
         self, session: ChatSession
     ) -> list[str]:
-        names: list[str] = []
-        if session.country_id is None or session.sector_id is None:
-            return names
-
-        region_scope_key = session.region_id or 0
-        try:
-            names.extend(
-                self.db.scalars(
-                    select(CustomHazard.name).where(
-                        CustomHazard.country_id == session.country_id,
-                        CustomHazard.sector_id == session.sector_id,
-                        CustomHazard.region_scope_key == region_scope_key,
-                        or_(
-                            CustomHazard.created_by_user_id == self.user_id,
-                            and_(
-                                CustomHazard.validation_mode == "strict",
-                                CustomHazard.is_crowd_sourced.is_(True),
-                            ),
-                        ),
-                    )
-                ).all()
-            )
-            names.extend(
-                self.db.scalars(
-                    select(UserHazard.name)
-                    .join(UserSession, UserSession.id == UserHazard.user_session_id)
-                    .where(
-                        UserHazard.source == "custom",
-                        UserHazard.sector_id == session.sector_id,
-                        UserHazard.region_id.is_(None)
-                        if session.region_id is None
-                        else UserHazard.region_id == session.region_id,
-                        UserSession.country_id == session.country_id,
-                        UserSession.sector_id == session.sector_id,
-                        UserSession.region_id.is_(None)
-                        if session.region_id is None
-                        else UserSession.region_id == session.region_id,
-                        or_(
-                            UserSession.user_id == self.user_id,
-                            and_(
-                                UserHazard.validation_mode == "strict",
-                                UserHazard.is_crowd_sourced.is_(True),
-                            ),
-                        ),
-                    )
-                ).all()
-            )
-        except Exception:
-            logger.exception("Failed to load same-scope custom hazards for duplicate check")
-
-        return self._dedupe_hazard_names(names)
+        return same_scope_custom_hazard_names(
+            getattr(self, "db", None),
+            session,
+            getattr(self, "user_id", None),
+        )
 
     @staticmethod
     def _dedupe_hazard_names(names: list[object]) -> list[str]:
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for name in names:
-            label = str(name or "").strip()
-            key = normalize_for_match(label)
-            if label and key and key not in seen:
-                seen.add(key)
-                deduped.append(label)
-        return deduped
+        return dedupe_hazard_names(names)
 
     def _custom_hazard_grounding_text(
         self, state: dict[str, object], hazard: str
@@ -555,21 +481,17 @@ class ChatHazardCreationMixin:
         hazard: str,
     ) -> None:
         state = self._custom_hazard_state(session)
+        known_hazards = self._dedupe_hazard_names(
+            [
+                *self._same_sector_hazard_names_for_duplicate_check(session),
+                *self._same_scope_custom_hazard_names_for_duplicate_check(session),
+            ]
+        )
         matches = self._local_similar_hazards(
             hazard,
-            self._same_scope_custom_hazard_names_for_duplicate_check(session),
+            known_hazards,
         )
-        state["duplicate_candidates"] = [
-            {
-                "existing_hazard": match,
-                "similarity_score": round(fuzzy_score(hazard, match) * 100),
-                "reason": (
-                    "The proposed hazard is the same as, or very similar to, "
-                    "an existing custom hazard in the same country, region, and sector."
-                ),
-            }
-            for match in matches[:3]
-        ]
+        state["duplicate_candidates"] = hazard_duplicate_payloads(hazard, matches)
 
     def _custom_hazard_validation_failed_response(
         self,
@@ -586,9 +508,10 @@ class ChatHazardCreationMixin:
         state["normalized_text"] = normalize_for_match(hazard)
         if evidence:
             state["evidence"] = evidence
+        rejected_dimension = dimension or self._custom_hazard_rejection_dimension(reason)
         self._mark_custom_hazard_dimension(
             session,
-            dimension or self._custom_hazard_rejection_dimension(reason),
+            rejected_dimension,
             status="REJECTED",
             score=0,
             reason=reason,
@@ -602,6 +525,13 @@ class ChatHazardCreationMixin:
                 "hazard_validation_failed.md",
                 sector=session.sector,
                 reason=reason,
+                rewrite_suggestion=self._custom_hazard_sector_rewrite_suggestion(
+                    session,
+                    hazard,
+                    evidence=evidence,
+                )
+                if rejected_dimension == "selected_sector_fit"
+                else "",
             ),
             options=HAZARD_ENTRY_OPTIONS,
             input_mode="reason_evidence",
@@ -731,6 +661,7 @@ class ChatHazardCreationMixin:
                     "hazard_rewrite_required.md",
                     hazard=hazard,
                     reason=plain_rejection_reason,
+                    rewrite_suggestion="",
                     suggestions="",
                     has_suggestions=False,
                 ),
@@ -769,6 +700,7 @@ class ChatHazardCreationMixin:
                     "hazard_rewrite_required.md",
                     hazard=hazard,
                     reason=hazard_review["reason"],
+                    rewrite_suggestion="",
                     suggestions="",
                     has_suggestions=False,
                 ),
@@ -798,6 +730,10 @@ class ChatHazardCreationMixin:
                     "hazard_rewrite_required.md",
                     hazard=hazard,
                     reason=sector_mismatch_reason,
+                    rewrite_suggestion=self._custom_hazard_sector_rewrite_suggestion(
+                        session,
+                        hazard,
+                    ),
                     suggestions="",
                     has_suggestions=False,
                 ),
@@ -905,6 +841,7 @@ class ChatHazardCreationMixin:
                         "hazard_validation_failed.md",
                         sector=session.sector,
                         reason=str(context_review["reason"]),
+                        rewrite_suggestion="",
                     ),
                     options=HAZARD_ENTRY_OPTIONS,
                     session=session.summary(),
@@ -1025,6 +962,10 @@ class ChatHazardCreationMixin:
                     "hazard_rewrite_required.md",
                     hazard=hazard,
                     reason=sector_mismatch_reason,
+                    rewrite_suggestion=self._custom_hazard_sector_rewrite_suggestion(
+                        session,
+                        hazard,
+                    ),
                     suggestions="",
                     has_suggestions=False,
                 ),
@@ -2059,161 +2000,19 @@ class ChatHazardCreationMixin:
 
     @classmethod
     def _local_similar_hazards(cls, hazard: str, existing_hazards: list[str]) -> list[str]:
-        query = normalize_for_match(hazard)
-        compact_query = compact_for_match(hazard)
-        if not query or not compact_query:
-            return []
-
-        query_words = cls._hazard_similarity_words(query)
-        matches: list[str] = []
-        for existing in existing_hazards:
-            existing_normalized = normalize_for_match(existing)
-            compact_existing = compact_for_match(existing)
-            if not existing_normalized or not compact_existing:
-                continue
-
-            existing_words = cls._hazard_similarity_words(existing_normalized)
-            overlap = len(query_words & existing_words) / max(1, len(query_words))
-            reverse_overlap = len(query_words & existing_words) / max(1, len(existing_words))
-            is_contained = compact_query in compact_existing or compact_existing in compact_query
-            if (
-                is_contained
-                or overlap >= 0.75
-                or reverse_overlap >= 0.75
-                or fuzzy_score(hazard, existing) >= 0.82
-            ):
-                matches.append(existing)
-
-        return list(dict.fromkeys(matches))
+        return local_similar_hazards(hazard, existing_hazards)
 
     @staticmethod
     def _hazard_similarity_words(value: str) -> set[str]:
-        words: set[str] = set()
-        for word in value.split():
-            if len(word) <= 2:
-                continue
-            if len(word) > 3 and word.endswith("ies"):
-                word = word[:-3] + "y"
-            elif len(word) > 3 and word.endswith("s"):
-                word = word[:-1]
-            words.add(word)
-        return words
+        return hazard_similarity_words(value)
 
     @classmethod
     def _extract_socio_demographic_profiles(cls, markdown_text: str) -> list[str]:
-        profiles: list[str] = []
-        seen: set[str] = set()
-        for raw_line in markdown_text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            bullet_match = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+)$", line)
-            if bullet_match is None:
-                continue
-
-            profile = bullet_match.group(1).strip()
-            if cls._is_statistical_basis_line(profile):
-                continue
-            profile = re.sub(r"\*\*(.*?)\*\*", r"\1", profile)
-            profile = re.sub(r"__(.*?)__", r"\1", profile)
-            profile = profile.strip("`*_ ")
-            if cls._is_statistical_basis_line(profile):
-                continue
-            for separator in (":", " - ", " – ", " — "):
-                if separator in profile:
-                    profile = profile.split(separator, 1)[0].strip()
-                    break
-            profile = profile.strip(" .;,-")
-            if not profile or len(profile) > 180:
-                continue
-            if profile.casefold().startswith(
-                (
-                    "socio-demographic",
-                    "statistical basis",
-                    "basis",
-                    "reason",
-                    "evidence",
-                )
-            ):
-                continue
-            key = normalize(profile)
-            if key not in seen:
-                seen.add(key)
-                profiles.append(profile)
-        return profiles
+        return extract_socio_demographic_profiles(markdown_text, cls._is_statistical_basis_line)
 
     @classmethod
     def _parse_hazard_profile_items(cls, response: str) -> list[dict[str, str]]:
-        if is_llm_unavailable_response(response):
-            return []
-        parsed = parse_json_array(response)
-        if not isinstance(parsed, list):
-            return []
-
-        profiles: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for item in parsed:
-            variable_name = ""
-            statistical_basis = ""
-            source = "sector_prompt"
-            if isinstance(item, str):
-                name = item.strip().strip("`*_ ")
-                explanation = ""
-            elif isinstance(item, dict):
-                name = str(item.get("name") or item.get("profile") or "").strip().strip("`*_ ")
-                explanation = str(
-                    item.get("explanation")
-                    or item.get("reason")
-                    or item.get("description")
-                    or ""
-                ).strip().strip("`*_ ")
-                variable_name = str(
-                    item.get("variable_name")
-                    or item.get("variable")
-                    or item.get("predictor")
-                    or ""
-                ).strip().strip("`*_ ")
-                statistical_basis = str(
-                    item.get("statistical_basis")
-                    or item.get("basis")
-                    or item.get("statistical_evidence")
-                    or ""
-                ).strip().strip("`*_ ")
-                source = str(item.get("source") or "sector_prompt").strip().strip("`*_ ")
-            else:
-                continue
-            if not name:
-                continue
-            key = normalize(name)
-            if key in seen:
-                continue
-            seen.add(key)
-            profile_item = {
-                "name": name[:120],
-                "profile": name[:120],
-                "explanation": explanation[:260],
-                "variable_name": variable_name[:160],
-                "statistical_basis": statistical_basis[:600],
-                "source": source[:40] if source else "sector_prompt",
-            }
-            if isinstance(item, dict):
-                metadata_value = item.get("metadata")
-                metadata = metadata_value if isinstance(metadata_value, dict) else {}
-                target_population_option_ids = item.get("target_population_option_ids")
-                if not isinstance(target_population_option_ids, list) or not target_population_option_ids:
-                    target_population_option_ids = metadata.get("target_population_option_ids")
-                target_population_labels = item.get("target_population_labels")
-                if not isinstance(target_population_labels, list) or not target_population_labels:
-                    target_population_labels = metadata.get("target_population_labels")
-                if isinstance(target_population_option_ids, list) and target_population_option_ids:
-                    profile_item["target_population_option_ids"] = list(target_population_option_ids)
-                if isinstance(target_population_labels, list) and target_population_labels:
-                    profile_item["target_population_labels"] = list(target_population_labels)
-                compacted_metadata = compact_profile_metadata(item)
-                if compacted_metadata:
-                    profile_item["metadata"] = compacted_metadata
-            profiles.append(profile_item)
-        return profiles[:12]
+        return parse_hazard_profile_items(response)
 
     async def _profiles_with_population_context(
         self,
@@ -5000,34 +4799,7 @@ class ChatHazardCreationMixin:
 
     @staticmethod
     def _clean_hazard_profile_item(value: object) -> dict[str, str]:
-        if not isinstance(value, dict):
-            return {}
-        name = strip_rule_lines(str(value.get("name") or value.get("profile") or "")).strip()
-        if not name:
-            return {}
-        variable_name = str(
-            value.get("variable_name") or value.get("variable") or ""
-        ).strip()
-        prefixed_match = re.match(
-            r"^(?:PREDICTOR\s+)?[0-9]+[A-Z]\s*:\s*(.+)$",
-            variable_name,
-            flags=re.IGNORECASE,
-        )
-        if prefixed_match:
-            variable_name = prefixed_match.group(1).strip()
-        variable_token = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", variable_name)
-        if variable_token:
-            variable_name = variable_token.group(1)
-        return {
-            "name": name[:120],
-            "profile": name[:120],
-            "variable_name": variable_name[:160],
-            "explanation": strip_rule_lines(str(value.get("explanation") or "")).strip()[:260],
-            "statistical_basis": str(
-                value.get("statistical_basis") or value.get("basis") or ""
-            ).strip()[:600],
-            "source": str(value.get("source") or "sector_prompt").strip()[:40] or "sector_prompt",
-        }
+        return clean_hazard_profile_item(value)
 
     async def _sector_prompt_hazard_block_from_rag(
         self,
@@ -5084,60 +4856,11 @@ class ChatHazardCreationMixin:
 
     @classmethod
     def _profile_from_predictor_entry(cls, entry: str) -> dict[str, str]:
-        header = re.search(
-            r"(?m)^PREDICTOR\s+([0-9]+[A-Z]):\s+(.+?)\s*$",
-            entry,
-        )
-        if not header:
-            return {}
-        predictor_id = header.group(1).strip()
-        variable_text = header.group(2).strip()
-        variable_name = variable_text.split("(", 1)[0].strip()
-        level_match = re.search(r'\blevel:\s*"([^"]+)"', variable_text, flags=re.IGNORECASE)
-        variable_label = cls._humanize_predictor_label(variable_name)
-        if level_match:
-            profile_name = f"{variable_label}: {level_match.group(1).strip()}"
-        elif "country-level" in variable_text.casefold():
-            profile_name = f"Countries with higher {variable_label}"
-        elif "continuous" in variable_text.casefold():
-            profile_name = f"Higher {variable_label}"
-        else:
-            profile_name = variable_label
-
-        direction_match = re.search(r"(?m)^\s*Direction\s*=\s*(.+?)\s*$", entry)
-        direction = direction_match.group(1).strip() if direction_match else ""
-        plain_match = re.search(
-            r"(?ms)^\s*Plain-English:\s*(.+?)(?=^\s*(?:Odds ratio|p-value|Direction|COUNTRY PATTERN|PREDICTORS NOT CONFIRMED)|\Z)",
-            entry,
-        )
-        plain = re.sub(r"\s+", " ", plain_match.group(1)).strip() if plain_match else ""
-        explanation = plain or f"{profile_name} is listed as a confirmed predictor for this hazard."
-        if direction and "lower" in direction.casefold() and "lower" not in explanation.casefold():
-            explanation = f"Lower concern/protective predictor: {explanation}"
-        elif direction and "protective" in direction.casefold() and "protective" not in explanation.casefold():
-            explanation = f"Protective predictor: {explanation}"
-
-        basis_parts = [f"PREDICTOR {predictor_id}: {variable_text}"]
-        if direction:
-            basis_parts.append(f"Direction: {direction}")
-        if plain:
-            basis_parts.append(f"Plain-English: {plain}")
-        return {
-            "variable_name": variable_name[:160],
-            "profile": profile_name[:120],
-            "name": profile_name[:120],
-            "explanation": explanation[:260],
-            "statistical_basis": "; ".join(basis_parts)[:600],
-            "source": "sector_prompt",
-        }
+        return profile_from_predictor_entry(entry)
 
     @staticmethod
     def _humanize_predictor_label(value: str) -> str:
-        label = re.sub(r"[_\-]+", " ", value).strip()
-        label = re.sub(r"\s+", " ", label)
-        if label.casefold().startswith("macro "):
-            label = label[6:]
-        return label[:1].upper() + label[1:] if label else "Confirmed predictor"
+        return humanize_predictor_label(value)
 
     async def _get_hazard_block_profiles_from_llm(
         self,

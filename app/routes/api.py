@@ -1,34 +1,40 @@
 import json
 import re
-import zipfile
-from datetime import datetime
-from xml.etree import ElementTree
+from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 import httpx
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, verify_password
-from app.database import get_db
+from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, set_auth_cookie, verify_password
+from app.config import get_settings
+from app.db.session import get_db
 from app.models import AppUser, Country, Region, Sector, UserChatMessage, UserSession
+from app.routes.request_limits import (
+    InvalidJsonPayload,
+    RequestTooLarge,
+    content_length as limited_content_length,
+    json_payload_error_response,
+    payload_too_large_response as limited_payload_too_large_response,
+    read_limited_json,
+    upload_too_large_response as limited_upload_too_large_response,
+)
 from app.schemas import ChatRequest, ChatResponse
 from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
-from app.services.document_text import (
-    compact_text,
-    extract_docx_text,
-    extract_pdf_page_texts,
-    html_to_text,
-)
+from app.services.audit_log import record_audit_event
 from app.services.hazard_effect_size import hazard_effect_size_rows
 from app.services.hazard_ranking_service import HazardRankingService
 from app.services.knowledge_base import MAIN_KB_SCOPE, KnowledgeBaseService
 from app.services.hazard_salience import country_hazard_salience
+from app.services.rate_limit import record_failed_attempt, reset_rate_limit, retry_after_seconds
 from app.services.sector_prompt_rag import SectorPromptRagService
 
 router = APIRouter(prefix="/api", tags=["chat"])
+settings = get_settings()
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
@@ -48,10 +54,11 @@ async def chat(
 
 @router.post("/stats-deep-dive", response_model=ChatResponse)
 async def stats_deep_dive(
-    payload: ChatRequest,
+    request: Request,
     current_user: AppUser = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> ChatResponse:
+    payload = await _chat_request_from_json(request, "Stats deep-dive payload")
     service = ChatService(db, user_id=current_user.id)
     return await service.handle_stats_deep_dive_dialog(
         payload.message,
@@ -63,10 +70,11 @@ async def stats_deep_dive(
 
 @router.post("/auto-user-message")
 async def auto_user_message(
-    payload: ChatRequest,
+    request: Request,
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    payload = await _chat_request_from_json(request, "Auto-user payload")
     service = ChatService(db, user_id=current_user.id)
     return await service.generate_auto_user_message(
         payload.session_id,
@@ -241,7 +249,7 @@ async def export_session(
     ).all()
     return {
         "error": False,
-        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "session": {
             "session_id": user_session.session_key,
             "title": user_session.title or "New policy session",
@@ -272,14 +280,29 @@ async def import_session(
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    too_large = payload_too_large_response(
+        request,
+        settings.max_session_import_bytes,
+        "Session export",
+    )
+    if too_large is not None:
+        return too_large
+
     form = await request.form()
     upload = form.get("file")
     filename = str(getattr(upload, "filename", "") or "").strip()
     if not filename.casefold().endswith(".json") or not hasattr(upload, "read"):
         return {"error": True, "detail": "Please choose an exported session JSON file."}
+    too_large = upload_too_large_response(
+        upload,
+        settings.max_session_import_bytes,
+        "Session export",
+    )
+    if too_large is not None:
+        return too_large
 
     content = await upload.read()
-    if len(content) > 10 * 1024 * 1024:
+    if len(content) > settings.max_session_import_bytes:
         return {"error": True, "detail": "Session export is too large to import."}
     try:
         payload = json.loads(content.decode("utf-8"))
@@ -337,6 +360,15 @@ async def import_session(
 
     db.commit()
     session_store.put(new_session_key, session_data)
+    record_audit_event(
+        db,
+        user=current_user,
+        action="session.import",
+        request=request,
+        target_type="session",
+        target_id=new_session_key,
+        details={"title": user_session.title, "messages": imported_messages, "source_filename": filename},
+    )
     return {
         "error": False,
         "session_id": new_session_key,
@@ -352,7 +384,9 @@ async def rename_session(
     current_user: AppUser = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    payload = await request.json()
+    payload = await _json_payload_or_error(request, "Session rename")
+    if isinstance(payload, JSONResponse):
+        return payload
     title = str(payload.get("title") or "").strip()
     if not title:
         return {"error": True, "detail": "Session title is required."}
@@ -379,15 +413,43 @@ async def rename_session(
 @router.patch("/profile/password")
 async def change_password(
     request: Request,
+    response: Response,
     current_user: AppUser = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    payload = await request.json()
+    payload = await _json_payload_or_error(request, "Password change")
+    if isinstance(payload, JSONResponse):
+        return payload
     current_password = str(payload.get("current_password") or "")
     new_password = str(payload.get("new_password") or "")
     confirm_password = str(payload.get("confirm_password") or "")
+    rate_limit_key = _password_rate_limit_key(request, current_user.id)
+    retry_after = retry_after_seconds(rate_limit_key, db)
+    if retry_after is not None:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": True,
+                "detail": f"Too many password change attempts. Try again in {retry_after} seconds.",
+            },
+        )
 
     if not verify_password(current_password, current_user.password_hash):
+        retry_after = record_failed_attempt(
+            rate_limit_key,
+            max_attempts=settings.password_rate_limit_attempts,
+            window_seconds=settings.password_rate_limit_window_seconds,
+            lockout_seconds=settings.password_rate_limit_lockout_seconds,
+            db=db,
+        )
+        if retry_after is not None:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": True,
+                    "detail": f"Too many password change attempts. Try again in {retry_after} seconds.",
+                },
+            )
         return {"error": True, "detail": "Current password is incorrect."}
     if new_password != confirm_password:
         return {"error": True, "detail": "New passwords do not match."}
@@ -402,7 +464,19 @@ async def change_password(
     if user is None:
         return {"error": True, "detail": "User not found."}
     user.password_hash = hash_password(new_password)
+    user.session_version = int(user.session_version or 1) + 1
     db.commit()
+    db.refresh(user)
+    set_auth_cookie(response, user)
+    reset_rate_limit(rate_limit_key, db)
+    record_audit_event(
+        db,
+        user=user,
+        action="password.change",
+        request=request,
+        target_type="user",
+        target_id=user.id,
+    )
     return {"error": False, "detail": "Password updated."}
 
 
@@ -422,6 +496,14 @@ async def knowledge_upload(
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    too_large = payload_too_large_response(
+        request,
+        settings.max_upload_bytes,
+        "Knowledge upload",
+    )
+    if too_large is not None:
+        return too_large
+
     form = await request.form()
     files = [item for key in ("files", "file") for item in form.getlist(key)]
     if not files:
@@ -441,6 +523,9 @@ async def knowledge_upload(
         if not filename.casefold().endswith((".pdf", ".docx", ".md", ".txt")):
             failures.append({"source": filename, "detail": "Supported file types are PDF, DOCX, MD, and TXT."})
             continue
+        too_large = upload_too_large_response(file, settings.max_upload_bytes, "Knowledge upload")
+        if too_large is not None:
+            return too_large
         content = await file.read()
         try:
             result = await service.ingest_file(filename, content)
@@ -452,6 +537,19 @@ async def knowledge_upload(
             continue
         total_chunks += int(result.get("chunks") or 0)
         results.append(result)
+    record_audit_event(
+        db,
+        user=current_user,
+        action="knowledge.upload",
+        request=request,
+        target_type="knowledge_document",
+        details={
+            "documents": [result.get("id") for result in results],
+            "uploaded": len(results),
+            "failed": len(failures),
+            "chunks": total_chunks,
+        },
+    )
     return {
         "error": bool(failures) and not results,
         "detail": _knowledge_ingest_detail("file", len(results), total_chunks, failures),
@@ -467,7 +565,9 @@ async def knowledge_url(
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    payload = await request.json()
+    payload = await _json_payload_or_error(request, "Knowledge URL payload")
+    if isinstance(payload, JSONResponse):
+        return payload
     urls = _knowledge_urls_from_payload(payload)
     title = str(payload.get("title") or "").strip() or None
     if not urls:
@@ -488,6 +588,20 @@ async def knowledge_url(
             continue
         total_chunks += int(result.get("chunks") or 0)
         results.append(result)
+    record_audit_event(
+        db,
+        user=current_user,
+        action="knowledge.url_import",
+        request=request,
+        target_type="knowledge_document",
+        details={
+            "documents": [result.get("id") for result in results],
+            "urls": urls,
+            "imported": len(results),
+            "failed": len(failures),
+            "chunks": total_chunks,
+        },
+    )
     return {
         "error": bool(failures) and not results,
         "detail": _knowledge_ingest_detail("URL", len(results), total_chunks, failures),
@@ -503,7 +617,9 @@ async def knowledge_search(
     current_user: AppUser = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    payload = await request.json()
+    payload = await _json_payload_or_error(request, "Knowledge search payload")
+    if isinstance(payload, JSONResponse):
+        return payload
     query = str(payload.get("query") or "").strip()
     if not query:
         return {"error": True, "detail": "Search query is required.", "results": []}
@@ -517,14 +633,22 @@ async def knowledge_search(
 
 @router.post("/sector-prompts/reindex")
 async def sector_prompts_reindex(
+    request: Request,
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    _ = current_user
     try:
         result = await SectorPromptRagService(db).rebuild()
     except (httpx.HTTPError, ValueError) as exc:
         return {"error": True, "detail": f"Could not reindex sector prompts: {exc}"}
+    record_audit_event(
+        db,
+        user=current_user,
+        action="sector_prompts.reindex",
+        request=request,
+        target_type="sector_prompts",
+        details={"error": bool(result.get("error")), **result},
+    )
     return {"error": bool(result.get("error")), **result}
 
 
@@ -535,7 +659,9 @@ async def sector_prompts_search(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     _ = current_user
-    payload = await request.json()
+    payload = await _json_payload_or_error(request, "Sector prompt search payload")
+    if isinstance(payload, JSONResponse):
+        return payload
     sector = str(payload.get("sector") or "").strip()
     query = str(payload.get("query") or "").strip()
     if not query:
@@ -550,24 +676,41 @@ async def sector_prompts_search(
 @router.delete("/knowledge/{document_id}")
 async def knowledge_delete(
     document_id: int,
+    request: Request,
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    _ = current_user
     service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
     try:
         deleted = await service.delete_document(document_id)
     except (httpx.HTTPError, ValueError) as exc:
         return {"error": True, "deleted": False, "detail": f"Could not delete document: {exc}"}
+    if deleted:
+        record_audit_event(
+            db,
+            user=current_user,
+            action="knowledge.delete",
+            request=request,
+            target_type="knowledge_document",
+            target_id=document_id,
+        )
     return {"error": not deleted, "deleted": deleted}
 
 
 async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequest:
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" not in content_type:
-        payload = ChatRequest.model_validate(await request.json())
+        payload = await _chat_request_from_json(request, "Chat payload")
         payload.validation_mode = _validation_mode(payload.validation_mode)
         return payload
+
+    too_large = payload_too_large_response(
+        request,
+        settings.max_upload_bytes,
+        "Evidence upload",
+    )
+    if too_large is not None:
+        raise HTTPException(status_code=413, detail="Evidence upload is too large.")
 
     form = await request.form()
     message = str(form.get("message") or "")
@@ -600,8 +743,17 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
     if isinstance(filename, str) and filename.strip():
         filename = filename.strip()
         if _allowed_evidence_file(filename) and hasattr(evidence_file, "read"):
+            too_large = upload_too_large_response(
+                evidence_file,
+                settings.max_upload_bytes,
+                "Evidence upload",
+            )
+            if too_large is not None:
+                raise HTTPException(status_code=413, detail="Evidence upload is too large.")
             evidence_parts.append(f"Evidence file: {filename}")
             file_bytes = await evidence_file.read()
+            if len(file_bytes) > settings.max_upload_bytes:
+                raise HTTPException(status_code=413, detail="Evidence upload is too large.")
             if session_id:
                 temporary_service = KnowledgeBaseService(
                     db,
@@ -631,6 +783,25 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
 
 def _validation_mode(value: object) -> str:
     return "easy" if str(value or "").strip().casefold() == "easy" else "strict"
+
+
+async def _json_payload_or_error(request: Request, label: str) -> dict[str, object] | JSONResponse:
+    try:
+        return await read_limited_json(request, settings.max_json_bytes, label)
+    except (RequestTooLarge, InvalidJsonPayload) as exc:
+        return json_payload_error_response(exc, settings.max_json_bytes)
+
+
+async def _chat_request_from_json(request: Request, label: str) -> ChatRequest:
+    try:
+        payload_data = await read_limited_json(request, settings.max_json_bytes, label)
+    except RequestTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except InvalidJsonPayload as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload = ChatRequest.model_validate(payload_data)
+    payload.validation_mode = _validation_mode(payload.validation_mode)
+    return payload
 
 
 def _truthy(value: object) -> bool:
@@ -665,6 +836,27 @@ def _knowledge_urls_from_payload(payload: dict[str, object]) -> list[str]:
     return urls
 
 
+def payload_too_large_response(
+    request: Request,
+    max_bytes: int,
+    label: str,
+) -> JSONResponse | None:
+    return limited_payload_too_large_response(request, max_bytes, label)
+
+
+def upload_too_large_response(upload: object, max_bytes: int, label: str) -> JSONResponse | None:
+    return limited_upload_too_large_response(upload, max_bytes, label)
+
+
+def _content_length(request: Request) -> int | None:
+    return limited_content_length(request)
+
+
+def _password_rate_limit_key(request: Request, user_id: int) -> str:
+    client = request.client.host if request.client else "unknown"
+    return f"password:{client}:{user_id}"
+
+
 def _knowledge_ingest_detail(
     source_label: str, ingested_count: int, chunks: int, failures: list[dict[str, str]]
 ) -> str:
@@ -677,64 +869,3 @@ def _knowledge_ingest_detail(
 
 def _allowed_evidence_file(filename: str) -> bool:
     return filename.casefold().endswith((".pdf", ".docx", ".md", ".txt"))
-
-
-async def _extract_url_text(url: str) -> str:
-    if not url.casefold().startswith(("http://", "https://")):
-        return "Unable to extract evidence: URL must start with http:// or https://."
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-    except httpx.HTTPError as exc:
-        return f"Unable to extract evidence from URL: {exc}."
-
-    content_type = response.headers.get("content-type", "").casefold()
-    content = response.content
-    if "pdf" in content_type or url.casefold().split("?", 1)[0].endswith(".pdf"):
-        return _extract_pdf_text(content) or "Unable to extract readable text from PDF URL."
-    if (
-        "wordprocessingml.document" in content_type
-        or url.casefold().split("?", 1)[0].endswith(".docx")
-    ):
-        return _extract_docx_text(content) or "Unable to extract readable text from DOCX URL."
-
-    encoding = response.encoding or "utf-8"
-    text = content.decode(encoding, errors="ignore")
-    if "html" in content_type or "<html" in text[:500].casefold():
-        text = html_to_text(text)
-    return _compact_text(text)
-
-
-def _extract_file_text(filename: str, content: bytes) -> str:
-    lowered = filename.casefold()
-    if lowered.endswith(".pdf"):
-        return _extract_pdf_text(content) or "Unable to extract readable text from uploaded PDF."
-    if lowered.endswith(".docx"):
-        return _extract_docx_text(content) or "Unable to extract readable text from uploaded DOCX."
-    if lowered.endswith((".md", ".txt")):
-        return _compact_text(content.decode("utf-8", errors="ignore"))
-    return "Unable to extract evidence: only PDF, DOCX, MD, and TXT files are supported."
-
-
-def _extract_pdf_text(content: bytes) -> str:
-    try:
-        text = "\n".join(extract_pdf_page_texts(content))
-    except Exception as exc:
-        return f"Unable to extract evidence from PDF: {exc}."
-    return _compact_text(text)
-
-
-def _extract_docx_text(content: bytes) -> str:
-    try:
-        text = extract_docx_text(content)
-    except (KeyError, zipfile.BadZipFile) as exc:
-        return f"Unable to extract evidence from DOCX: {exc}."
-    except ElementTree.ParseError as exc:
-        return f"Unable to parse DOCX evidence: {exc}."
-    return _compact_text(text)
-
-
-def _compact_text(text: str) -> str:
-    return compact_text(text)

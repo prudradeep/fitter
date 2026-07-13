@@ -348,14 +348,6 @@ class ChatService(
         if open_selection_response is not None:
             return open_selection_response
 
-        question_response = await self._handle_anytime_grounded_question(
-            current_session_id,
-            session,
-            clean_message,
-        )
-        if question_response is not None:
-            return question_response
-
         if session.phase == "hazards":
             return await self._handle_hazards_action(current_session_id, session, clean_message)
 
@@ -394,6 +386,14 @@ class ChatService(
             return await self._handle_custom_hazard_population_review(
                 current_session_id, session, clean_message
             )
+
+        question_response = await self._handle_anytime_grounded_question(
+            current_session_id,
+            session,
+            clean_message,
+        )
+        if question_response is not None:
+            return question_response
 
         if session.phase == "hazard_profile_selection":
             return await self._handle_hazard_profile_selection(

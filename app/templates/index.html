@@ -167,7 +167,8 @@
                 Change password
               </button>
               <form class="logout-form" method="post" action="/logout">
-                <button class="reset-button profile-link-button" type="submit" style="background: #c70000;">Logout</button>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                <button class="reset-button profile-link-button logout-button" type="submit">Logout</button>
               </form>
             </div>
           </div>
@@ -544,7 +545,6 @@
             type="button"
             class="methodology-close"
             aria-label="Close methodology"
-            onclick="document.getElementById('methodologyDialog').close()"
           >
             ✕
           </button>
@@ -730,6 +730,9 @@
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/highcharts-more.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/modules/venn.js"></script>
     <script src="{{ url_for('static', path='/js/app-utils.js') }}?v=20260703-voice-summary"></script>
+    <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260709-settings"></script>
+    <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
+    <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
     <script src="{{ url_for('static', path='/js/app.js') }}?v=20260708-session-import"></script>
   </body>
 </html>
