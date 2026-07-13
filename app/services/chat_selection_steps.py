@@ -1063,6 +1063,14 @@ class ChatSelectionStepsMixin:
         region: str,
         sector: str,
     ) -> str:
+        selected_context = ChatSelectionStepsMixin._selected_context_label(session)
+        if selected_context and session.sector:
+            return (
+                f"{selected_context} are already selected. "
+                f"{ChatSelectionStepsMixin._current_phase_instruction(session)}"
+            )
+        if selected_context and session.region:
+            return f"{selected_context} are already selected. Please choose a sector."
         if sector and session.sector and normalize(sector) == normalize(session.sector):
             return f"{session.sector} is already selected. Selection flow completed."
         if region and session.region and normalize(region) == normalize(session.region):
@@ -1070,6 +1078,53 @@ class ChatSelectionStepsMixin:
         if country and session.country and normalize(country) == normalize(session.country):
             return f"{session.country} is already selected. Please choose a region."
         return "This option is already selected. Please continue with the next step."
+
+    @staticmethod
+    def _selected_context_label(session: ChatSession) -> str:
+        values = [session.country, session.region, session.sector]
+        labels = [str(value).strip() for value in values if str(value or "").strip()]
+        if not labels:
+            return ""
+        if len(labels) == 1:
+            return labels[0]
+        if len(labels) == 2:
+            return f"{labels[0]} and {labels[1]}"
+        return f"{labels[0]}, {labels[1]}, and {labels[2]}"
+
+    @staticmethod
+    def _current_phase_instruction(session: ChatSession) -> str:
+        phase = session.phase or "complete"
+        if phase in {"hazards", "stats_deep_dive", "hazard_profile_selection"}:
+            return "You are already reviewing hazards; choose a hazard action or type a question."
+        if phase in {
+            "add_hazard",
+            "add_hazard_evidence",
+            "custom_hazard_input",
+            "custom_hazard_review",
+            "custom_hazard_clarification",
+            "custom_hazard_duplicate_confirmation",
+            "custom_hazard_group_review",
+            "custom_hazard_reason",
+            "custom_hazard_evidence",
+        }:
+            return "You are already adding a hazard; continue with the current hazard step."
+        if phase in {
+            "mitigation",
+            "mitigation_intro",
+            "mitigation_measure",
+            "mitigation_target_population",
+            "mitigation_target_population_review",
+            "mitigation_review",
+            "reason_confirmation",
+        }:
+            return "You are already in the mitigation step; continue with the current prompt."
+        if phase in {"evaluation_question", "evaluation_complete"}:
+            return "You are already in the evaluation step; continue with the current prompt."
+        if phase in {"socio_demographic_review", "dg_reason_evidence", "add_dgs"}:
+            return "You are already reviewing affected profiles; continue with the current prompt."
+        if phase == "other_actions":
+            return "Please choose one of the available actions."
+        return "Please continue with the current step."
 
     def _selection_is_outside_current_phase(
         self,

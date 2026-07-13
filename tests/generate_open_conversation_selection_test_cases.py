@@ -371,6 +371,17 @@ def make_test_cases() -> list[dict[str, str | bool]]:
                 action="COMPLETE_SELECTION",
             )
         )
+    rows.append(
+        row(
+            "Exact country selection",
+            "Sector",
+            "Country=Germany; Region=Bavaria",
+            "Italy",
+            expected_country="Italy",
+            bot_response=f"Italy selected. Please choose a region.",
+            action="SELECT_COUNTRY",
+        )
+    )
 
     rows.append(
         row(

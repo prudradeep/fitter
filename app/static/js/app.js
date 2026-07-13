@@ -199,6 +199,7 @@ const stageMapRetryAttempts = new Map();
 const mapTopologyCache = new Map();
 let optionTooltipElement = null;
 let optionTooltipTarget = null;
+let sourceCitationTooltipTarget = null;
 let listedHazardOptions = [];
 
 const defaultPlaceholder = "Type a country, region, or sector...";
@@ -2921,6 +2922,65 @@ function positionOptionTooltip() {
   optionTooltipElement.style.top = `${top}px`;
 }
 
+function sourceCitationTooltipFor(target) {
+  if (!target) return null;
+  return target.querySelector(".source-citation-tooltip");
+}
+
+function showSourceCitationTooltip(target) {
+  const tooltip = sourceCitationTooltipFor(target);
+  if (!tooltip) return;
+  sourceCitationTooltipTarget = target;
+  tooltip.classList.add("is-viewport-positioned");
+  positionSourceCitationTooltip();
+}
+
+function hideSourceCitationTooltip(target = sourceCitationTooltipTarget) {
+  const tooltip = sourceCitationTooltipFor(target);
+  if (tooltip) {
+    tooltip.classList.remove("is-viewport-positioned", "is-below");
+    tooltip.style.removeProperty("left");
+    tooltip.style.removeProperty("top");
+    tooltip.style.removeProperty("--source-tooltip-arrow-left");
+  }
+  if (!target || target === sourceCitationTooltipTarget) {
+    sourceCitationTooltipTarget = null;
+  }
+}
+
+function positionSourceCitationTooltip() {
+  const target = sourceCitationTooltipTarget;
+  const tooltip = sourceCitationTooltipFor(target);
+  if (!target || !tooltip || !tooltip.classList.contains("is-viewport-positioned")) return;
+
+  const targetRect = target.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const viewportPadding = 12;
+  const gap = 10;
+  const maxLeft = Math.max(viewportPadding, window.innerWidth - tooltipRect.width - viewportPadding);
+  const centeredLeft = targetRect.left + targetRect.width / 2 - tooltipRect.width / 2;
+  const left = Math.min(Math.max(centeredLeft, viewportPadding), maxLeft);
+  let top = targetRect.top - tooltipRect.height - gap;
+
+  if (top < viewportPadding) {
+    top = targetRect.bottom + gap;
+    tooltip.classList.add("is-below");
+  } else {
+    tooltip.classList.remove("is-below");
+  }
+
+  const maxTop = Math.max(viewportPadding, window.innerHeight - tooltipRect.height - viewportPadding);
+  top = Math.min(Math.max(top, viewportPadding), maxTop);
+  const arrowLeft = Math.min(
+    Math.max(targetRect.left + targetRect.width / 2 - left, 12),
+    tooltipRect.width - 12,
+  );
+
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+  tooltip.style.setProperty("--source-tooltip-arrow-left", `${arrowLeft}px`);
+}
+
 optionTray?.addEventListener("pointerover", (event) => {
   const target = event.target.closest("[data-tooltip]");
   if (!target || !optionTray.contains(target)) return;
@@ -2941,8 +3001,36 @@ optionTray?.addEventListener("focusin", (event) => {
 
 optionTray?.addEventListener("focusout", hideOptionTooltip);
 optionTray?.addEventListener("click", hideOptionTooltip);
-window.addEventListener("resize", positionOptionTooltip);
-document.addEventListener("scroll", positionOptionTooltip, true);
+chatLog?.addEventListener("pointerover", (event) => {
+  const target = event.target.closest(".source-citation");
+  if (!target || !chatLog.contains(target)) return;
+  showSourceCitationTooltip(target);
+});
+
+chatLog?.addEventListener("pointerout", (event) => {
+  const target = event.target.closest(".source-citation");
+  if (!target || !chatLog.contains(target)) return;
+  if (event.relatedTarget && target.contains(event.relatedTarget)) return;
+  hideSourceCitationTooltip(target);
+});
+
+chatLog?.addEventListener("focusin", (event) => {
+  const target = event.target.closest(".source-citation");
+  if (target && chatLog.contains(target)) showSourceCitationTooltip(target);
+});
+
+chatLog?.addEventListener("focusout", (event) => {
+  const target = event.target.closest(".source-citation");
+  if (target && chatLog.contains(target)) hideSourceCitationTooltip(target);
+});
+
+function positionVisibleTooltips() {
+  positionOptionTooltip();
+  positionSourceCitationTooltip();
+}
+
+window.addEventListener("resize", positionVisibleTooltips);
+document.addEventListener("scroll", positionVisibleTooltips, true);
 
 function renderOptions(options, otherOptions = []) {
   appState.currentOptions = options || [];

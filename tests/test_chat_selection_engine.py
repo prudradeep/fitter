@@ -259,6 +259,34 @@ class ChatSelectionEngineTests(unittest.TestCase):
             "restart_selection",
         )
 
+    def test_already_selected_country_mentions_full_context_after_sector(self):
+        session = ChatSession(
+            country="Italy",
+            region="Abruzzo",
+            sector="Energy",
+            phase="hazards",
+        )
+
+        message = ChatSelectionStepsMixin._already_selected_message(session, "Italy", "", "")
+
+        self.assertIn("Italy, Abruzzo, and Energy are already selected.", message)
+        self.assertIn("already reviewing hazards", message)
+        self.assertNotIn("Please choose a region", message)
+
+    def test_already_selected_country_still_asks_for_region_when_region_missing(self):
+        session = ChatSession(country="Italy")
+
+        message = ChatSelectionStepsMixin._already_selected_message(session, "Italy", "", "")
+
+        self.assertEqual(message, "Italy is already selected. Please choose a region.")
+
+    def test_already_selected_country_and_region_asks_for_sector_when_sector_missing(self):
+        session = ChatSession(country="Italy", region="Abruzzo")
+
+        message = ChatSelectionStepsMixin._already_selected_message(session, "Italy", "", "")
+
+        self.assertEqual(message, "Italy and Abruzzo are already selected. Please choose a sector.")
+
     def test_exact_sector_before_country_is_outside_current_phase(self):
         engine = _SelectionEngine()
         selection = engine._deterministic_selection_from_text(ChatSession(), "Housing")

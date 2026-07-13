@@ -949,6 +949,16 @@
   visibility: hidden;
 }
 
+.bubble .source-citation-tooltip.is-viewport-positioned {
+  position: fixed;
+  bottom: auto;
+  left: 0;
+  width: min(460px, calc(100vw - 24px));
+  max-height: min(420px, 58vh);
+  overflow-y: auto;
+  transform: translateY(4px);
+}
+
 .bubble .source-citation-tooltip::after {
   position: absolute;
   bottom: -5px;
@@ -958,6 +968,15 @@
   transform: translateX(-50%) rotate(45deg);
   background: #0f172a;
   content: "";
+}
+
+.bubble .source-citation-tooltip.is-viewport-positioned::after {
+  left: var(--source-tooltip-arrow-left, 50%);
+}
+
+.bubble .source-citation-tooltip.is-below::after {
+  top: -5px;
+  bottom: auto;
 }
 
 .bubble .source-citation-tooltip strong {
@@ -989,6 +1008,12 @@
   opacity: 1;
   transform: translateX(-50%) translateY(0);
   visibility: visible;
+}
+
+.bubble .source-citation:hover .source-citation-tooltip.is-viewport-positioned,
+.bubble .source-citation:focus .source-citation-tooltip.is-viewport-positioned,
+.bubble .source-citation:focus-within .source-citation-tooltip.is-viewport-positioned {
+  transform: translateY(0);
 }
 
 .bubble code {
