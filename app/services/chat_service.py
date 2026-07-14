@@ -142,9 +142,16 @@ class ChatService(
         "citation": "evidence",
     }
 
-    def __init__(self, db: Session, user_id: int | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        user_id: int | None = None,
+        *,
+        is_admin: bool = False,
+    ) -> None:
         self.db = db
         self.user_id = user_id
+        self.is_admin = bool(is_admin)
         self.settings = get_settings()
         self.grounding_models = GroundingModelService()
         self.eurostat = EurostatService(db)

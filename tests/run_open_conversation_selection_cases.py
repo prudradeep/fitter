@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
+import os
+import re
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -15,6 +17,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from app.config import get_settings
 from app.schemas import ChatResponse, Option
 from app.services.chat_options import best_fuzzy_label, normalize, option_list
 from app.services.chat_hazard_steps import ChatHazardStepsMixin
@@ -121,67 +124,48 @@ class _OpenConversationSelectionEngine(
                 "sector": None,
             }
 
-        expected_action = str(item.get("Expected Action") or "")
-        expected_selection = {
-            "country": str(item.get("Expected Country") or "").strip() or None,
-            "region": str(item.get("Expected Region") or "").strip() or None,
-            "sector": str(item.get("Expected Sector") or "").strip() or None,
-        }
-
-        with (
-            patch(
-                "app.services.chat_selection_steps.detect_message_intent",
-                new=AsyncMock(return_value=self._intent_for_case(item)),
-            ),
-            patch(
-                "app.services.chat_selection_steps.resolve_selection",
-                new=AsyncMock(
-                    return_value=self._resolver_result_for_case(expected_action, expected_selection)
-                ),
-            ),
-        ):
-            if phase == "country":
-                response = await self._select_country("test-session", session, message)
-            elif phase == "region":
-                response = await self._select_region("test-session", session, message)
-            elif phase == "sector":
-                response = await self._select_sector("test-session", session, message)
-            elif phase == "confirmation":
-                response = await self._handle_pending_selection_workflow(
+        if phase == "country":
+            response = await self._select_country("test-session", session, message)
+        elif phase == "region":
+            response = await self._select_region("test-session", session, message)
+        elif phase == "sector":
+            response = await self._select_sector("test-session", session, message)
+        elif phase == "confirmation":
+            response = await self._handle_pending_selection_workflow(
+                "test-session",
+                session,
+                message,
+            )
+            if response is None:
+                response = self._repeat_current_options(
                     "test-session",
                     session,
-                    message,
+                    self.invalid_message,
+                    True,
                 )
-                if response is None:
-                    response = self._repeat_current_options(
-                        "test-session",
-                        session,
-                        self.invalid_message,
-                        True,
-                    )
-            elif phase in {"hazards", "post-sector"}:
-                response = await self._handle_hazards_action("test-session", session, message)
-            elif phase == "hazard":
-                response = await self._handle_hazard_profile_selection("test-session", session, message)
-            elif phase == "reason confirmation":
-                session.suggested_new_policy_proposal = (
-                    "Targeted heat pump support for vulnerable households"
-                )
-                response = await self._handle_reason_confirmation("test-session", session, message)
-            else:
-                response = await self._maybe_apply_conversational_selection(
+        elif phase in {"hazards", "post-sector"}:
+            response = await self._handle_hazards_action("test-session", session, message)
+        elif phase == "hazard":
+            response = await self._handle_hazard_profile_selection("test-session", session, message)
+        elif phase == "reason confirmation":
+            session.suggested_new_policy_proposal = (
+                "Targeted heat pump support for vulnerable households"
+            )
+            response = await self._handle_reason_confirmation("test-session", session, message)
+        else:
+            response = await self._maybe_apply_conversational_selection(
+                "test-session",
+                session,
+                message,
+                current_phase="sector",
+            )
+            if response is None:
+                response = self._repeat_current_options(
                     "test-session",
                     session,
-                    message,
-                    current_phase="sector",
+                    self.invalid_message,
+                    True,
                 )
-                if response is None:
-                    response = self._repeat_current_options(
-                        "test-session",
-                        session,
-                        self.invalid_message,
-                        True,
-                    )
 
         return response, session
 
@@ -213,53 +197,6 @@ class _OpenConversationSelectionEngine(
             elif key.casefold() == "mitigation":
                 session.pending_mitigation_measure = value
         return session
-
-    @staticmethod
-    def _intent_for_case(item: dict[str, str]) -> dict[str, str]:
-        action = str(item.get("Expected Action") or "")
-        category = str(item.get("Category") or "")
-        if action in {"RESET_ALL", "RESET_REGION_AND_SECTOR"}:
-            return {"intent": "restart_selection", "confidence": "high", "reason": "Reset requested."}
-        if action == "RESET_SECTOR":
-            return {"intent": "change_region", "confidence": "high", "reason": "Region change requested."}
-        if action == "GO_BACK":
-            phase = str(item.get("Step / Current Phase") or "").casefold()
-            if phase == "sector":
-                return {"intent": "change_region", "confidence": "high", "reason": "Go back requested."}
-            return {"intent": "change_country", "confidence": "high", "reason": "Go back requested."}
-        if category == "Change sector":
-            return {"intent": "change_sector", "confidence": "high", "reason": "Sector change requested."}
-        if str(item.get("Should Ask Clarification") or "") == "Yes":
-            return {"intent": "unclear", "confidence": "low", "reason": "Ambiguous or unclear input."}
-        return {"intent": "selection", "confidence": "high", "reason": "Selection input."}
-
-    @staticmethod
-    def _resolver_result_for_case(
-        expected_action: str,
-        expected_selection: dict[str, str | None],
-    ) -> dict[str, object]:
-        if expected_action in {
-            "SELECT_COUNTRY",
-            "SELECT_REGION",
-            "SELECT_SECTOR",
-            "COMPLETE_SELECTION",
-            "RESET_REGION_AND_SECTOR",
-            "RESET_SECTOR",
-        } and any(expected_selection.values()):
-            return {
-                "matched": True,
-                **expected_selection,
-                "confidence": "high",
-                "reason": "Expected test-case selection.",
-            }
-        return {
-            "matched": False,
-            "country": None,
-            "region": None,
-            "sector": None,
-            "confidence": "low",
-            "reason": "No expected selection.",
-        }
 
     async def _select_country(
         self,
@@ -940,10 +877,13 @@ def row_result(
     }
 
 
-async def run_cases() -> list[dict[str, str]]:
+async def run_cases(limit: int | None = None) -> list[dict[str, str]]:
     engine = _OpenConversationSelectionEngine()
     results: list[dict[str, str]] = []
-    for index, item in enumerate(make_test_cases(), start=1):
+    cases = make_test_cases()
+    if limit is not None:
+        cases = cases[:limit]
+    for index, item in enumerate(cases, start=1):
         case_item = {"Test Case ID": f"TC-{index:03d}", **item}
         try:
             response, session = await engine.handle_case(case_item)
@@ -1011,6 +951,7 @@ def style_sheet(sheet) -> None:
 
 def write_results_workbook(results: list[dict[str, str]], output_path: str | Path = OUTPUT_FILE) -> Path:
     output = Path(output_path).resolve()
+    settings = get_settings()
     workbook = Workbook()
 
     sheet = workbook.active
@@ -1021,6 +962,11 @@ def write_results_workbook(results: list[dict[str, str]], output_path: str | Pat
     style_sheet(sheet)
 
     summary = workbook.create_sheet(SUMMARY_SHEET)
+    summary.append(["Run Setting", "Value"])
+    summary.append(["Execution mode", "Real flow - no mocked intent or selection resolver"])
+    summary.append(["Ollama base URL", settings.ollama_base_url])
+    summary.append(["Ollama model", settings.ollama_model])
+    summary.append([])
     summary.append(["Category", "Total", "Passed", "Failed"])
     by_category: dict[str, Counter[str]] = defaultdict(Counter)
     for item in results:
@@ -1042,13 +988,46 @@ def write_results_workbook(results: list[dict[str, str]], output_path: str | Pat
     return output
 
 
+def result_filename_for_model(model: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", model.strip())
+    slug = slug.replace(":", "_")
+    return f"open_conversation_selection_test_results_{slug}.xlsx"
+
+
+async def run_cases_for_model(model: str, limit: int | None = None) -> list[dict[str, str]]:
+    os.environ["OLLAMA_MODEL"] = model
+    get_settings.cache_clear()
+    return await run_cases(limit=limit)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run open conversation selection cases through the real app flow."
+    )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        help="Ollama model names to test. Writes one workbook per model.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="Optional maximum number of generated cases to run per model.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
-    results = asyncio.run(run_cases())
-    output = write_results_workbook(results, Path.cwd() / OUTPUT_FILE)
-    passed = sum(1 for item in results if item["Status"] == "Pass")
-    failed = len(results) - passed
-    print(f"Created selection test result file: {output}")
-    print(f"Total: {len(results)} | Passed: {passed} | Failed: {failed}")
+    args = parse_args()
+    models = args.models or [get_settings().ollama_model]
+    for model in models:
+        print(f"Running open conversation selection cases on Ollama model: {model}")
+        results = asyncio.run(run_cases_for_model(model, limit=args.limit))
+        output = write_results_workbook(results, Path.cwd() / result_filename_for_model(model))
+        passed = sum(1 for item in results if item["Status"] == "Pass")
+        failed = len(results) - passed
+        print(f"Created selection test result file: {output}")
+        print(f"Model: {model} | Total: {len(results)} | Passed: {passed} | Failed: {failed}")
 
 
 if __name__ == "__main__":

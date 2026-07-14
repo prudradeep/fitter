@@ -8,4 +8,5 @@ Rules:
 - Store only the raw predictor variable name in variable_name; never include IDs like 1A or 2B.
 - Keep profile names concise and human-readable.
 - Include lower-concern/protective predictors too and label them in the explanation.
-- Do not include Markdown, comments, or text outside the JSON.
+- Do not include Markdown, code fences, comments, extra keys, trailing commas,
+  or text outside the JSON.

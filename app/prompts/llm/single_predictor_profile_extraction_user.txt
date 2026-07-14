@@ -13,4 +13,5 @@ Rules:
 - Include a concise statistical_basis grounded in the predictor entry.
 - The explanation must be plain language only, under 24 words.
 - If the predictor is LOWER concern or protective, say lower concern/protective in the explanation.
-- Do not include odds ratios, p-values, statistical basis, model metrics, Markdown, or code fences.
+- Do not include odds ratios, p-values, model metrics, Markdown, code fences,
+  comments, trailing commas, extra keys, or prose outside the JSON object.

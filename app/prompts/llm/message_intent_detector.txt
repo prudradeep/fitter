@@ -27,12 +27,24 @@ Rules:
 - confidence must be "high", "medium", or "low".
 - If uncertain, use intent="unclear" and confidence="low".
 - Exact option labels in the provided context usually mean selection.
+- Clear country codes, abbreviations, adjective forms, and obvious typos for
+  supplied options are selection, not unclear. Examples: ES, PT, IE, HU,
+  Germny, Spane, Portugul, Irelnd, Itlay, Hungry, Bavria, Lisbom, Budapst,
+  Housng, Trasport.
 - Question-shaped messages can still be selection when they ask to use, look at,
   analyse/analyze, select, choose, or start with an available country, region, or
   sector. Example: "Can we look at Portugal?" is selection, not question.
 - Informational phrasing is still selection when it names available selection
   values. Example: "I want to know about the housing sector in Berlin, Germany"
   is selection, not question.
+- Comma-separated setup/correction messages with supplied values are selection
+  or multi_selection, not question. Examples: "Please set Portugal, Lisbon, and
+  Energy" and "Actually Spain, Catalonia, Transport".
 - "restart from the beginning", "start again", "start over", "restart", and
   similar reset phrases are restart_selection.
+- Do not classify generic phrases beginning with "start" as restart unless they
+  clearly mean reset/restart. Example: "start something nice" is unclear.
 - Messages with alternatives such as "Germany or Ireland" are unclear.
+- Messages asking to compare multiple same-level options, such as "Compare
+  Portugal and Italy", are unclear.
+- Emoji-only messages, random keyboard text, and gibberish are unclear.

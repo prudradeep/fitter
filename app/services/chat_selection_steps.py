@@ -20,7 +20,13 @@ from app.models import (
     SystemHazardSocioDemographicTargetPopulation,
 )
 from app.schemas import ChatResponse, Option
-from app.services.chat_options import best_fuzzy_label, normalize, normalize_for_match, option_list
+from app.services.chat_options import (
+    best_fuzzy_label,
+    fuzzy_score,
+    normalize,
+    normalize_for_match,
+    option_list,
+)
 from app.services.chat_session import ChatSession
 from app.services.conversational_selection import resolve_selection
 from app.services.message_renderer import render_message
@@ -308,6 +314,20 @@ class ChatSelectionStepsMixin:
     ) -> ChatResponse | None:
         if not message.strip() or self._is_exact_current_selection(session, message):
             return None
+        if not normalize_for_match(message):
+            return self._repeat_current_options(
+                session_id,
+                session,
+                "Please choose one of the available options, or type your selection another way.",
+                error=False,
+            )
+        if self._has_ambiguous_same_level_options(session, message, current_phase):
+            return self._repeat_current_options(
+                session_id,
+                session,
+                "Please choose one of the available options, or type your selection another way.",
+                error=False,
+            )
 
         deterministic_selection = self._ordinal_selection_from_text(
             session,
@@ -316,6 +336,18 @@ class ChatSelectionStepsMixin:
         )
         if deterministic_selection is None:
             deterministic_selection = self._deterministic_selection_from_text(session, message)
+        if deterministic_selection is None:
+            deterministic_selection = self._fuzzy_selection_from_text(
+                session,
+                message,
+                current_phase,
+            )
+        if deterministic_selection is None:
+            deterministic_selection = self._out_of_scope_selection_from_text(
+                session,
+                message,
+                current_phase,
+            )
         if deterministic_selection is not None:
             if self._selection_is_outside_current_phase(
                 session,
@@ -338,6 +370,9 @@ class ChatSelectionStepsMixin:
                     deterministic_selection,
                 )
             return await self._apply_pending_selection(session_id, session, deterministic_selection)
+
+        if current_phase in {"region", "sector"} and self._looks_like_unknown_option_label(message):
+            return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
         navigation_response = await self._open_selection_navigation_response(
             session_id,
@@ -676,17 +711,13 @@ class ChatSelectionStepsMixin:
         sector_labels = self._available_sector_names(session)
         if country_match and (
             session.country is None or normalize(country_match) != normalize(session.country)
-        ) and hasattr(self, "db"):
-            country = self._country_by_name(country_match)
+        ):
+            try:
+                country = self._country_by_name(country_match)
+            except AttributeError:
+                country = None
             if country is not None:
-                region_labels = [
-                    region.name
-                    for region in self.db.scalars(
-                        select(Region)
-                        .where(Region.country_id == country.id)
-                        .order_by(Region.name)
-                    ).all()
-                ]
+                region_labels = [region.name for region in self._regions_for_country_id(country.id)]
                 sector_labels = [sector.name for sector in self._sectors_for_country(country.id)]
 
         for key, labels in [("region", region_labels), ("sector", sector_labels)]:
@@ -719,6 +750,133 @@ class ChatSelectionStepsMixin:
         if len(matches) > 1:
             return ""
         return matches[0] if matches else None
+
+    def _fuzzy_selection_from_text(
+        self,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> dict[str, str | None] | None:
+        normalized = normalize_for_match(message)
+        if not normalized or len(normalized.split()) > 3:
+            return None
+        if normalized in {"yes", "no", "back", "restart", "reset"}:
+            return None
+
+        if current_phase == "country":
+            country = self._high_confidence_label_match(normalized, self._available_country_names())
+            return {"country": country, "region": None, "sector": None} if country else None
+        if current_phase == "region":
+            region = self._high_confidence_label_match(
+                normalized,
+                self._available_region_names(session),
+            )
+            return {"country": None, "region": region, "sector": None} if region else None
+        if current_phase == "sector":
+            sector = self._high_confidence_label_match(
+                normalized,
+                self._available_sector_names(session),
+            )
+            return {"country": None, "region": None, "sector": sector} if sector else None
+        return None
+
+    @classmethod
+    def _high_confidence_label_match(cls, normalized_message: str, labels: list[str]) -> str | None:
+        alias_match = cls._selection_alias_match(normalized_message, labels)
+        if alias_match:
+            return alias_match
+
+        scored = sorted(
+            (
+                (fuzzy_score(normalized_message, label), label)
+                for label in labels
+                if normalize_for_match(label)
+            ),
+            reverse=True,
+        )
+        if not scored:
+            return None
+        best_score, best_label = scored[0]
+        second_score = scored[1][0] if len(scored) > 1 else 0.0
+        if best_score >= 0.58 and best_score - second_score >= 0.12:
+            return best_label
+        return None
+
+    def _out_of_scope_selection_from_text(
+        self,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> dict[str, str | None] | None:
+        normalized = normalize_for_match(message)
+        if not normalized or len(normalized.split()) > 3:
+            return None
+        if current_phase == "region":
+            current_regions = {normalize_for_match(region) for region in self._available_region_names(session)}
+            for region in self._available_region_names(ChatSession()):
+                if normalize_for_match(region) == normalized and normalized not in current_regions:
+                    return {"country": None, "region": region, "sector": None}
+        return None
+
+    def _has_ambiguous_same_level_options(
+        self,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> bool:
+        normalized = f" {normalize_for_match(message)} "
+        if " or " not in normalized and not normalized.strip().startswith("compare "):
+            return False
+        labels: list[str]
+        if current_phase == "country":
+            labels = self._available_country_names()
+        elif current_phase == "region":
+            labels = self._available_region_names(session)
+        elif current_phase == "sector":
+            labels = self._available_sector_names(session)
+        else:
+            labels = (
+                self._available_country_names()
+                + self._available_region_names(session)
+                + self._available_sector_names(session)
+            )
+        matches = 0
+        for label in labels:
+            for term in self._selection_label_terms(label):
+                if f" {term} " in normalized:
+                    matches += 1
+                    break
+        return matches > 1
+
+    @staticmethod
+    def _looks_like_unknown_option_label(message: str) -> bool:
+        stripped = message.strip()
+        words = stripped.split()
+        if not words or len(words) > 3:
+            return False
+        if not all(word.replace("-", "").isalpha() for word in words):
+            return False
+        return all(word[:1].isupper() for word in words)
+
+    @classmethod
+    def _selection_alias_match(cls, normalized_message: str, labels: list[str]) -> str | None:
+        aliases = cls._selection_aliases()
+        for label in labels:
+            normalized_label = normalize_for_match(label)
+            if normalized_message in aliases.get(normalized_label, []):
+                return label
+        return None
+
+    @staticmethod
+    def _selection_aliases() -> dict[str, list[str]]:
+        return {
+            "germany": ["de", "deu", "ger"],
+            "spain": ["es", "esp"],
+            "portugal": ["pt", "prt"],
+            "ireland": ["ie", "irl"],
+            "italy": ["it", "ita"],
+            "hungary": ["hu", "hun"],
+        }
 
     @classmethod
     def _remove_selection_term(cls, remaining: str, label: str) -> str:
@@ -758,23 +916,32 @@ class ChatSelectionStepsMixin:
             "id",
             "d",
             "let",
+            "s",
             "lets",
             "want",
             "would",
             "like",
             "know",
+            "ll",
+            "go",
+            "analyze",
+            "analyse",
             "to",
             "start",
             "begin",
+            "set",
             "with",
             "use",
             "select",
             "choose",
             "please",
+            "my",
+            "session",
             "the",
             "a",
             "an",
             "and",
+            "first",
             "in",
             "about",
             "for",
@@ -792,6 +959,7 @@ class ChatSelectionStepsMixin:
             "this",
             "transition",
             "context",
+            "bitte",
         }
         return all(token in filler for token in tokens)
 
@@ -1375,6 +1543,17 @@ class ChatSelectionStepsMixin:
         if session.country_id is not None:
             query = query.where(Region.country_id == session.country_id)
         return [region.name for region in self.db.scalars(query).all()]
+
+    def _regions_for_country_id(self, country_id: int | None) -> list[Region]:
+        if country_id is None:
+            return []
+        if hasattr(self, "_regions_for_country"):
+            return list(self._regions_for_country(country_id))
+        return list(
+            self.db.scalars(
+                select(Region).where(Region.country_id == country_id).order_by(Region.name)
+            ).all()
+        )
 
     def _available_sector_names(self, session: ChatSession) -> list[str]:
         if session.country_id is not None:

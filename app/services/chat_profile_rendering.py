@@ -22,12 +22,25 @@ class ChatProfileRenderingMixin:
         )
         if rows:
             lines.append("")
-            lines.append(self._hazard_profile_table_html(rows))
+            lines.append(
+                self._hazard_profile_table_html(
+                    rows,
+                    show_admin_details=self._show_profile_admin_details(),
+                )
+            )
         if user_rows:
             lines.append("")
             lines.append("#### User-added socio-demographic profiles")
-            lines.append(self._hazard_profile_table_html(user_rows))
+            lines.append(
+                self._hazard_profile_table_html(
+                    user_rows,
+                    show_admin_details=self._show_profile_admin_details(),
+                )
+            )
         return "\n".join(lines)
+
+    def _show_profile_admin_details(self) -> bool:
+        return bool(getattr(self, "is_admin", False))
 
     @classmethod
     def _hazard_profile_table_rows(
@@ -247,7 +260,12 @@ class ChatProfileRenderingMixin:
         return round(sum(values) / len(values), 1)
 
     @classmethod
-    def _hazard_profile_table_html(cls, rows: list[dict[str, object]]) -> str:
+    def _hazard_profile_table_html(
+        cls,
+        rows: list[dict[str, object]],
+        *,
+        show_admin_details: bool = False,
+    ) -> str:
         rows = cls._combine_covered_profile_rows(rows)
         body_rows: list[str] = []
         for row in rows:
@@ -271,14 +289,20 @@ class ChatProfileRenderingMixin:
                         "Combined profiles: " + "; ".join(combined_names)
                     )
             explanation = str(row.get("explanation") or "").strip()
+            if explanation and not show_admin_details:
+                explanation = cls._strip_profile_admin_detail_lines(explanation)
             if explanation:
                 description_parts.append(explanation)
             statistical_basis = str(row.get("statistical_basis") or "").strip()
-            if statistical_basis:
-                description_parts.append(f"Reference: {statistical_basis}")
             target_population_labels = row.get("target_population_labels")
             population_lookup_labels = row.get("population_lookup_labels")
-            if isinstance(target_population_labels, list) and target_population_labels:
+            if show_admin_details and statistical_basis:
+                description_parts.append(f"Reference: {statistical_basis}")
+            if (
+                show_admin_details
+                and isinstance(target_population_labels, list)
+                and target_population_labels
+            ):
                 mapped_labels = [
                     str(label).strip()
                     for label in target_population_labels
@@ -288,7 +312,11 @@ class ChatProfileRenderingMixin:
                     description_parts.append(
                         "Mapped target population: " + "; ".join(mapped_labels)
                     )
-            elif isinstance(population_lookup_labels, list) and population_lookup_labels:
+            elif (
+                show_admin_details
+                and isinstance(population_lookup_labels, list)
+                and population_lookup_labels
+            ):
                 mapped_labels = [
                     str(label).strip()
                     for label in population_lookup_labels
@@ -298,7 +326,11 @@ class ChatProfileRenderingMixin:
                     description_parts.append(
                         "Mapped target population: " + "; ".join(mapped_labels)
                     )
-            if isinstance(population_lookup_labels, list) and population_lookup_labels:
+            if (
+                show_admin_details
+                and isinstance(population_lookup_labels, list)
+                and population_lookup_labels
+            ):
                 lookup_labels = [
                     str(label).strip()
                     for label in population_lookup_labels
@@ -348,6 +380,19 @@ class ChatProfileRenderingMixin:
             explanation,
         )
         return re.sub(r"\s+", " ", cleaned).strip()
+
+    @staticmethod
+    def _strip_profile_admin_detail_lines(text: str) -> str:
+        return "\n".join(
+            line
+            for line in text.splitlines()
+            if not re.match(
+                r"\s*(?:Reference|Plain[- ]English|Mapped target population|"
+                r"Eurostat population lookup):",
+                line,
+                flags=re.IGNORECASE,
+            )
+        ).strip()
 
     @staticmethod
     def _format_profile_population(value: object) -> str:

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from dataclasses import asdict
 
 from sqlalchemy import and_, desc, func, or_, select
@@ -173,11 +174,30 @@ class ChatPersistenceMixin:
                 role,
             )
 
-    @staticmethod
-    def _chat_message_display_content(content: str) -> str:
+    def _chat_message_display_content(self, content: str) -> str:
         if content.strip().startswith("TARGET_POPULATION_BATCH:"):
             return "Quick Select Affected Population Group"
+        if not bool(getattr(self, "is_admin", False)):
+            return self._strip_profile_admin_details(content)
         return content
+
+    @staticmethod
+    def _strip_profile_admin_details(content: str) -> str:
+        if not re.search(
+            r"Reference:|Plain[- ]English:|Mapped target population:|Eurostat population lookup:",
+            content,
+            flags=re.IGNORECASE,
+        ):
+            return content
+        admin_detail = re.compile(
+            r"(?is)(?:<br\s*/?>\s*)?"
+            r"(?:Reference|Plain[- ]English|Mapped target population|Eurostat population lookup):"
+            r"\s*.*?"
+            r"(?=(?:<br\s*/?>\s*)?"
+            r"(?:Combined profiles|Selected options|Reference|Plain[- ]English|"
+            r"Mapped target population|Eurostat population lookup):|</small>|</p>|</li>|</th>|$)"
+        )
+        return admin_detail.sub("", content)
 
     def _recent_chat_messages_for_auto_user(
         self, session_id: str, limit: int = 10

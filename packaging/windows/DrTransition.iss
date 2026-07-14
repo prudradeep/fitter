@@ -56,7 +56,6 @@ begin
   DatabasePage.Edits[0].ReadOnly := not Editable;
   DatabasePage.Edits[1].ReadOnly := not Editable;
   DatabasePage.Edits[3].ReadOnly := not Editable;
-  DatabasePage.Edits[4].ReadOnly := not Editable;
 end;
 
 procedure EditDatabaseDefaultsCheckClick(Sender: TObject);
@@ -109,11 +108,12 @@ begin
   EditDatabaseDefaultsCheck := TNewCheckBox.Create(DatabasePage);
   EditDatabaseDefaultsCheck.Parent := DatabasePage.Surface;
   EditDatabaseDefaultsCheck.Left := DatabasePage.Edits[0].Left;
-  EditDatabaseDefaultsCheck.Top := DatabasePage.Edits[0].Top - ScaleY(32);
+  EditDatabaseDefaultsCheck.Top := DatabasePage.Edits[0].Top - ScaleY(34);
   EditDatabaseDefaultsCheck.Width := DatabasePage.SurfaceWidth;
-  EditDatabaseDefaultsCheck.Height := ScaleY(17);
-  EditDatabaseDefaultsCheck.Caption := 'Edit default database settings';
+  EditDatabaseDefaultsCheck.Height := ScaleY(22);
+  EditDatabaseDefaultsCheck.Caption := 'Advanced: customize database name and users';
   EditDatabaseDefaultsCheck.Checked := False;
+  EditDatabaseDefaultsCheck.Font.Style := [fsBold];
   EditDatabaseDefaultsCheck.OnClick := @EditDatabaseDefaultsCheckClick;
 
   ModelPage := CreateInputQueryPage(

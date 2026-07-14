@@ -36,7 +36,10 @@ class ChatHazardStepsMixin:
                 country=session.country,
                 region=session.region,
                 sector=session.sector,
-                hazards=format_hazards(session),
+                hazards=format_hazards(
+                    session,
+                    show_admin_details=bool(getattr(self, "is_admin", False)),
+                ),
             ),
             options=POST_SECTOR_OPTIONS,
             session=session.summary(),

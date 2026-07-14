@@ -87,7 +87,7 @@ def _custom_hazard_visibility_label(session: ChatSession) -> str:
     return "Private Visibility"
 
 
-def format_hazards(session: ChatSession) -> str:
+def format_hazards(session: ChatSession, *, show_admin_details: bool = False) -> str:
     survey_hazards = [
         hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
     ]
@@ -97,10 +97,18 @@ def format_hazards(session: ChatSession) -> str:
     )
     sections = [
         f'<h3 class="hazard-group-heading">Top 3 {survey_source_button}</h3>',
-        format_system_hazards(session, survey_hazards[:3]),
+        format_system_hazards(
+            session,
+            survey_hazards[:3],
+            show_admin_details=show_admin_details,
+        ),
         "",
         f'<h3 class="hazard-group-heading">Other hazards {survey_source_button}</h3>',
-        format_system_hazards(session, survey_hazards[3:]),
+        format_system_hazards(
+            session,
+            survey_hazards[3:],
+            show_admin_details=show_admin_details,
+        ),
     ]
     if any(
         _hazard_has_profiles(session, hazard)
@@ -114,7 +122,10 @@ def format_hazards(session: ChatSession) -> str:
                 f"{_platform_users_source_button()}"
                 f"{_custom_hazards_info_icon()}"
                 "</h3>",
-                format_custom_hazards(session),
+                format_custom_hazards(
+                    session,
+                    show_admin_details=show_admin_details,
+                ),
             ]
         )
     if session.additional_hazards:
@@ -127,7 +138,10 @@ def format_hazards(session: ChatSession) -> str:
                 f"{_additional_hazards_info_icon()}"
                 f"{_additional_hazards_methodology_cta()}"
                 "</h3>",
-                format_additional_hazards(session),
+                format_additional_hazards(
+                    session,
+                    show_admin_details=show_admin_details,
+                ),
             ]
         )
     return "\n".join(sections)
@@ -136,6 +150,8 @@ def format_hazards(session: ChatSession) -> str:
 def format_system_hazards(
     session: ChatSession,
     hazards: list[str] | None = None,
+    *,
+    show_admin_details: bool = False,
 ) -> str:
     hazards = list(session.hazards or []) if hazards is None else hazards
     if not hazards:
@@ -151,12 +167,21 @@ def format_system_hazards(
             "</div>"
         )
         _append_hazard_ranking(lines, session, hazard)
-        _append_hazard_profiles(lines, session, hazard)
+        _append_hazard_profiles(
+            lines,
+            session,
+            hazard,
+            show_admin_details=show_admin_details,
+        )
         lines.append("</article>")
     return "\n".join(lines)
 
 
-def format_custom_hazards(session: ChatSession) -> str:
+def format_custom_hazards(
+    session: ChatSession,
+    *,
+    show_admin_details: bool = False,
+) -> str:
     hazards = [
         hazard
         for hazard in (session.custom_hazards or [])
@@ -174,12 +199,21 @@ def format_custom_hazards(session: ChatSession) -> str:
             f'<span class="hazard-visibility-label">{escape(_custom_hazard_visibility_label(session))}</span>'
             "</div>"
         )
-        _append_hazard_profiles(lines, session, hazard)
+        _append_hazard_profiles(
+            lines,
+            session,
+            hazard,
+            show_admin_details=show_admin_details,
+        )
         lines.append("</article>")
     return "\n".join(lines)
 
 
-def format_additional_hazards(session: ChatSession) -> str:
+def format_additional_hazards(
+    session: ChatSession,
+    *,
+    show_admin_details: bool = False,
+) -> str:
     hazards = [
         str(hazard).strip()
         for hazard in (session.additional_hazards or [])
@@ -196,12 +230,23 @@ def format_additional_hazards(session: ChatSession) -> str:
             f"<strong>{escape(hazard)}</strong>"
             "</div>"
         )
-        _append_hazard_profiles(lines, session, hazard)
+        _append_hazard_profiles(
+            lines,
+            session,
+            hazard,
+            show_admin_details=show_admin_details,
+        )
         lines.append("</article>")
     return "\n".join(lines)
 
 
-def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str) -> None:
+def _append_hazard_profiles(
+    lines: list[str],
+    session: ChatSession,
+    hazard: str,
+    *,
+    show_admin_details: bool = False,
+) -> None:
     profiles = session.hazard_profiles or {}
     profile_values = profiles.get(hazard)
     if isinstance(profile_values, str):
@@ -261,7 +306,10 @@ def _append_hazard_profiles(lines: list[str], session: ChatSession, hazard: str)
             }
         )
     profile_items = _combine_covered_profile_items(profile_items)
-    profile_rows = [_render_profile_row(item) for item in profile_items]
+    profile_rows = [
+        _render_profile_row(item, show_admin_details=show_admin_details)
+        for item in profile_items
+    ]
     if not profile_rows:
         return
     count = len(profile_rows)
@@ -466,7 +514,11 @@ def _append_unique(values: object, value: str) -> None:
         values.append(cleaned)
 
 
-def _render_profile_row(item: dict[str, object]) -> str:
+def _render_profile_row(
+    item: dict[str, object],
+    *,
+    show_admin_details: bool = False,
+) -> str:
     name = str(item.get("name") or "").strip()
     variable_name = str(item.get("variable_name") or "").strip()
     variable_type = str(item.get("variable_type") or "").strip()
@@ -488,15 +540,18 @@ def _render_profile_row(item: dict[str, object]) -> str:
         if options:
             description_parts.append("Selected options: " + escape("; ".join(options)))
     explanation = str(item.get("explanation") or "").strip()
+    if explanation and not show_admin_details:
+        explanation = _strip_profile_admin_detail_lines(explanation)
     if explanation:
         description_parts.append(escape(explanation))
     statistical_basis = str(item.get("statistical_basis") or "").strip()
-    if statistical_basis:
+    if show_admin_details and statistical_basis:
         description_parts.append(f"Reference: {escape(statistical_basis)}")
     target_population_labels = item.get("target_population_labels")
     population_lookup_labels = item.get("population_lookup_labels")
     if (
-        not item.get("is_grouped_target_population")
+        show_admin_details
+        and not item.get("is_grouped_target_population")
         and isinstance(target_population_labels, list)
         and target_population_labels
     ):
@@ -505,7 +560,8 @@ def _render_profile_row(item: dict[str, object]) -> str:
             + escape("; ".join(str(label) for label in target_population_labels if str(label).strip()))
         )
     elif (
-        not item.get("is_grouped_target_population")
+        show_admin_details
+        and not item.get("is_grouped_target_population")
         and isinstance(population_lookup_labels, list)
         and population_lookup_labels
     ):
@@ -513,7 +569,11 @@ def _render_profile_row(item: dict[str, object]) -> str:
             "Mapped target population: "
             + escape("; ".join(str(label) for label in population_lookup_labels if str(label).strip()))
         )
-    if isinstance(population_lookup_labels, list) and population_lookup_labels:
+    if (
+        show_admin_details
+        and isinstance(population_lookup_labels, list)
+        and population_lookup_labels
+    ):
         description_parts.append(
             "Eurostat population lookup: "
             + escape("; ".join(str(label) for label in population_lookup_labels if str(label).strip()))
@@ -567,6 +627,19 @@ def _is_macro_profile(variable_name: str, variable_type: str = "") -> bool:
         variable_type.strip().casefold() == "macro"
         or variable_name.strip().casefold().startswith("macro_")
     )
+
+
+def _strip_profile_admin_detail_lines(text: str) -> str:
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if not re.match(
+            r"\s*(?:Reference|Plain[- ]English|Mapped target population|"
+            r"Eurostat population lookup):",
+            line,
+            flags=re.IGNORECASE,
+        )
+    ).strip()
 
 
 def _profile_population_values(

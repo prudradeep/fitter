@@ -36,6 +36,11 @@ from app.services.sector_prompt_rag import SectorPromptRagService
 router = APIRouter(prefix="/api", tags=["chat"])
 settings = get_settings()
 
+
+def _is_admin_user(user: AppUser) -> bool:
+    return str(user.role or "").strip().casefold() == "admin"
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: Request,
@@ -43,7 +48,11 @@ async def chat(
     db: Session = Depends(get_db),
 ) -> ChatResponse:
     payload = await _chat_payload(request, db, current_user.id)
-    service = ChatService(db, user_id=current_user.id)
+    service = ChatService(
+        db,
+        user_id=current_user.id,
+        is_admin=_is_admin_user(current_user),
+    )
     return await service.handle_message(
         payload.message,
         payload.session_id,
@@ -59,7 +68,11 @@ async def stats_deep_dive(
     db: Session = Depends(get_db),
 ) -> ChatResponse:
     payload = await _chat_request_from_json(request, "Stats deep-dive payload")
-    service = ChatService(db, user_id=current_user.id)
+    service = ChatService(
+        db,
+        user_id=current_user.id,
+        is_admin=_is_admin_user(current_user),
+    )
     return await service.handle_stats_deep_dive_dialog(
         payload.message,
         payload.session_id,
@@ -75,7 +88,11 @@ async def auto_user_message(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     payload = await _chat_request_from_json(request, "Auto-user payload")
-    service = ChatService(db, user_id=current_user.id)
+    service = ChatService(
+        db,
+        user_id=current_user.id,
+        is_admin=_is_admin_user(current_user),
+    )
     return await service.generate_auto_user_message(
         payload.session_id,
         _validation_mode(payload.validation_mode),
@@ -189,7 +206,11 @@ async def restore_session(
             session_data = {}
     chat_session = session_store.put(session_key, session_data)
     chat_session.session_key = session_key
-    service = ChatService(db, user_id=current_user.id)
+    service = ChatService(
+        db,
+        user_id=current_user.id,
+        is_admin=_is_admin_user(current_user),
+    )
     current_prompt = service._repeat_current_options(session_key, chat_session, "", False)
     service._attach_other_options(current_prompt, chat_session)
     messages = db.scalars(
@@ -241,7 +262,11 @@ async def export_session(
         except json.JSONDecodeError:
             session_data = {}
 
-    service = ChatService(db, user_id=current_user.id)
+    service = ChatService(
+        db,
+        user_id=current_user.id,
+        is_admin=_is_admin_user(current_user),
+    )
     rows = db.scalars(
         select(UserChatMessage)
         .where(UserChatMessage.user_session_id == user_session.id)
@@ -265,7 +290,11 @@ async def export_session(
                 "id": message.id,
                 "role": message.role,
                 "content": service._chat_message_display_content(message.content),
-                "raw_content": message.content,
+                "raw_content": (
+                    message.content
+                    if _is_admin_user(current_user)
+                    else service._chat_message_display_content(message.content)
+                ),
                 "is_error": message.is_error,
                 "created_at": message.created_at.isoformat() if message.created_at else None,
             }

@@ -66,6 +66,8 @@ OUTPUT — return ONLY valid JSON with this exact shape:
   "frozen_inputs": {{ "measure_description": "", "justification": "", "evidence": "" }},
   "reason": "short clarity explanation"
 }}
+Do not include Markdown, code fences, comments, trailing commas, extra keys, or
+prose outside the JSON.
 
 RULES.
 - "clear" is true only when all three dimensions are CLEAR.

@@ -16,11 +16,30 @@ refers to one supplied option. If uncertain, use null.
 Map common adjective forms to supplied options when clear, for example
 "Bavarian" -> "Bavaria".
 
+Map clear country codes and abbreviations to supplied country options when
+present:
+- DE/DEU/GER -> Germany
+- ES/ESP -> Spain
+- PT/PRT -> Portugal
+- IE/IRL -> Ireland
+- IT/ITA -> Italy
+- HU/HUN -> Hungary
+
+Map obvious one-word misspellings to supplied options when the intended option
+is unambiguous, for example Germny -> Germany, Spane -> Spain, Portugul ->
+Portugal, Irelnd -> Ireland, Itlay -> Italy, Hungry -> Hungary, Bavria ->
+Bavaria, Lisbom -> Lisbon, Budapst -> Budapest, Housng -> Housing, and
+Trasport -> Transport.
+
 Resolve ordinal references such as "last one", "2nd one", "second one",
 "3rd one", "2nd last", and "third last" against the available options for the
 current phase.
 
 If multiple values are present, extract all valid values.
+Comma-separated commands are selection commands. For example, "Please set
+Portugal, Lisbon, and Energy" must extract all three supplied values.
+Correction commands are selection commands. For example, "Actually Spain,
+Catalonia, Transport" must extract Spain, Catalonia, and Transport.
 
 Respect the current phase:
 - country: extract country. Also extract region and sector when the user clearly
@@ -28,6 +47,12 @@ Respect the current phase:
 - region: extract region for the selected country. Also extract sector when the
   user clearly supplied it.
 - sector: extract sector.
+
+If the text contains two or more alternatives at the same level, such as
+"Compare Portugal and Italy" or "Germany or Ireland", use "matched": false.
+
+If the text is emoji-only, random keyboard text, generic chatter, or a vague
+phrase without a supplied option, use "matched": false.
 
 Return this shape:
 {
