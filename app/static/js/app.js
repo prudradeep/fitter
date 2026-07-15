@@ -579,11 +579,17 @@ function configureWorkspaceResizer() {
 
 async function fetchMapTopology(path) {
   if (mapTopologyCache.has(path)) return mapTopologyCache.get(path);
-  const response = await fetch(`https://code.highcharts.com/mapdata/${path}`);
+  const response = await fetch(mapTopologyUrl(path));
   if (!response.ok) throw new Error(`Map data failed with status ${response.status}`);
   const topology = await response.json();
   mapTopologyCache.set(path, topology);
   return topology;
+}
+
+function mapTopologyUrl(path) {
+  const value = String(path || "").trim();
+  if (/^https?:\/\//i.test(value) || value.startsWith("/")) return value;
+  return `/static/mapdata/${value.replace(/^\/+/, "")}`;
 }
 
 async function renderDynamicStageVisual(key, session = {}, options = appState.currentOptions) {

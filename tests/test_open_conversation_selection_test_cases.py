@@ -68,6 +68,13 @@ class OpenConversationSelectionTestCaseWorkbookTests(unittest.TestCase):
             self.assertEqual(result_sheet.max_row - 1, len(make_test_cases()))
             self.assertIn("Status", headers)
             self.assertIn("Reason", headers)
+            status_column = headers.index("Status") + 1
+            failures = [
+                result_sheet.cell(row=row_index, column=status_column).value
+                for row_index in range(2, result_sheet.max_row + 1)
+                if result_sheet.cell(row=row_index, column=status_column).value != "Pass"
+            ]
+            self.assertEqual(failures, [])
 
     def test_combined_regression_script_runs_from_working_directory(self):
         original_cwd = Path.cwd()

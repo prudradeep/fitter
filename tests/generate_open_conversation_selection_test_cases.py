@@ -350,9 +350,9 @@ def make_test_cases() -> list[dict[str, str | bool]]:
                 message,
                 expected_country="Germany",
                 expected_region="Bavaria",
-                expected_sector=sector,
-                bot_response=f"{sector} selected. Selection flow completed.",
-                action="COMPLETE_SELECTION",
+                bot_response=f"Did you mean **{sector}**?",
+                action="ASK_CLARIFICATION",
+                clarify=True,
             )
         )
 

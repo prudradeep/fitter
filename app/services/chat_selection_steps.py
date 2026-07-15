@@ -335,6 +335,15 @@ class ChatSelectionStepsMixin:
             current_phase,
         )
         if deterministic_selection is None:
+            sector_alias_response = self._sector_alias_confirmation_response(
+                session_id,
+                session,
+                message,
+                current_phase,
+            )
+            if sector_alias_response is not None:
+                return sector_alias_response
+        if deterministic_selection is None:
             deterministic_selection = self._deterministic_selection_from_text(session, message)
         if deterministic_selection is None:
             deterministic_selection = self._fuzzy_selection_from_text(
@@ -878,6 +887,50 @@ class ChatSelectionStepsMixin:
             "hungary": ["hu", "hun"],
         }
 
+    def _sector_alias_confirmation_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> ChatResponse | None:
+        if current_phase != "sector":
+            return None
+        sector = self._sector_label_from_alias_text(session, message)
+        if not sector:
+            return None
+        selection = {"country": None, "region": None, "sector": sector}
+        session.pending_selection_confirmation = selection
+        session.pending_selection_action = None
+        return ChatResponse(
+            session_id=session_id,
+            step="selection_confirmation",
+            bot_message=self._selection_confirmation_message(selection),
+            options=SELECTION_CONFIRMATION_OPTIONS,
+            session=session.summary(),
+            error=False,
+        )
+
+    def _sector_label_from_alias_text(
+        self,
+        session: ChatSession,
+        message: str,
+    ) -> str | None:
+        normalized = normalize_for_match(message)
+        if not normalized:
+            return None
+        matches: list[str] = []
+        for label in self._available_sector_names(session):
+            if normalized == normalize_for_match(label):
+                return None
+            for alias in self._selection_label_aliases(label):
+                alias_normalized = normalize_for_match(alias)
+                remaining = f" {normalized} ".replace(f" {alias_normalized} ", " ")
+                if remaining != f" {normalized} " and self._is_selection_filler_text(remaining):
+                    matches.append(label)
+                    break
+        return matches[0] if len(set(matches)) == 1 else None
+
     @classmethod
     def _remove_selection_term(cls, remaining: str, label: str) -> str:
         for term in cls._selection_label_terms(label):
@@ -888,6 +941,15 @@ class ChatSelectionStepsMixin:
     @staticmethod
     def _selection_label_terms(label: str) -> list[str]:
         normalized = normalize_for_match(label)
+        terms = [normalized]
+        terms.extend(ChatSelectionStepsMixin._selection_label_aliases(label))
+        if normalized.endswith("ia"):
+            terms.append(f"{normalized[:-1]}n")
+        return list(dict.fromkeys(term for term in terms if term))
+
+    @staticmethod
+    def _selection_label_aliases(label: str) -> list[str]:
+        normalized = normalize_for_match(label)
         aliases = {
             "bavaria": ["bavarian"],
             "germany": ["german", "deutschland"],
@@ -896,15 +958,11 @@ class ChatSelectionStepsMixin:
             "ireland": ["irish"],
             "italy": ["italian"],
             "hungary": ["hungarian"],
-            "transport": ["mobility", "transit"],
-            "housing": ["homes", "buildings"],
-            "energy": ["power", "electricity"],
+            "transport": ["mobility", "transit", "public transit", "mobility and public transit"],
+            "housing": ["homes", "buildings", "buildings and homes"],
+            "energy": ["power", "electricity", "power and electricity"],
         }
-        terms = [normalized]
-        terms.extend(aliases.get(normalized, []))
-        if normalized.endswith("ia"):
-            terms.append(f"{normalized[:-1]}n")
-        return list(dict.fromkeys(term for term in terms if term))
+        return list(aliases.get(normalized, []))
 
     @staticmethod
     def _is_selection_filler_text(value: str) -> bool:

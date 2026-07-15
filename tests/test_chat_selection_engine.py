@@ -104,6 +104,52 @@ class ChatSelectionEngineTests(unittest.TestCase):
             {"country": "Germany", "region": "Bavaria", "sector": "Transport"},
         )
 
+    def test_sector_synonym_phrase_asks_for_confirmation(self):
+        engine = _AsyncSelectionEngine()
+        session = ChatSession(country="Germany", region="Bavaria", phase="sector")
+
+        response = asyncio.run(
+            engine._maybe_apply_conversational_selection(
+                "session-1",
+                session,
+                "power and electricity",
+                current_phase="sector",
+            )
+        )
+
+        self.assertIsNotNone(response)
+        self.assertEqual(response.step, "selection_confirmation")
+        self.assertIn("Energy", response.bot_message)
+        self.assertEqual(
+            session.pending_selection_confirmation,
+            {"country": None, "region": None, "sector": "Energy"},
+        )
+        self.assertIsNone(engine.applied_selection)
+
+    def test_sector_synonym_phrase_confirmation_works_for_each_sector(self):
+        engine = _AsyncSelectionEngine()
+        cases = [
+            ("power and electricity", "Energy"),
+            ("buildings and homes", "Housing"),
+            ("mobility and public transit", "Transport"),
+        ]
+
+        for message, sector in cases:
+            with self.subTest(message=message):
+                session = ChatSession(country="Germany", region="Bavaria", phase="sector")
+                response = asyncio.run(
+                    engine._maybe_apply_conversational_selection(
+                        "session-1",
+                        session,
+                        message,
+                        current_phase="sector",
+                    )
+                )
+
+                self.assertIsNotNone(response)
+                self.assertEqual(response.step, "selection_confirmation")
+                self.assertEqual(session.pending_selection_confirmation["sector"], sector)
+
     def test_hazard_listing_cache_payload_excludes_custom_hazards(self):
         session = ChatSession(
             hazards=["System hazard"],

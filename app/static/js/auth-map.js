@@ -13,7 +13,8 @@ document.querySelectorAll("[data-coverage-map]").forEach(async (container) => {
       .replace(/'/g, "&#039;");
 
   try {
-    const response = await fetch("https://code.highcharts.com/mapdata/custom/europe.geo.json");
+    const response = await fetch("/static/mapdata/custom/europe.geo.json");
+    if (!response.ok) throw new Error(`Map data failed with status ${response.status}`);
     const topology = await response.json();
     /* const mainCountries = [
       "Germany",

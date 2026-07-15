@@ -8,11 +8,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DEVELOPMENT_CSP = (
     "default-src 'self'; "
-    "script-src 'self' https://cdn.jsdelivr.net https://code.highcharts.com 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline'; "
     "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: https:; "
     "font-src 'self' data:; "
-    "connect-src 'self' https://code.highcharts.com; "
+    "connect-src 'self'; "
     "frame-src 'self'; "
     "object-src 'none'; "
     "base-uri 'self'; "
@@ -22,12 +22,12 @@ DEFAULT_DEVELOPMENT_CSP = (
 
 DEFAULT_PRODUCTION_CSP = (
     "default-src 'self'; "
-    "script-src 'self' https://cdn.jsdelivr.net https://code.highcharts.com; "
+    "script-src 'self'; "
     "style-src-elem 'self'; "
     "style-src-attr 'unsafe-inline'; "
     "img-src 'self' data: https:; "
     "font-src 'self' data:; "
-    "connect-src 'self' https://code.highcharts.com; "
+    "connect-src 'self'; "
     "frame-src 'self'; "
     "object-src 'none'; "
     "base-uri 'self'; "

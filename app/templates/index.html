@@ -726,9 +726,9 @@
       </form>
     </dialog>
 
-    <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/highmaps.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/highcharts-more.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highcharts@11.4.8/modules/venn.js"></script>
+    <script src="{{ url_for('static', path='/vendor/highcharts/highmaps.js') }}"></script>
+    <script src="{{ url_for('static', path='/vendor/highcharts/highcharts-more.js') }}"></script>
+    <script src="{{ url_for('static', path='/vendor/highcharts/modules/venn.js') }}"></script>
     <script src="{{ url_for('static', path='/js/app-utils.js') }}?v=20260703-voice-summary"></script>
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260709-settings"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
