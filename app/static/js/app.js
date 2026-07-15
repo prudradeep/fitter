@@ -3505,6 +3505,80 @@ function targetPopulationBatchPayload() {
     .filter((item) => item.question_id && item.answers.length);
 }
 
+function clientWorkflowContext() {
+  return {
+    step: appState.currentStep,
+    inputMode: appState.inputMode,
+    session: appState.currentSession,
+    sessionId,
+    options: appState.currentOptions,
+    otherOptions: appState.currentOtherOptions,
+    countries: coverageCountries.map((country) => country.name),
+  };
+}
+
+function clientSessionSnapshot(context = clientWorkflowContext()) {
+  return {
+    ...(context.session || {}),
+    phase: context.step || "client_state",
+    input_mode: context.inputMode || "text",
+    validation_mode: currentValidationMode(),
+    crowd_sourcing_enabled: crowdSourcingEnabled(),
+  };
+}
+
+async function persistClientWorkflowInput(message = "", context = clientWorkflowContext()) {
+  const cleanMessage = String(message || "").trim();
+  const snapshot = clientSessionSnapshot(context);
+  const response = await csrfFetch("/api/sessions/state", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: context.sessionId || sessionId,
+      phase: snapshot.phase,
+      input_mode: snapshot.input_mode,
+      validation_mode: snapshot.validation_mode,
+      crowd_sourcing_enabled: snapshot.crowd_sourcing_enabled,
+      country_id: snapshot.country_id,
+      region_id: snapshot.region_id,
+      sector_id: snapshot.sector_id,
+      session: snapshot,
+      messages: cleanMessage
+        ? [
+            {
+              role: "user",
+              content: cleanMessage,
+            },
+          ]
+        : [],
+    }),
+  });
+  if (response.status === 401) {
+    window.location.href = "/login";
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+  const data = await response.json();
+  const nextSessionId = data.session_id || context.sessionId || sessionId;
+  return {
+    error: Boolean(data.error),
+    session_id: nextSessionId,
+    step: context.step || "client_state",
+    input_mode: context.inputMode || "text",
+    options: context.options || [],
+    other_options: context.otherOptions || [],
+    session: {
+      ...snapshot,
+      session_key: nextSessionId,
+      title: data.title || snapshot.title,
+    },
+    bot_message: "",
+    voice_summary: "",
+  };
+}
+
 async function sendStatsDialogMessage(message, echoUser = true) {
   if (statsDialogLoading || !statsDialogLog) return;
   const cleanMessage = message.trim();
@@ -3519,32 +3593,19 @@ async function sendStatsDialogMessage(message, echoUser = true) {
   setStatsDialogLoading(true);
 
   try {
-    const response = await csrfFetch("/api/stats-deep-dive", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: cleanMessage,
-        session_id: sessionId,
-        validation_mode: currentValidationMode(),
-        crowd_sourcing_enabled: crowdSourcingEnabled(),
-      }),
-    });
-
-    if (response.status === 401) {
-      window.location.href = "/login";
-      return;
-    }
-    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
-
-    const data = await response.json();
+    const data = await persistClientWorkflowInput(cleanMessage, clientWorkflowContext());
+    if (!data) return;
     sessionId = data.session_id;
     localStorage.setItem(sessionKey, sessionId);
+    const workflowData = window.DrTransitionWorkflows?.statsDeepDive
+      ? await window.DrTransitionWorkflows.statsDeepDive(cleanMessage, data, clientWorkflowContext())
+      : data;
 
     typing.remove();
-    const botRow = addMessage("bot", "", data.error, statsDialogLog);
-    speakServerMessage(data.bot_message, data.voice_summary);
-    await typeServerMessage(botRow, data.bot_message, statsDialogLog);
-    updateSessionCard(data.session);
+    const botRow = addMessage("bot", "", workflowData.error, statsDialogLog);
+    speakServerMessage(workflowData.bot_message, workflowData.voice_summary);
+    await typeServerMessage(botRow, workflowData.bot_message, statsDialogLog);
+    updateSessionCard(workflowData.session);
     loadSessions();
   } catch (error) {
     typing.remove();
@@ -3608,7 +3669,7 @@ async function loadSessions() {
   if (!sessionsList) return;
     renderEmptyState(sessionsList, "Loading sessions...");
   try {
-    const response = await fetch("/api/sessions");
+    const response = await apiFetch("/api/sessions");
     if (response.status === 401) {
       window.location.href = "/login";
       return;
@@ -3709,7 +3770,7 @@ async function exportCurrentSession() {
   exportSessionStatus.textContent = "Preparing export...";
   exportSessionStatus.hidden = false;
   try {
-    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/export`);
+    const response = await apiFetch(`/api/sessions/${encodeURIComponent(sessionId)}/export`);
     if (response.status === 401) {
       window.location.href = "/login";
       return;
@@ -3832,7 +3893,11 @@ function uploadKnowledgeFile(file, row) {
     const formData = new FormData();
     formData.append("files", file);
     const request = new XMLHttpRequest();
-    request.open("POST", "/api/knowledge/upload");
+    request.open("POST", hostedApiUrl("/api/knowledge/upload"));
+    request.withCredentials = true;
+    Object.entries(csrfHeaders(authHeaders())).forEach(([name, value]) => {
+      request.setRequestHeader(name, value);
+    });
     request.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) {
         updateKnowledgeProgressRow(row, "Uploading...", 12);
@@ -3884,7 +3949,7 @@ async function loadKnowledgeDocuments() {
   if (!knowledgeDocuments) return;
   renderEmptyState(knowledgeDocuments, "Loading documents...");
   try {
-    const response = await fetch("/api/knowledge");
+    const response = await apiFetch("/api/knowledge");
     if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
     const data = await response.json();
     renderKnowledgeDocuments(data.documents || []);
@@ -4126,7 +4191,7 @@ async function restoreSession(nextSessionId) {
   setLoading(true);
   let shouldStartFresh = false;
   try {
-    const response = await fetch(`/api/sessions/${encodeURIComponent(nextSessionId)}`);
+    const response = await apiFetch(`/api/sessions/${encodeURIComponent(nextSessionId)}`);
     if (response.status === 401) {
       window.location.href = "/login";
       return;
@@ -4197,25 +4262,9 @@ async function requestAutoConversationTurn() {
   if (!autoConversationEnabled() || loading || !sessionId) return;
 
   try {
-    const response = await csrfFetch("/api/auto-user-message", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: "",
-        session_id: sessionId,
-        validation_mode: currentValidationMode(),
-        crowd_sourcing_enabled: crowdSourcingEnabled(),
-      }),
-    });
-    if (response.status === 401) {
-      window.location.href = "/login";
-      return;
-    }
-    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
-    const data = await response.json();
-    let nextMessage = String(data.message || "").trim();
-    if (data.error || !nextMessage) {
-      console.warn(data.detail || "Auto conversation could not generate a message.");
+    let nextMessage = String(await window.DrTransitionWorkflows?.autoUserTesting(clientWorkflowContext()) || "").trim();
+    if (!nextMessage) {
+      console.warn("Auto conversation could not generate a message.");
       scheduleAutoConversationTurn(1800);
       return;
     }
@@ -4286,57 +4335,43 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
   let shouldScheduleAuto = false;
 
   try {
-    const hasEvidenceFile = extras.evidenceFile instanceof File && extras.evidenceFile.size > 0;
-    const hasEvidenceUrl = Boolean(extras.evidenceUrl);
-    const useMultipart = hasEvidenceFile || hasEvidenceUrl;
-    const response = await csrfFetch("/api/chat", {
-      method: "POST",
-      ...(useMultipart
-        ? {
-            body: buildChatFormData(cleanMessage, extras),
-          }
-        : {
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              message: cleanMessage,
-              session_id: sessionId,
-              validation_mode: currentValidationMode(),
-              crowd_sourcing_enabled: crowdSourcingEnabled(),
-            }),
-          }),
-    });
-
-    if (response.status === 401) {
-      window.location.href = "/login";
-      return;
-    }
-
-    if (!response.ok) {
-      throw new Error(`Request failed with status ${response.status}`);
-    }
-
-    const data = await response.json();
+    const previousContext = clientWorkflowContext();
+    const data = await persistClientWorkflowInput(cleanMessage, previousContext);
+    if (!data) return;
     sessionId = data.session_id;
     localStorage.setItem(sessionKey, sessionId);
+    const workflowData = window.DrTransitionWorkflows?.handleChatTurn
+      ? await window.DrTransitionWorkflows.handleChatTurn({
+          message: cleanMessage,
+          serverData: data,
+          context: previousContext,
+        })
+      : data;
 
     typing.remove();
-    appState.currentStep = data.step;
-    if (data.step === "stats_deep_dive_dialog") {
-      setInputMode(data.input_mode || "text", appState.currentStep, data.options || [], data.session);
-      updateSessionCard(data.session);
-      renderOptions(data.options || [], data.other_options || []);
-      await openStatsDeepDiveDialog(data.input_values?.stats_question || "", true);
+    appState.currentStep = workflowData.step;
+    if (workflowData.step === "stats_deep_dive_dialog") {
+      setInputMode(workflowData.input_mode || "text", appState.currentStep, workflowData.options || [], workflowData.session);
+      updateSessionCard(workflowData.session);
+      renderOptions(workflowData.options || [], workflowData.other_options || []);
+      await openStatsDeepDiveDialog(workflowData.input_values?.stats_question || "", true);
       loadSessions();
       return;
     }
-    const botRow = addMessage("bot", "", data.error);
-    speakServerMessage(data.bot_message, data.voice_summary);
-    await typeServerMessage(botRow, data.bot_message);
-    renderValidationDetails(botRow, data.validation_details);
-    updateSessionCard(data.session);
-    setInputMode(data.input_mode || "text", data.step, data.options || [], data.session);
-    applyInputValues(data.input_values);
-    renderOptions(data.options || [], data.other_options || []);
+    const botRow = addMessage("bot", "", workflowData.error);
+    speakServerMessage(workflowData.bot_message, workflowData.voice_summary);
+    await typeServerMessage(botRow, workflowData.bot_message);
+    renderValidationDetails(botRow, workflowData.validation_details);
+    try {
+      await maybePromoteValidatedEvidence(workflowData, previousContext);
+    } catch (promotionError) {
+      console.error("Validated evidence promotion failed", promotionError);
+      addMessage("bot", `Validated evidence was accepted locally, but promotion failed: ${promotionError.message || promotionError}`, true);
+    }
+    updateSessionCard(workflowData.session);
+    setInputMode(workflowData.input_mode || "text", workflowData.step, workflowData.options || [], workflowData.session);
+    applyInputValues(workflowData.input_values);
+    renderOptions(workflowData.options || [], workflowData.other_options || []);
     loadSessions();
     shouldScheduleAuto = true;
   } catch (error) {
@@ -4359,19 +4394,6 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
   }
 }
 
-function buildChatFormData(message, extras = {}) {
-  const formData = new FormData();
-  formData.append("message", message);
-  formData.append("validation_mode", currentValidationMode());
-  formData.append("crowd_sourcing_enabled", String(crowdSourcingEnabled()));
-  if (sessionId) formData.append("session_id", sessionId);
-  if (extras.evidenceUrl) formData.append("evidence_url", extras.evidenceUrl);
-  if (extras.evidenceFile instanceof File && extras.evidenceFile.size > 0) {
-    formData.append("evidence_file", extras.evidenceFile);
-  }
-  return formData;
-}
-
 function evidenceSummary(url, file) {
   const lines = [];
   if (url) lines.push(`Evidence URL: ${url}`);
@@ -4379,7 +4401,83 @@ function evidenceSummary(url, file) {
   return lines;
 }
 
-chatForm.addEventListener("submit", (event) => {
+function ensureLocalSessionId() {
+  if (!sessionId) {
+    sessionId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(sessionKey, sessionId);
+  }
+  return sessionId;
+}
+
+async function storeTemporaryEvidenceForCurrentSession({ evidenceUrl = "", evidenceFile = null, context = "" } = {}) {
+  const hasEvidenceUrl = Boolean(String(evidenceUrl || "").trim());
+  const hasEvidenceFile = evidenceFile instanceof File && evidenceFile.size > 0;
+  if (!hasEvidenceUrl && !hasEvidenceFile) {
+    return null;
+  }
+  if (!window.DrTransitionEvidence) {
+    throw new Error("Local evidence handling is not available.");
+  }
+  return window.DrTransitionEvidence.storeTemporaryEvidence({
+    sessionId: ensureLocalSessionId(),
+    evidenceUrl,
+    evidenceFile,
+    context,
+  });
+}
+
+function validationAcceptedForPromotion(details = {}) {
+  const workflow = String(details.workflow || "");
+  if (!workflow.endsWith("_validation")) return false;
+  const status = String(details.status || "").toLowerCase();
+  if (status !== "ok") return false;
+  const decisionLabel = String(details.decision?.label || "").toLowerCase();
+  if (/(reject|invalid|insufficient|unsupported|fail)/.test(decisionLabel)) return false;
+  return /(accept|valid|support|approve|pass)/.test(decisionLabel);
+}
+
+async function maybePromoteValidatedEvidence(workflowData, context = {}) {
+  const details = workflowData?.validation_details || {};
+  if (!validationAcceptedForPromotion(details)) return null;
+  if (!window.DrTransitionEvidence?.promoteValidatedEvidence) return null;
+  const activeSessionId = sessionId || workflowData.session_id || context.sessionId;
+  if (!activeSessionId) return null;
+  const result = await window.DrTransitionEvidence.promoteValidatedEvidence({
+    sessionId: activeSessionId,
+    context: {
+      ...context,
+      session: workflowData.session || context.session || {},
+    },
+    validation: details,
+  });
+  if (result.promoted_documents?.length) {
+    const documentIds = result.promoted_documents
+      .map((item) => item.document_id)
+      .filter(Boolean)
+      .join(", ");
+    addMessage(
+      "bot",
+      `Validated evidence promoted to the hosted knowledge base: ${result.promoted_documents.length} document(s), ${result.chunks} chunk(s).${documentIds ? ` Stored ID(s): ${documentIds}.` : ""}`
+    );
+  }
+  return result;
+}
+
+async function configureHostedApiFromRuntime() {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke || !window.DrTransitionAPI?.setBackendBaseUrl) return;
+  try {
+    const config = await invoke("runtime_config");
+    const backendUrl = config?.backend?.baseUrl;
+    if (backendUrl) {
+      window.DrTransitionAPI.setBackendBaseUrl(backendUrl);
+    }
+  } catch (error) {
+    console.warn("Could not load hosted backend runtime config", error);
+  }
+}
+
+chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   if (appState.inputMode === "reason_evidence" || appState.inputMode === "mitigation_measure") {
@@ -4407,12 +4505,26 @@ chatForm.addEventListener("submit", (event) => {
     }
     const reasonLine = primaryValue ? [`Reason: ${primaryValue}`] : [];
     const value = [...reasonLine, ...evidenceSummary(evidenceUrl, evidenceFile)].join("\n") || "No reason provided";
+    let evidenceResult = null;
+    try {
+      setLoading(true);
+      evidenceResult = await storeTemporaryEvidenceForCurrentSession({
+        evidenceUrl,
+        evidenceFile,
+        context: appState.currentStep || "reason_evidence",
+      });
+    } catch (error) {
+      setLoading(false);
+      addMessage("bot", `Temporary evidence could not be processed locally: ${error.message || error}`, true);
+      return;
+    }
+    setLoading(false);
     reasonInput.value = "";
     evidenceInput.value = "";
     evidenceFileInput.value = "";
     collapseExpandedMessages();
-    addMessage("user", value);
-    sendMessage(primaryValue ? `Reason: ${primaryValue}` : "", false, { evidenceUrl, evidenceFile });
+    addMessage("user", evidenceResult ? `${value}\nStored locally: ${evidenceResult.documents.length} evidence item(s), ${evidenceResult.chunks} chunk(s).` : value);
+    sendMessage(primaryValue ? `Reason: ${primaryValue}` : "", false);
     return;
   }
 
@@ -4425,15 +4537,26 @@ chatForm.addEventListener("submit", (event) => {
     if (reason) lines.push(`Reason: ${reason}`);
     lines.push(...evidenceSummary(evidenceUrl, evidenceFile));
     const value = lines.join("\n");
+    let evidenceResult = null;
+    try {
+      setLoading(true);
+      evidenceResult = await storeTemporaryEvidenceForCurrentSession({
+        evidenceUrl,
+        evidenceFile,
+        context: "evaluation_question",
+      });
+    } catch (error) {
+      setLoading(false);
+      addMessage("bot", `Temporary evidence could not be processed locally: ${error.message || error}`, true);
+      return;
+    }
+    setLoading(false);
     evaluationReasonInput.value = "";
     evaluationEvidenceInput.value = "";
     evaluationEvidenceFileInput.value = "";
     collapseExpandedMessages();
-    addMessage("user", value);
-    sendMessage(lines.filter((line) => !line.startsWith("Evidence ")).join("\n"), false, {
-      evidenceUrl,
-      evidenceFile,
-    });
+    addMessage("user", evidenceResult ? `${value}\nStored locally: ${evidenceResult.documents.length} evidence item(s), ${evidenceResult.chunks} chunk(s).` : value);
+    sendMessage(lines.filter((line) => !line.startsWith("Evidence ")).join("\n"), false);
     return;
   }
 
@@ -4541,6 +4664,10 @@ resetButton.addEventListener("click", async () => {
   autoConversationTurns = 0;
   closeStatsDeepDiveDialog();
   clearCurrentInputState();
+  const previousSessionId = sessionId;
+  if (previousSessionId) {
+    await window.DrTransitionEvidence?.clearTemporary(previousSessionId);
+  }
   localStorage.removeItem(sessionKey);
   sessionId = null;
   statsDialogStarted = false;
@@ -4811,10 +4938,13 @@ changePasswordForm?.addEventListener("submit", async (event) => {
 
 logoutForm?.addEventListener("submit", () => {
   clearCurrentInputState();
+  if (sessionId) {
+    window.DrTransitionEvidence?.clearTemporary(sessionId);
+  }
   localStorage.removeItem(sessionKey);
 });
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   configureVoiceControls();
   configureTypingEffectControl();
   configureValidationModeControl();
@@ -4822,6 +4952,8 @@ document.addEventListener("DOMContentLoaded", () => {
   configureMic();
   configureWorkspaceResizer();
   clearCurrentInputState();
+  await configureHostedApiFromRuntime();
+  window.DrTransitionKBSync?.start();
   loadSessions();
   if (sessionId) {
     restoreSession(sessionId);

@@ -136,8 +136,6 @@ class KnowledgeBaseService:
         if not chunks:
             return {"error": True, "detail": "No readable knowledge-base text was found."}
 
-        if not allow_lexical_only:
-            self._require_faiss()
         scope_level = self._scope_level()
         document = KnowledgeDocument(
             user_id=self.user_id,
@@ -179,21 +177,19 @@ class KnowledgeBaseService:
 
         vector_indexed = False
         vector_error = ""
-        if faiss is not None and np is not None:
+        if allow_lexical_only:
+            vector_error = "Server vector indexing is disabled; clients build local indexes after sync."
+        elif faiss is not None and np is not None:
             try:
                 embeddings = await self._embed_many([row.content for row in chunk_rows])
                 self._add_vectors([row.id for row in chunk_rows], embeddings)
                 vector_indexed = True
             except Exception as exc:
-                if not allow_lexical_only:
-                    self.db.rollback()
-                    raise
-                vector_error = str(exc)
-        elif not allow_lexical_only:
+                self.db.rollback()
+                raise
+        else:
             self.db.rollback()
             self._require_faiss()
-        else:
-            vector_error = "FAISS or NumPy is unavailable; using DB lexical retrieval."
 
         self.db.commit()
         self.db.refresh(document)
@@ -267,10 +263,16 @@ class KnowledgeBaseService:
         query: str,
         limit: int = 5,
         source_uris: list[str] | None = None,
+        *,
+        use_server_models: bool = False,
     ) -> list[dict[str, object]]:
         overfetch = max(limit * 25, 100)
         source_uri_filter = [item for item in (source_uris or []) if item]
-        vector_scores = await self._vector_search_scores(query, overfetch)
+        vector_scores = (
+            await self._vector_search_scores(query, overfetch)
+            if use_server_models
+            else {}
+        )
         candidates: dict[int, tuple[KnowledgeChunk, KnowledgeDocument, float]] = {}
         if vector_scores:
             for chunk, document in self._knowledge_rows(
@@ -304,7 +306,11 @@ class KnowledgeBaseService:
             reverse=True,
         )
         results = self._search_results(ranked, lexical_scores, limit)
-        grounded = await self.grounding_models.ground_results(query, results)
+        grounded = (
+            await self.grounding_models.ground_results(query, results)
+            if use_server_models
+            else results
+        )
         if self.scope == VALIDATED_EVIDENCE_SCOPE:
             return sorted(
                 grounded,

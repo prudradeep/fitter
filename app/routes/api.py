@@ -12,7 +12,16 @@ from sqlalchemy.orm import Session
 from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, set_auth_cookie, verify_password
 from app.config import get_settings
 from app.db.session import get_db
-from app.models import AppUser, Country, Region, Sector, UserChatMessage, UserSession
+from app.models import (
+    AppUser,
+    Country,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    Region,
+    Sector,
+    UserChatMessage,
+    UserSession,
+)
 from app.routes.request_limits import (
     InvalidJsonPayload,
     RequestTooLarge,
@@ -28,7 +37,13 @@ from app.services.chat_service import ChatService
 from app.services.audit_log import record_audit_event
 from app.services.hazard_effect_size import hazard_effect_size_rows
 from app.services.hazard_ranking_service import HazardRankingService
-from app.services.knowledge_base import MAIN_KB_SCOPE, KnowledgeBaseService
+from app.services.knowledge_base import (
+    MAIN_KB_SCOPE,
+    SECTOR_PROMPT_SCOPE,
+    VALIDATED_EVIDENCE_SCOPE,
+    KnowledgeBaseService,
+    validated_scope_level,
+)
 from app.services.hazard_salience import country_hazard_salience
 from app.services.rate_limit import record_failed_attempt, reset_rate_limit, retry_after_seconds
 from app.services.sector_prompt_rag import SectorPromptRagService
@@ -48,16 +63,21 @@ async def chat(
     db: Session = Depends(get_db),
 ) -> ChatResponse:
     payload = await _chat_payload(request, db, current_user.id)
-    service = ChatService(
-        db,
-        user_id=current_user.id,
-        is_admin=_is_admin_user(current_user),
+    session_key = _client_session_key(payload.session_id)
+    session_data = _session_data_from_payload(
+        {
+            "session_id": session_key,
+            "validation_mode": payload.validation_mode,
+            "crowd_sourcing_enabled": payload.crowd_sourcing_enabled,
+        }
     )
-    return await service.handle_message(
-        payload.message,
-        payload.session_id,
-        payload.validation_mode,
-        payload.crowd_sourcing_enabled,
+    user_session = _upsert_user_session(db, current_user.id, session_key, session_data)
+    if payload.message.strip():
+        _record_user_chat_message(db, user_session, "user", payload.message)
+    return _client_state_chat_response(
+        session_key,
+        session_data,
+        "Message persisted. Continue the local LLM workflow in the client app.",
     )
 
 
@@ -68,16 +88,21 @@ async def stats_deep_dive(
     db: Session = Depends(get_db),
 ) -> ChatResponse:
     payload = await _chat_request_from_json(request, "Stats deep-dive payload")
-    service = ChatService(
-        db,
-        user_id=current_user.id,
-        is_admin=_is_admin_user(current_user),
+    session_key = _client_session_key(payload.session_id)
+    session_data = _session_data_from_payload(
+        {
+            "session_id": session_key,
+            "validation_mode": payload.validation_mode,
+            "crowd_sourcing_enabled": payload.crowd_sourcing_enabled,
+        }
     )
-    return await service.handle_stats_deep_dive_dialog(
-        payload.message,
-        payload.session_id,
-        _validation_mode(payload.validation_mode),
-        payload.crowd_sourcing_enabled,
+    user_session = _upsert_user_session(db, current_user.id, session_key, session_data)
+    if payload.message.strip():
+        _record_user_chat_message(db, user_session, "user", payload.message)
+    return _client_state_chat_response(
+        session_key,
+        session_data,
+        "Stats deep-dive input persisted. Run the local LLM workflow in the client app.",
     )
 
 
@@ -88,16 +113,13 @@ async def auto_user_message(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     payload = await _chat_request_from_json(request, "Auto-user payload")
-    service = ChatService(
-        db,
-        user_id=current_user.id,
-        is_admin=_is_admin_user(current_user),
-    )
-    return await service.generate_auto_user_message(
-        payload.session_id,
-        _validation_mode(payload.validation_mode),
-        payload.crowd_sourcing_enabled,
-    )
+    session_key = _client_session_key(payload.session_id)
+    return {
+        "error": True,
+        "session_id": session_key,
+        "message": "",
+        "detail": "Auto-user generation is a client-side local LLM workflow.",
+    }
 
 
 @router.get("/sessions")
@@ -122,6 +144,35 @@ async def sessions(
             }
             for row in rows
         ]
+    }
+
+
+@router.post("/sessions/state")
+async def save_session_state(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    payload = await _json_payload_or_error(request, "Session state payload")
+    if isinstance(payload, JSONResponse):
+        return payload
+    session_key = _client_session_key(payload.get("session_id"))
+    session_data = _session_data_from_payload({**payload, "session_id": session_key})
+    user_session = _upsert_user_session(db, current_user.id, session_key, session_data)
+    messages = _messages_from_payload(payload)
+    for message in messages:
+        _record_user_chat_message(
+            db,
+            user_session,
+            str(message.get("role") or "user")[:20],
+            str(message.get("content") or ""),
+            bool(message.get("is_error")),
+        )
+    return {
+        "error": False,
+        "session_id": session_key,
+        "title": user_session.title or "New policy session",
+        "messages": len(messages),
     }
 
 
@@ -557,7 +608,11 @@ async def knowledge_upload(
             return too_large
         content = await file.read()
         try:
-            result = await service.ingest_file(filename, content)
+            result = await service.ingest_file(
+                filename,
+                content,
+                allow_lexical_only=True,
+            )
         except (httpx.HTTPError, ValueError) as exc:
             failures.append({"source": filename, "detail": str(exc)})
             continue
@@ -608,7 +663,11 @@ async def knowledge_url(
     total_chunks = 0
     for url in urls:
         try:
-            result = await service.ingest_url(url, title if len(urls) == 1 else None)
+            result = await service.ingest_url(
+                url,
+                title if len(urls) == 1 else None,
+                allow_lexical_only=True,
+            )
         except (httpx.HTTPError, ValueError) as exc:
             failures.append({"source": url, "detail": str(exc)})
             continue
@@ -702,6 +761,210 @@ async def sector_prompts_search(
     return {"error": False, "results": results}
 
 
+@router.get("/knowledge/sync/manifest")
+async def knowledge_sync_manifest(
+    scope: str = Query(default=MAIN_KB_SCOPE, max_length=40),
+    country_id: int | None = Query(default=None, gt=0),
+    region_id: int | None = Query(default=None, gt=0),
+    sector_id: int | None = Query(default=None, gt=0),
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    scope = _knowledge_sync_scope(scope)
+    filters = _knowledge_sync_filters(
+        scope,
+        current_user=current_user,
+        country_id=country_id,
+        region_id=region_id,
+        sector_id=sector_id,
+    )
+    rows = db.scalars(
+        select(KnowledgeDocument)
+        .where(*filters)
+        .order_by(KnowledgeDocument.id)
+    ).all()
+    chunk_rows_by_document: dict[int, list[KnowledgeChunk]] = {}
+    if rows:
+        document_ids = [row.id for row in rows]
+        chunks = db.scalars(
+            select(KnowledgeChunk)
+            .where(KnowledgeChunk.document_id.in_(document_ids))
+            .order_by(KnowledgeChunk.document_id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+        ).all()
+        for chunk in chunks:
+            chunk_rows_by_document.setdefault(chunk.document_id, []).append(chunk)
+    max_id = max([0, *[row.id for row in rows]])
+    documents = [
+        {
+            "id": row.id,
+            "checksum": _knowledge_document_manifest_checksum(row, chunk_rows_by_document.get(row.id, [])),
+            "updated_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+    return {
+        "error": False,
+        "scope": scope,
+        "cursor": max_id,
+        "checksum": f"{scope}:{len(documents)}:{max_id}",
+        "documents": documents,
+    }
+
+
+@router.get("/knowledge/sync")
+async def knowledge_sync(
+    scope: str = Query(default=MAIN_KB_SCOPE, max_length=40),
+    since_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, gt=0, le=1000),
+    include_chunks: bool = Query(default=True),
+    country_id: int | None = Query(default=None, gt=0),
+    region_id: int | None = Query(default=None, gt=0),
+    sector_id: int | None = Query(default=None, gt=0),
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    scope = _knowledge_sync_scope(scope)
+    filters = _knowledge_sync_filters(
+        scope,
+        current_user=current_user,
+        country_id=country_id,
+        region_id=region_id,
+        sector_id=sector_id,
+    )
+    rows = db.scalars(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.id > since_id, *filters)
+        .order_by(KnowledgeDocument.id)
+        .limit(limit)
+    ).all()
+    chunk_rows_by_document: dict[int, list[KnowledgeChunk]] = {}
+    if include_chunks and rows:
+        document_ids = [row.id for row in rows]
+        chunks = db.scalars(
+            select(KnowledgeChunk)
+            .where(KnowledgeChunk.document_id.in_(document_ids))
+            .order_by(KnowledgeChunk.document_id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+        ).all()
+        for chunk in chunks:
+            chunk_rows_by_document.setdefault(chunk.document_id, []).append(chunk)
+    next_cursor = max([since_id, *[row.id for row in rows]])
+    return {
+        "error": False,
+        "scope": scope,
+        "next_cursor": next_cursor,
+        "has_more": len(rows) == limit,
+        "deleted_document_ids": [],
+        "documents": [
+            _knowledge_document_sync_payload(
+                row,
+                chunk_rows_by_document.get(row.id, []) if include_chunks else [],
+            )
+            for row in rows
+        ],
+    }
+
+
+@router.post("/validated-evidence/promote")
+async def validated_evidence_promote(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    payload = await _json_payload_or_error(request, "Validated evidence payload")
+    if isinstance(payload, JSONResponse):
+        return payload
+    title = str(payload.get("title") or "").strip()
+    chunks_payload = payload.get("chunks")
+    if not title:
+        return {"error": True, "detail": "Validated evidence title is required."}
+    if not isinstance(chunks_payload, list) or not chunks_payload:
+        return {"error": True, "detail": "At least one validated evidence chunk is required."}
+
+    country_id = _optional_int(payload.get("country_id"))
+    region_id = _optional_int(payload.get("region_id"))
+    sector_id = _optional_int(payload.get("sector_id"))
+    source_type = str(payload.get("source_type") or "validated_user_evidence").strip()[:40]
+    source_uri = str(payload.get("source_uri") or "").strip() or None
+    scope_level = validated_scope_level(country_id, region_id)
+    session_key = str(payload.get("session_key") or "").strip()[:64] or None
+    validation_summary = str(payload.get("validation_summary") or "").strip()
+    if validation_summary:
+        title = f"{title} [{validation_summary[:80]}]"
+
+    document = KnowledgeDocument(
+        user_id=current_user.id,
+        title=title[:255],
+        source_type=source_type or "validated_user_evidence",
+        source_uri=source_uri,
+        scope=VALIDATED_EVIDENCE_SCOPE,
+        session_key=session_key,
+        scope_level=scope_level,
+        country_id=country_id,
+        region_id=region_id,
+        sector_id=sector_id,
+    )
+    db.add(document)
+    db.flush()
+
+    chunks_added = 0
+    for index, item in enumerate(chunks_payload):
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        chunk_source_uri = str(item.get("source_uri") or "").strip() or source_uri
+        chunk_source_type = str(item.get("source_type") or source_type).strip()[:40]
+        db.add(
+            KnowledgeChunk(
+                document_id=document.id,
+                user_id=current_user.id,
+                chunk_index=_optional_int(item.get("chunk_index")) or index,
+                content=content,
+                source_type=chunk_source_type or "validated_user_evidence",
+                source_uri=chunk_source_uri,
+                page_number=_optional_int(item.get("page_number")),
+                scope_level=scope_level,
+                country_id=country_id,
+                region_id=region_id,
+                sector_id=sector_id,
+            )
+        )
+        chunks_added += 1
+    if not chunks_added:
+        db.rollback()
+        return {"error": True, "detail": "At least one validated evidence chunk must include content."}
+
+    db.commit()
+    db.refresh(document)
+    stored_chunks = db.scalars(
+        select(KnowledgeChunk)
+        .where(KnowledgeChunk.document_id == document.id)
+        .order_by(KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+    ).all()
+    record_audit_event(
+        db,
+        user=current_user,
+        action="validated_evidence.promote",
+        request=request,
+        target_type="knowledge_document",
+        target_id=document.id,
+        details={
+            "chunks": chunks_added,
+            "country_id": country_id,
+            "region_id": region_id,
+            "sector_id": sector_id,
+            "session_key": session_key,
+        },
+    )
+    return {
+        "error": False,
+        "document": _knowledge_document_sync_payload(document, stored_chunks),
+        "chunks": chunks_added,
+        "version": document.created_at.isoformat() if document.created_at else None,
+    }
+
+
 @router.delete("/knowledge/{document_id}")
 async def knowledge_delete(
     document_id: int,
@@ -746,26 +1009,13 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
     session_id = str(form.get("session_id") or "") or None
     validation_mode = _validation_mode(str(form.get("validation_mode") or ""))
     crowd_sourcing_enabled = _truthy(form.get("crowd_sourcing_enabled"))
-    evidence_parts: list[str] = []
 
     evidence_url = str(form.get("evidence_url") or "").strip()
     if evidence_url:
-        evidence_parts.append(f"Evidence URL: {evidence_url}")
-        if session_id:
-            temporary_service = KnowledgeBaseService(
-                db,
-                user_id,
-                scope="temporary",
-                session_key=session_id,
-            )
-            try:
-                await temporary_service.ingest_url(
-                    evidence_url,
-                    evidence_url,
-                    allow_lexical_only=True,
-                )
-            except (httpx.HTTPError, ValueError):
-                pass
+        raise HTTPException(
+            status_code=400,
+            detail="Temporary evidence must be handled by the client app before validation.",
+        )
 
     evidence_file = form.get("evidence_file")
     filename = getattr(evidence_file, "filename", "")
@@ -779,28 +1029,10 @@ async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequ
             )
             if too_large is not None:
                 raise HTTPException(status_code=413, detail="Evidence upload is too large.")
-            evidence_parts.append(f"Evidence file: {filename}")
-            file_bytes = await evidence_file.read()
-            if len(file_bytes) > settings.max_upload_bytes:
-                raise HTTPException(status_code=413, detail="Evidence upload is too large.")
-            if session_id:
-                temporary_service = KnowledgeBaseService(
-                    db,
-                    user_id,
-                    scope="temporary",
-                    session_key=session_id,
-                )
-                try:
-                    await temporary_service.ingest_file(
-                        filename,
-                        file_bytes,
-                        allow_lexical_only=True,
-                    )
-                except (httpx.HTTPError, ValueError):
-                    pass
-
-    if evidence_parts:
-        message = "\n".join([message.strip(), *evidence_parts]).strip()
+            raise HTTPException(
+                status_code=400,
+                detail="Temporary evidence must be handled by the client app before validation.",
+            )
 
     return ChatRequest(
         message=message,
@@ -863,6 +1095,233 @@ def _knowledge_urls_from_payload(payload: dict[str, object]) -> list[str]:
         seen.add(url)
         urls.append(url)
     return urls
+
+
+def _knowledge_sync_scope(scope: str) -> str:
+    value = str(scope or "").strip()
+    allowed = {MAIN_KB_SCOPE, SECTOR_PROMPT_SCOPE, VALIDATED_EVIDENCE_SCOPE}
+    if value not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail="Knowledge sync scope must be main, sector_prompt, or validated_evidence.",
+        )
+    return value
+
+
+def _knowledge_sync_filters(
+    scope: str,
+    *,
+    current_user: AppUser,
+    country_id: int | None,
+    region_id: int | None,
+    sector_id: int | None,
+) -> list[object]:
+    filters: list[object] = [KnowledgeDocument.scope == scope]
+    if scope in {MAIN_KB_SCOPE, SECTOR_PROMPT_SCOPE}:
+        filters.append(KnowledgeDocument.user_id.is_(None))
+        return filters
+
+    filters.append(
+        (KnowledgeDocument.user_id.is_(None)) | (KnowledgeDocument.user_id == current_user.id)
+    )
+    if country_id is not None:
+        filters.append(
+            (KnowledgeDocument.country_id == country_id)
+            | (KnowledgeDocument.scope_level == "global")
+            | (KnowledgeDocument.country_id.is_(None))
+        )
+    if region_id is not None:
+        filters.append(
+            (KnowledgeDocument.region_id == region_id)
+            | (KnowledgeDocument.region_id.is_(None))
+            | (KnowledgeDocument.scope_level == "global")
+        )
+    if sector_id is not None:
+        filters.append((KnowledgeDocument.sector_id == sector_id) | (KnowledgeDocument.sector_id.is_(None)))
+    return filters
+
+
+def _knowledge_document_sync_payload(
+    document: KnowledgeDocument,
+    chunks: list[KnowledgeChunk],
+) -> dict[str, object]:
+    return {
+        "id": document.id,
+        "title": document.title,
+        "checksum": _knowledge_document_manifest_checksum(document, chunks),
+        "source_type": document.source_type,
+        "source_uri": document.source_uri,
+        "scope": document.scope,
+        "scope_level": document.scope_level,
+        "session_key": document.session_key,
+        "country_id": document.country_id,
+        "region_id": document.region_id,
+        "sector_id": document.sector_id,
+        "created_at": document.created_at.isoformat() if document.created_at else None,
+        "chunks": [
+            {
+                "id": chunk.id,
+                "document_id": chunk.document_id,
+                "chunk_index": chunk.chunk_index,
+                "content": chunk.content,
+                "source_type": chunk.source_type,
+                "source_uri": chunk.source_uri,
+                "page_number": chunk.page_number,
+                "scope_level": chunk.scope_level,
+                "country_id": chunk.country_id,
+                "region_id": chunk.region_id,
+                "sector_id": chunk.sector_id,
+                "created_at": chunk.created_at.isoformat() if chunk.created_at else None,
+            }
+            for chunk in chunks
+        ],
+    }
+
+
+def _knowledge_document_manifest_checksum(document: KnowledgeDocument, chunks: list[KnowledgeChunk]) -> str:
+    parts = [
+        str(document.id),
+        document.title or "",
+        document.source_type or "",
+        document.source_uri or "",
+        document.created_at.isoformat() if document.created_at else "",
+        str(document.country_id or ""),
+        str(document.region_id or ""),
+        str(document.sector_id or ""),
+    ]
+    for chunk in chunks:
+        parts.extend(
+            [
+                str(chunk.id),
+                str(chunk.chunk_index),
+                chunk.content or "",
+                chunk.source_type or "",
+                chunk.source_uri or "",
+                str(chunk.page_number or ""),
+            ]
+        )
+    return "|".join(parts)
+
+
+def _client_session_key(value: object) -> str:
+    session_key = str(value or "").strip()
+    return session_key[:64] if session_key else str(uuid4())
+
+
+def _session_data_from_payload(payload: dict[str, object]) -> dict[str, object]:
+    raw_session = payload.get("session")
+    session_data = dict(raw_session) if isinstance(raw_session, dict) else {}
+    raw_data = payload.get("data")
+    if isinstance(raw_data, dict):
+        session_data.update(raw_data)
+    session_data["session_key"] = str(payload.get("session_id") or session_data.get("session_key") or "")
+    for key in ("country_id", "region_id", "sector_id"):
+        value = _optional_int(payload.get(key) if key in payload else session_data.get(key))
+        if value is not None:
+            session_data[key] = value
+    for key in ("country", "region", "sector", "phase"):
+        if key in payload and payload.get(key) is not None:
+            session_data[key] = str(payload.get(key) or "").strip()
+    session_data["validation_mode"] = _validation_mode(
+        payload.get("validation_mode") or session_data.get("validation_mode")
+    )
+    session_data["crowd_sourcing_enabled"] = bool(
+        payload.get("crowd_sourcing_enabled", session_data.get("crowd_sourcing_enabled", False))
+    )
+    return session_data
+
+
+def _upsert_user_session(
+    db: Session,
+    user_id: int,
+    session_key: str,
+    session_data: dict[str, object],
+) -> UserSession:
+    user_session = db.scalar(select(UserSession).where(UserSession.session_key == session_key))
+    if user_session is not None and user_session.user_id not in {None, user_id}:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    if user_session is None:
+        user_session = UserSession(
+            session_key=session_key,
+            user_id=user_id,
+        )
+        db.add(user_session)
+    user_session.user_id = user_id
+    title = str(session_data.get("title") or "").strip()
+    if title:
+        user_session.title = title[:220]
+        user_session.title_is_manual = bool(session_data.get("title_is_manual", False))
+    elif not user_session.title_is_manual:
+        user_session.title = _session_title_from_data(session_data)
+    user_session.country_id = _optional_int(session_data.get("country_id"))
+    user_session.region_id = _optional_int(session_data.get("region_id"))
+    user_session.sector_id = _optional_int(session_data.get("sector_id"))
+    user_session.session_data = json.dumps(session_data, default=str)
+    db.commit()
+    db.refresh(user_session)
+    session_store.put(session_key, session_data)
+    return user_session
+
+
+def _record_user_chat_message(
+    db: Session,
+    user_session: UserSession,
+    role: str,
+    content: str,
+    is_error: bool = False,
+) -> None:
+    content = str(content or "").strip()
+    if not content:
+        return
+    role = str(role or "user").strip().casefold()
+    if role not in {"user", "bot", "assistant", "system"}:
+        role = "user"
+    db.add(
+        UserChatMessage(
+            user_session_id=user_session.id,
+            role=role[:20],
+            content=content,
+            is_error=bool(is_error),
+        )
+    )
+    db.commit()
+
+
+def _messages_from_payload(payload: dict[str, object]) -> list[dict[str, object]]:
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        return [message for message in messages if isinstance(message, dict)]
+    message = str(payload.get("message") or "").strip()
+    if message:
+        return [{"role": payload.get("role") or "user", "content": message}]
+    return []
+
+
+def _client_state_chat_response(
+    session_key: str,
+    session_data: dict[str, object],
+    bot_message: str,
+) -> ChatResponse:
+    chat_session = session_store.put(session_key, session_data)
+    chat_session.session_key = session_key
+    return ChatResponse(
+        session_id=session_key,
+        step=str(session_data.get("phase") or "client_state"),
+        bot_message=bot_message,
+        options=[],
+        session=chat_session.summary(),
+        input_mode="client",
+        error=False,
+    )
+
+
+def _session_title_from_data(session_data: dict[str, object]) -> str:
+    parts = [
+        str(session_data.get(key) or "").strip()
+        for key in ("country", "region", "sector", "selected_hazard")
+        if str(session_data.get(key) or "").strip()
+    ]
+    return " / ".join(parts[:4]) or "New policy session"
 
 
 def payload_too_large_response(

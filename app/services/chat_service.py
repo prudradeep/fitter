@@ -54,7 +54,6 @@ from app.services.chat_session import ChatSession, session_store
 from app.services.validation_service import ChatValidationServiceMixin
 from app.services.chat_profile_rendering import ChatProfileRenderingMixin
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
-from app.services.knowledge_base import KnowledgeBaseService
 from app.services.eurostat_service import EurostatService
 from app.services.grounding_models import GroundingModelService
 from app.services.hazard_ranking_service import HazardRankingService
@@ -171,16 +170,6 @@ class ChatService(
         if clean_message == "/reset":
             if not self._session_belongs_to_current_user(session_id):
                 session_id = None
-            if session_id:
-                try:
-                    KnowledgeBaseService(
-                        self.db,
-                        self.user_id,
-                        scope="temporary",
-                        session_key=session_id,
-                    ).delete_temporary_documents()
-                except Exception:
-                    logger.exception("Failed to clear temporary evidence during session reset")
             current_session_id, session = session_store.reset(session_id)
             session.session_key = current_session_id
             session.validation_mode = validation_mode

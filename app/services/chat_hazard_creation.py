@@ -83,7 +83,7 @@ from app.services.custom_hazard_validation import (
     validate_custom_hazard_dimensions,
 )
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
-from app.services.knowledge_base import TEMPORARY_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
+from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 from app.services.sector_prompt_rag import (
@@ -1955,18 +1955,7 @@ class ChatHazardCreationMixin:
         ]
 
     def _discard_temporary_evidence(self, session: ChatSession, evidence: str | None) -> None:
-        document_ids = self._temporary_evidence_document_ids(evidence)
-        if not session.session_key or not self._has_user_supplied_evidence(evidence):
-            return
-        try:
-            KnowledgeBaseService(
-                self.db,
-                self.user_id,
-                scope=TEMPORARY_KB_SCOPE,
-                session_key=session.session_key,
-            ).delete_temporary_documents(document_ids)
-        except Exception:
-            logger.exception("Failed to discard rejected temporary evidence")
+        _ = session, evidence
 
     def _promote_temporary_evidence(
         self,
@@ -1975,23 +1964,7 @@ class ChatHazardCreationMixin:
         target_scope: str = VALIDATED_EVIDENCE_SCOPE,
         provenance: str | None = None,
     ) -> None:
-        if not session.session_key:
-            return
-        try:
-            KnowledgeBaseService(
-                self.db,
-                self.user_id,
-                scope=TEMPORARY_KB_SCOPE,
-                session_key=session.session_key,
-            ).promote_temporary_documents(
-                target_scope=target_scope,
-                provenance=provenance,
-                country_id=session.country_id,
-                region_id=session.region_id,
-                sector_id=session.sector_id,
-            )
-        except Exception:
-            logger.exception("Failed to promote temporary evidence")
+        _ = session, target_scope, provenance
 
     @staticmethod
     def _has_hazard_suggestions(review: dict[str, object]) -> bool:

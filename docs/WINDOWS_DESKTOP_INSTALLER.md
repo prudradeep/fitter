@@ -1,24 +1,38 @@
 # Windows Desktop Installer
 
-This project now includes the first production packaging layer for a Windows desktop build of Dr Transition.
+The Windows installer now targets the split architecture defined in
+[`ARCHITECTURE_BOUNDARIES.md`](ARCHITECTURE_BOUNDARIES.md).
+Backend deployment and frontend bundle release steps are in
+[`DEPLOYMENT.md`](DEPLOYMENT.md).
 
-The target runtime is:
+The installer bundles the desktop client and local runtime configuration only.
+It does not bundle backend APIs, MySQL, schema files, migrations, seeds, or
+database assets. Authentication, persistence, knowledge sync, and validated
+evidence storage are provided by the hosted backend.
+
+## Target Runtime
 
 - `DrTransition.exe`: native Tauri/WebView2 desktop launcher
-- `drtransition-backend.exe`: FastAPI application on `127.0.0.1:8000`
-- `drtransition-reranker.exe`: grounding reranker service on `127.0.0.1:8081`
-- `drtransition-nli.exe`: grounding NLI service on `127.0.0.1:8082`
+- Hosted backend URL: configured during install or through local override config
+- Local Ollama API: used for client-side chat and embeddings
+- Local frontend assets: owned by the desktop app
 
-The desktop launcher starts the backend services as hidden child processes, waits for their health endpoints, then opens the UI in a native desktop window. The user's external browser is not launched.
+The launcher opens the hosted backend in a native desktop window after runtime
+diagnostics pass. The user's external browser is not launched.
 
-If required local dependencies are missing, the launcher opens a setup diagnostics
-window instead of failing silently. That window reports:
+## Diagnostics
 
-- Whether a runtime `.env` file was found
-- Whether MySQL is reachable on `127.0.0.1:3306`
-- Whether Ollama is reachable
-- Whether the configured chat and embedding models are downloaded in Ollama
-- The local log directory for bundled service errors
+If required runtime checks fail, the launcher opens a setup diagnostics window
+instead of failing silently. That window reports:
+
+- Hosted backend reachable
+- Hosted auth/session endpoint reachable or ready for sign-in
+- Local Ollama reachable
+- Configured chat model installed
+- Configured embedding model installed
+- Local diagnostics log directory
+
+The launcher does not check for MySQL. MySQL belongs to the hosted backend.
 
 ## Layout
 
@@ -31,14 +45,9 @@ desktop/tauri/
     src/main.rs
 
 packaging/
-  python/
-    drtransition_app_server.py
-    drtransition_reranker_server.py
-    drtransition_nli_server.py
   windows/
     DrTransition.iss
     config/default.config.json
-    pyinstaller/*.spec
     scripts/*.ps1
 ```
 
@@ -46,37 +55,12 @@ packaging/
 
 Build machines need:
 
-- Python 3.12
-- `uv`
 - Rust and Cargo
 - Node.js and npm
 - Tauri prerequisites for Windows, including WebView2
 - Inno Setup 6, with `ISCC.exe` on `PATH`
 
 End users should not need these tools after the installer is produced.
-
-## Build Python Services
-
-From the repository root:
-
-```powershell
-.\packaging\windows\scripts\build-python-services.ps1
-```
-
-This creates PyInstaller one-folder builds in `dist/`:
-
-```text
-dist/drtransition-backend/
-dist/drtransition-reranker/
-dist/drtransition-nli/
-```
-
-The reranker and NLI builds include the grounding Python dependencies. Hugging Face model weights are still expected to be downloaded and cached on the target machine unless a future offline model bundle is added.
-
-If a bundled service shows an error like `Unable to configure formatter 'default'` or
-`'NoneType' object has no attribute 'isatty'`, rebuild the services. The packaged
-entrypoints explicitly disable Uvicorn's console formatter so the services can run
-as hidden Windows processes.
 
 ## Build Desktop Launcher
 
@@ -90,15 +74,13 @@ The packaging script expects:
 desktop/tauri/src-tauri/target/release/drtransition.exe
 ```
 
-The launcher opens the FastAPI backend URL in a native window, but Tauri still
-requires a small local frontend directory at build time. That placeholder lives
-at:
+Tauri still requires a small local frontend directory at build time:
 
 ```text
 desktop/tauri/ui/index.html
 ```
 
-Tauri also requires a Windows icon at build time:
+Tauri also requires a Windows icon:
 
 ```text
 desktop/tauri/src-tauri/icons/icon.ico
@@ -109,19 +91,7 @@ missing.
 
 ## Build Installer
 
-For release builds, prefer the full release script. It increments the patch
-version by default, keeps all Windows packaging version files in sync, then
-builds the bundled services, desktop launcher, and installer:
-
-```powershell
-.\packaging\windows\scripts\build-release.ps1
-```
-
-Use `-VersionPart Minor` or `-VersionPart Major` when needed. Use `-Version
-1.2.3` to set an exact version, or `-NoVersionBump` when rerunning the same
-release build after a packaging failure.
-
-To package the current already-built payload without changing the version:
+To package the current already-built desktop payload:
 
 ```powershell
 .\packaging\windows\scripts\build-installer.ps1
@@ -139,9 +109,22 @@ Then compiles:
 build/windows-installer/DrTransitionSetup-0.1.2.exe
 ```
 
-If you only run `build-python-services.ps1`, you will get the service executables
-under `dist/`, but you will not get an installer. The installer is produced only
-after the Tauri launcher and Inno Setup steps complete.
+The payload contains only client/runtime assets:
+
+```text
+DrTransition.exe
+config/default.config.json
+frontend/static/
+frontend/templates/
+reference/prompts/
+scripts/Get-ModelRecommendation.ps1
+scripts/Test-SystemCompatibility.ps1
+```
+
+The payload assembly script starts from a clean payload directory and fails if
+backend/database artifacts are detected. It does not include Python backend
+service folders, PyInstaller outputs, `schema.sql`, migrations, seeds, MySQL
+assets, or database scripts.
 
 ## Runtime Configuration
 
@@ -151,105 +134,44 @@ The default installed config is:
 config/default.config.json
 ```
 
-It defines the backend, reranker, NLI, Ollama, and data/log paths. The launcher reads this file from the installed app directory.
+It contains no secrets. It defines:
 
-The packaged Python backend reads environment variables from these locations, in
-order:
+- Hosted backend base URL
+- Hosted backend health URL
+- Hosted auth/session check URL
+- Local Ollama base URL
+- Chat model name
+- Embedding model name
+
+The installer asks for the hosted backend URL and writes a no-secret override to:
 
 ```text
-.env
 %ProgramData%\DrTransition\.env
+```
+
+The launcher also accepts per-user overrides from:
+
+```text
 %LOCALAPPDATA%\DrTransition\.env
 ```
 
-When a build-time `.env` exists in the repository root, the installer copies it
-to:
+Supported override keys:
 
 ```text
-%ProgramData%\DrTransition\.env
+DR_TRANSITION_BACKEND_URL
+DR_TRANSITION_BACKEND_HEALTH_URL
+DR_TRANSITION_BACKEND_AUTH_CHECK_URL
+OLLAMA_BASE_URL
+OLLAMA_MODEL
+OLLAMA_EMBEDDING_MODEL
 ```
 
-The copy is conditional and does not overwrite an existing runtime `.env`.
+When only `DR_TRANSITION_BACKEND_URL` is set, the launcher derives:
 
-For installed desktop use, prefer one of:
+- `{backend}/health/ready`
+- `{backend}/api/sessions`
 
-```powershell
-New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\DrTransition"
-Copy-Item .\.env "$env:LOCALAPPDATA\DrTransition\.env"
-```
-
-or, for a machine-wide admin-managed config:
-
-```powershell
-New-Item -ItemType Directory -Force "$env:ProgramData\DrTransition"
-Copy-Item .\.env "$env:ProgramData\DrTransition\.env"
-```
-
-Default runtime ports:
-
-- Main app: `8000`
-- Reranker: `8081`
-- NLI: `8082`
-- Ollama: `11434`
-
-## Grounding Services
-
-The reranker and NLI services are packaged as separate executables and started by `DrTransition.exe` when `grounding.enabled` is `true`.
-
-If either service is already healthy on its configured port, the launcher reuses it instead of starting another process.
-
-## Dependency and Model Checks
-
-The installer now performs the first dependency setup pass:
-
-- Checks for MySQL before installing it; if `mysql.exe` already exists, the installer skips installation and only starts/checks the service
-- Checks for Ollama before installing it; if `ollama.exe` already exists, the installer skips installation and only starts/checks the API
-- Asks for the database name and MySQL credentials
-- Creates the application database/user
-- Creates a default app login if it does not already exist
-- Updates `%ProgramData%\DrTransition\.env`
-- Seeds the schema and bundled CSV/XLSX reference data through the packaged backend
-- Pulls the required Ollama chat and embedding models
-
-If a custom Ollama model directory is already configured through `OLLAMA_MODELS`
-or a common Ollama `server.json` location, the installer preserves that path
-before starting Ollama or pulling models. It does not reset the model directory
-to Ollama's default path.
-
-Missing dependencies are installed with `winget`:
-
-```text
-Oracle.MySQL
-Ollama.Ollama
-```
-
-The setup log is written to:
-
-```text
-%LOCALAPPDATA%\DrTransition\logs\installer-setup.log
-```
-
-The desktop launcher still checks the external dependencies before starting the
-bundled services. If setup did not complete, it opens the diagnostics window
-instead of starting the backend.
-
-Default app login created during seed:
-
-```text
-Email: admin@drtransition.local
-Password: DrTransition@123
-```
-
-The seed step is idempotent. If that email already exists, the installer does
-not reset its password.
-
-Manual checks:
-
-```powershell
-Test-NetConnection 127.0.0.1 -Port 3306
-Invoke-RestMethod http://127.0.0.1:11434/api/tags
-ollama list
-```
+## Ollama Checks
 
 Default model downloads:
 
@@ -261,13 +183,44 @@ ollama pull nomic-embed-text
 If a model is missing, the setup diagnostics window shows the exact `ollama pull`
 command for the configured model.
 
-The diagnostics launcher reads these values from the runtime `.env` when present:
+## Local Knowledge Store
+
+The desktop runtime initializes the client knowledge store at:
 
 ```text
-OLLAMA_BASE_URL
-OLLAMA_MODEL
-OLLAMA_EMBEDDING_MODEL
+%LOCALAPPDATA%\DrTransition\knowledge
 ```
+
+It keeps synced `main`, `sector_prompt`, and `validated_evidence` scopes
+separate from session-local `temporary` evidence. Each scope tracks sync cursors,
+checksums, document checksums, and deleted-document tombstones.
+
+The authenticated frontend starts `window.DrTransitionKBSync` on app load. It
+fetches hosted manifests, downloads changed documents/chunks, removes stale
+local documents, generates embeddings through local Ollama, and rebuilds local
+indexes per knowledge scope. It repeats incremental sync periodically while the
+app remains open.
+
+Temporary evidence is handled by `window.DrTransitionEvidence`. Files and URLs
+are parsed locally before chat state is persisted. Extracted text is chunked,
+embedded through local Ollama, and stored only in the session-local `temporary`
+scope. Reset and logout clear that temporary scope. The hosted backend never
+receives temporary evidence before validation.
+
+Supported local temporary file formats are PDF, DOCX, TXT, Markdown, CSV, JSON,
+and HTML. Evidence URLs are fetched locally when browser CORS policy permits it.
+Image-only scans or unusually encoded PDFs may fail local text extraction, but
+temporary evidence is still never uploaded to the server before validation.
+
+Local chat and retrieval are handled by `window.DrTransitionLocalRAG`. It calls
+Ollama on the user's machine, retrieves from selected local KB scopes, constructs
+cited prompts, parses responses, and reports clear errors when Ollama or the
+configured models are unavailable.
+
+Workflow turns are routed through `window.DrTransitionWorkflows` after the
+hosted backend persists state. Intro/help text, open-selection assistance,
+grounded questions, validation turns, stats deep-dives, and auto-user testing
+use the local LLM/RAG layer in the desktop app.
 
 During installer setup, leaving the chat model as `auto` selects a model from
 RAM/GPU conditions:
@@ -283,19 +236,17 @@ RAM/GPU conditions:
 Included now:
 
 - Native launcher scaffold
-- App, reranker, and NLI executable entrypoints
-- PyInstaller specs
-- Inno Setup installer skeleton
+- Hosted backend URL configuration
+- No-secret local override config
+- Bundled frontend static/template assets for the desktop client package
+- Bundled local prompt/reference assets
+- Client knowledge store for persistent and temporary scopes
+- Client knowledge sync manager and local embedding/index refresh
+- Client-only temporary evidence parsing, chunking, embedding, and cleanup
+- Client local Ollama chat/RAG layer with citations and response parsing
+- Client workflow controller for local LLM-backed workflow turns
+- Validated evidence promotion to hosted `validated_evidence`
+- Frontend API rewrite around hosted auth/session/sync/promotion APIs
+- Installer payload assembly without backend/database assets
+- First-run diagnostics for hosted backend, auth/session, Ollama, and models
 - Hardware/model helper scripts
-- Installer payload assembly
-- Config/log path conventions
-- First-run diagnostics for `.env`, MySQL, Ollama, and Ollama models
-- Installer-driven MySQL/Ollama detection, install, DB creation, seeding, and model pull
-
-Next production hardening layer:
-
-- Optional offline Hugging Face model bundle
-- Code signing
-- Upgrade migration rules
-- Rich installer progress UI for long MySQL/Ollama/model operations
-- Diagnostics export command

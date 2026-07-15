@@ -1,15 +1,3 @@
 $ErrorActionPreference = "Stop"
 
-$root = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
-$specDir = Join-Path $root "packaging\windows\pyinstaller"
-
-Push-Location $root
-try {
-    uv sync --extra grounding
-    uv run --with pyinstaller pyinstaller (Join-Path $specDir "drtransition-backend.spec") --noconfirm --clean
-    uv run --with pyinstaller pyinstaller (Join-Path $specDir "drtransition-reranker.spec") --noconfirm --clean
-    uv run --with pyinstaller pyinstaller (Join-Path $specDir "drtransition-nli.spec") --noconfirm --clean
-}
-finally {
-    Pop-Location
-}
+throw "Deprecated: Windows packaging no longer builds Python/FastAPI services. The installer is desktop-client only and uses the hosted backend for APIs, MySQL persistence, migrations, seeds, knowledge sync, and validated evidence storage."

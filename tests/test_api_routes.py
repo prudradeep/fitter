@@ -13,7 +13,15 @@ from unittest.mock import patch
 
 from app.auth import create_auth_token, get_current_user, hash_password, verify_password
 from app.db.session import Base
-from app.models import AppRateLimit, AppUser, AuditLog, UserChatMessage, UserSession
+from app.models import (
+    AppRateLimit,
+    AppUser,
+    AuditLog,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    UserChatMessage,
+    UserSession,
+)
 from app.resource_paths import resource_path
 from app.services.rate_limit import clear_rate_limits
 import app.routes.api as api_routes
@@ -30,7 +38,15 @@ class FakeKnowledgeBaseService:
     def list_documents(self) -> list[dict[str, object]]:
         return self.documents
 
-    async def ingest_file(self, filename: str, content: bytes) -> dict[str, object]:
+    async def ingest_file(
+        self,
+        filename: str,
+        content: bytes,
+        *,
+        allow_lexical_only: bool = False,
+    ) -> dict[str, object]:
+        if not allow_lexical_only:
+            raise AssertionError("Hosted KB uploads must not require server embeddings.")
         return {
             "error": False,
             "id": 11,
@@ -38,7 +54,15 @@ class FakeKnowledgeBaseService:
             "chunks": 2,
         }
 
-    async def ingest_url(self, url: str, title: str | None = None) -> dict[str, object]:
+    async def ingest_url(
+        self,
+        url: str,
+        title: str | None = None,
+        *,
+        allow_lexical_only: bool = False,
+    ) -> dict[str, object]:
+        if not allow_lexical_only:
+            raise AssertionError("Hosted KB URL imports must not require server embeddings.")
         return {
             "error": False,
             "id": 12,
@@ -46,12 +70,24 @@ class FakeKnowledgeBaseService:
             "chunks": 1,
         }
 
-    async def search(self, query: str, limit: int) -> list[dict[str, object]]:
+    async def search(self, query: str, limit: int, **kwargs) -> list[dict[str, object]]:
+        if kwargs.get("use_server_models"):
+            raise AssertionError("Hosted KB search must not require server models.")
         return [{"title": "Policy note", "content": query, "score": 1.0}]
 
     async def delete_document(self, document_id: int) -> bool:
         self.deleted_ids.append(document_id)
         return True
+
+
+class FailingKnowledgeBaseService:
+    def __init__(self, *args, **kwargs) -> None:
+        raise AssertionError("Temporary evidence must not be handled by the backend KB service.")
+
+
+class FailingChatService:
+    def __init__(self, *args, **kwargs) -> None:
+        raise AssertionError("Hosted chat routes must not instantiate server LLM workflows.")
 
 
 class ApiRouteIntegrationTests(unittest.TestCase):
@@ -282,6 +318,234 @@ class ApiRouteIntegrationTests(unittest.TestCase):
             for row in self.db.query(AuditLog).filter(AuditLog.action.like("knowledge.%")).all()
         }
         self.assertEqual(actions, {"knowledge.upload", "knowledge.delete"})
+
+    def test_knowledge_sync_returns_authoritative_documents_and_chunks(self) -> None:
+        document = KnowledgeDocument(
+            title="Core policy",
+            source_type="txt",
+            source_uri="core.txt",
+            scope="main",
+            scope_level="global",
+        )
+        self.db.add(document)
+        self.db.flush()
+        self.db.add(
+            KnowledgeChunk(
+                document_id=document.id,
+                chunk_index=0,
+                content="Core policy chunk",
+                source_type="txt",
+                source_uri="core.txt",
+                scope_level="global",
+            )
+        )
+        self.db.commit()
+
+        response = self.client.get("/api/knowledge/sync", params={"scope": "main"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["error"])
+        self.assertEqual(payload["documents"][0]["title"], "Core policy")
+        self.assertEqual(payload["documents"][0]["chunks"][0]["content"], "Core policy chunk")
+        self.assertEqual(payload["next_cursor"], document.id)
+
+    def test_knowledge_sync_manifest_returns_authoritative_document_ids(self) -> None:
+        document = KnowledgeDocument(
+            title="Manifest policy",
+            source_type="txt",
+            source_uri="manifest.txt",
+            scope="main",
+            scope_level="global",
+        )
+        self.db.add(document)
+        self.db.commit()
+
+        response = self.client.get("/api/knowledge/sync/manifest", params={"scope": "main"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["error"])
+        self.assertEqual(payload["scope"], "main")
+        self.assertEqual(payload["cursor"], document.id)
+        self.assertEqual(payload["documents"][0]["id"], document.id)
+        self.assertIn("checksum", payload["documents"][0])
+
+    def test_knowledge_sync_rejects_temporary_scope(self) -> None:
+        response = self.client.get("/api/knowledge/sync", params={"scope": "temporary"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("scope must be main", response.json()["detail"])
+
+    def test_validated_evidence_promotion_persists_document_and_chunks(self) -> None:
+        response = self.client.post(
+            "/api/validated-evidence/promote",
+            json={
+                "title": "Accepted evidence",
+                "source_type": "pdf",
+                "source_uri": "evidence.pdf",
+                "country_id": 1,
+                "sector_id": 2,
+                "session_key": "session-1",
+                "validation_summary": "accepted",
+                "chunks": [
+                    {
+                        "content": "Validated evidence chunk",
+                        "page_number": 3,
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["error"])
+        document_id = payload["document"]["id"]
+        self.assertEqual(payload["document"]["chunks"][0]["document_id"], document_id)
+        self.assertIsNotNone(payload["document"]["chunks"][0]["id"])
+        self.assertIsNotNone(payload["version"])
+        document = self.db.get(KnowledgeDocument, document_id)
+        self.assertIsNotNone(document)
+        self.assertEqual(document.scope, "validated_evidence")
+        self.assertEqual(document.user_id, self.user.id)
+        chunk = self.db.query(KnowledgeChunk).filter(KnowledgeChunk.document_id == document_id).one()
+        self.assertEqual(chunk.content, "Validated evidence chunk")
+        audit = self.db.query(AuditLog).filter(AuditLog.action == "validated_evidence.promote").one()
+        self.assertEqual(audit.target_id, str(document_id))
+
+        sync_response = self.client.get("/api/knowledge/sync", params={"scope": "validated_evidence"})
+        self.assertEqual(sync_response.status_code, 200)
+        sync_payload = sync_response.json()
+        self.assertEqual(sync_payload["documents"][0]["id"], document_id)
+        self.assertEqual(sync_payload["documents"][0]["chunks"][0]["content"], "Validated evidence chunk")
+
+    def test_validated_evidence_sync_filters_to_authorized_records(self) -> None:
+        other_user = AppUser(
+            email="other@example.com",
+            name="Other",
+            password_hash=hash_password("Password!1"),
+            designation="Analyst",
+            organisation_type="Local",
+            organisation_name="Other Org",
+            role="user",
+        )
+        self.db.add(other_user)
+        self.db.flush()
+        own_document = KnowledgeDocument(
+            user_id=self.user.id,
+            title="Own validated evidence",
+            source_type="txt",
+            source_uri="own.txt",
+            scope="validated_evidence",
+            scope_level="global",
+        )
+        other_document = KnowledgeDocument(
+            user_id=other_user.id,
+            title="Other user's evidence",
+            source_type="txt",
+            source_uri="other.txt",
+            scope="validated_evidence",
+            scope_level="global",
+        )
+        public_document = KnowledgeDocument(
+            user_id=None,
+            title="Public validated evidence",
+            source_type="txt",
+            source_uri="public.txt",
+            scope="validated_evidence",
+            scope_level="global",
+        )
+        self.db.add_all([own_document, other_document, public_document])
+        self.db.commit()
+
+        response = self.client.get("/api/knowledge/sync/manifest", params={"scope": "validated_evidence"})
+
+        self.assertEqual(response.status_code, 200)
+        titles_by_id = {
+            row.id: row.title
+            for row in (own_document, other_document, public_document)
+        }
+        synced_titles = {
+            titles_by_id[item["id"]]
+            for item in response.json()["documents"]
+        }
+        self.assertEqual(synced_titles, {"Own validated evidence", "Public validated evidence"})
+
+    def test_chat_evidence_upload_does_not_use_backend_temporary_kb(self) -> None:
+        with (
+            patch.object(api_routes, "KnowledgeBaseService", FailingKnowledgeBaseService),
+            patch.object(api_routes, "ChatService", FailingChatService),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                data={
+                    "message": "Reason: test",
+                    "session_id": "session-1",
+                    "evidence_url": "https://example.org/evidence",
+                },
+                files={"evidence_file": ("evidence.txt", b"client-side only", "text/plain")},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Temporary evidence must be handled by the client app", response.json()["detail"])
+        self.assertEqual(self.db.query(UserChatMessage).count(), 0)
+        self.assertEqual(self.db.query(KnowledgeDocument).count(), 0)
+
+    def test_session_state_with_local_workflow_result_does_not_persist_temporary_evidence(self) -> None:
+        response = self.client.post(
+            "/api/sessions/state",
+            json={
+                "session_id": "client-session",
+                "phase": "hazard_validation",
+                "session": {
+                    "workflow_result": {
+                        "workflow": "hazard_validation",
+                        "status": "ok",
+                        "summary": "accepted locally",
+                    }
+                },
+                "messages": [
+                    {"role": "user", "content": "Reason: locally validated"},
+                    {"role": "bot", "content": "Accepted with local temporary evidence."},
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.db.query(KnowledgeDocument).count(), 0)
+        self.assertEqual(self.db.query(KnowledgeChunk).count(), 0)
+
+    def test_session_state_endpoint_persists_client_snapshot_and_messages(self) -> None:
+        response = self.client.post(
+            "/api/sessions/state",
+            json={
+                "session_id": "client-session",
+                "title": "Client Session",
+                "country_id": 1,
+                "region_id": 2,
+                "sector_id": 3,
+                "session": {
+                    "country": "Germany",
+                    "region": "Bavaria",
+                    "sector": "Transport",
+                    "phase": "client_validation",
+                },
+                "messages": [
+                    {"role": "user", "content": "Client-side message"},
+                    {"role": "assistant", "content": "Client-side answer"},
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["error"])
+        self.assertEqual(payload["session_id"], "client-session")
+        user_session = self.db.query(UserSession).filter(UserSession.session_key == "client-session").one()
+        self.assertEqual(user_session.user_id, self.user.id)
+        self.assertEqual(user_session.country_id, 1)
+        messages = self.db.query(UserChatMessage).filter(UserChatMessage.user_session_id == user_session.id).all()
+        self.assertEqual([message.content for message in messages], ["Client-side message", "Client-side answer"])
 
     def test_json_endpoint_rejects_oversized_body_before_parse(self) -> None:
         with self._temporary_route_limits(max_json_bytes=32):

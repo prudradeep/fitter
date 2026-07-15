@@ -93,21 +93,78 @@ function cookieValue(name) {
     ?.slice(prefix.length) || "";
 }
 
+function localStorageValue(name) {
+  try {
+    return localStorage.getItem(name) || "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function setDrTransitionBackendBaseUrl(value) {
+  const clean = String(value || "").trim().replace(/\/+$/, "");
+  window.DrTransitionBackendBaseUrl = clean;
+  if (clean) {
+    try {
+      localStorage.setItem("dr_transition_backend_base_url", clean);
+    } catch (_error) {
+      // Runtime config remains in memory when localStorage is unavailable.
+    }
+  }
+}
+
+function hostedBackendBaseUrl() {
+  return String(
+    window.DrTransitionBackendBaseUrl ||
+    localStorageValue("dr_transition_backend_base_url") ||
+    ""
+  ).replace(/\/+$/, "");
+}
+
+function hostedApiUrl(url) {
+  const value = String(url || "");
+  if (/^https?:\/\//i.test(value)) return value;
+  if (!value.startsWith("/api/") && !value.startsWith("/health/")) return value;
+  const baseUrl = hostedBackendBaseUrl();
+  return baseUrl ? `${baseUrl}${value}` : value;
+}
+
+function authHeaders(headers = {}) {
+  const token = localStorageValue("dr_transition_auth_token");
+  return token && !headers.Authorization ? { ...headers, Authorization: `Bearer ${token}` } : { ...headers };
+}
+
 function csrfHeaders(headers = {}) {
-  const token = cookieValue("dr_transition_csrf");
+  const token = cookieValue("dr_transition_csrf") || localStorageValue("dr_transition_csrf");
   return token ? { ...headers, "X-CSRF-Token": token } : { ...headers };
+}
+
+function apiFetch(url, options = {}) {
+  return fetch(hostedApiUrl(url), {
+    ...options,
+    credentials: "include",
+    headers: authHeaders(options.headers || {}),
+  });
 }
 
 function csrfFetch(url, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-    return fetch(url, options);
+    return apiFetch(url, options);
   }
-  return fetch(url, {
+  return apiFetch(url, {
     ...options,
     headers: csrfHeaders(options.headers || {}),
   });
 }
+
+window.DrTransitionAPI = {
+  apiFetch,
+  csrfFetch,
+  hostedApiUrl,
+  hostedBackendBaseUrl,
+  setBackendBaseUrl: setDrTransitionBackendBaseUrl,
+};
 
 function levenshteinDistance(a, b) {
   const previous = Array.from({ length: b.length + 1 }, (_, index) => index);

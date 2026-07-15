@@ -1,6 +1,25 @@
 # Dr Transition
 
-Dr Transition is a local browser-based FastAPI application for guided Twin-Transition policy analysis. It uses a single chat endpoint to walk users through country, region, and sector selection, with MySQL-backed reference data and optional local Ollama support.
+Dr Transition is a split frontend/backend application for guided Twin-Transition
+policy analysis. The hosted FastAPI backend owns authentication, MySQL-backed
+persistence, knowledge sync, and validated evidence storage. The Windows/Tauri
+desktop client owns local LLM calls, local embeddings, local RAG, temporary
+evidence, and workflow interaction.
+
+## Target Architecture Boundary
+
+The server/client split migration is governed by
+[`docs/ARCHITECTURE_BOUNDARIES.md`](docs/ARCHITECTURE_BOUNDARIES.md).
+
+Target ownership:
+
+- Hosted server: authentication, MySQL persistence, sessions, main knowledge
+  base, validated evidence, sync APIs, and audit logging.
+- Windows desktop app: frontend, local LLM calls, local embeddings, local RAG,
+  client-only temporary evidence, and local knowledge indexes.
+- Temporary evidence never reaches the hosted server before validation.
+- The Windows installer target bundles the desktop client only, not backend
+  APIs, schema, migrations, seeds, MySQL, or production secrets.
 
 ## Prerequisites
 
@@ -369,19 +388,21 @@ http://localhost:8000/health
 
 ## Windows Desktop Installer
 
-The repository includes an initial Windows desktop packaging layer under
-`desktop/tauri/` and `packaging/windows/`.
+The Windows installer is now a desktop-client package. It points at the hosted
+backend for authentication, MySQL persistence, session state, knowledge sync,
+and validated evidence storage. Local LLM, embeddings, RAG, temporary evidence,
+and workflow handling run on the user's machine.
 
-The packaged desktop target is:
+The installer payload includes:
 
 - `DrTransition.exe`, a native Tauri/WebView2 launcher
-- `drtransition-backend.exe`, the main FastAPI backend
-- `drtransition-reranker.exe`, the grounding reranker service
-- `drtransition-nli.exe`, the grounding NLI service
+- frontend static/template assets
+- local prompt/reference assets
+- default hosted-backend/Ollama config template
+- Ollama/model compatibility helper scripts
 
-On launch, `DrTransition.exe` starts the backend, reranker, and NLI services as
-hidden local processes, waits for their health checks, then opens the app in its
-own desktop window instead of the user's browser.
+It does not include FastAPI backend services, schema files, migrations, seeds,
+MySQL assets, database scripts, or production secrets.
 
 Build documentation is in:
 
@@ -452,10 +473,11 @@ $env:DR_TRANSITION_TEST_PASSWORD = "local-admin-password"
 
 ## API
 
-The full chat flow uses one endpoint:
+The hosted backend is a persistence and sync API. LLM/RAG workflow turns run in
+the client app.
 
 ```http
-POST /api/chat
+POST /api/sessions/state
 Content-Type: application/json
 ```
 
@@ -463,8 +485,19 @@ Request:
 
 ```json
 {
-  "message": "Spain",
-  "session_id": "optional-session-id"
+  "session_id": "optional-session-id",
+  "phase": "hazard_validation",
+  "session": {
+    "workflow_result": {
+      "workflow": "hazard_validation",
+      "status": "ok",
+      "summary": "Accepted locally"
+    }
+  },
+  "messages": [
+    { "role": "user", "content": "Reason: ..." },
+    { "role": "bot", "content": "Accepted with local evidence." }
+  ]
 }
 ```
 
@@ -473,26 +506,41 @@ Response:
 ```json
 {
   "session_id": "uuid",
-  "step": "region",
-  "bot_message": "Great. Select your region in Spain.",
-  "options": [{ "id": 1, "label": "Andalusia" }],
-  "session": {
-    "country": "Spain",
-    "region": null,
-    "sector": null
-  },
+  "title": "New policy session",
+  "messages": 2,
   "error": false
 }
 ```
 
-Reset a session:
+Knowledge sync:
+
+```http
+GET /api/knowledge/sync/manifest?scope=main
+GET /api/knowledge/sync?scope=main&include_chunks=true
+```
+
+Validated evidence promotion:
 
 ```json
 {
-  "message": "/reset",
-  "session_id": "existing-session-id"
+  "title": "Accepted evidence",
+  "source_type": "pdf",
+  "source_uri": "evidence.pdf",
+  "session_key": "session-id",
+  "validation_summary": "accepted",
+  "chunks": [
+    { "content": "Validated evidence chunk", "page_number": 3 }
+  ]
 }
 ```
+
+The frontend must not use `/api/chat`, `/api/stats-deep-dive`, or
+`/api/auto-user-message` for LLM work. Those workflows are handled by
+`window.DrTransitionWorkflows` and local Ollama/RAG modules.
+
+Deployment guidance is in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). For an
+Ubuntu server with MySQL, Nginx, and systemd, use
+[`docs/UBUNTU_BACKEND_DEPLOYMENT.md`](docs/UBUNTU_BACKEND_DEPLOYMENT.md).
 
 ## Project Structure
 
