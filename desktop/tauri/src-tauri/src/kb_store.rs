@@ -152,7 +152,8 @@ impl KnowledgeStore {
     }
 
     pub fn init(&self) -> Result<()> {
-        fs::create_dir_all(&self.root).with_context(|| format!("failed to create {}", self.root.display()))?;
+        fs::create_dir_all(&self.root)
+            .with_context(|| format!("failed to create {}", self.root.display()))?;
         for scope in PERSISTENT_SCOPES {
             let path = self.scope_path(scope, None)?;
             fs::create_dir_all(path.join("documents"))?;
@@ -197,7 +198,11 @@ impl KnowledgeStore {
         self.read_or_create_manifest(scope, session_id, &path)
     }
 
-    pub fn list_documents(&self, scope: &str, session_id: Option<&str>) -> Result<Vec<KnowledgeDocument>> {
+    pub fn list_documents(
+        &self,
+        scope: &str,
+        session_id: Option<&str>,
+    ) -> Result<Vec<KnowledgeDocument>> {
         let path = self.scope_path(scope, session_id)?;
         let documents_path = path.join("documents");
         if !documents_path.exists() {
@@ -217,7 +222,12 @@ impl KnowledgeStore {
         Ok(documents)
     }
 
-    pub fn get_document(&self, scope: &str, session_id: Option<&str>, document_id: &str) -> Result<Option<KnowledgeDocument>> {
+    pub fn get_document(
+        &self,
+        scope: &str,
+        session_id: Option<&str>,
+        document_id: &str,
+    ) -> Result<Option<KnowledgeDocument>> {
         let path = self.document_path(scope, session_id, document_id)?;
         if !path.exists() {
             return Ok(None);
@@ -235,10 +245,17 @@ impl KnowledgeStore {
 
         for document in batch.documents {
             let document_id = validate_id("document id", &document.id)?;
-            let checksum = document.checksum.clone().unwrap_or_else(|| fallback_document_checksum(&document));
-            let document_path = path.join("documents").join(format!("{}.json", file_key(document_id)));
+            let checksum = document
+                .checksum
+                .clone()
+                .unwrap_or_else(|| fallback_document_checksum(&document));
+            let document_path = path
+                .join("documents")
+                .join(format!("{}.json", file_key(document_id)));
             write_json(&document_path, &document)?;
-            manifest.document_checksums.insert(document_id.to_string(), checksum);
+            manifest
+                .document_checksums
+                .insert(document_id.to_string(), checksum);
             manifest.tombstones.remove(document_id);
         }
 
@@ -256,7 +273,9 @@ impl KnowledgeStore {
 
         for id in batch.document_ids {
             let document_id = validate_id("document id", &id)?;
-            let document_path = path.join("documents").join(format!("{}.json", file_key(document_id)));
+            let document_path = path
+                .join("documents")
+                .join(format!("{}.json", file_key(document_id)));
             if document_path.exists() {
                 fs::remove_file(document_path)?;
             }
@@ -313,19 +332,34 @@ impl KnowledgeStore {
         let scope = validate_scope(scope)?;
         let path = if scope == TEMPORARY_SCOPE {
             let session_id = validate_session(scope, session_id)?;
-            self.root.join(TEMPORARY_SCOPE).join(file_key(session_id.expect("temporary session id should exist")))
+            self.root.join(TEMPORARY_SCOPE).join(file_key(
+                session_id.expect("temporary session id should exist"),
+            ))
         } else {
             self.root.join(scope)
         };
         Ok(path)
     }
 
-    fn document_path(&self, scope: &str, session_id: Option<&str>, document_id: &str) -> Result<PathBuf> {
+    fn document_path(
+        &self,
+        scope: &str,
+        session_id: Option<&str>,
+        document_id: &str,
+    ) -> Result<PathBuf> {
         let document_id = validate_id("document id", document_id)?;
-        Ok(self.scope_path(scope, session_id)?.join("documents").join(format!("{}.json", file_key(document_id))))
+        Ok(self
+            .scope_path(scope, session_id)?
+            .join("documents")
+            .join(format!("{}.json", file_key(document_id))))
     }
 
-    fn read_or_create_manifest(&self, scope: &str, session_id: Option<&str>, path: &Path) -> Result<ScopeManifest> {
+    fn read_or_create_manifest(
+        &self,
+        scope: &str,
+        session_id: Option<&str>,
+        path: &Path,
+    ) -> Result<ScopeManifest> {
         fs::create_dir_all(path.join("documents"))?;
         let manifest_path = path.join("manifest.json");
         if manifest_path.exists() {
@@ -357,7 +391,11 @@ impl ScopeManifest {
     }
 }
 
-fn update_manifest_sync(manifest: &mut ScopeManifest, sync_cursor: Option<String>, checksum: Option<String>) {
+fn update_manifest_sync(
+    manifest: &mut ScopeManifest,
+    sync_cursor: Option<String>,
+    checksum: Option<String>,
+) {
     if sync_cursor.is_some() {
         manifest.sync_cursor = sync_cursor;
     }
@@ -378,7 +416,8 @@ fn validate_scope(scope: &str) -> Result<&str> {
 
 fn validate_session<'a>(scope: &str, session_id: Option<&'a str>) -> Result<Option<&'a str>> {
     if scope == TEMPORARY_SCOPE {
-        let session_id = session_id.ok_or_else(|| anyhow!("temporary knowledge requires a session id"))?;
+        let session_id =
+            session_id.ok_or_else(|| anyhow!("temporary knowledge requires a session id"))?;
         return Ok(Some(validate_id("session id", session_id)?));
     }
     if session_id.is_some() {
@@ -407,7 +446,11 @@ fn file_key(value: &str) -> String {
 }
 
 fn fallback_document_checksum(document: &KnowledgeDocument) -> String {
-    format!("chunks:{}:title:{}", document.chunks.len(), document.title.as_deref().unwrap_or(""))
+    format!(
+        "chunks:{}:title:{}",
+        document.chunks.len(),
+        document.title.as_deref().unwrap_or("")
+    )
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {

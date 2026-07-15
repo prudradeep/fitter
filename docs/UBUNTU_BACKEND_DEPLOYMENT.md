@@ -35,12 +35,12 @@ sudo mkdir -p /opt/dr-transition
 sudo chown drtransition:drtransition /opt/dr-transition
 ```
 
-Install `uv` and Python 3.12 for the service user:
+Install `uv` system-wide and let it manage Python 3.12 for the service user:
 
 ```bash
-sudo -u drtransition -H bash -lc 'curl -LsSf https://astral.sh/uv/install.sh | sh'
-sudo -u drtransition -H bash -lc '~/.local/bin/uv --version'
-sudo -u drtransition -H bash -lc '~/.local/bin/uv python install 3.12'
+curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
+/usr/local/bin/uv --version
+sudo -u drtransition -H bash -lc '/usr/local/bin/uv python install 3.12'
 ```
 
 Confirm system packages:
@@ -55,8 +55,8 @@ Clone or copy the backend release:
 ```bash
 sudo -u drtransition git clone <your-repo-url> /opt/dr-transition
 cd /opt/dr-transition
-sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && ~/.local/bin/uv python pin 3.12'
-sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && ~/.local/bin/uv sync'
+sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && /usr/local/bin/uv python pin 3.12'
+sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && /usr/local/bin/uv sync'
 ```
 
 If you deploy with archives instead of Git, unpack the release into
@@ -117,6 +117,16 @@ LLM_LOG_TO_DB=false
 LLM_LOG_INCLUDE_PAYLOADS=false
 ```
 
+If the database password contains URL-reserved characters, encode them in
+`DATABASE_URL`. For example, `@` becomes `%40`, `#` becomes `%23`, `/` becomes
+`%2F`, and `:` becomes `%3A`.
+
+Example:
+
+```env
+DATABASE_URL="mysql+pymysql://drtransition:Anyth!ng%401301@127.0.0.1:3306/drtransition"
+```
+
 Generate a strong secret:
 
 ```bash
@@ -134,18 +144,22 @@ sudo chmod 600 /opt/dr-transition/.env
 
 ```bash
 cd /opt/dr-transition
-sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && ~/.local/bin/uv run python scripts/apply_migrations.py --apply-base-schema'
-sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && ~/.local/bin/uv run python scripts/apply_migrations.py'
-sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && ~/.local/bin/uv run python -m app.seed_data'
+sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && PYTHONPATH=/opt/dr-transition /usr/local/bin/uv run python scripts/apply_migrations.py --apply-base-schema'
+sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && PYTHONPATH=/opt/dr-transition /usr/local/bin/uv run python scripts/apply_migrations.py'
+sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && PYTHONPATH=/opt/dr-transition /usr/local/bin/uv run python -m app.seed_data'
 ```
 
 For future releases, usually run only:
 
 ```bash
-sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && ~/.local/bin/uv run python scripts/apply_migrations.py'
+sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && PYTHONPATH=/opt/dr-transition /usr/local/bin/uv run python scripts/apply_migrations.py'
 ```
 
 Run the seed command again only when reference data changes.
+
+If you see `ModuleNotFoundError: No module named 'app'`, rerun the command with
+`PYTHONPATH=/opt/dr-transition` as shown above. This is required because the
+repository is not installed as a Python package during deployment.
 
 ## 6. Create systemd Service
 
@@ -166,7 +180,7 @@ User=drtransition
 Group=drtransition
 WorkingDirectory=/opt/dr-transition
 EnvironmentFile=/opt/dr-transition/.env
-ExecStart=/home/drtransition/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips="127.0.0.1"
+ExecStart=/usr/local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips="127.0.0.1"
 Restart=always
 RestartSec=5
 
@@ -177,7 +191,7 @@ WantedBy=multi-user.target
 If `uv` is installed somewhere else, check with:
 
 ```bash
-sudo -u drtransition -H bash -lc 'command -v ~/.local/bin/uv && ~/.local/bin/uv --version'
+/usr/local/bin/uv --version
 ```
 
 Then update `ExecStart`.
@@ -208,6 +222,27 @@ sudo nano /etc/nginx/sites-available/dr-transition
 server {
     listen 80;
     server_name api.example.org;
+
+    client_max_body_size 20m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+If you are testing by public IP before DNS is ready, make this the default
+server block and include the IP:
+
+```nginx
+server {
+    listen 80 default_server;
+    server_name 13.232.131.219 _;
 
     client_max_body_size 20m;
 
@@ -288,6 +323,14 @@ curl -i https://api.example.org/health/live
 curl -i https://api.example.org/health/ready
 ```
 
+When testing by public IP before HTTPS/DNS:
+
+```bash
+curl -i http://13.232.131.219/health/live
+curl -i http://13.232.131.219/health/ready
+curl -i http://13.232.131.219/login
+```
+
 From a browser:
 
 1. Open `https://api.example.org/login`.
@@ -312,8 +355,8 @@ From the Windows desktop app:
 cd /opt/dr-transition
 sudo systemctl stop dr-transition
 sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && git pull'
-sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && ~/.local/bin/uv sync'
-sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && ~/.local/bin/uv run python scripts/apply_migrations.py'
+sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && /usr/local/bin/uv sync'
+sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && PYTHONPATH=/opt/dr-transition /usr/local/bin/uv run python scripts/apply_migrations.py'
 sudo systemctl start dr-transition
 sudo systemctl status dr-transition
 curl -fsS https://api.example.org/health/ready
@@ -322,7 +365,7 @@ curl -fsS https://api.example.org/health/ready
 Run seeds only when reference data changed:
 
 ```bash
-sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && ~/.local/bin/uv run python -m app.seed_data'
+sudo -u drtransition -H bash -lc 'cd /opt/dr-transition && PYTHONPATH=/opt/dr-transition /usr/local/bin/uv run python -m app.seed_data'
 ```
 
 ## 13. Useful Checks

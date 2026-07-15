@@ -20,4 +20,5 @@ if (-not $NoVersionBump) {
 }
 
 & (Join-Path $PSScriptRoot "build-desktop-launcher.ps1")
+& (Join-Path $PSScriptRoot "build-grounding-services.ps1")
 & (Join-Path $PSScriptRoot "build-installer.ps1")

@@ -471,6 +471,20 @@ $env:DR_TRANSITION_TEST_PASSWORD = "local-admin-password"
 .\scripts\ci_check.ps1
 ```
 
+For the real desktop smoke path against a hosted test backend, install a built
+desktop app first, then run:
+
+```powershell
+uv sync --extra browser
+uv run playwright install chromium
+$env:DR_TRANSITION_DESKTOP_SMOKE = "1"
+$env:DR_TRANSITION_DESKTOP_EXE = "C:\Program Files\Dr Transition\DrTransition.exe"
+$env:DR_TRANSITION_HOSTED_TEST_BACKEND_URL = "https://api.example.org"
+$env:DR_TRANSITION_TEST_EMAIL = "admin@example.com"
+$env:DR_TRANSITION_TEST_PASSWORD = "test-password"
+uv run python -m unittest tests.browser.test_desktop_hosted_smoke
+```
+
 ## API
 
 The hosted backend is a persistence and sync API. LLM/RAG workflow turns run in

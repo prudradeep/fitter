@@ -1,5 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+# Deprecated archive only.
+#
+# The Windows installer no longer bundles the FastAPI/backend service, schema,
+# migrations, seeds, or MySQL assets. Hosted backend deployment owns those
+# responsibilities. This historical spec is retained only as an archive record
+# while the active Windows package uses the Tauri launcher plus local
+# reranker/NLI companion specs.
+
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules

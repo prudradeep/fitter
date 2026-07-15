@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.2"
+#define MyAppVersion "0.1.3"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 
@@ -274,6 +274,106 @@ begin
   Result := False;
 end;
 
+function RunOllamaDependencyCheck(ChatModel: String; EmbeddingModel: String; var Reason: AnsiString): Integer;
+var
+  PowerShell: String;
+  CheckScriptPath: String;
+  ReasonPath: String;
+  Script: String;
+  Params: String;
+  ResultCode: Integer;
+begin
+  PowerShell := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  CheckScriptPath := ExpandConstant('{tmp}\drtransition-ollama-check.ps1');
+  ReasonPath := ExpandConstant('{tmp}\drtransition-ollama-check.reason.txt');
+
+  DeleteFile(ReasonPath);
+
+  Script :=
+    '$ErrorActionPreference = "Stop"' + #13#10 +
+    '$chatModel = ' + PowerShellStringLiteral(ChatModel) + #13#10 +
+    '$embeddingModel = ' + PowerShellStringLiteral(EmbeddingModel) + #13#10 +
+    '$reasonPath = ' + PowerShellStringLiteral(ReasonPath) + #13#10 +
+    '$ollamaBaseUrl = "http://127.0.0.1:11434"' + #13#10 +
+    '$utf8NoBom = New-Object System.Text.UTF8Encoding($false)' + #13#10 +
+    'function Write-Reason { param([string]$Message) [System.IO.File]::WriteAllText($reasonPath, $Message, $utf8NoBom) }' + #13#10 +
+    'function Test-ModelPresent {' + #13#10 +
+    '  param([string[]]$Models, [string]$Expected)' + #13#10 +
+    '  if ([string]::IsNullOrWhiteSpace($Expected)) { return $false }' + #13#10 +
+    '  foreach ($model in $Models) {' + #13#10 +
+    '    if ($model -eq $Expected) { return $true }' + #13#10 +
+    '    if (($model -replace ":latest$", "") -eq $Expected) { return $true }' + #13#10 +
+    '    if ($model -eq ($Expected + ":latest")) { return $true }' + #13#10 +
+    '  }' + #13#10 +
+    '  return $false' + #13#10 +
+    '}' + #13#10 +
+    'try {' + #13#10 +
+    '  $response = Invoke-RestMethod -Method Get -Uri ($ollamaBaseUrl + "/api/tags") -TimeoutSec 5' + #13#10 +
+    '} catch {' + #13#10 +
+    '  Write-Reason ("Ollama is not reachable at " + $ollamaBaseUrl + ". Install Ollama, start it, then run this installer again.")' + #13#10 +
+    '  exit 10' + #13#10 +
+    '}' + #13#10 +
+    '$models = @($response.models | ForEach-Object { [string]$_.name })' + #13#10 +
+    '$missing = @()' + #13#10 +
+    'if (-not (Test-ModelPresent -Models $models -Expected $chatModel)) { $missing += $chatModel }' + #13#10 +
+    'if (-not (Test-ModelPresent -Models $models -Expected $embeddingModel)) { $missing += $embeddingModel }' + #13#10 +
+    'if (@($missing).Count -gt 0) {' + #13#10 +
+    '  $installed = if ($models.Count -gt 0) { ($models -join ", ") } else { "none" }' + #13#10 +
+    '  $commands = ($missing | ForEach-Object { "ollama pull " + $_ }) -join [Environment]::NewLine' + #13#10 +
+    '  Write-Reason ("Required Ollama models are missing." + [Environment]::NewLine + [Environment]::NewLine + "Installed models: " + $installed + [Environment]::NewLine + [Environment]::NewLine + "Run:" + [Environment]::NewLine + $commands + [Environment]::NewLine + [Environment]::NewLine + "Then run this installer again.")' + #13#10 +
+    '  exit 11' + #13#10 +
+    '}' + #13#10 +
+    'Write-Reason ("Ollama is reachable and required models are installed.")' + #13#10 +
+    'exit 0' + #13#10;
+
+  SaveStringToFile(CheckScriptPath, Script, False);
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + CheckScriptPath + '"';
+
+  if not Exec(PowerShell, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Result := -1;
+    Exit;
+  end;
+
+  if FileExists(ReasonPath) then
+    LoadStringFromFile(ReasonPath, Reason);
+
+  Result := ResultCode;
+end;
+
+function EnsureOllamaReady(): Boolean;
+var
+  ResultCode: Integer;
+  Reason: AnsiString;
+begin
+  Result := EnsureRecommendedModelSupported();
+  if not Result then
+    Exit;
+
+  ModelPage.Values[0] := CleanModelName(ModelPage.Values[0]);
+  ModelPage.Values[1] := CleanModelName(ModelPage.Values[1]);
+
+  if (Trim(ModelPage.Values[0]) = '') or (Trim(ModelPage.Values[1]) = '') then
+  begin
+    MsgBox('Enter both the chat model and embedding model before continuing.', mbError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+
+  ResultCode := RunOllamaDependencyCheck(ModelPage.Values[0], ModelPage.Values[1], Reason);
+  if ResultCode = 0 then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  if Trim(Reason) = '' then
+    Reason := 'Ollama or one of the required models could not be verified.';
+
+  MsgBox('Dr Transition requires local Ollama and the configured models before installation can continue.' + #13#10#13#10 + Trim(Reason), mbError, MB_OK);
+  Result := False;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
@@ -281,23 +381,32 @@ var
   RecommendedModel: AnsiString;
 begin
   Result := '';
-  if not IsAutoModel(ModelPage.Values[0]) then
-    Exit;
 
-  ResultCode := RunRecommendedModelCheck(Reason, RecommendedModel);
-  if ResultCode = 0 then
+  if IsAutoModel(ModelPage.Values[0]) then
   begin
-    ModelPage.Values[0] := CleanModelName(RecommendedModel);
-    Exit;
+    ResultCode := RunRecommendedModelCheck(Reason, RecommendedModel);
+    if ResultCode = 0 then
+      ModelPage.Values[0] := CleanModelName(RecommendedModel)
+    else
+    begin
+      if Trim(Reason) = '' then
+        Reason := 'This computer does not meet the minimum hardware requirements for local Dr Transition model inference.';
+
+      if ResultCode = 42 then
+        Result := 'Dr Transition cannot be installed on this computer for local model inference.' + #13#10#13#10 + Trim(Reason)
+      else
+        Result := 'Dr Transition could not complete the local model compatibility check.' + #13#10#13#10 + Trim(Reason);
+      Exit;
+    end;
   end;
 
-  if Trim(Reason) = '' then
-    Reason := 'This computer does not meet the minimum hardware requirements for local Dr Transition model inference.';
-
-  if ResultCode = 42 then
-    Result := 'Dr Transition cannot be installed on this computer for local model inference.' + #13#10#13#10 + Trim(Reason)
-  else
-    Result := 'Dr Transition could not complete the local model compatibility check.' + #13#10#13#10 + Trim(Reason);
+  ResultCode := RunOllamaDependencyCheck(CleanModelName(ModelPage.Values[0]), CleanModelName(ModelPage.Values[1]), Reason);
+  if ResultCode <> 0 then
+  begin
+    if Trim(Reason) = '' then
+      Reason := 'Ollama or one of the required models could not be verified.';
+    Result := 'Dr Transition requires local Ollama and the configured models before installation can continue.' + #13#10#13#10 + Trim(Reason);
+  end;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -314,7 +423,7 @@ begin
   end;
   if CurPageID = ModelPage.ID then
   begin
-    Result := EnsureRecommendedModelSupported();
+    Result := EnsureOllamaReady();
     Exit;
   end;
 end;

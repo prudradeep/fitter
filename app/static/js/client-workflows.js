@@ -81,7 +81,20 @@ Do not include markdown fences, retrieved context text, prompts, or private reas
       ? `Choose a country to begin. Available examples: ${countries.join(", ")}.`
       : "Choose a country to begin the analysis.";
     return [
-      "I am ready to run this workflow locally. The hosted server will persist final state, while this desktop app handles local LLM and RAG work.",
+      "This workflow runs on the desktop app using local Ollama models. The hosted server only persists final state.",
+      countryList,
+    ].join("\n\n");
+  }
+
+  function localSetupIntro(error, context = {}) {
+    const countries = (context.countries || []).slice(0, 12);
+    const countryList = countries.length
+      ? `After setup is ready, choose a country to begin. Available examples: ${countries.join(", ")}.`
+      : "After setup is ready, choose a country to begin the analysis.";
+    const detail = error?.message || String(error || "Local LLM/RAG is unavailable.");
+    return [
+      `Local LLM/RAG is not ready: ${detail}`,
+      "Start Ollama and install the configured chat and embedding models, then restart Dr Transition.",
       countryList,
     ].join("\n\n");
   }
@@ -296,7 +309,7 @@ Do not include markdown fences, retrieved context text, prompts, or private reas
         options: optionObjects(context.countries || []),
       });
     } catch (error) {
-      const output = errorOutput(workflow, error, fallbackIntro(context));
+      const output = errorOutput(workflow, error, localSetupIntro(error, context));
       return finishWorkflow(serverData, context, output, {
         step: "country",
         input_mode: "text",

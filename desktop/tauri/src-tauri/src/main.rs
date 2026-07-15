@@ -1,13 +1,19 @@
 use std::{
     collections::HashMap,
     env, fs,
+    fs::File,
     path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
     sync::Mutex,
+    thread,
     time::Duration,
 };
 
 use anyhow::{Context, Result};
-use kb_store::{BatchResult, DeleteBatch, KnowledgeDocument, KnowledgeStore, ScopeManifest, StoreStatus, UpsertBatch};
+use kb_store::{
+    BatchResult, DeleteBatch, KnowledgeDocument, KnowledgeStore, ScopeManifest, StoreStatus,
+    UpsertBatch,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -18,6 +24,8 @@ mod kb_store;
 struct DesktopConfig {
     backend: BackendConfig,
     ollama: OllamaConfig,
+    #[serde(default)]
+    grounding: GroundingConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +46,32 @@ struct OllamaConfig {
     selected_model: String,
     #[serde(rename = "embeddingModel")]
     embedding_model: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+struct GroundingConfig {
+    enabled: bool,
+    #[serde(rename = "rerankerUrl")]
+    reranker_url: String,
+    #[serde(rename = "rerankerHealthUrl")]
+    reranker_health_url: String,
+    #[serde(rename = "nliUrl")]
+    nli_url: String,
+    #[serde(rename = "nliHealthUrl")]
+    nli_health_url: String,
+}
+
+impl Default for GroundingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            reranker_url: "http://127.0.0.1:8081/rerank".to_string(),
+            reranker_health_url: "http://127.0.0.1:8081/health".to_string(),
+            nli_url: "http://127.0.0.1:8082/entail".to_string(),
+            nli_health_url: "http://127.0.0.1:8082/health".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,6 +95,7 @@ struct RuntimeCheck {
 struct EffectiveRuntimeConfig {
     backend: EffectiveBackendConfig,
     ollama: EffectiveOllamaConfig,
+    grounding: EffectiveGroundingConfig,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +112,16 @@ struct EffectiveOllamaConfig {
     base_url: String,
     chat_model: String,
     embedding_model: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EffectiveGroundingConfig {
+    enabled: bool,
+    reranker_url: String,
+    reranker_health_url: String,
+    nli_url: String,
+    nli_health_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,6 +145,7 @@ struct OllamaModelStatus {
 struct RuntimeState {
     diagnostics: Mutex<Option<RuntimeDiagnostics>>,
     knowledge_store: KnowledgeStore,
+    grounding_children: Mutex<Vec<Child>>,
 }
 
 fn main() {
@@ -121,6 +167,7 @@ fn main() {
         .manage(RuntimeState {
             diagnostics: Mutex::new(None),
             knowledge_store: KnowledgeStore::new(knowledge_store_dir()),
+            grounding_children: Mutex::new(Vec::new()),
         })
         .setup(|app| {
             let install_dir = install_dir()?;
@@ -131,7 +178,9 @@ fn main() {
             let state = app.state::<RuntimeState>();
             state.knowledge_store.init()?;
             let env_config = RuntimeEnv::load();
-            let preflight = check_runtime(&config, &env_config, &log_dir);
+            let grounding_checks =
+                start_grounding_services(&config, &env_config, &install_dir, &log_dir, &state);
+            let preflight = check_runtime(&config, &env_config, &log_dir, grounding_checks);
             if !preflight.ready {
                 set_diagnostics(&state, preflight);
                 open_diagnostics_window(app)?;
@@ -150,7 +199,9 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                let _ = window.label();
+                if let Some(state) = window.try_state::<RuntimeState>() {
+                    stop_grounding_services(&state);
+                }
             }
         })
         .run(tauri::generate_context!())
@@ -209,18 +260,36 @@ fn kb_get_document(
 }
 
 #[tauri::command]
-fn kb_upsert_documents(state: tauri::State<'_, RuntimeState>, batch: UpsertBatch) -> Result<BatchResult, String> {
-    state.knowledge_store.upsert_documents(batch).map_err(error_text)
+fn kb_upsert_documents(
+    state: tauri::State<'_, RuntimeState>,
+    batch: UpsertBatch,
+) -> Result<BatchResult, String> {
+    state
+        .knowledge_store
+        .upsert_documents(batch)
+        .map_err(error_text)
 }
 
 #[tauri::command]
-fn kb_delete_documents(state: tauri::State<'_, RuntimeState>, batch: DeleteBatch) -> Result<BatchResult, String> {
-    state.knowledge_store.delete_documents(batch).map_err(error_text)
+fn kb_delete_documents(
+    state: tauri::State<'_, RuntimeState>,
+    batch: DeleteBatch,
+) -> Result<BatchResult, String> {
+    state
+        .knowledge_store
+        .delete_documents(batch)
+        .map_err(error_text)
 }
 
 #[tauri::command]
-fn kb_clear_temporary(state: tauri::State<'_, RuntimeState>, session_id: String) -> Result<(), String> {
-    state.knowledge_store.clear_temporary(&session_id).map_err(error_text)
+fn kb_clear_temporary(
+    state: tauri::State<'_, RuntimeState>,
+    session_id: String,
+) -> Result<(), String> {
+    state
+        .knowledge_store
+        .clear_temporary(&session_id)
+        .map_err(error_text)
 }
 
 #[tauri::command]
@@ -302,7 +371,7 @@ fn effective_runtime_config() -> Result<EffectiveRuntimeConfig> {
             if backend_url_overridden {
                 derived_health_url
             } else {
-                config.backend.health_url
+                config.backend.health_url.clone()
             }
         });
     let auth_check_url = env_config
@@ -313,7 +382,7 @@ fn effective_runtime_config() -> Result<EffectiveRuntimeConfig> {
             if backend_url_overridden {
                 derived_auth_check_url
             } else {
-                config.backend.auth_check_url
+                config.backend.auth_check_url.clone()
             }
         });
     Ok(EffectiveRuntimeConfig {
@@ -334,6 +403,27 @@ fn effective_runtime_config() -> Result<EffectiveRuntimeConfig> {
             embedding_model: env_config
                 .get("OLLAMA_EMBEDDING_MODEL")
                 .unwrap_or(&config.ollama.embedding_model)
+                .to_string(),
+        },
+        grounding: EffectiveGroundingConfig {
+            enabled: grounding_enabled(&config, &env_config),
+            reranker_url: env_config
+                .get("DR_TRANSITION_RERANKER_URL")
+                .or_else(|| env_config.get("RERANKER_URL"))
+                .unwrap_or(&config.grounding.reranker_url)
+                .to_string(),
+            reranker_health_url: env_config
+                .get("DR_TRANSITION_RERANKER_HEALTH_URL")
+                .unwrap_or(&config.grounding.reranker_health_url)
+                .to_string(),
+            nli_url: env_config
+                .get("DR_TRANSITION_NLI_URL")
+                .or_else(|| env_config.get("NLI_URL"))
+                .unwrap_or(&config.grounding.nli_url)
+                .to_string(),
+            nli_health_url: env_config
+                .get("DR_TRANSITION_NLI_HEALTH_URL")
+                .unwrap_or(&config.grounding.nli_health_url)
                 .to_string(),
         },
     })
@@ -431,7 +521,12 @@ fn unquote_env_value(value: &str) -> String {
     value.to_string()
 }
 
-fn check_runtime(config: &DesktopConfig, env_config: &RuntimeEnv, log_dir: &Path) -> RuntimeDiagnostics {
+fn check_runtime(
+    config: &DesktopConfig,
+    env_config: &RuntimeEnv,
+    log_dir: &Path,
+    grounding_checks: Vec<RuntimeCheck>,
+) -> RuntimeDiagnostics {
     let mut checks = Vec::new();
     let backend_base_url = backend_base_url(config, env_config);
     let derived_health_url = join_url(backend_base_url, "health/ready");
@@ -527,13 +622,17 @@ fn check_runtime(config: &DesktopConfig, env_config: &RuntimeEnv, log_dir: &Path
             detail: if present {
                 format!("{model} is downloaded in Ollama.")
             } else if ollama_ok {
-                format!("{model} was not found in Ollama. Installed models: {}.", model_list_text(&models))
+                format!(
+                    "{model} was not found in Ollama. Installed models: {}.",
+                    model_list_text(&models)
+                )
             } else {
                 "Model status could not be checked because Ollama is offline.".to_string()
             },
             action: format!("Run: ollama pull {model}"),
         });
     }
+    checks.extend(grounding_checks);
 
     let ready = checks.iter().all(|check| check.ok);
     RuntimeDiagnostics {
@@ -553,6 +652,187 @@ fn check_runtime(config: &DesktopConfig, env_config: &RuntimeEnv, log_dir: &Path
     }
 }
 
+fn start_grounding_services(
+    config: &DesktopConfig,
+    env_config: &RuntimeEnv,
+    install_dir: &Path,
+    log_dir: &Path,
+    state: &RuntimeState,
+) -> Vec<RuntimeCheck> {
+    if !grounding_enabled(config, env_config) {
+        return vec![RuntimeCheck {
+            name: "Local grounding services".to_string(),
+            ok: true,
+            detail: "Local reranker and NLI services are disabled by runtime configuration."
+                .to_string(),
+            action: "Set DR_TRANSITION_GROUNDING_ENABLED=true to enable local grounding."
+                .to_string(),
+        }];
+    }
+
+    let reranker_health_url = env_config
+        .get("DR_TRANSITION_RERANKER_HEALTH_URL")
+        .unwrap_or(&config.grounding.reranker_health_url)
+        .to_string();
+    let nli_health_url = env_config
+        .get("DR_TRANSITION_NLI_HEALTH_URL")
+        .unwrap_or(&config.grounding.nli_health_url)
+        .to_string();
+
+    vec![
+        start_grounding_service(
+            state,
+            "Reranker service",
+            install_dir,
+            &install_dir
+                .join("services")
+                .join("drtransition-reranker")
+                .join("drtransition-reranker.exe"),
+            &reranker_health_url,
+            "DRTRANSITION_RERANKER_PORT",
+            service_port_from_url(&reranker_health_url, 8081),
+            log_dir,
+        ),
+        start_grounding_service(
+            state,
+            "NLI entailment service",
+            install_dir,
+            &install_dir
+                .join("services")
+                .join("drtransition-nli")
+                .join("drtransition-nli.exe"),
+            &nli_health_url,
+            "DRTRANSITION_NLI_PORT",
+            service_port_from_url(&nli_health_url, 8082),
+            log_dir,
+        ),
+    ]
+}
+
+fn start_grounding_service(
+    state: &RuntimeState,
+    name: &str,
+    install_dir: &Path,
+    exe_path: &Path,
+    health_url: &str,
+    port_env: &str,
+    port: u16,
+    log_dir: &Path,
+) -> RuntimeCheck {
+    if health_ok(health_url) {
+        return RuntimeCheck {
+            name: name.to_string(),
+            ok: true,
+            detail: format!("{name} is already reachable at {health_url}."),
+            action: "No action needed.".to_string(),
+        };
+    }
+    if !exe_path.exists() {
+        return RuntimeCheck {
+            name: name.to_string(),
+            ok: false,
+            detail: format!("{name} executable was not found at {}.", exe_path.display()),
+            action: "Rebuild the installer with packaging\\windows\\scripts\\build-grounding-services.ps1.".to_string(),
+        };
+    }
+
+    let log_name = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let stdout_path = log_dir.join(format!("{log_name}.stdout.log"));
+    let stderr_path = log_dir.join(format!("{log_name}.stderr.log"));
+    let stdout = File::create(&stdout_path)
+        .ok()
+        .map(Stdio::from)
+        .unwrap_or_else(Stdio::null);
+    let stderr = File::create(&stderr_path)
+        .ok()
+        .map(Stdio::from)
+        .unwrap_or_else(Stdio::null);
+    let model_cache = install_dir.join("models").join("huggingface");
+
+    let child = Command::new(exe_path)
+        .env(port_env, port.to_string())
+        .env("HF_HOME", &model_cache)
+        .env("TRANSFORMERS_CACHE", &model_cache)
+        .env("LLM_LOG_ENABLED", "false")
+        .env("LLM_LOG_TO_DB", "false")
+        .env("LLM_LOG_TO_FILE", "false")
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr)
+        .spawn();
+
+    match child {
+        Ok(child) => {
+            state
+                .grounding_children
+                .lock()
+                .expect("grounding child lock poisoned")
+                .push(child);
+            for _ in 0..30 {
+                if health_ok(health_url) {
+                    return RuntimeCheck {
+                        name: name.to_string(),
+                        ok: true,
+                        detail: format!("{name} started and is reachable at {health_url}."),
+                        action: "No action needed.".to_string(),
+                    };
+                }
+                thread::sleep(Duration::from_millis(500));
+            }
+            RuntimeCheck {
+                name: name.to_string(),
+                ok: false,
+                detail: format!("{name} was launched but did not become ready at {health_url}. Logs: {}", log_dir.display()),
+                action: "Check the service logs and confirm the grounding models can load on this machine.".to_string(),
+            }
+        }
+        Err(error) => RuntimeCheck {
+            name: name.to_string(),
+            ok: false,
+            detail: format!("Failed to launch {name}: {error}."),
+            action: "Confirm the installer payload includes the grounding service bundle and Windows security software is not blocking it.".to_string(),
+        },
+    }
+}
+
+fn stop_grounding_services(state: &RuntimeState) {
+    let mut children = state
+        .grounding_children
+        .lock()
+        .expect("grounding child lock poisoned");
+    for child in children.iter_mut() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    children.clear();
+}
+
+fn grounding_enabled(config: &DesktopConfig, env_config: &RuntimeEnv) -> bool {
+    env_config
+        .get("DR_TRANSITION_GROUNDING_ENABLED")
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(config.grounding.enabled)
+}
+
+fn service_port_from_url(url: &str, fallback: u16) -> u16 {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.port())
+        .unwrap_or(fallback)
+}
+
 fn backend_base_url<'a>(config: &'a DesktopConfig, env_config: &'a RuntimeEnv) -> &'a str {
     env_config
         .get("DR_TRANSITION_BACKEND_URL")
@@ -561,7 +841,11 @@ fn backend_base_url<'a>(config: &'a DesktopConfig, env_config: &'a RuntimeEnv) -
 }
 
 fn join_url(base_url: &str, path: &str) -> String {
-    format!("{}/{}", base_url.trim_end_matches('/'), path.trim_start_matches('/'))
+    format!(
+        "{}/{}",
+        base_url.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
 }
 
 fn ollama_models(base_url: &str) -> Result<Vec<String>> {
@@ -572,7 +856,8 @@ fn ollama_models(base_url: &str) -> Result<Vec<String>> {
         .context("failed to query Ollama tags")?
         .into_string()
         .context("failed to read Ollama response")?;
-    let json: serde_json::Value = serde_json::from_str(&raw).context("failed to parse Ollama response")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&raw).context("failed to parse Ollama response")?;
     Ok(json
         .get("models")
         .and_then(|models| models.as_array())
@@ -596,16 +881,16 @@ fn ollama_embedding(base_url: &str, model: &str, text: &str) -> Result<Vec<f32>>
         .context("failed to request Ollama embedding")?
         .into_string()
         .context("failed to read Ollama embedding response")?;
-    let json: serde_json::Value = serde_json::from_str(&raw).context("failed to parse Ollama embedding response")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&raw).context("failed to parse Ollama embedding response")?;
     json.get("embedding")
         .and_then(|value| value.as_array())
         .ok_or_else(|| anyhow::anyhow!("Ollama embedding response did not include an embedding"))?
         .iter()
         .map(|value| {
-            value
-                .as_f64()
-                .map(|number| number as f32)
-                .ok_or_else(|| anyhow::anyhow!("Ollama embedding response contained a non-numeric value"))
+            value.as_f64().map(|number| number as f32).ok_or_else(|| {
+                anyhow::anyhow!("Ollama embedding response contained a non-numeric value")
+            })
         })
         .collect()
 }
@@ -636,7 +921,8 @@ fn ollama_chat_completion(
         .context("failed to request Ollama chat completion")?
         .into_string()
         .context("failed to read Ollama chat response")?;
-    let json: serde_json::Value = serde_json::from_str(&raw).context("failed to parse Ollama chat response")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&raw).context("failed to parse Ollama chat response")?;
     json.get("message")
         .and_then(|message| message.get("content"))
         .or_else(|| json.get("response"))
@@ -646,7 +932,9 @@ fn ollama_chat_completion(
 }
 
 fn model_present(models: &[String], expected: &str) -> bool {
-    models.iter().any(|model| model == expected || model.strip_suffix(":latest") == Some(expected))
+    models
+        .iter()
+        .any(|model| model == expected || model.strip_suffix(":latest") == Some(expected))
 }
 
 fn model_list_text(models: &[String]) -> String {
@@ -658,10 +946,7 @@ fn model_list_text(models: &[String]) -> String {
 }
 
 fn set_diagnostics(state: &RuntimeState, diagnostics: RuntimeDiagnostics) {
-    *state
-        .diagnostics
-        .lock()
-        .expect("runtime lock poisoned") = Some(diagnostics);
+    *state.diagnostics.lock().expect("runtime lock poisoned") = Some(diagnostics);
 }
 
 fn open_diagnostics_window(app: &tauri::App) -> Result<()> {

@@ -6,6 +6,8 @@ $configPayload = Join-Path $payload "config"
 $scriptsPayload = Join-Path $payload "scripts"
 $frontendPayload = Join-Path $payload "frontend"
 $referencePayload = Join-Path $payload "reference"
+$servicesPayload = Join-Path $payload "services"
+$modelsPayload = Join-Path $payload "models"
 
 function Assert-UnderRoot {
     param(
@@ -38,7 +40,7 @@ function Assert-NoServerArtifacts {
     $forbiddenPatterns = @(
         '(^|[\\/])backend([\\/]|$)',
         '(^|[\\/])drtransition-backend(\.exe|[\\/]|$)',
-        '(^|[\\/])app([\\/](routes|db|models|services|seed|schemas\.py|main\.py))',
+        '(^|[\\/])app([\\/](routes|db|models|seed|schemas\.py|main\.py))',
         '(^|[\\/])schema\.sql$',
         '(^|[\\/])migrations?([\\/]|$)',
         '(^|[\\/])seeds?([\\/]|$)',
@@ -78,6 +80,8 @@ New-Item -ItemType Directory -Force -Path $configPayload | Out-Null
 New-Item -ItemType Directory -Force -Path $scriptsPayload | Out-Null
 New-Item -ItemType Directory -Force -Path $frontendPayload | Out-Null
 New-Item -ItemType Directory -Force -Path $referencePayload | Out-Null
+New-Item -ItemType Directory -Force -Path $servicesPayload | Out-Null
+New-Item -ItemType Directory -Force -Path $modelsPayload | Out-Null
 
 $tauriExe = Join-Path $root "desktop\tauri\src-tauri\target\release\drtransition.exe"
 if (-not (Test-Path $tauriExe)) {
@@ -88,6 +92,23 @@ Copy-Item -LiteralPath $tauriExe -Destination (Join-Path $payload "DrTransition.
 Copy-ClientDirectory -Source (Join-Path $root "app\static") -Destination (Join-Path $frontendPayload "static")
 Copy-ClientDirectory -Source (Join-Path $root "app\templates") -Destination (Join-Path $frontendPayload "templates")
 Copy-ClientDirectory -Source (Join-Path $root "app\prompts") -Destination (Join-Path $referencePayload "prompts")
+
+$rerankerBundle = Join-Path $root "dist\drtransition-reranker"
+$nliBundle = Join-Path $root "dist\drtransition-nli"
+if (-not (Test-Path (Join-Path $rerankerBundle "drtransition-reranker.exe"))) {
+    throw "Missing reranker companion service bundle: $rerankerBundle. Run packaging\windows\scripts\build-grounding-services.ps1 first."
+}
+if (-not (Test-Path (Join-Path $nliBundle "drtransition-nli.exe"))) {
+    throw "Missing NLI companion service bundle: $nliBundle. Run packaging\windows\scripts\build-grounding-services.ps1 first."
+}
+Copy-ClientDirectory -Source $rerankerBundle -Destination (Join-Path $servicesPayload "drtransition-reranker")
+Copy-ClientDirectory -Source $nliBundle -Destination (Join-Path $servicesPayload "drtransition-nli")
+
+$groundingModelCache = Join-Path $root "build\windows-installer\model-cache\huggingface"
+if (-not (Test-Path $groundingModelCache)) {
+    throw "Missing local grounding model cache: $groundingModelCache. Run packaging\windows\scripts\build-grounding-services.ps1 first."
+}
+Copy-ClientDirectory -Source $groundingModelCache -Destination (Join-Path $modelsPayload "huggingface")
 
 Copy-Item -LiteralPath (Join-Path $root "packaging\windows\config\default.config.json") -Destination $configPayload -Force
 Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Test-SystemCompatibility.ps1") -Destination $scriptsPayload -Force

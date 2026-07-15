@@ -57,6 +57,8 @@ LLM_LOG_INCLUDE_PAYLOADS=false
 Notes:
 
 - Keep production secrets only on the hosted server.
+- URL-encode reserved characters in `DATABASE_URL` passwords. For example,
+  `@` becomes `%40`.
 - Set `AUTH_COOKIE_SECURE=true` behind HTTPS.
 - Include the deployed web origin and desktop WebView origin in `CORS_ORIGINS`
   if the desktop client reaches the backend cross-origin.
@@ -174,7 +176,33 @@ On the Windows build machine:
 - Inno Setup 6 with `ISCC.exe` on `PATH`
 - Built or available local Ollama on target machines, not bundled in the app
 
-### 2. Build Tauri App
+### 2. Full Release Build
+
+For the normal release path, run:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1
+```
+
+This bumps the patch version, builds the Tauri desktop launcher, assembles the
+local reranker/NLI companion services, assembles the installer payload, and
+builds the Windows installer.
+
+Useful options:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1 -VersionPart Minor
+.\packaging\windows\scripts\build-release.ps1 -Version 1.2.0
+.\packaging\windows\scripts\build-release.ps1 -NoVersionBump
+```
+
+Expected output:
+
+```text
+build/windows-installer/DrTransitionSetup-<version>.exe
+```
+
+### 3. Manual Build: Tauri App
 
 ```powershell
 .\packaging\windows\scripts\build-desktop-launcher.ps1
@@ -186,7 +214,7 @@ Expected output:
 desktop/tauri/src-tauri/target/release/drtransition.exe
 ```
 
-### 3. Assemble Installer Payload
+### 4. Manual Build: Assemble Installer Payload
 
 ```powershell
 .\packaging\windows\scripts\assemble-installer-payload.ps1
@@ -201,6 +229,9 @@ build/windows-installer/payload/
   frontend/static/
   frontend/templates/
   reference/prompts/
+  services/drtransition-reranker/
+  services/drtransition-nli/
+  models/huggingface/
   scripts/Get-ModelRecommendation.ps1
   scripts/Test-SystemCompatibility.ps1
 ```
@@ -214,7 +245,25 @@ backend/database artifacts such as:
 - MySQL/database scripts
 - production `.env`
 
-### 4. Build Installer
+The `services/drtransition-reranker/` and `services/drtransition-nli/` folders
+are client-side companion services only. They run on localhost, do not connect to
+MySQL, and are used by the desktop RAG layer for reranking and entailment.
+The `models/huggingface/` folder contains the pre-cached grounding model weights
+created by `build-grounding-services.ps1`.
+
+The source config template is:
+
+```text
+packaging/windows/config/default.config.json
+```
+
+The assembled installer payload copy is:
+
+```text
+build/windows-installer/payload/config/default.config.json
+```
+
+### 5. Manual Build: Installer Only
 
 ```powershell
 .\packaging\windows\scripts\build-installer.ps1
@@ -226,13 +275,23 @@ Expected output:
 build/windows-installer/DrTransitionSetup-<version>.exe
 ```
 
-### 5. Installer Runtime Configuration
+### 6. Installer Runtime Configuration
 
 During setup, enter:
 
 - Hosted backend URL, for example `https://api.example.org/`
 - Chat model, or `auto`
 - Embedding model, usually `nomic-embed-text`
+
+The installer verifies local Ollama before installation continues. On each
+desktop machine, Ollama must be running at `http://127.0.0.1:11434`, and the
+selected chat model plus embedding model must already be installed. For the
+default model set:
+
+```powershell
+ollama pull mistral-nemo
+ollama pull nomic-embed-text
+```
 
 The installer writes no-secret runtime config to:
 
@@ -255,9 +314,14 @@ DR_TRANSITION_BACKEND_AUTH_CHECK_URL
 OLLAMA_BASE_URL
 OLLAMA_MODEL
 OLLAMA_EMBEDDING_MODEL
+DR_TRANSITION_GROUNDING_ENABLED
+DR_TRANSITION_RERANKER_URL
+DR_TRANSITION_RERANKER_HEALTH_URL
+DR_TRANSITION_NLI_URL
+DR_TRANSITION_NLI_HEALTH_URL
 ```
 
-### 6. Desktop Smoke Test
+### 7. Desktop Smoke Test
 
 On a clean Windows machine:
 
@@ -287,6 +351,25 @@ Client module tests:
 node tests/client_phase12.test.js
 ```
 
+Hosted desktop Playwright smoke test:
+
+```powershell
+uv sync --extra browser
+uv run playwright install chromium
+$env:DR_TRANSITION_DESKTOP_SMOKE = "1"
+$env:DR_TRANSITION_DESKTOP_EXE = "C:\Program Files\Dr Transition\DrTransition.exe"
+$env:DR_TRANSITION_HOSTED_TEST_BACKEND_URL = "https://api.example.org"
+$env:DR_TRANSITION_TEST_EMAIL = "admin@example.com"
+$env:DR_TRANSITION_TEST_PASSWORD = "test-password"
+uv run python -m unittest tests.browser.test_desktop_hosted_smoke
+```
+
+This test launches the real Tauri desktop executable, points its per-run local
+config at the hosted test backend, enables WebView2 remote debugging for the
+test process, connects with Playwright over CDP, and verifies the hosted login
+or app screen. It remains skipped unless `DR_TRANSITION_DESKTOP_SMOKE=1` and the
+required backend/executable variables are set.
+
 Packaging guard:
 
 ```powershell
@@ -304,10 +387,6 @@ Recommended follow-ups before production rollout:
   `uv run python -m unittest tests.test_api_routes`.
 - Add a CI packaging job that runs `assemble-installer-payload.ps1` and the
   forbidden-artifact scan.
-- Remove or archive old PyInstaller specs once nobody needs the historical local
-  service bundle.
-- Add a true Playwright desktop smoke test when a hosted test backend is
-  available.
 - Decide the final desktop origin/CORS policy for Tauri WebView and document it
   beside production proxy config.
 - Add release signing for `DrTransitionSetup-<version>.exe`.

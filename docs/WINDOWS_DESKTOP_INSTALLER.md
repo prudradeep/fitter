@@ -89,7 +89,26 @@ desktop/tauri/src-tauri/icons/icon.ico
 `build-desktop-launcher.ps1` creates it from `app/static/img/logo.png` when it is
 missing.
 
-## Build Installer
+## Release Build
+
+For a full release build, run:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1
+```
+
+By default this bumps the patch version, builds the Tauri desktop launcher, then
+builds the Windows installer.
+
+Useful options:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1 -VersionPart Minor
+.\packaging\windows\scripts\build-release.ps1 -Version 1.2.0
+.\packaging\windows\scripts\build-release.ps1 -NoVersionBump
+```
+
+## Build Installer Only
 
 To package the current already-built desktop payload:
 
@@ -106,7 +125,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionSetup-0.1.2.exe
+build/windows-installer/DrTransitionSetup-0.1.3.exe
 ```
 
 The payload contains only client/runtime assets:
@@ -117,6 +136,9 @@ config/default.config.json
 frontend/static/
 frontend/templates/
 reference/prompts/
+services/drtransition-reranker/
+services/drtransition-nli/
+models/huggingface/
 scripts/Get-ModelRecommendation.ps1
 scripts/Test-SystemCompatibility.ps1
 ```
@@ -126,9 +148,74 @@ backend/database artifacts are detected. It does not include Python backend
 service folders, PyInstaller outputs, `schema.sql`, migrations, seeds, MySQL
 assets, or database scripts.
 
+The reranker and NLI/entailment bundles are local desktop companion services.
+They do not expose backend APIs or connect to MySQL. The launcher starts them on
+localhost and checks:
+
+- Reranker: `http://127.0.0.1:8081/health`
+- NLI/entailment: `http://127.0.0.1:8082/health`
+
+Build them before assembling the installer payload:
+
+```powershell
+.\packaging\windows\scripts\build-grounding-services.ps1
+```
+
+That command also pre-caches the reranker and NLI model weights into:
+
+```text
+build/windows-installer/model-cache/huggingface/
+```
+
+The assembled installer copies that cache to `models/huggingface/`, and the
+desktop launcher sets `HF_HOME`/`TRANSFORMERS_CACHE` for the companion services
+so they work on the client machine without relying on a first-run model
+download.
+
+The historical backend PyInstaller spec has been archived at:
+
+```text
+packaging/windows/pyinstaller/archive/drtransition-backend.spec.deprecated
+```
+
+Do not use it for new Windows builds. The active PyInstaller specs are only the
+local reranker and NLI companion services.
+
+## Installer Ollama Check
+
+During setup, the model page now verifies local runtime readiness before
+installation continues:
+
+- Ollama must be reachable at `http://127.0.0.1:11434`
+- The selected chat model must already be installed
+- The embedding model must already be installed
+
+For the default configuration, prepare the machine with:
+
+```powershell
+ollama pull mistral-nemo
+ollama pull nomic-embed-text
+```
+
+If the chat model is left as `auto`, the installer first selects the recommended
+model for the machine, then checks whether that model is installed.
+
 ## Runtime Configuration
 
-The default installed config is:
+The source template lives at:
+
+```text
+packaging/windows/config/default.config.json
+```
+
+After `assemble-installer-payload.ps1` runs, it is copied into the payload as:
+
+```text
+build/windows-installer/payload/config/default.config.json
+```
+
+After installation, the default installed config is under the application
+install directory:
 
 ```text
 config/default.config.json
@@ -164,6 +251,11 @@ DR_TRANSITION_BACKEND_AUTH_CHECK_URL
 OLLAMA_BASE_URL
 OLLAMA_MODEL
 OLLAMA_EMBEDDING_MODEL
+DR_TRANSITION_GROUNDING_ENABLED
+DR_TRANSITION_RERANKER_URL
+DR_TRANSITION_RERANKER_HEALTH_URL
+DR_TRANSITION_NLI_URL
+DR_TRANSITION_NLI_HEALTH_URL
 ```
 
 When only `DR_TRANSITION_BACKEND_URL` is set, the launcher derives:

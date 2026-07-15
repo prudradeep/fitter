@@ -28,6 +28,11 @@
         baseUrl: localStorage.getItem("dr_transition_ollama_base_url") || "http://127.0.0.1:11434",
         chatModel: localStorage.getItem("dr_transition_ollama_chat_model") || "mistral-nemo",
         embeddingModel: localStorage.getItem("dr_transition_ollama_embedding_model") || "nomic-embed-text"
+      },
+      grounding: {
+        enabled: localStorage.getItem("dr_transition_grounding_enabled") !== "false",
+        rerankerUrl: localStorage.getItem("dr_transition_reranker_url") || "http://127.0.0.1:8081/rerank",
+        nliUrl: localStorage.getItem("dr_transition_nli_url") || "http://127.0.0.1:8082/entail"
       }
     };
   }
@@ -181,10 +186,92 @@
       }
     }
 
-    return results
+    const candidates = results
       .sort((left, right) => right.score - left.score)
+      .slice(0, Math.max(topK * 3, topK));
+    const grounded = await applyGrounding(query, candidates, topK);
+    return grounded
       .slice(0, topK)
       .map((item, index) => ({ ...item, citation_id: `S${index + 1}` }));
+  }
+
+  async function applyGrounding(query, contexts, topK) {
+    if (!contexts.length) return contexts;
+    const config = await runtimeConfig();
+    if (config.grounding?.enabled === false) {
+      return contexts.slice(0, topK);
+    }
+    const reranked = await rerankContexts(query, contexts, config);
+    const entailed = await entailContexts(query, reranked.slice(0, Math.max(topK * 2, topK)), config);
+    return entailed.sort((left, right) => {
+      const leftEntailed = left.nli_entailed ? 1 : 0;
+      const rightEntailed = right.nli_entailed ? 1 : 0;
+      if (leftEntailed !== rightEntailed) return rightEntailed - leftEntailed;
+      return Number(right.score || 0) - Number(left.score || 0);
+    });
+  }
+
+  async function rerankContexts(query, contexts, config) {
+    const url = config.grounding?.rerankerUrl || "http://127.0.0.1:8081/rerank";
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          documents: contexts.map((context) => String(context.text || "").slice(0, 16000))
+        })
+      });
+      if (!response.ok) throw new Error(`reranker returned HTTP ${response.status}`);
+      const payload = await response.json();
+      const scores = Array.isArray(payload.scores) ? payload.scores : [];
+      if (scores.length !== contexts.length) throw new Error("reranker returned an unexpected score count");
+      return contexts
+        .map((context, index) => ({
+          ...context,
+          retrieval_score: context.score,
+          score: Number(scores[index] || 0),
+          reranker_score: Number(scores[index] || 0)
+        }))
+        .sort((left, right) => right.score - left.score);
+    } catch (error) {
+      console.warn("Local reranker unavailable; using embedding retrieval scores.", error);
+      return contexts;
+    }
+  }
+
+  async function entailContexts(query, contexts, config) {
+    const url = config.grounding?.nliUrl || "http://127.0.0.1:8082/entail";
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pairs: contexts.map((context) => ({
+            premise: String(context.text || "").slice(0, 30000),
+            hypothesis: String(query || "").slice(0, 10000)
+          }))
+        })
+      });
+      if (!response.ok) throw new Error(`NLI returned HTTP ${response.status}`);
+      const payload = await response.json();
+      const verdicts = Array.isArray(payload.results) ? payload.results : [];
+      if (verdicts.length !== contexts.length) throw new Error("NLI returned an unexpected result count");
+      return contexts.map((context, index) => {
+        const verdict = verdicts[index] || {};
+        const label = String(verdict.label || "").toLowerCase();
+        const score = Number(verdict.score || 0);
+        return {
+          ...context,
+          nli_label: label,
+          nli_score: score,
+          nli_entailed: ["entailment", "entailed"].includes(label) && score >= 0.5
+        };
+      });
+    } catch (error) {
+      console.warn("Local NLI unavailable; using reranked contexts without entailment labels.", error);
+      return contexts;
+    }
   }
 
   function citationsFromContexts(contexts) {
@@ -196,7 +283,12 @@
       chunk_id: context.chunk_id,
       source_uri: context.source_uri,
       page: context.page,
-      score: context.score
+      score: context.score,
+      retrieval_score: context.retrieval_score,
+      reranker_score: context.reranker_score,
+      nli_label: context.nli_label,
+      nli_score: context.nli_score,
+      nli_entailed: context.nli_entailed
     }));
   }
 
@@ -207,6 +299,7 @@
           `Scope: ${context.scope}`,
           context.source_uri ? `Source: ${context.source_uri}` : "",
           context.page ? `Page: ${context.page}` : "",
+          context.nli_label ? `Entailment: ${context.nli_label} ${context.nli_score || 0}` : "",
           context.text
         ].filter(Boolean).join("\n")).join("\n\n")
       : "No retrieved local knowledge was available.";
