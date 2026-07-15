@@ -263,6 +263,16 @@ When only `DR_TRANSITION_BACKEND_URL` is set, the launcher derives:
 - `{backend}/health/ready`
 - `{backend}/api/sessions`
 
+For local backend testing, prefer:
+
+```text
+DR_TRANSITION_BACKEND_URL=http://127.0.0.1:8000/
+```
+
+instead of `http://localhost:8000/` if Uvicorn is bound to `127.0.0.1`. The
+launcher also retries health/auth checks through `127.0.0.1` when a
+`localhost` URL fails, which avoids Windows IPv6 localhost resolution issues.
+
 ## Ollama Checks
 
 Default model downloads:

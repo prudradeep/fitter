@@ -1,6 +1,7 @@
 from time import perf_counter
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
@@ -8,6 +9,13 @@ from app.grounding_servers.model_runtime import reranker_model, sigmoid
 from app.services.llm_logging import log_llm_exchange, new_llm_request_id
 
 app = FastAPI(title="Dr Transition Reranker")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["content-type"],
+    allow_credentials=False,
+)
 
 
 class RerankRequest(BaseModel):

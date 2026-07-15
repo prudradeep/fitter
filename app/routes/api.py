@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 import httpx
 from sqlalchemy import desc, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, set_auth_cookie, verify_password
 from app.config import get_settings
@@ -31,10 +31,9 @@ from app.routes.request_limits import (
     read_limited_json,
     upload_too_large_response as limited_upload_too_large_response,
 )
-from app.schemas import ChatRequest, ChatResponse, Option
+from app.schemas import ChatRequest, ChatResponse
 from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
-from app.services.chat_options import POST_SECTOR_OPTIONS, option_list
 from app.services.audit_log import record_audit_event
 from app.services.hazard_effect_size import hazard_effect_size_rows
 from app.services.hazard_ranking_service import HazardRankingService
@@ -175,39 +174,6 @@ async def save_session_state(
         "title": user_session.title or "New policy session",
         "messages": len(messages),
     }
-
-
-@router.post("/selections/advance")
-async def advance_selection(
-    request: Request,
-    current_user: AppUser = Depends(require_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, object]:
-    payload = await _json_payload_or_error(request, "Selection payload")
-    if isinstance(payload, JSONResponse):
-        return payload
-    message = str(payload.get("message") or "").strip()
-    if not message:
-        return {"error": False, "matched": False, "detail": "No selection provided."}
-    session_key = _client_session_key(payload.get("session_id"))
-    session_data = _session_data_from_payload({**payload, "session_id": session_key})
-    step = str(payload.get("step") or session_data.get("phase") or "").strip().casefold()
-
-    if step in {"", "client_state", "wizard", "country"} or not session_data.get("country_id"):
-        response = _advance_country_selection(db, session_key, session_data, message)
-    elif step == "region" and session_data.get("country_id"):
-        response = _advance_region_selection(db, session_key, session_data, message)
-    elif step == "sector" and session_data.get("country_id"):
-        response = _advance_sector_selection(db, session_key, session_data, message)
-    else:
-        return {"error": False, "matched": False, "detail": "Current step is not a selection step."}
-
-    if not response.get("matched"):
-        return response
-    user_session = _upsert_user_session(db, current_user.id, session_key, session_data)
-    _record_user_chat_message(db, user_session, "user", message)
-    response["session_id"] = session_key
-    return response
 
 
 @router.get("/hazard-salience")
@@ -1346,162 +1312,6 @@ def _client_state_chat_response(
         session=chat_session.summary(),
         input_mode="client",
         error=False,
-    )
-
-
-def _advance_country_selection(
-    db: Session,
-    session_key: str,
-    session_data: dict[str, object],
-    message: str,
-) -> dict[str, object]:
-    countries = db.scalars(
-        select(Country)
-        .options(selectinload(Country.regions), selectinload(Country.sectors))
-        .order_by(Country.name)
-    ).all()
-    country = _match_named_row(countries, message)
-    if country is None:
-        return {"error": False, "matched": False, "detail": "No country matched the selection."}
-    session_data.update(
-        {
-            "country_id": country.id,
-            "country": country.name,
-            "region_id": None,
-            "region": None,
-            "sector_id": None,
-            "sector": None,
-        }
-    )
-    regions = sorted(country.regions, key=lambda row: row.name)
-    if regions:
-        session_data["phase"] = "region"
-        return _selection_response(
-            session_key,
-            session_data,
-            step="region",
-            bot_message=f"Country set to {country.name}. Choose a region.",
-            options=option_list(list(regions)),
-        )
-    session_data["region"] = "National scope"
-    session_data["phase"] = "sector"
-    sectors = sorted(country.sectors, key=lambda row: row.name)
-    return _selection_response(
-        session_key,
-        session_data,
-        step="sector",
-        bot_message=f"Country set to {country.name}. National scope selected. Choose a sector.",
-        options=option_list(list(sectors)),
-    )
-
-
-def _advance_region_selection(
-    db: Session,
-    session_key: str,
-    session_data: dict[str, object],
-    message: str,
-) -> dict[str, object]:
-    country = db.scalar(
-        select(Country)
-        .options(selectinload(Country.regions), selectinload(Country.sectors))
-        .where(Country.id == _optional_int(session_data.get("country_id")))
-    )
-    if country is None:
-        return {"error": False, "matched": False, "detail": "Country must be selected first."}
-    region = _match_named_row(sorted(country.regions, key=lambda row: row.name), message)
-    if region is None:
-        return {"error": False, "matched": False, "detail": "No region matched the selection."}
-    session_data.update(
-        {
-            "region_id": region.id,
-            "region": region.name,
-            "sector_id": None,
-            "sector": None,
-            "phase": "sector",
-        }
-    )
-    sectors = sorted(country.sectors, key=lambda row: row.name)
-    return _selection_response(
-        session_key,
-        session_data,
-        step="sector",
-        bot_message=f"Region set to {region.name}. Choose a sector.",
-        options=option_list(list(sectors)),
-    )
-
-
-def _advance_sector_selection(
-    db: Session,
-    session_key: str,
-    session_data: dict[str, object],
-    message: str,
-) -> dict[str, object]:
-    country = db.scalar(
-        select(Country)
-        .options(selectinload(Country.sectors))
-        .where(Country.id == _optional_int(session_data.get("country_id")))
-    )
-    if country is None:
-        return {"error": False, "matched": False, "detail": "Country must be selected first."}
-    sector = _match_named_row(sorted(country.sectors, key=lambda row: row.name), message)
-    if sector is None:
-        return {"error": False, "matched": False, "detail": "No sector matched the selection."}
-    session_data.update(
-        {
-            "sector_id": sector.id,
-            "sector": sector.name,
-            "phase": "post_sector",
-        }
-    )
-    return _selection_response(
-        session_key,
-        session_data,
-        step="post_sector",
-        bot_message=(
-            f"Sector set to {sector.name}. You can start mitigation planning, add a new hazard, "
-            "or refresh local hazard context."
-        ),
-        options=POST_SECTOR_OPTIONS,
-    )
-
-
-def _selection_response(
-    session_key: str,
-    session_data: dict[str, object],
-    *,
-    step: str,
-    bot_message: str,
-    options: list[Option],
-) -> dict[str, object]:
-    chat_session = session_store.put(session_key, session_data)
-    chat_session.session_key = session_key
-    return {
-        "error": False,
-        "matched": True,
-        "session_id": session_key,
-        "step": step,
-        "bot_message": bot_message,
-        "voice_summary": bot_message,
-        "options": [option.model_dump() for option in options],
-        "other_options": [],
-        "session": chat_session.summary().model_dump(),
-        "input_mode": "text",
-        "input_values": {},
-        "validation_details": None,
-    }
-
-
-def _match_named_row(rows: list[object], message: str) -> object | None:
-    normalized = _normalize_selection_text(message)
-    for row in rows:
-        if _normalize_selection_text(getattr(row, "name", "")) == normalized:
-            return row
-    return None
-
-
-def _normalize_selection_text(value: object) -> str:
-    return " ".join(
-        "".join(character.casefold() if character.isalnum() else " " for character in str(value or "")).split()
     )
 
 

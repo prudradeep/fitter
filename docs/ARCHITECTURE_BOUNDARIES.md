@@ -42,6 +42,30 @@ The Windows desktop app is the local intelligence and user-experience layer.
 Temporary evidence remains local to the client until a validation workflow
 explicitly promotes it.
 
+## Supported Runtime Modes
+
+The production runtime is:
+
+```text
+Hosted Ubuntu backend + Windows desktop/Tauri app
+```
+
+The hosted backend may serve the HTML, JavaScript, and static assets, but the
+local LLM/RAG work is supported only when that frontend is opened inside the
+Windows desktop app. In that mode, Tauri provides the local bridge for Ollama,
+file-backed knowledge storage, runtime diagnostics, and local companion service
+startup.
+
+Opening the hosted backend URL directly in Chrome, Edge, or another normal
+browser is a server-admin/web fallback only. It can use hosted auth and
+persistence pages, but it is not the supported local-intelligence runtime
+because a normal browser cannot start the bundled reranker/NLI services, cannot
+use the Tauri knowledge-store commands, and may be blocked from local Ollama by
+browser CORS/security rules.
+
+For local development, `localhost`/`127.0.0.1` browser runs may use best-effort
+browser fallbacks, but release validation must use the Windows desktop app.
+
 ## Knowledge-Base Scope Ownership
 
 | Scope | Source of Truth | Client Behavior | Server Behavior |

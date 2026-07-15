@@ -1,0 +1,59 @@
+[[permission]]
+identifier = "allow-runtime-status"
+description = "Allow the desktop webview to read local runtime diagnostics."
+commands.allow = ["runtime_status"]
+
+[[permission]]
+identifier = "allow-runtime-config"
+description = "Allow the desktop webview to read non-secret runtime configuration."
+commands.allow = ["runtime_config"]
+
+[[permission]]
+identifier = "allow-ollama-model-status"
+description = "Allow the desktop webview to check local Ollama model availability."
+commands.allow = ["ollama_model_status"]
+
+[[permission]]
+identifier = "allow-ollama-embed-texts"
+description = "Allow the desktop webview to generate local Ollama embeddings."
+commands.allow = ["ollama_embed_texts"]
+
+[[permission]]
+identifier = "allow-ollama-chat"
+description = "Allow the desktop webview to call the local Ollama chat model."
+commands.allow = ["ollama_chat"]
+
+[[permission]]
+identifier = "allow-kb-store-status"
+description = "Allow the desktop webview to inspect the local knowledge store."
+commands.allow = ["kb_store_status"]
+
+[[permission]]
+identifier = "allow-kb-scope-manifest"
+description = "Allow the desktop webview to read local knowledge scope manifests."
+commands.allow = ["kb_scope_manifest"]
+
+[[permission]]
+identifier = "allow-kb-list-documents"
+description = "Allow the desktop webview to list local knowledge documents."
+commands.allow = ["kb_list_documents"]
+
+[[permission]]
+identifier = "allow-kb-get-document"
+description = "Allow the desktop webview to read local knowledge documents."
+commands.allow = ["kb_get_document"]
+
+[[permission]]
+identifier = "allow-kb-upsert-documents"
+description = "Allow the desktop webview to write synced or temporary local knowledge documents."
+commands.allow = ["kb_upsert_documents"]
+
+[[permission]]
+identifier = "allow-kb-delete-documents"
+description = "Allow the desktop webview to delete local knowledge documents and track tombstones."
+commands.allow = ["kb_delete_documents"]
+
+[[permission]]
+identifier = "allow-kb-clear-temporary"
+description = "Allow the desktop webview to clear session-local temporary evidence."
+commands.allow = ["kb_clear_temporary"]

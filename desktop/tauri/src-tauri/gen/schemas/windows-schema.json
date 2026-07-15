@@ -177,6 +177,78 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Allow the desktop webview to clear session-local temporary evidence.",
+          "type": "string",
+          "const": "allow-kb-clear-temporary",
+          "markdownDescription": "Allow the desktop webview to clear session-local temporary evidence."
+        },
+        {
+          "description": "Allow the desktop webview to delete local knowledge documents and track tombstones.",
+          "type": "string",
+          "const": "allow-kb-delete-documents",
+          "markdownDescription": "Allow the desktop webview to delete local knowledge documents and track tombstones."
+        },
+        {
+          "description": "Allow the desktop webview to read local knowledge documents.",
+          "type": "string",
+          "const": "allow-kb-get-document",
+          "markdownDescription": "Allow the desktop webview to read local knowledge documents."
+        },
+        {
+          "description": "Allow the desktop webview to list local knowledge documents.",
+          "type": "string",
+          "const": "allow-kb-list-documents",
+          "markdownDescription": "Allow the desktop webview to list local knowledge documents."
+        },
+        {
+          "description": "Allow the desktop webview to read local knowledge scope manifests.",
+          "type": "string",
+          "const": "allow-kb-scope-manifest",
+          "markdownDescription": "Allow the desktop webview to read local knowledge scope manifests."
+        },
+        {
+          "description": "Allow the desktop webview to inspect the local knowledge store.",
+          "type": "string",
+          "const": "allow-kb-store-status",
+          "markdownDescription": "Allow the desktop webview to inspect the local knowledge store."
+        },
+        {
+          "description": "Allow the desktop webview to write synced or temporary local knowledge documents.",
+          "type": "string",
+          "const": "allow-kb-upsert-documents",
+          "markdownDescription": "Allow the desktop webview to write synced or temporary local knowledge documents."
+        },
+        {
+          "description": "Allow the desktop webview to call the local Ollama chat model.",
+          "type": "string",
+          "const": "allow-ollama-chat",
+          "markdownDescription": "Allow the desktop webview to call the local Ollama chat model."
+        },
+        {
+          "description": "Allow the desktop webview to generate local Ollama embeddings.",
+          "type": "string",
+          "const": "allow-ollama-embed-texts",
+          "markdownDescription": "Allow the desktop webview to generate local Ollama embeddings."
+        },
+        {
+          "description": "Allow the desktop webview to check local Ollama model availability.",
+          "type": "string",
+          "const": "allow-ollama-model-status",
+          "markdownDescription": "Allow the desktop webview to check local Ollama model availability."
+        },
+        {
+          "description": "Allow the desktop webview to read non-secret runtime configuration.",
+          "type": "string",
+          "const": "allow-runtime-config",
+          "markdownDescription": "Allow the desktop webview to read non-secret runtime configuration."
+        },
+        {
+          "description": "Allow the desktop webview to read local runtime diagnostics.",
+          "type": "string",
+          "const": "allow-runtime-status",
+          "markdownDescription": "Allow the desktop webview to read local runtime diagnostics."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

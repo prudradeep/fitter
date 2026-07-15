@@ -18,11 +18,28 @@
     return window.__TAURI__?.core?.invoke || null;
   }
 
+  function isLocalBrowserOrigin() {
+    const hostname = window.location?.hostname || "";
+    return ["localhost", "127.0.0.1", "::1", ""].includes(hostname);
+  }
+
+  function assertSupportedRuntime() {
+    if (invoke() || isLocalBrowserOrigin()) {
+      return;
+    }
+    throw new LocalLlmError(
+      "This hosted web page is running outside the Windows desktop app, so it cannot use the desktop local LLM/RAG bridge. Open Dr Transition from the Windows app/installer.",
+      "desktop_runtime_required",
+      { origin: window.location?.origin || "" }
+    );
+  }
+
   async function runtimeConfig() {
     const tauriInvoke = invoke();
     if (tauriInvoke) {
       return tauriInvoke("runtime_config");
     }
+    assertSupportedRuntime();
     return {
       ollama: {
         baseUrl: localStorage.getItem("dr_transition_ollama_base_url") || "http://127.0.0.1:11434",
@@ -42,6 +59,7 @@
     if (tauriInvoke) {
       return tauriInvoke("ollama_model_status");
     }
+    assertSupportedRuntime();
     const config = await runtimeConfig();
     const baseUrl = config.ollama?.baseUrl || "http://127.0.0.1:11434";
     const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/tags`);
@@ -87,6 +105,7 @@
     if (tauriInvoke) {
       return tauriInvoke("ollama_embed_texts", { texts: cleanTexts });
     }
+    assertSupportedRuntime();
     const config = await runtimeConfig();
     const baseUrl = config.ollama?.baseUrl || "http://127.0.0.1:11434";
     const model = config.ollama?.embeddingModel || "nomic-embed-text";
@@ -116,6 +135,7 @@
     if (tauriInvoke) {
       return tauriInvoke("ollama_chat", { messages: cleanMessages, options: options.options || null });
     }
+    assertSupportedRuntime();
     const config = await runtimeConfig();
     const baseUrl = config.ollama?.baseUrl || "http://127.0.0.1:11434";
     const model = options.model || config.ollama?.chatModel || "mistral-nemo";

@@ -10,6 +10,11 @@ This guide follows the split architecture in
 - The Windows installer bundles frontend/runtime assets only. It does not bundle
   backend APIs, MySQL, schema, migrations, seeds, or secrets.
 
+Production users must open the Windows desktop app, not the hosted backend URL
+directly in a normal browser, for local LLM/RAG workflows. The hosted backend
+can serve the frontend assets, but the desktop app supplies the local Tauri
+bridge, local knowledge store, and reranker/NLI companion service startup.
+
 ## Hosted Backend Deployment
 
 Deploy the backend on the server where MySQL is available.
@@ -165,6 +170,11 @@ uv run python -m unittest tests.test_api_routes
 
 The Windows bundle is built from the desktop/Tauri app and frontend/runtime
 assets. It connects to the hosted backend configured at install time.
+
+The hosted backend URL may render the same frontend in a browser for admin or
+debugging tasks, but that browser runtime is not the supported release path for
+local intelligence. Local Ollama calls, synced local KB embeddings, temporary
+evidence embeddings, and bundled reranker/NLI startup require `DrTransition.exe`.
 
 ### 1. Build Prerequisites
 

@@ -3527,43 +3527,6 @@ function clientSessionSnapshot(context = clientWorkflowContext()) {
   };
 }
 
-function currentOptionLabelMatch(message = "", context = clientWorkflowContext()) {
-  const normalizedMessage = normalizeForMatch(message);
-  if (!normalizedMessage) return "";
-  const option = (context.options || []).find((item) => normalizeForMatch(item?.label || item) === normalizedMessage);
-  return option ? String(option.label || option).trim() : "";
-}
-
-async function advanceDeterministicSelection(message = "", context = clientWorkflowContext()) {
-  const matchedLabel = currentOptionLabelMatch(message, context);
-  if (!matchedLabel) return null;
-  const snapshot = clientSessionSnapshot(context);
-  const response = await csrfFetch("/api/selections/advance", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      session_id: context.sessionId || sessionId,
-      step: context.step || snapshot.phase || "country",
-      message: matchedLabel,
-      validation_mode: snapshot.validation_mode,
-      crowd_sourcing_enabled: snapshot.crowd_sourcing_enabled,
-      country_id: snapshot.country_id,
-      region_id: snapshot.region_id,
-      sector_id: snapshot.sector_id,
-      session: snapshot,
-    }),
-  });
-  if (response.status === 401) {
-    window.location.href = "/login";
-    return null;
-  }
-  if (!response.ok) {
-    throw new Error(`Selection request failed with status ${response.status}`);
-  }
-  const data = await response.json();
-  return data?.matched ? data : null;
-}
-
 async function persistClientWorkflowInput(message = "", context = clientWorkflowContext()) {
   const cleanMessage = String(message || "").trim();
   const snapshot = clientSessionSnapshot(context);
@@ -4373,19 +4336,15 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
 
   try {
     const previousContext = clientWorkflowContext();
-    const selectionData = await advanceDeterministicSelection(cleanMessage, previousContext);
-    let workflowData = selectionData;
-    if (!workflowData) {
-      const data = await persistClientWorkflowInput(cleanMessage, previousContext);
-      if (!data) return;
-      workflowData = window.DrTransitionWorkflows?.handleChatTurn
-        ? await window.DrTransitionWorkflows.handleChatTurn({
-            message: cleanMessage,
-            serverData: data,
-            context: previousContext,
-          })
-        : data;
-    }
+    const data = await persistClientWorkflowInput(cleanMessage, previousContext);
+    if (!data) return;
+    const workflowData = window.DrTransitionWorkflows?.handleChatTurn
+      ? await window.DrTransitionWorkflows.handleChatTurn({
+          message: cleanMessage,
+          serverData: data,
+          context: previousContext,
+        })
+      : data;
     sessionId = workflowData.session_id;
     localStorage.setItem(sessionKey, sessionId);
 

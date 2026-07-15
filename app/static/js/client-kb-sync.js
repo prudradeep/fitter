@@ -20,6 +20,20 @@
     return window.__TAURI__?.core?.invoke || null;
   }
 
+  function isLocalBrowserOrigin() {
+    const hostname = window.location?.hostname || "";
+    return ["localhost", "127.0.0.1", "::1", ""].includes(hostname);
+  }
+
+  function assertSupportedRuntime() {
+    if (invoke() || isLocalBrowserOrigin()) {
+      return;
+    }
+    throw new Error(
+      "Knowledge sync embeddings require the Windows desktop app. Open Dr Transition from the Windows app/installer."
+    );
+  }
+
   function clientStore() {
     if (!window.DrTransitionClientKB) {
       throw new Error("Client knowledge store is not available.");
@@ -48,6 +62,7 @@
         console.warn("Could not read Tauri runtime config", error);
       }
     }
+    assertSupportedRuntime();
     return {
       ollama: {
         baseUrl: localStorage.getItem("dr_transition_ollama_base_url") || "http://127.0.0.1:11434",
@@ -63,6 +78,7 @@
       return tauriInvoke("ollama_embed_texts", { texts: cleanTexts });
     }
 
+    assertSupportedRuntime();
     const config = await runtimeConfig();
     const baseUrl = config.ollama?.baseUrl || "http://127.0.0.1:11434";
     const model = config.ollama?.embeddingModel || "nomic-embed-text";

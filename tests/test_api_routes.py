@@ -550,37 +550,6 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         messages = self.db.query(UserChatMessage).filter(UserChatMessage.user_session_id == user_session.id).all()
         self.assertEqual([message.content for message in messages], ["Client-side message", "Client-side answer"])
 
-    def test_selection_advance_persists_country_without_chat_service(self) -> None:
-        country = Country(name="Germany", map_code="DE")
-        region = Region(name="Bavaria", country=country)
-        sector = Sector(name="Transport")
-        country.sectors.append(sector)
-        self.db.add_all([country, region, sector])
-        self.db.commit()
-
-        with patch.object(api_routes, "ChatService", FailingChatService):
-            response = self.client.post(
-                "/api/selections/advance",
-                json={
-                    "session_id": "selection-session",
-                    "step": "country",
-                    "message": "Germany",
-                    "session": {"phase": "country"},
-                },
-            )
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertTrue(payload["matched"])
-        self.assertEqual(payload["step"], "region")
-        self.assertEqual(payload["session"]["country"], "Germany")
-        self.assertEqual(payload["options"], [{"id": region.id, "label": "Bavaria"}])
-        user_session = self.db.query(UserSession).filter(UserSession.session_key == "selection-session").one()
-        self.assertEqual(user_session.country_id, country.id)
-        self.assertIsNone(user_session.region_id)
-        messages = self.db.query(UserChatMessage).filter(UserChatMessage.user_session_id == user_session.id).all()
-        self.assertEqual([message.content for message in messages], ["Germany"])
-
     def test_json_endpoint_rejects_oversized_body_before_parse(self) -> None:
         with self._temporary_route_limits(max_json_bytes=32):
             response = self.client.post(

@@ -959,17 +959,33 @@ fn open_diagnostics_window(app: &tauri::App) -> Result<()> {
 }
 
 fn health_ok(url: &str) -> bool {
-    ureq::get(url)
-        .timeout(Duration::from_secs(2))
-        .call()
-        .map(|response| response.status() < 500)
-        .unwrap_or(false)
+    url_with_localhost_fallbacks(url).iter().any(|candidate| {
+        ureq::get(candidate)
+            .timeout(Duration::from_secs(2))
+            .call()
+            .map(|response| response.status() < 500)
+            .unwrap_or(false)
+    })
 }
 
 fn http_status(url: &str) -> Option<u16> {
-    match ureq::get(url).timeout(Duration::from_secs(3)).call() {
-        Ok(response) => Some(response.status()),
-        Err(ureq::Error::Status(status, _)) => Some(status),
-        Err(_) => None,
+    for candidate in url_with_localhost_fallbacks(url) {
+        match ureq::get(&candidate).timeout(Duration::from_secs(3)).call() {
+            Ok(response) => return Some(response.status()),
+            Err(ureq::Error::Status(status, _)) => return Some(status),
+            Err(_) => continue,
+        }
     }
+    None
+}
+
+fn url_with_localhost_fallbacks(url: &str) -> Vec<String> {
+    let mut candidates = vec![url.to_string()];
+    if let Ok(mut parsed) = url::Url::parse(url) {
+        if parsed.host_str() == Some("localhost") {
+            let _ = parsed.set_host(Some("127.0.0.1"));
+            candidates.push(parsed.to_string());
+        }
+    }
+    candidates
 }
