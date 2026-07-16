@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.2"
+#define MyAppVersion "0.1.3"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 
@@ -13,8 +13,8 @@ DefaultGroupName=Dr Transition
 DisableProgramGroupPage=yes
 OutputDir=..\..\build\windows-installer
 OutputBaseFilename=DrTransitionSetup-{#MyAppVersion}
-Compression=zip
-SolidCompression=no
+Compression=lzma2/ultra64
+SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64

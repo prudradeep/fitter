@@ -6,35 +6,20 @@ from PyInstaller.utils.hooks import collect_submodules
 
 root = Path(SPECPATH).parents[2]
 
-datas = [
-    (str(root / "app" / "static"), "app/static"),
-    (str(root / "app" / "templates"), "app/templates"),
-    (str(root / "app" / "prompts"), "app/prompts"),
-    (str(root / "app" / "outputs"), "app/outputs"),
-    (str(root / "kb"), "kb"),
-    (str(root / "schema.sql"), "."),
-    (str(root / "mm.csv"), "."),
-    (str(root / "MM Target group.xlsx"), "."),
-    (str(root / "sectoral_challenges.xlsx"), "."),
-    (str(root / "hazards.xlsx"), "."),
-    (str(root / "additionalHazards.csv"), "."),
-    (str(root / "additionalHazardProfiles.csv"), "."),
-]
-
 a = Analysis(
-    [str(root / "packaging" / "python" / "drtransition_app_server.py")],
+    [str(root / "packaging" / "python" / "drtransition_grounding_server.py")],
     pathex=[str(root), str(root / "packaging" / "python")],
     binaries=[],
-    datas=datas,
+    datas=[],
     hiddenimports=[
         *collect_submodules("app"),
-        "pymysql",
         "uvicorn.logging",
         "uvicorn.loops.auto",
         "uvicorn.protocols.http.auto",
         "uvicorn.protocols.websockets.auto",
         "uvicorn.lifespan.on",
         "runtime_stdio",
+        "sentence_transformers",
     ],
     hookspath=[],
     hooksconfig={},
@@ -49,7 +34,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="drtransition-backend",
+    name="drtransition-grounding",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -63,5 +48,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="drtransition-backend",
+    name="drtransition-grounding",
 )

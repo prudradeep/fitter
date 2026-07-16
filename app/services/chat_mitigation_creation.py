@@ -42,6 +42,7 @@ from app.services.chat_parsers import (
 )
 from app.services.chat_session import ChatSession
 from app.services.hazard_effect_size import hazard_predictor_effect_rows
+from app.services.hazard_ranking_service import slugify_hazard
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.mitigation_policy_formatting import (
     format_mitigation_reference_links,
@@ -1306,6 +1307,7 @@ class ChatMitigationCreationMixin:
     ) -> ChatResponse:
         hazard_reference = self._selected_hazard_reference(session_id, session)
         session.mitigation_record_id = self._store_mitigation_measure(
+            existing_id=session.mitigation_record_id,
             user_session_id=hazard_reference["user_session_id"],
             user_hazard_id=hazard_reference["user_hazard_id"],
             custom_hazard_id=hazard_reference["custom_hazard_id"],
@@ -2357,6 +2359,7 @@ class ChatMitigationCreationMixin:
     def _store_mitigation_measure(
         self,
         *,
+        existing_id: int | None = None,
         user_session_id: int | None,
         user_hazard_id: int | None,
         custom_hazard_id: int | None,
@@ -2375,26 +2378,55 @@ class ChatMitigationCreationMixin:
             and additional_hazard_id is None
         ):
             return None
+        normalized_validation_mode = self._validation_mode(validation_mode)
+        normalized_is_crowd_sourced = (
+            normalized_validation_mode == "strict" and bool(is_crowd_sourced)
+        )
+        target_population_json = (
+            json.dumps(target_population, ensure_ascii=False)
+            if target_population
+            else None
+        )
         try:
-            row = UserMitigationMeasure(
-                user_session_id=user_session_id,
-                user_hazard_id=user_hazard_id,
-                custom_hazard_id=custom_hazard_id,
-                system_hazard_id=system_hazard_id,
-                additional_hazard_id=additional_hazard_id,
-                measure=mitigation_measure,
-                reason=reason,
-                target_population=(
-                    json.dumps(target_population, ensure_ascii=False)
-                    if target_population
-                    else None
-                ),
-                validation_mode=self._validation_mode(validation_mode),
-                is_crowd_sourced=(
-                    self._validation_mode(validation_mode) == "strict" and bool(is_crowd_sourced)
-                ),
-            )
-            self.db.add(row)
+            row = self.db.get(UserMitigationMeasure, existing_id) if existing_id else None
+            if row is None:
+                row = self._existing_mitigation_measure_row(
+                    user_session_id=user_session_id,
+                    user_hazard_id=user_hazard_id,
+                    custom_hazard_id=custom_hazard_id,
+                    system_hazard_id=system_hazard_id,
+                    additional_hazard_id=additional_hazard_id,
+                    mitigation_measure=mitigation_measure,
+                    reason=reason,
+                    target_population_json=target_population_json,
+                    validation_mode=normalized_validation_mode,
+                    is_crowd_sourced=normalized_is_crowd_sourced,
+                )
+            if row is None:
+                row = UserMitigationMeasure(
+                    user_session_id=user_session_id,
+                    user_hazard_id=user_hazard_id,
+                    custom_hazard_id=custom_hazard_id,
+                    system_hazard_id=system_hazard_id,
+                    additional_hazard_id=additional_hazard_id,
+                    measure=mitigation_measure,
+                    reason=reason,
+                    target_population=target_population_json,
+                    validation_mode=normalized_validation_mode,
+                    is_crowd_sourced=normalized_is_crowd_sourced,
+                )
+                self.db.add(row)
+            else:
+                row.user_session_id = user_session_id
+                row.user_hazard_id = user_hazard_id
+                row.custom_hazard_id = custom_hazard_id
+                row.system_hazard_id = system_hazard_id
+                row.additional_hazard_id = additional_hazard_id
+                row.measure = mitigation_measure
+                row.reason = reason
+                row.target_population = target_population_json
+                row.validation_mode = normalized_validation_mode
+                row.is_crowd_sourced = normalized_is_crowd_sourced
             self.db.commit()
             self.db.refresh(row)
             return row.id
@@ -2402,6 +2434,40 @@ class ChatMitigationCreationMixin:
             self.db.rollback()
             logger.exception("Failed to persist mitigation measure")
             return None
+
+    def _existing_mitigation_measure_row(
+        self,
+        *,
+        user_session_id: int | None,
+        user_hazard_id: int | None,
+        custom_hazard_id: int | None,
+        system_hazard_id: int | None,
+        additional_hazard_id: int | None,
+        mitigation_measure: str,
+        reason: str,
+        target_population_json: str | None,
+        validation_mode: str,
+        is_crowd_sourced: bool,
+    ) -> UserMitigationMeasure | None:
+        def column_matches(column, value):
+            return column.is_(None) if value is None else column == value
+
+        return self.db.scalar(
+            select(UserMitigationMeasure)
+            .where(
+                column_matches(UserMitigationMeasure.user_session_id, user_session_id),
+                column_matches(UserMitigationMeasure.user_hazard_id, user_hazard_id),
+                column_matches(UserMitigationMeasure.custom_hazard_id, custom_hazard_id),
+                column_matches(UserMitigationMeasure.system_hazard_id, system_hazard_id),
+                column_matches(UserMitigationMeasure.additional_hazard_id, additional_hazard_id),
+                UserMitigationMeasure.measure == mitigation_measure,
+                UserMitigationMeasure.reason == reason,
+                column_matches(UserMitigationMeasure.target_population, target_population_json),
+                UserMitigationMeasure.validation_mode == validation_mode,
+                UserMitigationMeasure.is_crowd_sourced.is_(is_crowd_sourced),
+            )
+            .order_by(UserMitigationMeasure.id.desc())
+        )
 
     def _update_mitigation_review_details(
         self,

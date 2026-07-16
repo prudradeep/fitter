@@ -44,6 +44,18 @@ def _env_files() -> tuple[Path, ...]:
     return (Path.cwd() / ".env",)
 
 
+def _frozen_program_data_path(relative_path: str) -> str:
+    if not getattr(sys, "frozen", False):
+        return relative_path
+    path = Path(relative_path)
+    if path.is_absolute():
+        return relative_path
+    base = os.getenv("PROGRAMDATA")
+    if not base:
+        return relative_path
+    return str(Path(base) / "DrTransition" / path)
+
+
 class Settings(BaseSettings):
     app_name: str = "Dr Transition"
     app_env: str = "development"
@@ -122,6 +134,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_safe_runtime_defaults(self) -> "Settings":
+        self.faiss_index_path = _frozen_program_data_path(self.faiss_index_path)
+        self.llm_log_path = _frozen_program_data_path(self.llm_log_path)
         if not self.is_development:
             unsafe_secrets = {"", "development-only-secret", "change-this-secret-key-before-production"}
             if self.secret_key.strip() in unsafe_secrets:

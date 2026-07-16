@@ -1,5 +1,5 @@
 {
-  "appVersion": "0.1.2",
+  "appVersion": "0.1.3",
   "backend": {
     "enabled": true,
     "host": "127.0.0.1",
@@ -13,13 +13,15 @@
       "host": "127.0.0.1",
       "port": 8081,
       "healthUrl": "http://127.0.0.1:8081/health",
-      "executable": "backend\\drtransition-reranker\\drtransition-reranker.exe"
+      "executable": "backend\\drtransition-grounding\\drtransition-grounding.exe",
+      "arguments": ["--service", "reranker"]
     },
     "nli": {
       "host": "127.0.0.1",
       "port": 8082,
       "healthUrl": "http://127.0.0.1:8082/health",
-      "executable": "backend\\drtransition-nli\\drtransition-nli.exe"
+      "executable": "backend\\drtransition-grounding\\drtransition-grounding.exe",
+      "arguments": ["--service", "nli"]
     }
   },
   "ollama": {

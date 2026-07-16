@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import random
 from time import perf_counter
@@ -11,8 +12,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth import AUTH_COOKIE_NAME, CSRF_COOKIE_NAME, get_current_user, require_admin_user
 from app.config import get_settings
-from app.db.migrations_runtime import run_runtime_migrations
-from app.db.session import validate_database_connection
+from app.db.migrations_runtime import repair_partial_installer_schema, run_runtime_migrations
+from app.db.session import SessionLocal, validate_database_connection
 from app.models import AppUser
 from app.observability import (
     configure_logging,
@@ -25,6 +26,7 @@ from app.resource_paths import resource_path
 from app.routes.api import router as api_router
 from app.routes.auth import router as auth_router
 from app.security import apply_security_headers, create_csrf_token, csrf_request_allowed, csrf_token_valid
+from app.services.bundled_knowledge_base import ingest_bundled_main_kb_pdfs
 from app.services.coverage import get_coverage_rows
 
 settings = get_settings()
@@ -130,7 +132,24 @@ async def startup() -> None:
     if settings.database_auto_migrate:
         run_runtime_migrations()
     else:
-        logger.info("Database auto-migration is disabled; startup will not mutate schema")
+        logger.info("Database auto-migration is disabled; checking installer schema health only")
+        repair_partial_installer_schema()
+    app.state.bundled_kb_ingest_task = asyncio.create_task(
+        _ingest_bundled_main_kb_pdfs_after_startup()
+    )
+
+
+async def _ingest_bundled_main_kb_pdfs_after_startup() -> None:
+    try:
+        with SessionLocal() as db:
+            result = await ingest_bundled_main_kb_pdfs(db)
+        failures = result.get("failures") if isinstance(result.get("failures"), list) else []
+        if failures:
+            logger.warning(
+                "Bundled Main KB PDF ingest finished with %s failure(s)", len(failures)
+            )
+    except Exception:
+        logger.exception("Bundled Main KB PDF ingest failed after startup")
 
 
 @app.exception_handler(SQLAlchemyError)

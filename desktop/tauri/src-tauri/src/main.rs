@@ -33,6 +33,8 @@ struct ServiceConfig {
     #[serde(rename = "healthUrl")]
     health_url: String,
     executable: String,
+    #[serde(default)]
+    arguments: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -422,6 +424,7 @@ fn start_service(
     let stdout = fs::File::create(log_dir.join(format!("{name}.out.log")))?;
     let stderr = fs::File::create(log_dir.join(format!("{name}.err.log")))?;
     let child = Command::new(&exe_path)
+        .args(&config.arguments)
         .current_dir(install_dir)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))

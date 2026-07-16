@@ -1,4 +1,5 @@
 import logging
+import re
 
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -6,6 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from pathlib import Path
 
 from app.db.reference_schema import ensure_reference_data_schema
+from app.db.schema_type_helpers import mysql_question_option_id_type
 from app.db.session import Base, engine
 from app.db.versioned_migrations import apply_versioned_migrations
 from app.seed.reference_data import (
@@ -31,6 +33,7 @@ def run_schema_sql() -> None:
                 normalized = statement.lstrip().casefold()
                 if normalized.startswith(("create database", "use ")):
                     continue
+                statement = _adapt_question_option_fk_type(connection, statement)
                 connection.execute(text(statement))
         logger.info("Database schema.sql applied")
     except SQLAlchemyError:
@@ -74,9 +77,27 @@ def split_sql_statements(sql: str) -> list[str]:
 
     return [statement for statement in statements if not statement.startswith("--")]
 
+
+def _adapt_question_option_fk_type(connection, statement: str) -> str:
+    normalized = statement.casefold()
+    if (
+        "references question_options(id)" not in normalized
+        or "question_option_id int" not in normalized
+    ):
+        return statement
+
+    question_option_id_type = mysql_question_option_id_type(connection)
+    return re.sub(
+        r"\bquestion_option_id\s+INT\b",
+        f"question_option_id {question_option_id_type}",
+        statement,
+        flags=re.IGNORECASE,
+    )
+
 def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
     try:
         with engine.begin() as connection:
+            question_option_id_type = mysql_question_option_id_type(connection)
             connection.execute(
                 text(
                     """
@@ -1161,11 +1182,11 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
             )
             connection.execute(
                 text(
-                    """
+                    f"""
                     CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_target_populations (
                       id INT AUTO_INCREMENT PRIMARY KEY,
                       system_hazard_socio_demographic_id INT NOT NULL,
-                      question_option_id INT NOT NULL,
+                      question_option_id {question_option_id_type} NOT NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       CONSTRAINT fk_system_dg_target_population_system_dg
                         FOREIGN KEY (system_hazard_socio_demographic_id)
@@ -1452,6 +1473,59 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
 
 
 
+def repair_partial_installer_schema() -> bool:
+    """Repair local databases left incomplete by an interrupted installer seed."""
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    missing_required_tables = {
+        "custom_hazards",
+        "custom_hazard_profiles",
+        "user_hazards",
+        "user_hazard_socio_demographics",
+    } - table_names
+    if missing_required_tables:
+        logger.warning(
+            "Repairing partial installer schema; missing tables: %s",
+            ", ".join(sorted(missing_required_tables)),
+        )
+        if {
+            "user_hazards",
+            "user_hazard_socio_demographics",
+        } & missing_required_tables:
+            run_schema_sql()
+        ensure_runtime_schema(seed_reference_data=False)
+        return True
+
+    user_hazard_columns = {
+        column["name"] for column in inspector.get_columns("user_hazards")
+    }
+    dg_columns = {
+        column["name"]
+        for column in inspector.get_columns("user_hazard_socio_demographics")
+    }
+    missing_columns = []
+    if "custom_hazard_id" not in user_hazard_columns:
+        missing_columns.append("user_hazards.custom_hazard_id")
+    for column_name in (
+        "user_session_id",
+        "custom_hazard_id",
+        "system_hazard_id",
+        "additional_hazard_id",
+    ):
+        if column_name not in dg_columns:
+            missing_columns.append(f"user_hazard_socio_demographics.{column_name}")
+
+    if not missing_columns:
+        return False
+
+    logger.warning(
+        "Repairing partial installer schema; missing columns: %s",
+        ", ".join(missing_columns),
+    )
+    ensure_runtime_schema(seed_reference_data=False)
+    return True
+
+
 
 def run_runtime_migrations(
     *,
@@ -1466,6 +1540,7 @@ def run_runtime_migrations(
     if apply_base_schema:
         run_schema_sql()
     apply_versioned_migrations()
+    repair_partial_installer_schema()
     if seed_reference_data:
         ensure_additional_hazards()
         ensure_mitigation_measure_examples()

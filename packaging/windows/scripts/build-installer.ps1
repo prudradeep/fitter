@@ -2,6 +2,19 @@ $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
 $iss = Join-Path $root "packaging\windows\DrTransition.iss"
+$requiredServiceBuilds = @(
+    Join-Path $root "dist\drtransition-backend",
+    Join-Path $root "dist\drtransition-grounding"
+)
+
+foreach ($requiredServiceBuild in $requiredServiceBuilds) {
+    if (-not (Test-Path -LiteralPath $requiredServiceBuild)) {
+        Write-Host "Missing Python service build: $requiredServiceBuild"
+        Write-Host "Running build-python-services.ps1 first..."
+        & (Join-Path $PSScriptRoot "build-python-services.ps1")
+        break
+    }
+}
 
 & (Join-Path $PSScriptRoot "assemble-installer-payload.ps1")
 

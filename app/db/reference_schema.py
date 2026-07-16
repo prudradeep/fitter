@@ -2,6 +2,7 @@ import logging
 
 from sqlalchemy import inspect, text
 
+from app.db.schema_type_helpers import mysql_question_option_id_type
 from app.db.session import engine
 
 
@@ -15,6 +16,7 @@ def ensure_reference_data_schema() -> None:
 
 def ensure_additional_hazard_schema() -> None:
     with engine.begin() as connection:
+        question_option_id_type = mysql_question_option_id_type(connection)
         connection.execute(
             text(
                 """
@@ -64,11 +66,11 @@ def ensure_additional_hazard_schema() -> None:
         )
         connection.execute(
             text(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS additional_hazard_profile_target_populations (
                   id INT AUTO_INCREMENT PRIMARY KEY,
                   additional_hazard_profile_id INT NOT NULL,
-                  question_option_id INT NOT NULL,
+                  question_option_id {question_option_id_type} NOT NULL,
                   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   CONSTRAINT fk_additional_hazard_profile_target_profile
                     FOREIGN KEY (additional_hazard_profile_id)
@@ -98,6 +100,7 @@ def ensure_mitigation_measure_schema() -> None:
                 connection.execute(text("DROP TABLE mitigation_measure_target_groups"))
 
     with engine.begin() as connection:
+        question_option_id_type = mysql_question_option_id_type(connection)
         connection.execute(
             text(
                 """
@@ -160,11 +163,11 @@ def ensure_mitigation_measure_schema() -> None:
         )
         connection.execute(
             text(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS mitigation_measure_target_groups (
                   id INT AUTO_INCREMENT PRIMARY KEY,
                   mitigation_measure_policy_id INT NOT NULL,
-                  question_option_id INT NOT NULL,
+                  question_option_id {question_option_id_type} NOT NULL,
                   match_value VARCHAR(40) NULL,
                   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
                   excel_column_number INT NULL,

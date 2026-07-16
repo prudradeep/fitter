@@ -6,8 +6,8 @@ The target runtime is:
 
 - `DrTransition.exe`: native Tauri/WebView2 desktop launcher
 - `drtransition-backend.exe`: FastAPI application on `127.0.0.1:8000`
-- `drtransition-reranker.exe`: grounding reranker service on `127.0.0.1:8081`
-- `drtransition-nli.exe`: grounding NLI service on `127.0.0.1:8082`
+- `drtransition-grounding.exe --service reranker`: grounding reranker service on `127.0.0.1:8081`
+- `drtransition-grounding.exe --service nli`: grounding NLI service on `127.0.0.1:8082`
 
 The desktop launcher starts the backend services as hidden child processes, waits for their health endpoints, then opens the UI in a native desktop window. The user's external browser is not launched.
 
@@ -33,8 +33,7 @@ desktop/tauri/
 packaging/
   python/
     drtransition_app_server.py
-    drtransition_reranker_server.py
-    drtransition_nli_server.py
+    drtransition_grounding_server.py
   windows/
     DrTransition.iss
     config/default.config.json
@@ -67,11 +66,14 @@ This creates PyInstaller one-folder builds in `dist/`:
 
 ```text
 dist/drtransition-backend/
-dist/drtransition-reranker/
-dist/drtransition-nli/
+dist/drtransition-grounding/
 ```
 
-The reranker and NLI builds include the grounding Python dependencies. Hugging Face model weights are still expected to be downloaded and cached on the target machine unless a future offline model bundle is added.
+The shared `drtransition-grounding` build contains one executable that can run
+either grounding service via `--service reranker` or `--service nli`, so PyTorch
+and the grounding Python dependencies are bundled once instead of once per
+service. Hugging Face model weights are still expected to be downloaded and
+cached on the target machine unless a future offline model bundle is added.
 
 If a bundled service shows an error like `Unable to configure formatter 'default'` or
 `'NoneType' object has no attribute 'isatty'`, rebuild the services. The packaged
@@ -136,7 +138,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionSetup-0.1.2.exe
+build/windows-installer/DrTransitionSetup-0.1.3.exe
 ```
 
 If you only run `build-python-services.ps1`, you will get the service executables
@@ -194,7 +196,8 @@ Default runtime ports:
 
 ## Grounding Services
 
-The reranker and NLI services are packaged as separate executables and started by `DrTransition.exe` when `grounding.enabled` is `true`.
+The reranker and NLI services are started as separate processes from the shared
+`drtransition-grounding.exe` executable when `grounding.enabled` is `true`.
 
 If either service is already healthy on its configured port, the launcher reuses it instead of starting another process.
 
@@ -209,6 +212,7 @@ The installer now performs the first dependency setup pass:
 - Creates a default app login if it does not already exist
 - Updates `%ProgramData%\DrTransition\.env`
 - Seeds the schema and bundled CSV/XLSX reference data through the packaged backend
+- Ingests bundled `kb/*.pdf` files into the Main knowledge base after the backend starts successfully; failures are logged and do not halt installation or app startup
 - Pulls the required Ollama chat and embedding models
 
 If a custom Ollama model directory is already configured through `OLLAMA_MODELS`

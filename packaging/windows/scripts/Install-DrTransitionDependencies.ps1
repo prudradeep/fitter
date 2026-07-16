@@ -28,6 +28,8 @@ $ErrorActionPreference = "Stop"
 
 $programData = Join-Path $env:ProgramData "DrTransition"
 $logDir = Join-Path $env:LOCALAPPDATA "DrTransition\logs"
+$runtimeDataDir = Join-Path $programData "data"
+$runtimeLogDir = Join-Path $runtimeDataDir "logs"
 $envPath = Join-Path $programData ".env"
 $runtimeTemplate = Join-Path $InstallDir "config\runtime.env"
 $backendExe = Join-Path $InstallDir "backend\drtransition-backend\drtransition-backend.exe"
@@ -35,6 +37,7 @@ $setupLog = Join-Path $logDir "installer-setup.log"
 
 New-Item -ItemType Directory -Force -Path $programData | Out-Null
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+New-Item -ItemType Directory -Force -Path $runtimeLogDir | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($ConfigPath) -and (Test-Path -LiteralPath $ConfigPath)) {
     $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
@@ -202,6 +205,22 @@ function Quote-SqlString {
     return "'" + ($Value -replace "'", "''") + "'"
 }
 
+function ConvertTo-DatabaseUrlComponent {
+    param([string]$Value)
+    return [System.Uri]::EscapeDataString([string]$Value)
+}
+
+function Format-EnvAssignment {
+    param([string]$Key, [string]$Value)
+
+    $escaped = [string]$Value
+    $escaped = $escaped.Replace("\", "\\")
+    $escaped = $escaped.Replace('"', '\"')
+    $escaped = $escaped.Replace("`r", "\r")
+    $escaped = $escaped.Replace("`n", "\n")
+    return "$Key=""$escaped"""
+}
+
 function Find-CommandPath {
     param([string]$Name)
     $command = Get-Command $Name -ErrorAction SilentlyContinue
@@ -239,6 +258,28 @@ function Find-MySqlExe {
     return $null
 }
 
+function Find-MySqlDExe {
+    $commandPath = Find-CommandPath "mysqld.exe"
+    if ($commandPath) {
+        return $commandPath
+    }
+
+    $candidates = @(
+        "$env:ProgramFiles\MySQL\MySQL Server 8.4\bin\mysqld.exe",
+        "$env:ProgramFiles\MySQL\MySQL Server 8.3\bin\mysqld.exe",
+        "$env:ProgramFiles\MySQL\MySQL Server 8.2\bin\mysqld.exe",
+        "$env:ProgramFiles\MySQL\MySQL Server 8.1\bin\mysqld.exe",
+        "$env:ProgramFiles\MySQL\MySQL Server 8.0\bin\mysqld.exe",
+        "${env:ProgramFiles(x86)}\MySQL\MySQL Server 8.0\bin\mysqld.exe"
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
 function Test-TcpPort {
     param([string]$HostName, [int]$Port)
     try {
@@ -253,6 +294,214 @@ function Test-TcpPort {
         return $true
     } catch {
         return $false
+    }
+}
+
+function Get-MySqlServiceDetails {
+    return @(Get-CimInstance Win32_Service -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^(MySQL|MySQL80|MySQL84)$' -or $_.DisplayName -match 'MySQL' })
+}
+
+function Find-MySqlDefaultsFile {
+    $candidates = @(
+        "$env:ProgramData\MySQL\MySQL Server 8.4\my.ini",
+        "$env:ProgramData\MySQL\MySQL Server 8.3\my.ini",
+        "$env:ProgramData\MySQL\MySQL Server 8.2\my.ini",
+        "$env:ProgramData\MySQL\MySQL Server 8.1\my.ini",
+        "$env:ProgramData\MySQL\MySQL Server 8.0\my.ini",
+        "$env:ProgramFiles\MySQL\MySQL Server 8.4\my.ini",
+        "$env:ProgramFiles\MySQL\MySQL Server 8.3\my.ini",
+        "$env:ProgramFiles\MySQL\MySQL Server 8.2\my.ini",
+        "$env:ProgramFiles\MySQL\MySQL Server 8.1\my.ini",
+        "$env:ProgramFiles\MySQL\MySQL Server 8.0\my.ini"
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
+function New-MySqlDefaultsFile {
+    param([string]$MySqlDExe)
+
+    $existing = Find-MySqlDefaultsFile
+    if ($existing) {
+        return $existing
+    }
+
+    $serverRoot = Split-Path -Parent (Split-Path -Parent $MySqlDExe)
+    $programDataRoot = Join-Path $env:ProgramData "MySQL"
+    $serverDirName = Split-Path -Leaf $serverRoot
+    $configDir = Join-Path $programDataRoot $serverDirName
+    if ([string]::IsNullOrWhiteSpace($serverDirName) -or $serverDirName -notmatch '^MySQL Server ') {
+        $configDir = Join-Path $programDataRoot "MySQL Server 8.0"
+    }
+
+    $dataDir = Join-Path $configDir "Data"
+    $errorLog = Join-Path $dataDir "error.log"
+    $defaultsFile = Join-Path $configDir "my.ini"
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+
+    $basedir = ($serverRoot -replace '\\', '/')
+    $datadir = ($dataDir -replace '\\', '/')
+    $content = @"
+[client]
+port=3306
+
+[mysql]
+no-beep
+
+[mysqld]
+port=3306
+basedir="$basedir"
+datadir="$datadir"
+default-storage-engine=INNODB
+sql-mode="NO_ENGINE_SUBSTITUTION"
+log-output=FILE
+log-error="$($errorLog -replace '\\', '/')"
+"@
+    Set-Content -LiteralPath $defaultsFile -Value $content -Encoding ASCII
+    Write-SetupLog "Created MySQL defaults file: $defaultsFile"
+    return $defaultsFile
+}
+
+function Get-MySqlDataDirFromDefaultsFile {
+    param([string]$DefaultsFile)
+
+    if (-not (Test-Path -LiteralPath $DefaultsFile)) {
+        return $null
+    }
+
+    $inServerSection = $false
+    foreach ($line in Get-Content -LiteralPath $DefaultsFile) {
+        $trimmed = $line.Trim()
+        if ($trimmed -match '^\[(.+)\]$') {
+            $inServerSection = ($Matches[1] -ieq "mysqld")
+            continue
+        }
+        if (-not $inServerSection) {
+            continue
+        }
+        if ($trimmed -match '^datadir\s*=\s*(.+)$') {
+            return ($Matches[1].Trim().Trim('"') -replace '/', '\')
+        }
+    }
+    return $null
+}
+
+function Test-MySqlDataDirectoryInitialized {
+    param([string]$DefaultsFile)
+
+    $dataDir = Get-MySqlDataDirFromDefaultsFile -DefaultsFile $DefaultsFile
+    if ([string]::IsNullOrWhiteSpace($dataDir)) {
+        return $false
+    }
+    return (Test-Path -LiteralPath (Join-Path $dataDir "mysql"))
+}
+
+function Initialize-MySqlDataDirectory {
+    param([string]$MySqlDExe, [string]$DefaultsFile)
+
+    if (Test-MySqlDataDirectoryInitialized -DefaultsFile $DefaultsFile) {
+        return $false
+    }
+
+    Write-SetupLog "Initializing MySQL data directory"
+    $process = Start-Process -FilePath $MySqlDExe -ArgumentList (Join-ProcessArguments @(
+        "--defaults-file=$DefaultsFile",
+        "--initialize",
+        "--console"
+    )) -Wait -PassThru -WindowStyle Hidden
+    if ($process.ExitCode -ne 0) {
+        throw "MySQL data directory initialization failed with exit code $($process.ExitCode)."
+    }
+    return $true
+}
+
+function Get-MySqlTemporaryRootPassword {
+    param([string]$DefaultsFile)
+
+    $dataDir = Get-MySqlDataDirFromDefaultsFile -DefaultsFile $DefaultsFile
+    if ([string]::IsNullOrWhiteSpace($dataDir)) {
+        throw "Could not determine MySQL data directory for temporary password lookup."
+    }
+
+    $logCandidates = @(
+        (Join-Path $dataDir "error.log"),
+        (Join-Path $dataDir "$env:COMPUTERNAME.err")
+    )
+    foreach ($log in $logCandidates) {
+        if (-not (Test-Path -LiteralPath $log)) {
+            continue
+        }
+        $match = Get-Content -LiteralPath $log |
+            Select-String -Pattern 'temporary password.*root@localhost:\s*(.+)$' |
+            Select-Object -Last 1
+        if ($match) {
+            return $match.Matches[0].Groups[1].Value.Trim()
+        }
+    }
+
+    throw "Could not find MySQL temporary root password in the data directory logs."
+}
+
+function Repair-MySqlServiceDefaultsFile {
+    param([object]$Service)
+
+    $pathName = [string]$Service.PathName
+    if ([string]::IsNullOrWhiteSpace($pathName)) {
+        return
+    }
+    if ($pathName -notmatch 'mysqld\.exe') {
+        return
+    }
+    if ($pathName -notmatch "--defaults-file=(?:''|`"`"|'`"|`"')" -and $pathName -notmatch '--defaults-file=\s*$') {
+        return
+    }
+
+    $defaultsFile = Find-MySqlDefaultsFile
+    if (-not $defaultsFile) {
+        Write-SetupLog "MySQL service $($Service.Name) has an empty defaults-file, but no my.ini was found to repair it"
+        return
+    }
+
+    if ($pathName -match '^"([^"]*mysqld\.exe)"') {
+        $mysqld = $Matches[1]
+    } elseif ($pathName -match '^([^"]*mysqld\.exe)') {
+        $mysqld = $Matches[1]
+    } else {
+        Write-SetupLog "Could not parse mysqld.exe path for service $($Service.Name)"
+        return
+    }
+
+    Write-SetupLog "Repairing MySQL service $($Service.Name) defaults-file path"
+    Stop-Service -Name $Service.Name -ErrorAction SilentlyContinue
+    $binPath = '"{0}" --defaults-file="{1}" {2}' -f $mysqld, $defaultsFile, $Service.Name
+    $process = Start-Process -FilePath "sc.exe" -ArgumentList @("config", $Service.Name, "binPath=", $binPath) -Wait -PassThru -WindowStyle Hidden
+    if ($process.ExitCode -ne 0) {
+        throw "Could not repair MySQL service $($Service.Name) defaults-file path; sc.exe exited with code $($process.ExitCode)."
+    }
+}
+
+function Install-MySqlService {
+    param([string]$MySqlDExe, [string]$DefaultsFile)
+
+    $services = Get-MySqlServiceDetails
+    if ($services.Count -gt 0) {
+        return
+    }
+
+    Write-SetupLog "Installing MySQL Windows service"
+    $process = Start-Process -FilePath $MySqlDExe -ArgumentList (Join-ProcessArguments @(
+        "--install",
+        "MySQL",
+        "--defaults-file=$DefaultsFile"
+    )) -Wait -PassThru -WindowStyle Hidden
+    if ($process.ExitCode -ne 0) {
+        throw "MySQL service installation failed with exit code $($process.ExitCode)."
     }
 }
 
@@ -285,14 +534,105 @@ function Invoke-WingetInstall {
 }
 
 function Start-MySqlService {
-    $services = Get-Service -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^(MySQL|MySQL80|MySQL84|MariaDB)' -or $_.DisplayName -match 'MySQL|MariaDB' }
+    $serviceDetails = Get-MySqlServiceDetails
+    foreach ($service in $serviceDetails) {
+        Repair-MySqlServiceDefaultsFile -Service $service
+    }
+
+    $services = @(Get-Service -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^(MySQL|MySQL80|MySQL84)$' -or $_.DisplayName -match 'MySQL' })
     foreach ($service in $services) {
+        $service.Refresh()
         if ($service.Status -ne "Running") {
             Write-SetupLog "Starting service $($service.Name)"
-            Start-Service -Name $service.Name -ErrorAction SilentlyContinue
+            try {
+                Start-Service -Name $service.Name -ErrorAction Stop
+            } catch {
+                Write-SetupLog "Could not start service $($service.Name): $($_.Exception.Message)"
+            }
         }
     }
+}
+
+function Wait-MySqlReachable {
+    $mysqlReachable = $false
+    for ($attempt = 1; $attempt -le 45; $attempt++) {
+        if (Test-TcpPort -HostName "127.0.0.1" -Port 3306) {
+            $mysqlReachable = $true
+            break
+        }
+        if ($attempt -eq 5 -or $attempt -eq 15 -or $attempt -eq 30) {
+            Start-MySqlService
+        }
+        Start-Sleep -Seconds 2
+    }
+    return $mysqlReachable
+}
+
+function Invoke-MySqlSqlWithPassword {
+    param(
+        [string]$MySqlExe,
+        [string]$Sql,
+        [string]$User,
+        [string]$Password,
+        [switch]$ConnectExpiredPassword
+    )
+
+    $tempSql = Join-Path $env:TEMP ("drtransition-mysql-bootstrap-" + [guid]::NewGuid() + ".sql")
+    Set-Content -LiteralPath $tempSql -Value $Sql -Encoding UTF8
+    $previous = $env:MYSQL_PWD
+    try {
+        if ([string]::IsNullOrEmpty($Password)) {
+            Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue
+        } else {
+            $env:MYSQL_PWD = $Password
+        }
+        $mysqlArgs = @(
+            "--protocol=tcp",
+            "-h", "127.0.0.1",
+            "-P", "3306",
+            "-u", $User,
+            "--default-character-set=utf8mb4"
+        )
+        if ($ConnectExpiredPassword) {
+            $mysqlArgs += "--connect-expired-password"
+        }
+        $mysqlArgs += @("-e", "source $tempSql")
+        & $MySqlExe @mysqlArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "mysql.exe exited with code $LASTEXITCODE"
+        }
+    } finally {
+        if ($null -eq $previous) {
+            Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue
+        } else {
+            $env:MYSQL_PWD = $previous
+        }
+        Remove-Item -LiteralPath $tempSql -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Set-FreshMySqlRootPassword {
+    param([string]$MySqlExe, [string]$DefaultsFile)
+
+    if ([string]::IsNullOrWhiteSpace($MySqlAdminPassword)) {
+        throw "MySQL administrator password is required to finish fresh MySQL setup."
+    }
+
+    Write-SetupLog "Setting MySQL root password for fresh local install"
+    $temporaryPassword = Get-MySqlTemporaryRootPassword -DefaultsFile $DefaultsFile
+    $quotedPassword = Quote-SqlString $MySqlAdminPassword
+    $sql = @"
+ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY $quotedPassword;
+CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY $quotedPassword;
+ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY $quotedPassword;
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;
+CREATE USER IF NOT EXISTS '$MySqlAdminUser'@'127.0.0.1' IDENTIFIED BY $quotedPassword;
+ALTER USER '$MySqlAdminUser'@'127.0.0.1' IDENTIFIED BY $quotedPassword;
+GRANT ALL PRIVILEGES ON *.* TO '$MySqlAdminUser'@'127.0.0.1' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+"@
+    Invoke-MySqlSqlWithPassword -MySqlExe $MySqlExe -Sql $sql -User "root" -Password $temporaryPassword -ConnectExpiredPassword
 }
 
 function Ensure-MySql {
@@ -301,7 +641,7 @@ function Ensure-MySql {
 
     if (-not $mysql -and $InstallMySql) {
         Write-SetupLog "MySQL executable was not found; attempting installation"
-        Invoke-WingetInstall -PackageIds @("Oracle.MySQL", "Oracle.MySQLInstaller")
+        Invoke-WingetInstall -PackageIds @("Oracle.MySQL")
         Start-Sleep -Seconds 5
         $mysql = Find-MySqlExe
     } else {
@@ -312,12 +652,23 @@ function Ensure-MySql {
         throw "mysql.exe was not found. Install MySQL Server and rerun setup."
     }
 
+    $mysqld = Find-MySqlDExe
+    if (-not $mysqld) {
+        throw "mysqld.exe was not found after MySQL installation. The Oracle.MySQL winget package did not install MySQL Server binaries."
+    }
+
+    $defaultsFile = New-MySqlDefaultsFile -MySqlDExe $mysqld
+    $freshDataDirectory = Initialize-MySqlDataDirectory -MySqlDExe $mysqld -DefaultsFile $defaultsFile
+    Install-MySqlService -MySqlDExe $mysqld -DefaultsFile $defaultsFile
+
     Write-SetupLog "Checking MySQL service state"
     Start-MySqlService
-    Start-Sleep -Seconds 5
-
-    if (-not (Test-TcpPort -HostName "127.0.0.1" -Port 3306)) {
+    if (-not (Wait-MySqlReachable)) {
         throw "MySQL is installed but not reachable on 127.0.0.1:3306."
+    }
+
+    if ($freshDataDirectory) {
+        Set-FreshMySqlRootPassword -MySqlExe $mysql -DefaultsFile $defaultsFile
     }
 
     Write-SetupLog "MySQL is reachable"
@@ -431,11 +782,58 @@ function Use-ConfiguredOllamaModelsPath {
 
 function Test-Ollama {
     try {
-        $response = Invoke-RestMethod -Uri $OllamaBaseUrl -TimeoutSec 2
+        $response = Invoke-RestMethod -Uri "$($OllamaBaseUrl.TrimEnd('/'))/api/tags" -TimeoutSec 5
         return $null -ne $response
     } catch {
         return $false
     }
+}
+
+function Get-OllamaHost {
+    try {
+        $uri = [Uri]$OllamaBaseUrl
+        return $uri.Authority
+    } catch {
+        return "127.0.0.1:11434"
+    }
+}
+
+function Start-OllamaServer {
+    param([string]$OllamaExe)
+
+    $ollamaOut = Join-Path $logDir "ollama-serve.out.log"
+    $ollamaErr = Join-Path $logDir "ollama-serve.err.log"
+    $env:OLLAMA_HOST = Get-OllamaHost
+    Write-SetupLog "Starting Ollama server on $env:OLLAMA_HOST"
+    return Start-Process -FilePath $OllamaExe -ArgumentList "serve" -PassThru -WindowStyle Hidden -RedirectStandardOutput $ollamaOut -RedirectStandardError $ollamaErr
+}
+
+function Wait-OllamaReachable {
+    param([System.Diagnostics.Process]$Process = $null)
+
+    for ($attempt = 1; $attempt -le 45; $attempt++) {
+        if (Test-Ollama) {
+            return $true
+        }
+        if ($null -ne $Process) {
+            $Process.Refresh()
+            if ($Process.HasExited) {
+                Write-SetupLog "Ollama server process exited with code $($Process.ExitCode)"
+                break
+            }
+        }
+        if ($attempt -eq 10 -or $attempt -eq 25 -or $attempt -eq 40) {
+            Write-SetupLog "Waiting for Ollama API at $OllamaBaseUrl"
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    $ollamaErr = Join-Path $logDir "ollama-serve.err.log"
+    if (Test-Path -LiteralPath $ollamaErr) {
+        Write-SetupLog "Ollama stderr tail:"
+        Get-Content -LiteralPath $ollamaErr -Tail 20 | ForEach-Object { Write-SetupLog "  $_" }
+    }
+    return $false
 }
 
 function Ensure-Ollama {
@@ -454,12 +852,13 @@ function Ensure-Ollama {
     Write-SetupLog "Ollama executable is available; installation will be skipped"
 
     if (-not (Test-Ollama)) {
-        Write-SetupLog "Starting Ollama service"
-        Start-Process -FilePath $ollama -ArgumentList "serve" -WindowStyle Hidden
-        Start-Sleep -Seconds 8
+        $process = Start-OllamaServer -OllamaExe $ollama
+        if (-not (Wait-OllamaReachable -Process $process)) {
+            throw "Ollama is installed but not reachable at $OllamaBaseUrl."
+        }
     }
 
-    if (-not (Test-Ollama)) {
+    if (-not (Wait-OllamaReachable)) {
         throw "Ollama is installed but not reachable at $OllamaBaseUrl."
     }
 
@@ -513,7 +912,7 @@ function Update-RuntimeEnv {
             $key = $Matches[1]
             if ($Updates.ContainsKey($key)) {
                 $seen[$key] = $true
-                "$key=""$($Updates[$key])"""
+                Format-EnvAssignment -Key $key -Value ([string]$Updates[$key])
             } else {
                 $line
             }
@@ -524,7 +923,7 @@ function Update-RuntimeEnv {
 
     foreach ($key in $Updates.Keys) {
         if (-not $seen.ContainsKey($key)) {
-            $updated += "$key=""$($Updates[$key])"""
+            $updated += Format-EnvAssignment -Key $key -Value ([string]$Updates[$key])
         }
     }
 
@@ -677,9 +1076,11 @@ try {
         Write-SetupLog "Recommended Ollama model selected: $OllamaModel ($($recommendation.tier))"
     }
 
-    $databaseUrl = "mysql+pymysql://$AppDbUser`:$AppDbPassword@localhost:3306/$DbName"
+    $databaseUrl = "mysql+pymysql://$(ConvertTo-DatabaseUrlComponent $AppDbUser):$(ConvertTo-DatabaseUrlComponent $AppDbPassword)@localhost:3306/$(ConvertTo-DatabaseUrlComponent $DbName)"
     Update-RuntimeEnv -Updates @{
         DATABASE_URL = $databaseUrl
+        FAISS_INDEX_PATH = (Join-Path $runtimeDataDir "knowledge.faiss")
+        LLM_LOG_PATH = (Join-Path $runtimeLogDir "llm_requests.jsonl")
         OLLAMA_BASE_URL = $OllamaBaseUrl
         OLLAMA_MODEL = $OllamaModel
         OLLAMA_EMBEDDING_MODEL = $OllamaEmbeddingModel

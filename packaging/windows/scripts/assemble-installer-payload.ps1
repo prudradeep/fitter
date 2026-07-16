@@ -1,16 +1,24 @@
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
+$installerBuildRoot = Join-Path $root "build\windows-installer"
 $payload = Join-Path $root "build\windows-installer\payload"
 $backendPayload = Join-Path $payload "backend"
 $configPayload = Join-Path $payload "config"
 $scriptsPayload = Join-Path $payload "scripts"
 
+if (Test-Path -LiteralPath $payload) {
+    $resolvedPayload = Resolve-Path -LiteralPath $payload
+    if (-not $resolvedPayload.Path.StartsWith((Join-Path $installerBuildRoot ""), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove path outside build\windows-installer: $($resolvedPayload.Path)"
+    }
+    Remove-Item -LiteralPath $resolvedPayload.Path -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $backendPayload | Out-Null
 New-Item -ItemType Directory -Force -Path $configPayload | Out-Null
 New-Item -ItemType Directory -Force -Path $scriptsPayload | Out-Null
 
-$serviceNames = @("drtransition-backend", "drtransition-reranker", "drtransition-nli")
+$serviceNames = @("drtransition-backend", "drtransition-grounding")
 foreach ($serviceName in $serviceNames) {
     $source = Join-Path $root "dist\$serviceName"
     if (-not (Test-Path $source)) {
