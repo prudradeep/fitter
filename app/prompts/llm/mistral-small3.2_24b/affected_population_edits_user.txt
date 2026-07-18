@@ -1,0 +1,11 @@
+Current affected population groups:
+{current_groups}
+
+User message: {message}
+
+Return ONLY valid JSON.
+Do not wrap in Markdown.
+Do not include comments, trailing commas, or extra keys.
+Use empty strings/arrays when information is missing.
+
+Return JSON like {{"add": ["Low-income renters"], "remove": ["General Population"]}}.

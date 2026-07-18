@@ -1,0 +1,13 @@
+Recent conversation:
+{recent_conversation}
+
+Current assistant message:
+{current_assistant_message}
+
+Primary options:
+{primary_options}
+
+Other navigation options:
+{other_options}
+
+Generate the next user message now.

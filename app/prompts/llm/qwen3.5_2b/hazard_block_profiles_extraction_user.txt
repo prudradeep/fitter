@@ -1,0 +1,18 @@
+Selected context:
+- Country: {country}
+- Region: {region}
+- Sector: {sector}
+- Hazard: {hazard}
+
+Return the socio-demographic profiles for this hazard as ONLY valid JSON:
+[{{"variable_name": "predictor ID or variable", "profile": "human-readable profile", "name": "human-readable profile", "explanation": "short explanation", "statistical_basis": "confirmed-predictor evidence summary", "source": "sector_prompt"}}]
+
+Rules:
+{count_rule}{id_rule}- Do not merge predictors into fewer profiles, even when predictors are related.
+- If the block says 0 confirmed predictors, return [].
+- Convert variable names into human-readable profile names.
+- Store only the raw predictor variable name in variable_name; do not include predictor IDs like 1A or 2B.
+- Include a concise statistical_basis grounded in the predictor entry.
+- Include LOWER concern or protective predictors too, and say lower concern/protective in the explanation.
+- Explanation should be plain language only, under 24 words.
+- Do not include odds ratios, p-values, statistical basis, model metrics, Markdown, or code fences.

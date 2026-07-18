@@ -1,0 +1,32 @@
+Review the fields below.
+
+Purpose: {purpose}
+Sector: {sector}
+Country: {country}
+Region: {region}
+Selected hazard: {selected_hazard}
+
+Fields:
+{field_text}
+
+Return ONLY valid JSON with this exact shape:
+{{"valid": true, "reason": "The text is meaningful and specific enough."}}
+Do not include Markdown, code fences, comments, extra keys, or trailing commas.
+
+Validation checks:
+- Each required field should appear to be recognizable words or a meaningful phrase.
+- The text must be valid and meaningful for the stated purpose.
+- This is not a grammar, spelling, punctuation, or style check.
+- Check for generic, ambiguous, incomplete, or unsupported context.
+- Check evidence URL/file content when provided; extracted content that says it could not be read is not valid evidence.
+- Random characters, keyboard mashing, gibberish, or unrecognizable text is invalid.
+- Text that is too short to determine intent is ambiguous and must be invalid for this workflow.
+
+Rules:
+- Do not mark text invalid only because it has grammar, spelling, punctuation, capitalization, or style errors.
+- If a question, request, or statement is understandable, mark it valid even when the wording is imperfect.
+- valid must be false if any field is random, gibberish, keyboard mashing, too short, ambiguous, incomplete, or unrelated to the purpose.
+- valid must be false if the reason is only a broad label, such as 'poverty', 'transport', or 'policy', without a clear mechanism or outcome.
+- valid must be false if provided evidence is only a filename/URL with no readable evidence content, or extracted content says it could not be read.
+- valid may be true for concise text when the mechanism, expected benefit, or affected outcome is understandable.
+- The reason field must tell the user what to rewrite, stay under 60 words, and mention the specific weak field.

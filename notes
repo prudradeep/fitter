@@ -322,3 +322,5 @@ mistral-nemo
 ministral-3:8b
 qwen2.5:7b
 qwen2.5:3b
+
+Dynamic prompting for each model:

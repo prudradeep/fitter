@@ -26,7 +26,7 @@
   },
   "ollama": {
     "baseUrl": "http://127.0.0.1:11434",
-    "selectedModel": "mistral-nemo",
+    "selectedModel": "qwen3.5:4b",
     "embeddingModel": "nomic-embed-text"
   },
   "paths": {

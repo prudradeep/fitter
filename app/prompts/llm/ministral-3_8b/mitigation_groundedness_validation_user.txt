@@ -1,0 +1,25 @@
+Authoritative support corpus for this verdict: {support_label}
+
+Validated user inputs to evaluate:
+Selected Country: {country}
+Selected Sector: {sector}
+Selected Region: {region}
+Selected hazard: {selected_hazard}
+Selected target populations/groups:
+{target_population}
+Affected socio-demographic profiles:
+{socio_demographic_profiles}
+
+Mitigation measure: {mitigation_measure}
+
+Justification to evaluate: {reason}
+
+Clarification history:
+{clarification_history}
+
+User-supplied evidence description: {evidence}
+
+Support excerpts eligible as citations:
+{support_context}
+
+Evaluate every dimension. For justification_soundness, directly evaluate the complete justification above for internal coherence and check whether any support excerpt contradicts it.

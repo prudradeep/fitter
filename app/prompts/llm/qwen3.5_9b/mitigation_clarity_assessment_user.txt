@@ -1,0 +1,10 @@
+- Selected country: {country}
+- Selected region: {region}
+- Selected sector: {sector}
+- Selected hazard: {selected_hazard}
+- Selected target populations/groups: {target_population}
+Measure description: {mitigation_measure}
+Justification: {reason}
+Evidence: {evidence}
+Clarification history:
+{clarification_history}

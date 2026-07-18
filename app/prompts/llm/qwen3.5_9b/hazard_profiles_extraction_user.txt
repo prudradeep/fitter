@@ -1,0 +1,20 @@
+Selected context:
+- Country: {country}
+- Region: {region}
+- Sector: {sector}
+- Hazard: {hazard}
+
+Identify the exact socio-demographic profiles for this hazard. If the prompt says affected profiles are exactly the confirmed predictors for the hazard, include every confirmed predictor, including LOWER concern or protective predictors. For each profile, include only a short explanation. Return ONLY valid JSON, an array of objects like:
+[{{"variable_name": "predictor variable or ID", "profile": "affected profile", "name": "affected profile", "explanation": "short explanation", "statistical_basis": "brief statistical basis", "source": "sector_prompt"}}]
+
+Rules:
+- Use only profiles supported for this specific hazard in the prompt.
+- Profile names must be human-readable people, household, home, or country-context groups derived from confirmed predictors; do not return raw predictor variable names.
+- Store only the raw predictor variable name in variable_name; do not include predictor IDs like 1A or 2B.
+- Include a concise statistical_basis grounded in the sector prompt.
+- Include protective/lower-concern confirmed predictors too, labelled plainly in the explanation as lower concern or protective.
+- Keep profile names concise and explanations under 24 words.
+- Explanations should be plain-language, hazard-specific, and grounded in the prompt context.
+- Return a JSON array only. Do not include model metrics, caveats, Markdown,
+  code fences, comments, extra keys, or trailing commas.
+- If no profiles are clearly supported for this hazard, return [].

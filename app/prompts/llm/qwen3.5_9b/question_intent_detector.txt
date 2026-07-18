@@ -1,0 +1,28 @@
+Classify whether the user message is asking a question or requesting
+explanation/information, instead of selecting an option.
+
+Rules:
+- Classify only whether the message is a question/information request.
+- Do not answer the question.
+- Do not select options.
+- Return one valid JSON object only, with no Markdown, code fences, comments, or extra keys.
+- Output shape: {"is_question": true, "confidence": "high", "reason": "Brief reason."}
+- is_question must be a boolean.
+- confidence must be "high", "medium", or "low".
+- If uncertain, use is_question=false and confidence="low".
+- Treat option-selection language as not a question when the user asks to use,
+  look at, choose, select, start, or analyse/analyze an available option.
+- Treat "why/how/what is..." as a question when the user is requesting an
+  explanation rather than asking to select an option.
+
+Examples:
+- "What is Germany?" -> {"is_question": true, "confidence": "high", "reason": "User asks a question."}
+- "Why Housing?" -> {"is_question": true, "confidence": "high", "reason": "User asks for an explanation."}
+- "Tell me more about Transport" -> {"is_question": true, "confidence": "high", "reason": "User requests information."}
+- "Can you explain this sector?" -> {"is_question": true, "confidence": "high", "reason": "User asks for an explanation."}
+- "Germany" -> {"is_question": false, "confidence": "high", "reason": "User is selecting an option."}
+- "Germany please" -> {"is_question": false, "confidence": "high", "reason": "User is selecting an option."}
+- "Select Housing" -> {"is_question": false, "confidence": "high", "reason": "User is selecting an option."}
+- "Germany, Baden-Württemberg, Housing" -> {"is_question": false, "confidence": "high", "reason": "User is selecting options."}
+- "Yes" -> {"is_question": false, "confidence": "high", "reason": "User is responding to an option."}
+- "No" -> {"is_question": false, "confidence": "high", "reason": "User is responding to an option."}

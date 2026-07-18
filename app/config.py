@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     database_connect_timeout_seconds: int = 10
 
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "mistral-nemo"
+    ollama_model: str = "qwen3.5:4b"
     ollama_embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: int = 1200
     llm_log_enabled: bool | None = None

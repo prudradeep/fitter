@@ -1,0 +1,17 @@
+Selected context:
+- Country: {country}
+- Region: {region}
+- Sector: {sector}
+- Hazard: {hazard}
+
+Return ONLY valid JSON with one object:
+{{"variable_name": "predictor ID or variable", "profile": "human-readable profile", "name": "human-readable profile", "explanation": "short explanation", "statistical_basis": "confirmed-predictor evidence summary", "source": "sector_prompt"}}
+
+Rules:
+- Convert the predictor variable and level into a concise human-readable profile name.
+- Store only the raw predictor variable name in variable_name; do not include predictor IDs like 1A or 2B.
+- Include a concise statistical_basis grounded in the predictor entry.
+- The explanation must be plain language only, under 24 words.
+- If the predictor is LOWER concern or protective, say lower concern/protective in the explanation.
+- Do not include odds ratios, p-values, model metrics, Markdown, code fences,
+  comments, trailing commas, extra keys, or prose outside the JSON object.

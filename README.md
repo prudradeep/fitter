@@ -252,7 +252,7 @@ Recommended production flow:
 Install Ollama from https://ollama.com, start the Ollama service, then pull the chat and embedding models:
 
 ```bash
-ollama pull mistral-nemo
+ollama pull qwen3.5:4b
 ollama pull nomic-embed-text
 ```
 

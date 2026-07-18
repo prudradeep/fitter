@@ -1,0 +1,7 @@
+Session context:
+- Country: {country}
+- Region: {region}
+- Sector: {sector}
+
+Continue the statistical findings conversation below. Use only the loaded sector statistical context. Stay within the selected country and sector.
+Use previous dialog only to resolve follow-up references. Do not treat previous assistant text as a source of new facts.

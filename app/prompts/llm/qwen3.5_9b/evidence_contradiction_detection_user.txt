@@ -1,0 +1,16 @@
+Claim type: {claim_type}
+Selected sector: {sector}
+Selected country: {country}
+Selected region: {region}
+
+Claim being validated:
+{claim_text}
+
+Extracted L2 concepts:
+{l2_concepts}
+
+L2 evidence:
+{l2_evidence}
+
+Retrieved L1 core knowledge-base matches:
+{l1_matches}
