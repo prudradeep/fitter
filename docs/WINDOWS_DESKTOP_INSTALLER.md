@@ -138,7 +138,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionSetup-0.1.3.exe
+build/windows-installer/DrTransitionSetup-0.1.5.exe
 ```
 
 If you only run `build-python-services.ps1`, you will get the service executables

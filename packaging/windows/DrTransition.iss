@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.3"
+#define MyAppVersion "0.1.5"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 
