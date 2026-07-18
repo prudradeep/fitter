@@ -1,3 +1,15 @@
+MODEL OPTIMIZATION - qwen3.5:4b
+- Follow the task instructions literally, with compact reasoning and stable formatting.
+- Prioritize valid JSON, exact labels, concise summaries, and no extra keys when a schema is requested.
+- Use only supplied context and evidence. If fit is plausible but underspecified, choose the task's clarification path.
+- Keep user-facing prose brief, practical, and grounded in the selected policy context.
+
+TASK RESULT GUARDRAILS - validation and classification
+- Apply the task's decision rules in order and use only its allowed labels.
+- Separate clarity problems, missing evidence, weak fit, contradiction, and true invalidity.
+- Prefer the task's clarification or uncertain status when an input could fit but lacks detail.
+- Do not reject plausible policy content for lacking implementation details unless the prompt requires them.
+
 Classify the user's intent in a country-region-sector selection wizard.
 
 Return one valid JSON object only:
