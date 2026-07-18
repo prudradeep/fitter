@@ -503,6 +503,118 @@ def make_test_cases() -> list[dict[str, str | bool]]:
             )
         )
 
+    additional_full_combined_cases = [
+        ("Germany", "Berlin", "Energy", "Country Germany region Berlin sector Energy"),
+        ("Germany", "Hesse", "Transport", "Transport sector in Hesse Germany"),
+        ("Spain", "Madrid", "Housing", "Country Spain region Madrid sector Housing"),
+        ("Spain", "Valencia", "Energy", "Energy sector in Valencia Spain"),
+        ("Portugal", "Porto", "Transport", "Country Portugal region Porto sector Transport"),
+        ("Portugal", "Algarve", "Housing", "Housing sector in Algarve Portugal"),
+        ("Ireland", "Cork", "Energy", "Country Ireland region Cork sector Energy"),
+        ("Ireland", "Galway", "Transport", "Transport sector in Galway Ireland"),
+        ("Italy", "Lazio", "Housing", "Country Italy region Lazio sector Housing"),
+        ("Italy", "Veneto", "Energy", "Energy sector in Veneto Italy"),
+        ("Hungary", "Pest", "Transport", "Country Hungary region Pest sector Transport"),
+        ("Hungary", "Baranya", "Housing", "Housing sector in Baranya Hungary"),
+    ]
+    for country, region_name, sector, message in additional_full_combined_cases:
+        rows.append(
+            row(
+                "Country + region + sector in one message",
+                "Country",
+                "No selection",
+                message,
+                expected_country=country,
+                expected_region=region_name,
+                expected_sector=sector,
+                bot_response=f"{sector} selected. Selection flow completed.",
+                action="COMPLETE_SELECTION",
+            )
+        )
+
+    additional_country_region_cases = [
+        ("Germany", "Berlin", "Country Germany region Berlin"),
+        ("Germany", "Saxony", "Use Germany and Saxony"),
+        ("Spain", "Madrid", "Country Spain region Madrid"),
+        ("Spain", "Basque Country", "Use Spain and Basque Country"),
+        ("Portugal", "Porto", "Country Portugal region Porto"),
+        ("Portugal", "Madeira", "Use Portugal and Madeira"),
+        ("Ireland", "Cork", "Country Ireland region Cork"),
+        ("Ireland", "Waterford", "Use Ireland and Waterford"),
+        ("Italy", "Lazio", "Country Italy region Lazio"),
+        ("Italy", "Sicily", "Use Italy and Sicily"),
+        ("Hungary", "Pest", "Country Hungary region Pest"),
+        ("Hungary", "Csongrad-Csanad", "Use Hungary and Csongrad-Csanad"),
+    ]
+    for country, region_name, message in additional_country_region_cases:
+        rows.append(
+            row(
+                "Country + region in one message",
+                "Country",
+                "No selection",
+                message,
+                expected_country=country,
+                expected_region=region_name,
+                bot_response=f"{region_name} selected. Please choose a sector.",
+                action="SELECT_REGION",
+            )
+        )
+
+    additional_country_sector_cases = [
+        ("Germany", "Housing", "Country Germany sector Housing"),
+        ("Germany", "Transport", "Use Germany with Transport"),
+        ("Spain", "Energy", "Country Spain sector Energy"),
+        ("Spain", "Housing", "Use Spain with Housing"),
+        ("Portugal", "Energy", "Country Portugal sector Energy"),
+        ("Portugal", "Transport", "Use Portugal with Transport"),
+        ("Ireland", "Housing", "Country Ireland sector Housing"),
+        ("Ireland", "Energy", "Use Ireland with Energy"),
+        ("Italy", "Transport", "Country Italy sector Transport"),
+        ("Italy", "Housing", "Use Italy with Housing"),
+        ("Hungary", "Energy", "Country Hungary sector Energy"),
+        ("Hungary", "Transport", "Use Hungary with Transport"),
+    ]
+    for country, sector, message in additional_country_sector_cases:
+        rows.append(
+            row(
+                "Country + sector in one message",
+                "Country",
+                "No selection",
+                message,
+                expected_country=country,
+                expected_sector=sector,
+                bot_response=f"{country} selected. Please choose a region.",
+                action="SELECT_COUNTRY",
+            )
+        )
+
+    additional_region_sector_cases = [
+        ("Germany", "Berlin", "Energy", "Region Berlin sector Energy"),
+        ("Germany", "Hesse", "Housing", "Use Hesse with Housing"),
+        ("Spain", "Madrid", "Transport", "Region Madrid sector Transport"),
+        ("Portugal", "Porto", "Energy", "Use Porto with Energy"),
+        ("Ireland", "Cork", "Housing", "Region Cork sector Housing"),
+        ("Ireland", "Galway", "Transport", "Use Galway with Transport"),
+        ("Italy", "Lazio", "Energy", "Region Lazio sector Energy"),
+        ("Italy", "Veneto", "Housing", "Use Veneto with Housing"),
+        ("Hungary", "Pest", "Transport", "Region Pest sector Transport"),
+        ("Hungary", "Baranya", "Energy", "Use Baranya with Energy"),
+    ]
+    for country, region_name, sector, message in additional_region_sector_cases:
+        rows.append(
+            row(
+                "Region + sector in one message",
+                "Region",
+                f"Country={country}",
+                message,
+                expected_country=country,
+                expected_region=region_name,
+                expected_sector=sector,
+                bot_response=f"{sector} selected. Selection flow completed.",
+                action="COMPLETE_SELECTION",
+            )
+        )
+
     rows.extend(
         [
             row(

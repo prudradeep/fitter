@@ -10,6 +10,13 @@ TASK RESULT GUARDRAILS - validation and classification
 - Prefer the task's clarification or uncertain status when an input could fit but lacks detail.
 - Do not reject plausible policy content for lacking implementation details unless the prompt requires them.
 
+QWEN INTENT CLASSIFICATION EXAMPLES
+- Selection-like text remains selection even when the named place is unavailable. Example: "Quiero Francia" is selection, not unclear and not question.
+- A message with an unavailable country plus an available sector is still selection. Example: "France Energy" is selection.
+- Region-choice wording is selection. Examples: "Use Bavaria as the region", "Set it to Dublin", "The region is Lombardy", and "Budapest works for me".
+- Ordinal option wording is selection. Example: "the first region option".
+- Do not classify these selection-like messages as unclear merely because they contain extra words or a foreign-language verb.
+
 Classify the user's intent in a country-region-sector selection wizard.
 
 Return one valid JSON object only:

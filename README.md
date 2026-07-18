@@ -256,6 +256,29 @@ ollama pull qwen3.5:4b
 ollama pull nomic-embed-text
 ```
 
+Supported local chat models:
+
+```text
+qwen3.5:2b
+qwen3.5:4b
+ministral-3:8b
+qwen3.5:9b
+ministral-3:14b
+mistral-small3.2:24b
+qwen3.5:27b
+```
+
+Each supported chat model has its own prompt directory under
+`app/prompts/llm/<model-directory>/`. The configured `OLLAMA_MODEL` selects the
+matching prompt files automatically, with fallback to the shared
+`app/prompts/llm/*.txt` prompts if a model-specific file is missing.
+
+Example:
+
+```env
+OLLAMA_MODEL="qwen3.5:4b"
+```
+
 The app calls Ollama at:
 
 ```text
@@ -416,6 +439,36 @@ The lower-level scripts are also available when needed:
 ```bash
 uv run python tests/generate_open_conversation_selection_test_cases.py
 uv run python tests/run_open_conversation_selection_cases.py
+```
+
+To run the open conversation selection cases across all supported Ollama chat
+models, use:
+
+```powershell
+uv run python tests/run_open_conversation_selection_cases.py `
+  --models `
+  qwen3.5:2b `
+  qwen3.5:4b `
+  ministral-3:8b `
+  qwen3.5:9b `
+  ministral-3:14b `
+  mistral-small3.2:24b `
+  qwen3.5:27b
+```
+
+Add `--limit <count>` to run only a fixed number of generated cases per model:
+
+```powershell
+uv run python tests/run_open_conversation_selection_cases.py `
+  --models `
+  qwen3.5:2b `
+  qwen3.5:4b `
+  ministral-3:8b `
+  qwen3.5:9b `
+  ministral-3:14b `
+  mistral-small3.2:24b `
+  qwen3.5:27b `
+  --limit 20
 ```
 
 ## CI Checks

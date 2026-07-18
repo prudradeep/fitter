@@ -380,6 +380,9 @@ class ChatSelectionStepsMixin:
                 )
             return await self._apply_pending_selection(session_id, session, deterministic_selection)
 
+        if current_phase == "country" and self._mentions_unsupported_country(message):
+            return self._country_step(session_id, session, self.invalid_message, True)
+
         if current_phase in {"region", "sector"} and self._looks_like_unknown_option_label(message):
             return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
@@ -867,6 +870,16 @@ class ChatSelectionStepsMixin:
             return False
         return all(word[:1].isupper() for word in words)
 
+    @staticmethod
+    def _mentions_unsupported_country(message: str) -> bool:
+        normalized = f" {normalize_for_match(message)} "
+        unsupported_country_terms = {
+            "france",
+            "francia",
+            "french",
+        }
+        return any(f" {term} " in normalized for term in unsupported_country_terms)
+
     @classmethod
     def _selection_alias_match(cls, normalized_message: str, labels: list[str]) -> str | None:
         aliases = cls._selection_aliases()
@@ -977,19 +990,29 @@ class ChatSelectionStepsMixin:
             "s",
             "lets",
             "want",
+            "will",
             "would",
             "like",
             "know",
+            "can",
+            "we",
+            "look",
             "ll",
             "go",
             "analyze",
             "analyse",
             "to",
+            "at",
+            "as",
             "start",
             "begin",
             "set",
+            "it",
             "with",
             "use",
+            "is",
+            "works",
+            "me",
             "select",
             "choose",
             "please",

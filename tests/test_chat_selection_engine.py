@@ -14,7 +14,7 @@ class _SelectionEngine(ChatHazardStepsMixin, ChatMitigationStepsMixin, ChatSelec
         return ["Germany", "Ireland", "Portugal"]
 
     def _available_region_names(self, session):
-        return ["Bavaria", "Berlin"]
+        return ["Bavaria", "Berlin", "Dublin", "Lombardy"]
 
     def _available_sector_names(self, session):
         return ["Energy", "Housing", "Transport"]
@@ -49,6 +49,95 @@ class _AsyncSelectionEngine(_SelectionEngine):
 
 
 class ChatSelectionEngineTests(unittest.TestCase):
+    @staticmethod
+    def _combined_selection_case_matrix():
+        countries = ["Germany", "Ireland", "Portugal"]
+        regions = ["Bavaria", "Berlin", "Dublin", "Lombardy"]
+        sectors = ["Energy", "Housing", "Transport"]
+        cases = []
+
+        full_templates = [
+            "country {country} region {region} sector {sector}",
+            "Use {country} {region} {sector}",
+        ]
+        country_sector_templates = [
+            "country {country} sector {sector}",
+            "Use {country} with {sector}",
+            "I want {country} {sector}",
+            "Set country to {country} and sector to {sector}",
+        ]
+        country_region_templates = [
+            "country {country} region {region}",
+            "Use {country} and {region}",
+            "Set country to {country} and region to {region}",
+            "I want {country} in {region}",
+        ]
+        region_sector_templates = [
+            "region {region} sector {sector}",
+            "Use {region} with {sector}",
+            "Set region to {region} and sector to {sector}",
+            "I want {sector} in {region}",
+        ]
+
+        for country in countries:
+            for region in regions:
+                for sector in sectors:
+                    for template in full_templates:
+                        cases.append(
+                            (
+                                ChatSession(),
+                                template.format(country=country, region=region, sector=sector),
+                                {"country": country, "region": region, "sector": sector},
+                            )
+                        )
+
+        for country in countries:
+            for sector in sectors:
+                for template in country_sector_templates:
+                    cases.append(
+                        (
+                            ChatSession(),
+                            template.format(country=country, sector=sector),
+                            {"country": country, "region": None, "sector": sector},
+                        )
+                    )
+
+        for country in countries:
+            for region in regions:
+                for template in country_region_templates:
+                    cases.append(
+                        (
+                            ChatSession(),
+                            template.format(country=country, region=region),
+                            {"country": country, "region": region, "sector": None},
+                        )
+                    )
+
+        for region in regions:
+            for sector in sectors:
+                for template in region_sector_templates:
+                    cases.append(
+                        (
+                            ChatSession(country="Germany"),
+                            template.format(region=region, sector=sector),
+                            {"country": None, "region": region, "sector": sector},
+                        )
+                    )
+
+        return cases[:200]
+
+    def test_200_combined_selection_message_variants(self):
+        engine = _SelectionEngine()
+        cases = self._combined_selection_case_matrix()
+
+        self.assertEqual(len(cases), 200)
+        for index, (session, message, expected) in enumerate(cases, start=1):
+            with self.subTest(index=index, message=message):
+                self.assertEqual(
+                    engine._deterministic_selection_from_text(session, message),
+                    expected,
+                )
+
     def test_embedded_exact_country_region_sector_ignores_conversational_filler(self):
         engine = _SelectionEngine()
         selection = engine._deterministic_selection_from_text(
@@ -85,6 +174,161 @@ class ChatSelectionEngineTests(unittest.TestCase):
             {"country": "Germany", "region": "Berlin", "sector": "Housing"},
         )
 
+    def test_combined_country_region_sector_selection_phrases(self):
+        engine = _SelectionEngine()
+        cases = [
+            (
+                ChatSession(),
+                "Use Germany, Bavaria, and Housing",
+                {"country": "Germany", "region": "Bavaria", "sector": "Housing"},
+            ),
+            (
+                ChatSession(),
+                "Set country to Ireland, region Dublin and sector Transport",
+                {"country": "Ireland", "region": "Dublin", "sector": "Transport"},
+            ),
+            (
+                ChatSession(),
+                "I want Portugal Energy for Berlin",
+                {"country": "Portugal", "region": "Berlin", "sector": "Energy"},
+            ),
+        ]
+
+        for session, message, expected in cases:
+            with self.subTest(message=message):
+                self.assertEqual(
+                    engine._deterministic_selection_from_text(session, message),
+                    expected,
+                )
+
+    def test_combined_country_and_sector_selection_phrases(self):
+        engine = _SelectionEngine()
+        cases = [
+            (
+                ChatSession(),
+                "Portugal with Energy sector",
+                {"country": "Portugal", "region": None, "sector": "Energy"},
+            ),
+            (
+                ChatSession(),
+                "Country Germany and sector Transport",
+                {"country": "Germany", "region": None, "sector": "Transport"},
+            ),
+            (
+                ChatSession(region="Bavaria"),
+                "I will go with Ireland Housing",
+                {"country": "Ireland", "region": None, "sector": "Housing"},
+            ),
+        ]
+
+        for session, message, expected in cases:
+            with self.subTest(message=message):
+                self.assertEqual(
+                    engine._deterministic_selection_from_text(session, message),
+                    expected,
+                )
+
+    def test_combined_country_and_region_selection_phrases(self):
+        engine = _SelectionEngine()
+        cases = [
+            (
+                ChatSession(),
+                "Germany and Bavaria",
+                {"country": "Germany", "region": "Bavaria", "sector": None},
+            ),
+            (
+                ChatSession(),
+                "Country Ireland region Dublin",
+                {"country": "Ireland", "region": "Dublin", "sector": None},
+            ),
+            (
+                ChatSession(sector="Energy"),
+                "Set it to Portugal and Berlin",
+                {"country": "Portugal", "region": "Berlin", "sector": None},
+            ),
+        ]
+
+        for session, message, expected in cases:
+            with self.subTest(message=message):
+                self.assertEqual(
+                    engine._deterministic_selection_from_text(session, message),
+                    expected,
+                )
+
+    def test_combined_region_and_sector_selection_phrases(self):
+        engine = _SelectionEngine()
+        cases = [
+            (
+                ChatSession(country="Germany"),
+                "Bavaria Housing",
+                {"country": None, "region": "Bavaria", "sector": "Housing"},
+            ),
+            (
+                ChatSession(country="Ireland"),
+                "Use Dublin for Transport",
+                {"country": None, "region": "Dublin", "sector": "Transport"},
+            ),
+            (
+                ChatSession(country="Italy"),
+                "Region Lombardy and sector Energy",
+                {"country": None, "region": "Lombardy", "sector": "Energy"},
+            ),
+        ]
+
+        for session, message, expected in cases:
+            with self.subTest(message=message):
+                self.assertEqual(
+                    engine._deterministic_selection_from_text(session, message),
+                    expected,
+                )
+
+    def test_natural_country_question_is_deterministic_selection(self):
+        engine = _SelectionEngine()
+        selection = engine._deterministic_selection_from_text(
+            ChatSession(),
+            "Can we look at Portugal?",
+        )
+
+        self.assertEqual(selection, {"country": "Portugal", "region": None, "sector": None})
+
+    def test_natural_country_phrase_does_not_infer_region(self):
+        engine = _SelectionEngine()
+        selection = engine._deterministic_selection_from_text(
+            ChatSession(),
+            "I will go with Portugal",
+        )
+
+        self.assertEqual(selection, {"country": "Portugal", "region": None, "sector": None})
+
+    def test_natural_region_phrases_are_deterministic_selection(self):
+        engine = _SelectionEngine()
+
+        self.assertEqual(
+            engine._deterministic_selection_from_text(
+                ChatSession(country="Germany"),
+                "Use Bavaria as the region",
+            ),
+            {"country": None, "region": "Bavaria", "sector": None},
+        )
+        self.assertEqual(
+            engine._deterministic_selection_from_text(
+                ChatSession(country="Ireland"),
+                "Set it to Dublin",
+            ),
+            {"country": None, "region": "Dublin", "sector": None},
+        )
+        self.assertEqual(
+            engine._deterministic_selection_from_text(
+                ChatSession(country="Italy"),
+                "The region is Lombardy",
+            ),
+            {"country": None, "region": "Lombardy", "sector": None},
+        )
+
+    def test_unsupported_country_alias_is_detected_in_embedded_text(self):
+        self.assertTrue(ChatSelectionStepsMixin._mentions_unsupported_country("Quiero Francia"))
+        self.assertTrue(ChatSelectionStepsMixin._mentions_unsupported_country("France Energy"))
+
     def test_new_full_selection_from_any_step_can_change_existing_selection(self):
         engine = _AsyncSelectionEngine()
         session = ChatSession(country="Germany", region="Berlin", sector="Housing")
@@ -102,6 +346,25 @@ class ChatSelectionEngineTests(unittest.TestCase):
         self.assertEqual(
             engine.applied_selection,
             {"country": "Germany", "region": "Bavaria", "sector": "Transport"},
+        )
+
+    def test_pairwise_selection_from_any_step_applies_without_llm(self):
+        engine = _AsyncSelectionEngine()
+        session = ChatSession(country="Germany", phase="region")
+
+        response = asyncio.run(
+            engine._open_selection_response_from_any_step(
+                "session-1",
+                session,
+                "Use Bavaria and Housing",
+                current_phase="region",
+            )
+        )
+
+        self.assertEqual(response, "applied")
+        self.assertEqual(
+            engine.applied_selection,
+            {"country": None, "region": "Bavaria", "sector": "Housing"},
         )
 
     def test_sector_synonym_phrase_asks_for_confirmation(self):

@@ -39,6 +39,8 @@ async def ask_llm_chat(
             "num_predict": max_tokens,
         },
     }
+    if should_disable_thinking(settings.ollama_model):
+        payload["think"] = False
     request_id = new_llm_request_id()
     started_at = perf_counter()
 
@@ -158,3 +160,9 @@ def _extract_chat_content(data: dict[str, Any]) -> str:
         return response
 
     return ""
+
+
+def should_disable_thinking(model: str | None) -> bool:
+    if not model:
+        return False
+    return model.strip().casefold().startswith("qwen3.5:")
