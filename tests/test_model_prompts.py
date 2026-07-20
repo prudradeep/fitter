@@ -1,4 +1,6 @@
 import unittest
+from collections import Counter
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,6 +15,29 @@ MODEL_PROMPT_DIRS = {
     "mistral-small3.2:24b": "mistral-small3.2_24b",
     "qwen3.5:27b": "qwen3.5_27b",
 }
+
+USER_TEMPLATE_SUFFIXES = ("_user.txt", "_user_context.txt", "_user_followup.txt")
+
+USER_FACING_PROMPTS = {
+    "dr_transition_coach.txt",
+    "intro_message.txt",
+    "mitigation_review_assistant.txt",
+    "new_policy_suggestion.txt",
+    "other_actions_navigation.txt",
+    "selection_message.txt",
+}
+
+EXPECTED_GUARDRAIL_COUNTS = Counter(
+    {
+        "TASK RESULT GUARDRAILS - extraction and matching": 10,
+        "TASK RESULT GUARDRAILS - simulated user message": 1,
+        "TASK RESULT GUARDRAILS - grounding and citations": 4,
+        "TASK RESULT GUARDRAILS - validation and classification": 12,
+        "TASK RESULT GUARDRAILS - structured output": 3,
+        "TASK RESULT GUARDRAILS - evidence and statistical context": 6,
+        "TASK RESULT GUARDRAILS - user-facing response": 6,
+    }
+)
 
 
 class ModelPromptTests(unittest.TestCase):
@@ -65,6 +90,79 @@ class ModelPromptTests(unittest.TestCase):
                 first_line = prompt_path.read_text(encoding="utf-8").splitlines()[0]
 
                 self.assertFalse(first_line.startswith("MODEL OPTIMIZATION -"))
+
+    def test_model_prompt_directories_mirror_base_prompt_files(self) -> None:
+        base_dir = Path("app/prompts/llm")
+        base_files = {path.name for path in base_dir.glob("*.txt")}
+
+        self.assertEqual(len(base_files), 74)
+        for model, directory in MODEL_PROMPT_DIRS.items():
+            with self.subTest(model=model):
+                model_files = {path.name for path in (base_dir / directory).glob("*.txt")}
+
+                self.assertEqual(model_files, base_files)
+
+    def test_system_task_prompts_have_one_header_and_guardrail(self) -> None:
+        base_dir = Path("app/prompts/llm")
+
+        for model, directory in MODEL_PROMPT_DIRS.items():
+            for prompt_path in sorted((base_dir / directory).glob("*.txt")):
+                if prompt_path.name.endswith(USER_TEMPLATE_SUFFIXES):
+                    continue
+
+                with self.subTest(model=model, prompt=prompt_path.name):
+                    prompt = prompt_path.read_text(encoding="utf-8")
+
+                    self.assertEqual(prompt.count("MODEL OPTIMIZATION -"), 1)
+                    self.assertEqual(prompt.count("TASK RESULT GUARDRAILS -"), 1)
+                    self.assertTrue(prompt.startswith(f"MODEL OPTIMIZATION - {model}"))
+
+    def test_guardrail_distribution_is_consistent_for_each_model(self) -> None:
+        base_dir = Path("app/prompts/llm")
+
+        for model, directory in MODEL_PROMPT_DIRS.items():
+            counts = Counter()
+            for prompt_path in sorted((base_dir / directory).glob("*.txt")):
+                for line in prompt_path.read_text(encoding="utf-8").splitlines():
+                    if line.startswith("TASK RESULT GUARDRAILS -"):
+                        counts[line] += 1
+
+            with self.subTest(model=model):
+                self.assertEqual(counts, EXPECTED_GUARDRAIL_COUNTS)
+
+    def test_conversational_prompts_use_user_facing_guardrails(self) -> None:
+        base_dir = Path("app/prompts/llm")
+
+        for model, directory in MODEL_PROMPT_DIRS.items():
+            for prompt_name in USER_FACING_PROMPTS:
+                with self.subTest(model=model, prompt=prompt_name):
+                    prompt = (base_dir / directory / prompt_name).read_text(encoding="utf-8")
+
+                    self.assertIn("TASK RESULT GUARDRAILS - user-facing response", prompt)
+                    self.assertNotIn("TASK RESULT GUARDRAILS - structured output", prompt)
+
+    def test_selection_prompts_cover_combined_message_patterns(self) -> None:
+        for model in MODEL_PROMPT_DIRS:
+            with self.subTest(model=model):
+                resolver_path = prompt_loader.resolve_nested_prompt_path(
+                    "llm/conversational_selection_resolver.txt",
+                    model,
+                )
+                intent_path = prompt_loader.resolve_nested_prompt_path(
+                    "llm/message_intent_detector.txt",
+                    model,
+                )
+                resolver = resolver_path.read_text(encoding="utf-8")
+                intent = intent_path.read_text(encoding="utf-8")
+
+                for phrase in [
+                    "Country Germany region Berlin sector Energy",
+                    "Country Portugal sector Transport",
+                    "Use Ireland and Waterford",
+                    "Use Galway with Transport",
+                ]:
+                    self.assertIn(phrase, resolver)
+                    self.assertIn(phrase, intent)
 
 
 if __name__ == "__main__":

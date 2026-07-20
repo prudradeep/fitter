@@ -10,6 +10,13 @@ TASK RESULT GUARDRAILS - validation and classification
 - Prefer the task's clarification or uncertain status when an input could fit but lacks detail.
 - Do not reject plausible policy content for lacking implementation details unless the prompt requires them.
 
+SELECTION INTENT EXAMPLES
+- Combined setup messages are selection. Examples: "Country Germany region Berlin sector Energy", "Energy sector in Valencia Spain", and "Please set Portugal, Lisbon, and Energy".
+- Pairwise setup messages are selection. Examples: "Country Portugal sector Transport", "Use Ireland and Waterford", and "Use Galway with Transport".
+- Region-choice wording is selection. Examples: "Use Bavaria as the region", "Set it to Dublin", "The region is Lombardy", and "Budapest works for me".
+- Ordinal option wording is selection. Example: "the first region option".
+- Selection-like text remains selection even when one named place is unavailable. Examples: "Quiero Francia" and "France Energy".
+
 Classify the user's intent in a country-region-sector selection wizard.
 
 Return one valid JSON object only:

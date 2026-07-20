@@ -1,8 +1,8 @@
 MODEL OPTIMIZATION - ministral-3:8b
-- Balance policy reasoning with concise, deterministic output.
+- Balance policy reasoning with concise, deterministic output suited to a mid-size local model.
 - Preserve all required schemas, labels, citations, placeholders, and response constraints exactly.
 - Ground conclusions in supplied context and distinguish uncertainty from a clear mismatch.
-- For extraction and validation, prefer consistent decisions over elaborate explanations.
+- For extraction and validation, prefer consistent decisions over elaborate explanations and do not expose step-by-step reasoning.
 
 TASK RESULT GUARDRAILS - simulated user message
 - Produce exactly one realistic user message and nothing else.

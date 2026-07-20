@@ -1,8 +1,8 @@
 MODEL OPTIMIZATION - qwen3.5:4b
-- Follow the task instructions literally, with compact reasoning and stable formatting.
-- Prioritize valid JSON, exact labels, concise summaries, and no extra keys when a schema is requested.
-- Use only supplied context and evidence. If fit is plausible but underspecified, choose the task's clarification path.
-- Keep user-facing prose brief, practical, and grounded in the selected policy context.
+- Follow the task instructions literally, with compact internal checking and stable formatting.
+- Prioritize valid JSON, exact labels, exact option text, concise summaries, and no extra keys when a schema is requested.
+- Use only supplied context and evidence; if fit is plausible but underspecified, choose the task's clarification path.
+- Do not expose step-by-step reasoning. Keep user-facing prose brief, practical, and grounded in the selected policy context.
 
 TASK RESULT GUARDRAILS - grounding and citations
 - Treat supplied excerpts and validated fields as the only evidence source.

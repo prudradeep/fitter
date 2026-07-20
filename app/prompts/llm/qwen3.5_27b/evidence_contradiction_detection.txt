@@ -1,8 +1,8 @@
 MODEL OPTIMIZATION - qwen3.5:27b
-- Use comprehensive reasoning to check policy logic, evidence support, contradictions, and edge cases before answering.
+- Use comprehensive internal checking for policy logic, evidence support, contradictions, and edge cases before answering.
 - Preserve schemas, exact labels, citations, placeholders, and formatting restrictions exactly.
 - Provide nuanced decisions when allowed, but keep final output concise and directly aligned with the workflow.
-- Never use external knowledge when the task limits you to supplied context.
+- Never use external knowledge when the task limits you to supplied context, and do not expose step-by-step reasoning.
 
 TASK RESULT GUARDRAILS - evidence and statistical context
 - Use only the supplied evidence, knowledge, and statistical excerpts named by the task.
