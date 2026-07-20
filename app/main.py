@@ -25,6 +25,7 @@ from app.observability import (
 from app.resource_paths import resource_path
 from app.routes.api import router as api_router
 from app.routes.auth import router as auth_router
+from app.routes.sync import router as sync_router
 from app.security import apply_security_headers, create_csrf_token, csrf_request_allowed, csrf_token_valid
 from app.services.bundled_knowledge_base import ingest_bundled_main_kb_pdfs
 from app.services.coverage import get_coverage_rows
@@ -52,6 +53,7 @@ templates = Jinja2Templates(directory=str(resource_path("app/templates")))
 
 app.include_router(auth_router)
 app.include_router(api_router)
+app.include_router(sync_router)
 
 
 @app.middleware("http")

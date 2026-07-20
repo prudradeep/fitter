@@ -129,6 +129,13 @@ class Settings(BaseSettings):
     rate_limit_retention_days: int = 7
     temporary_knowledge_retention_hours: int = 24
     llm_log_retention_days: int = 30
+    sync_enabled: bool = False
+    sync_mode: str = "client"
+    sync_server_url: str = ""
+    sync_api_token: str = ""
+    sync_device_id: str = ""
+    sync_batch_size: int = 500
+    sync_include_logs: bool = False
 
     model_config = SettingsConfigDict(env_file=_env_files(), env_file_encoding="utf-8", extra="ignore")
 

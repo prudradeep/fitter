@@ -247,6 +247,12 @@ Recommended production flow:
    source files changed.
 7. Confirm the retention cleanup schedule is enabled.
 
+Central sync backend deployment is documented in:
+
+```text
+docs/BACKEND_SYNC_DEPLOYMENT.md
+```
+
 ## Ollama Setup
 
 Install Ollama from https://ollama.com, start the Ollama service, then pull the chat and embedding models:
