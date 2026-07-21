@@ -1,6 +1,6 @@
 [project]
 name = "dr-transition"
-version = "0.1.5"
+version = "0.1.6"
 description = "A digital coach for Twin-Transition policy analysis"
 readme = "README.md"
 requires-python = ">=3.12"
