@@ -121,7 +121,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS app_users (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
                       email VARCHAR(255) NOT NULL UNIQUE,
                       name VARCHAR(160) NOT NULL,
                       password_hash VARCHAR(255) NOT NULL,
@@ -175,7 +175,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS llm_exchange_logs (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
                       request_id VARCHAR(64) NOT NULL,
                       provider VARCHAR(80) NOT NULL,
                       endpoint VARCHAR(255) NOT NULL,
@@ -212,8 +212,8 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS audit_logs (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
-                      user_id INT NULL,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                      user_id CHAR(36) NULL,
                       action VARCHAR(120) NOT NULL,
                       status VARCHAR(40) NOT NULL DEFAULT 'success',
                       target_type VARCHAR(80) NULL,
@@ -239,8 +239,8 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS system_hazards (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
-                      sector_id INT NOT NULL,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                      sector_id CHAR(36) NOT NULL,
                       name VARCHAR(255) NOT NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       CONSTRAINT fk_system_hazards_sector
@@ -255,11 +255,11 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS custom_hazards (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
-                      country_id INT NOT NULL,
-                      sector_id INT NOT NULL,
-                      region_id INT NULL,
-                      region_scope_key INT NOT NULL DEFAULT 0,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                      country_id CHAR(36) NOT NULL,
+                      sector_id CHAR(36) NOT NULL,
+                      region_id CHAR(36) NULL,
+                      region_scope_key CHAR(36) NOT NULL DEFAULT '',
                       name VARCHAR(255) NOT NULL,
                       name_key VARCHAR(255) NOT NULL,
                       reason TEXT NULL,
@@ -267,7 +267,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                       source VARCHAR(40) NOT NULL DEFAULT 'user',
                       validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
                       is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,
-                      created_by_user_id INT NULL,
+                      created_by_user_id CHAR(36) NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       CONSTRAINT fk_custom_hazards_country
                         FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE CASCADE,
@@ -292,8 +292,8 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS custom_hazard_profiles (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
-                      custom_hazard_id INT NOT NULL,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                      custom_hazard_id CHAR(36) NOT NULL,
                       profile TEXT NOT NULL,
                       profile_key VARCHAR(255) NOT NULL,
                       variable_name VARCHAR(160) NULL,
@@ -454,7 +454,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 if "user_id" not in session_columns:
                     connection.execute(
                         text(
-                            "ALTER TABLE user_sessions ADD COLUMN user_id INT NULL "
+                            "ALTER TABLE user_sessions ADD COLUMN user_id CHAR(36) NULL "
                             "AFTER session_key"
                         )
                     )
@@ -482,8 +482,8 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS user_chat_messages (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
-                      user_session_id INT NOT NULL,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                      user_session_id CHAR(36) NOT NULL,
                       role VARCHAR(20) NOT NULL,
                       content TEXT NOT NULL,
                       is_error BOOLEAN NOT NULL DEFAULT FALSE,
@@ -586,7 +586,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
             with engine.begin() as connection:
                 if "user_id" not in chunk_columns:
                     connection.execute(
-                        text("ALTER TABLE knowledge_chunks ADD COLUMN user_id INT NULL AFTER document_id")
+                        text("ALTER TABLE knowledge_chunks ADD COLUMN user_id CHAR(36) NULL AFTER document_id")
                     )
                 if "source_type" not in chunk_columns:
                     connection.execute(
@@ -677,28 +677,28 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     connection.execute(
                         text(
                             "ALTER TABLE user_mitigation_measures "
-                            "ADD COLUMN user_session_id INT NULL AFTER id"
+                            "ADD COLUMN user_session_id CHAR(36) NULL AFTER id"
                         )
                     )
                 if "system_hazard_id" not in mitigation_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_mitigation_measures "
-                            "ADD COLUMN system_hazard_id INT NULL AFTER user_hazard_id"
+                            "ADD COLUMN system_hazard_id CHAR(36) NULL AFTER user_hazard_id"
                         )
                     )
                 if "custom_hazard_id" not in mitigation_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_mitigation_measures "
-                            "ADD COLUMN custom_hazard_id INT NULL AFTER user_hazard_id"
+                            "ADD COLUMN custom_hazard_id CHAR(36) NULL AFTER user_hazard_id"
                         )
                     )
                 if "additional_hazard_id" not in mitigation_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_mitigation_measures "
-                            "ADD COLUMN additional_hazard_id INT NULL AFTER system_hazard_id"
+                            "ADD COLUMN additional_hazard_id CHAR(36) NULL AFTER system_hazard_id"
                         )
                     )
                 if "target_population" not in mitigation_columns:
@@ -811,7 +811,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     )
                 try:
                     connection.execute(
-                        text("ALTER TABLE user_mitigation_measures MODIFY user_hazard_id INT NULL")
+                        text("ALTER TABLE user_mitigation_measures MODIFY user_hazard_id CHAR(36) NULL")
                     )
                 except Exception:
                     logger.exception("Failed to relax user_mitigation_measures.user_hazard_id")
@@ -826,15 +826,15 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
         with engine.begin() as connection:
             if "system_hazard_id" not in columns:
                 connection.execute(
-                    text("ALTER TABLE user_hazards ADD COLUMN system_hazard_id INT NULL AFTER user_session_id")
+                    text("ALTER TABLE user_hazards ADD COLUMN system_hazard_id CHAR(36) NULL AFTER user_session_id")
                 )
             if "custom_hazard_id" not in columns:
                 connection.execute(
-                    text("ALTER TABLE user_hazards ADD COLUMN custom_hazard_id INT NULL AFTER user_session_id")
+                    text("ALTER TABLE user_hazards ADD COLUMN custom_hazard_id CHAR(36) NULL AFTER user_session_id")
                 )
             if "region_id" not in columns:
                 connection.execute(
-                    text("ALTER TABLE user_hazards ADD COLUMN region_id INT NULL AFTER sector_id")
+                    text("ALTER TABLE user_hazards ADD COLUMN region_id CHAR(36) NULL AFTER sector_id")
                 )
             if "validation_mode" not in columns:
                 connection.execute(
@@ -907,21 +907,21 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     connection.execute(
                         text(
                             "ALTER TABLE user_question_responses "
-                            "ADD COLUMN system_hazard_id INT NULL AFTER user_hazard_id"
+                            "ADD COLUMN system_hazard_id CHAR(36) NULL AFTER user_hazard_id"
                         )
                     )
                 if "custom_hazard_id" not in response_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_question_responses "
-                            "ADD COLUMN custom_hazard_id INT NULL AFTER user_hazard_id"
+                            "ADD COLUMN custom_hazard_id CHAR(36) NULL AFTER user_hazard_id"
                         )
                     )
                 if "additional_hazard_id" not in response_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_question_responses "
-                            "ADD COLUMN additional_hazard_id INT NULL AFTER system_hazard_id"
+                            "ADD COLUMN additional_hazard_id CHAR(36) NULL AFTER system_hazard_id"
                         )
                     )
                 if "ix_user_question_responses_system_hazard_id" not in response_indexes:
@@ -992,49 +992,49 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     connection.execute(
                         text(
                             "ALTER TABLE user_hazard_socio_demographics "
-                            "ADD COLUMN user_session_id INT NULL AFTER id"
+                            "ADD COLUMN user_session_id CHAR(36) NULL AFTER id"
                         )
                     )
                 if "system_hazard_id" not in dg_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_hazard_socio_demographics "
-                            "ADD COLUMN system_hazard_id INT NULL AFTER user_hazard_id"
+                            "ADD COLUMN system_hazard_id CHAR(36) NULL AFTER user_hazard_id"
                         )
                     )
                 if "custom_hazard_id" not in dg_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_hazard_socio_demographics "
-                            "ADD COLUMN custom_hazard_id INT NULL AFTER user_hazard_id"
+                            "ADD COLUMN custom_hazard_id CHAR(36) NULL AFTER user_hazard_id"
                         )
                     )
                 if "additional_hazard_id" not in dg_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_hazard_socio_demographics "
-                            "ADD COLUMN additional_hazard_id INT NULL AFTER system_hazard_id"
+                            "ADD COLUMN additional_hazard_id CHAR(36) NULL AFTER system_hazard_id"
                         )
                     )
                 if "country_id" not in dg_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_hazard_socio_demographics "
-                            "ADD COLUMN country_id INT NULL AFTER user_hazard_id"
+                            "ADD COLUMN country_id CHAR(36) NULL AFTER user_hazard_id"
                         )
                     )
                 if "region_id" not in dg_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_hazard_socio_demographics "
-                            "ADD COLUMN region_id INT NULL AFTER country_id"
+                            "ADD COLUMN region_id CHAR(36) NULL AFTER country_id"
                         )
                     )
                 if "sector_id" not in dg_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_hazard_socio_demographics "
-                            "ADD COLUMN sector_id INT NULL AFTER region_id"
+                            "ADD COLUMN sector_id CHAR(36) NULL AFTER region_id"
                         )
                     )
                 if "variable_name" not in dg_columns:
@@ -1151,7 +1151,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                     )
                 try:
                     connection.execute(
-                        text("ALTER TABLE user_hazard_socio_demographics MODIFY user_hazard_id INT NULL")
+                        text("ALTER TABLE user_hazard_socio_demographics MODIFY user_hazard_id CHAR(36) NULL")
                     )
                 except Exception:
                     logger.exception("Failed to relax user_hazard_socio_demographics.user_hazard_id")
@@ -1185,9 +1185,9 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS system_hazard_socio_demographics (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
-                      system_hazard_id INT NOT NULL,
-                      sector_id INT NULL,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                      system_hazard_id CHAR(36) NOT NULL,
+                      sector_id CHAR(36) NULL,
                       variable_name VARCHAR(160) NULL,
                       variable_type VARCHAR(40) NOT NULL DEFAULT 'individual',
                       profile TEXT NOT NULL,
@@ -1209,8 +1209,8 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     f"""
                     CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_target_populations (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
-                      system_hazard_socio_demographic_id INT NOT NULL,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                      system_hazard_socio_demographic_id CHAR(36) NOT NULL,
                       question_option_id {question_option_id_type} NOT NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       CONSTRAINT fk_system_dg_target_population_system_dg
@@ -1322,13 +1322,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS eurostat_population_cache (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
                       country VARCHAR(120) NOT NULL,
                       region VARCHAR(120) NOT NULL,
-                      country_id INT NULL,
-                      region_id INT NULL,
-                      sector_id INT NULL,
-                      system_hazard_id INT NULL,
+                      country_id CHAR(36) NULL,
+                      region_id CHAR(36) NULL,
+                      sector_id CHAR(36) NULL,
+                      system_hazard_id CHAR(36) NULL,
                       profile VARCHAR(255) NOT NULL,
                       response_json TEXT NOT NULL,
                       expires_at DATETIME NOT NULL,
@@ -1436,9 +1436,9 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 text(
                     """
                     CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_population_matches (
-                      id INT AUTO_INCREMENT PRIMARY KEY,
-                      system_hazard_socio_demographic_id INT NOT NULL,
-                      eurostat_population_cache_id INT NULL,
+                      id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                      system_hazard_socio_demographic_id CHAR(36) NOT NULL,
+                      eurostat_population_cache_id CHAR(36) NULL,
                       match_status INT NOT NULL DEFAULT 1,
                       attempt_count INT NOT NULL DEFAULT 0,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1468,7 +1468,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 connection.execute(
                     text(
                         "ALTER TABLE system_hazard_socio_demographic_population_matches "
-                        "MODIFY COLUMN eurostat_population_cache_id INT NULL"
+                        "MODIFY COLUMN eurostat_population_cache_id CHAR(36) NULL"
                     )
                 )
             if "match_status" not in match_columns:

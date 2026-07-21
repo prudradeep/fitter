@@ -58,13 +58,13 @@ def same_sector_hazard_names(db: Any, session: ChatSession) -> list[str]:
 def same_scope_custom_hazard_names(
     db: Any,
     session: ChatSession,
-    user_id: int | None,
+    user_id: str | None,
 ) -> list[str]:
     names: list[object] = []
     if session.country_id is None or session.sector_id is None:
         return []
 
-    region_scope_key = session.region_id or 0
+    region_scope_key = session.region_id or ""
     try:
         names.extend(
             db.scalars(

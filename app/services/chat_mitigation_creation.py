@@ -1560,9 +1560,9 @@ class ChatMitigationCreationMixin:
         if not rows:
             return []
 
-        allowed_ids = {int(row.id) for row in rows}
+        allowed_ids = {str(row.id) for row in rows}
         option_catalogue = "\n".join(
-            f"- {int(row.id)} | {row.question}: {row.option}" for row in rows
+            f"- {row.id} | {row.question}: {row.option}" for row in rows
         )
         context = render_prompt_template(
             "llm/mitigation_target_population_extraction.txt",
@@ -1586,17 +1586,16 @@ class ChatMitigationCreationMixin:
         except Exception:
             logger.exception("Target-population LLM matching failed; using deterministic fallback.")
             response = ""
-        matched_ids: set[int] = set()
+        matched_ids: set[str] = set()
         additional_groups: list[str] = []
-        rows_by_id = {int(row.id): row for row in rows}
+        rows_by_id = {str(row.id): row for row in rows}
         if not is_llm_unavailable_response(response):
             parsed = parse_json_object(response) or {}
             raw_ids = parsed.get("option_ids") if isinstance(parsed, dict) else []
             if isinstance(raw_ids, list):
                 for raw_id in raw_ids:
-                    try:
-                        option_id = int(raw_id)
-                    except (TypeError, ValueError):
+                    option_id = str(raw_id or "").strip()
+                    if not option_id:
                         continue
                     if (
                         option_id in allowed_ids
@@ -1617,7 +1616,7 @@ class ChatMitigationCreationMixin:
         labels = [
             f"{row.question}: {row.option}"
             for row in rows
-            if int(row.id) in matched_ids
+            if str(row.id) in matched_ids
         ]
         return self._merge_target_population_labels(labels, additional_groups)
 
@@ -1850,11 +1849,11 @@ class ChatMitigationCreationMixin:
         return option in exact_single_word_options and f" {option} " in text
 
     @classmethod
-    def _fallback_target_population_option_ids(cls, answer: str, rows: list[object]) -> set[int]:
-        matched: set[int] = set()
+    def _fallback_target_population_option_ids(cls, answer: str, rows: list[object]) -> set[str]:
+        matched: set[str] = set()
         for row in rows:
             if cls._target_population_option_is_supported_by_text(answer, row):
-                matched.add(int(row.id))
+                matched.add(str(row.id))
         return matched
 
     def _mitigation_target_population_step(
@@ -1906,7 +1905,7 @@ class ChatMitigationCreationMixin:
             )
 
         questions_by_id = {
-            int(question["id"]): question
+            str(question["id"]): question
             for question in (session.target_population_questions or [])
             if question.get("id") is not None
         }
@@ -1915,9 +1914,8 @@ class ChatMitigationCreationMixin:
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            try:
-                question_id = int(item.get("question_id"))
-            except (TypeError, ValueError):
+            question_id = str(item.get("question_id") or "").strip()
+            if not question_id:
                 continue
             question = questions_by_id.get(question_id)
             answers = item.get("answers")
@@ -2359,18 +2357,18 @@ class ChatMitigationCreationMixin:
     def _store_mitigation_measure(
         self,
         *,
-        existing_id: int | None = None,
-        user_session_id: int | None,
-        user_hazard_id: int | None,
-        custom_hazard_id: int | None,
-        system_hazard_id: int | None,
-        additional_hazard_id: int | None,
+        existing_id: str | None = None,
+        user_session_id: str | None,
+        user_hazard_id: str | None,
+        custom_hazard_id: str | None,
+        system_hazard_id: str | None,
+        additional_hazard_id: str | None,
         mitigation_measure: str,
         reason: str,
         target_population: list[str] | None = None,
         validation_mode: str = "strict",
         is_crowd_sourced: bool = False,
-    ) -> int | None:
+    ) -> str | None:
         if (
             user_hazard_id is None
             and custom_hazard_id is None
@@ -2438,11 +2436,11 @@ class ChatMitigationCreationMixin:
     def _existing_mitigation_measure_row(
         self,
         *,
-        user_session_id: int | None,
-        user_hazard_id: int | None,
-        custom_hazard_id: int | None,
-        system_hazard_id: int | None,
-        additional_hazard_id: int | None,
+        user_session_id: str | None,
+        user_hazard_id: str | None,
+        custom_hazard_id: str | None,
+        system_hazard_id: str | None,
+        additional_hazard_id: str | None,
         mitigation_measure: str,
         reason: str,
         target_population_json: str | None,
@@ -2580,18 +2578,18 @@ class ChatMitigationCreationMixin:
         session_id: str,
         session: ChatSession,
         *,
-        question_id: int | None,
+        question_id: str | None,
         category: str | None,
         response_text: str | None = None,
-        question_option_id: int | None = None,
+        question_option_id: str | None = None,
         score: int | None = None,
         reason: str | None = None,
         evidence: str | None = None,
-        hazard_id: int | None = None,
-        custom_hazard_id: int | None = None,
-        system_hazard_id: int | None = None,
-        additional_hazard_id: int | None = None,
-        mitigation_measure_id: int | None = None,
+        hazard_id: str | None = None,
+        custom_hazard_id: str | None = None,
+        system_hazard_id: str | None = None,
+        additional_hazard_id: str | None = None,
+        mitigation_measure_id: str | None = None,
     ) -> None:
         try:
             user_session = self._ensure_user_session(session_id, session)
@@ -2654,7 +2652,7 @@ class ChatMitigationCreationMixin:
 
 
 
-    def _selected_system_hazard_id(self, session: ChatSession) -> int | None:
+    def _selected_system_hazard_id(self, session: ChatSession) -> str | None:
         if session.sector_id is None or not session.selected_hazard:
             return None
         hazard_id = self.db.scalar(
@@ -2663,13 +2661,11 @@ class ChatMitigationCreationMixin:
                 func.lower(SystemHazard.name) == session.selected_hazard.casefold(),
             )
         )
-        if isinstance(hazard_id, int):
-            return hazard_id
-        return None
+        return str(hazard_id) if hazard_id else None
 
     def _selected_system_profile_ids(
-        self, session: ChatSession, system_hazard_id: int | None
-    ) -> list[int]:
+        self, session: ChatSession, system_hazard_id: str | None
+    ) -> list[str]:
         if system_hazard_id is None:
             return []
 
@@ -2694,10 +2690,10 @@ class ChatMitigationCreationMixin:
             ).where(SystemHazardSocioDemographic.system_hazard_id == system_hazard_id)
         ).all()
 
-        profile_ids: list[int] = []
-        seen: set[int] = set()
+        profile_ids: list[str] = []
+        seen: set[str] = set()
         for row in rows:
-            row_id = int(row.id)
+            row_id = str(row.id)
             row_keys = {
                 normalize(str(row.profile or "")),
                 normalize(str(row.variable_name or "")),
@@ -3305,7 +3301,7 @@ class ChatMitigationCreationMixin:
         if not policy_rows:
             return []
 
-        policy_ids = [int(row["id"]) for row in policy_rows]
+        policy_ids = [str(row["id"]) for row in policy_rows]
         target_rows = self.db.execute(
             select(
                 MitigationMeasureTargetGroup.mitigation_measure_policy_id.label("policy_id"),
@@ -3333,16 +3329,16 @@ class ChatMitigationCreationMixin:
             )
         ).mappings().all()
 
-        targets_by_policy: dict[int, list[dict[str, object]]] = {}
+        targets_by_policy: dict[str, list[dict[str, object]]] = {}
         for row in target_rows:
-            policy_id = int(row["policy_id"])
+            policy_id = str(row["policy_id"])
             label = self._target_population_label(
                 str(row["question"] or ""),
                 str(row["option"] or ""),
             )
             targets_by_policy.setdefault(policy_id, []).append(
                 {
-                    "question_option_id": int(row["question_option_id"]),
+                    "question_option_id": str(row["question_option_id"]),
                     "label": label,
                     "match_value": str(row["match_value"] or "").strip(),
                 }
@@ -3350,7 +3346,7 @@ class ChatMitigationCreationMixin:
 
         candidates: list[dict[str, object]] = []
         for row in policy_rows:
-            policy_id = int(row["id"])
+            policy_id = str(row["id"])
             target_groups = targets_by_policy.get(policy_id, [])
             score_details = self._new_policy_suggestion_score(
                 mitigation_effect=str(row["mitigation_effect"] or ""),
@@ -3389,15 +3385,15 @@ class ChatMitigationCreationMixin:
     def _selected_system_hazard_target_option_ids(
         self,
         session: ChatSession,
-        system_hazard_id: int | None,
-    ) -> set[int]:
+        system_hazard_id: str | None,
+    ) -> set[str]:
         if system_hazard_id is None:
             return self._selected_target_population_option_ids(session)
 
         profile_ids = self._selected_system_profile_ids(session, system_hazard_id)
         if not profile_ids:
             profile_ids = [
-                int(row_id)
+                str(row_id)
                 for row_id in self.db.scalars(
                     select(SystemHazardSocioDemographic.id).where(
                         SystemHazardSocioDemographic.system_hazard_id
@@ -3409,7 +3405,7 @@ class ChatMitigationCreationMixin:
             return self._selected_target_population_option_ids(session)
 
         option_ids = {
-            int(option_id)
+            str(option_id)
             for option_id in self.db.scalars(
                 select(
                     SystemHazardSocioDemographicTargetPopulation.question_option_id
@@ -3422,7 +3418,7 @@ class ChatMitigationCreationMixin:
         }
         return option_ids or self._selected_target_population_option_ids(session)
 
-    def _selected_target_population_option_ids(self, session: ChatSession) -> set[int]:
+    def _selected_target_population_option_ids(self, session: ChatSession) -> set[str]:
         answer_pairs: set[tuple[str, str]] = set()
         for answer in session.target_population_answers or []:
             question = normalize_for_match(str(answer.get("question") or ""))
@@ -3445,7 +3441,7 @@ class ChatMitigationCreationMixin:
             .where(EvaluationQuestion.category == "target_population")
         ).all()
         return {
-            int(row.id)
+            str(row.id)
             for row in rows
             if (
                 normalize_for_match(str(row.question or "")),
@@ -3459,7 +3455,7 @@ class ChatMitigationCreationMixin:
         *,
         mitigation_effect: str,
         target_groups: list[dict[str, object]],
-        hazard_target_option_ids: set[int],
+        hazard_target_option_ids: set[str],
     ) -> dict[str, object]:
         effect_key = normalize_for_match(mitigation_effect)
         hazard_effect_score = {
@@ -3483,7 +3479,9 @@ class ChatMitigationCreationMixin:
                 "hazard_target_option_count": 0,
             }
         for group in target_groups:
-            option_id = int(group.get("question_option_id") or 0)
+            option_id = str(group.get("question_option_id") or "").strip()
+            if not option_id:
+                continue
             if option_id not in hazard_target_option_ids:
                 continue
             value = str(group.get("match_value") or "").strip()

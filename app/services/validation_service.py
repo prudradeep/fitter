@@ -1053,7 +1053,7 @@ class ChatValidationServiceMixin:
     ) -> list[dict[str, str]]:
         option_rows = self._target_population_option_rows()
         option_catalogue = "\n".join(
-            f"- {int(row.id)} | {row.question}: {row.option}" for row in option_rows
+            f"- {row.id} | {row.question}: {row.option}" for row in option_rows
         )
         context = render_prompt_template(
             "llm/custom_hazard_population_extraction.txt",
@@ -1113,14 +1113,14 @@ class ChatValidationServiceMixin:
 
     @staticmethod
     def _profiles_from_target_population_option_ids(
-        option_ids: set[int],
+        option_ids: set[str],
         option_rows: list[object],
         *,
         reason: str,
     ) -> list[dict[str, str]]:
         if not option_ids:
             return []
-        rows_by_id = {int(row.id): row for row in option_rows}
+        rows_by_id = {str(row.id): row for row in option_rows}
         profiles: list[dict[str, str]] = []
         for option_id in sorted(option_ids):
             row = rows_by_id.get(option_id)
@@ -1172,7 +1172,7 @@ class ChatValidationServiceMixin:
         rows = option_rows if option_rows is not None else self._target_population_option_rows()
         if not rows:
             return profiles
-        rows_by_id = {int(row.id): row for row in rows}
+        rows_by_id = {str(row.id): row for row in rows}
         allowed_ids = set(rows_by_id)
         for profile in profiles:
             support_text = " ".join(
@@ -1207,9 +1207,9 @@ class ChatValidationServiceMixin:
                 self._deterministic_target_population_option_ids(profile, rows)
             )
             ordered_ids = [
-                int(row.id)
+                str(row.id)
                 for row in rows
-                if int(row.id) in matched_ids
+                if str(row.id) in matched_ids
             ]
             if not ordered_ids:
                 profile["target_population_option_ids"] = []
@@ -1233,19 +1233,18 @@ class ChatValidationServiceMixin:
     def _coerce_target_population_option_ids(
         cls,
         value: object,
-        allowed_ids: set[int],
-        rows_by_id: dict[int, object],
+        allowed_ids: set[str],
+        rows_by_id: dict[str, object],
         support_text: str,
         *,
         trust_ids: bool = False,
-    ) -> set[int]:
+    ) -> set[str]:
         if not isinstance(value, list):
             return set()
-        ids: set[int] = set()
+        ids: set[str] = set()
         for raw_id in value:
-            try:
-                option_id = int(raw_id)
-            except (TypeError, ValueError):
+            option_id = str(raw_id or "").strip()
+            if not option_id:
                 continue
             if option_id not in allowed_ids or option_id not in rows_by_id:
                 continue

@@ -9,11 +9,11 @@ from app.services.enums import ChatPhase
 @dataclass
 class ChatSession:
     session_key: str | None = None
-    country_id: int | None = None
+    country_id: str | None = None
     country: str | None = None
-    region_id: int | None = None
+    region_id: str | None = None
     region: str | None = None
-    sector_id: int | None = None
+    sector_id: str | None = None
     sector: str | None = None
     phase: str = ChatPhase.WIZARD.value
     hazards: list[str] | None = None
@@ -23,7 +23,7 @@ class ChatSession:
     additional_hazards: list[str] | None = None
     pending_hazard: str | None = None
     selected_hazard: str | None = None
-    selected_hazard_record_id: int | None = None
+    selected_hazard_record_id: str | None = None
     socio_demographic_findings: str | None = None
     socio_demographic_profiles: list[str] | None = None
     additional_dgs: list[str] | None = None
@@ -40,18 +40,18 @@ class ChatSession:
     mitigation_clarity_turns: int = 0
     mitigation_clarification_history: list[dict[str, str]] | None = None
     mitigation_frozen_inputs: dict[str, str] | None = None
-    suggested_mitigation_measure_id: int | None = None
+    suggested_mitigation_measure_id: str | None = None
     suggested_mitigation_measure_name: str | None = None
     suggested_new_policy_proposal: str | None = None
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
     mitigation_target_population: list[str] | None = None
-    mitigation_record_id: int | None = None
+    mitigation_record_id: str | None = None
     mitigation_validation: dict[str, object] | None = None
     mitigation_grounded_synthesis: str | None = None
-    evaluation_questions: list[dict[str, str | int]] | None = None
+    evaluation_questions: list[dict[str, object]] | None = None
     evaluation_index: int = 0
-    evaluation_answers: list[dict[str, str | int | None]] | None = None
+    evaluation_answers: list[dict[str, object]] | None = None
     target_population_questions: list[dict[str, object]] | None = None
     target_population_index: int = 0
     target_population_answers: list[dict[str, object]] | None = None
@@ -59,14 +59,14 @@ class ChatSession:
     accepted_custom_hazard: str | None = None
     accepted_custom_hazard_reason: str | None = None
     accepted_custom_hazard_evidence: str | None = None
-    accepted_custom_hazard_id: int | None = None
-    accepted_custom_hazard_record_id: int | None = None
+    accepted_custom_hazard_id: str | None = None
+    accepted_custom_hazard_record_id: str | None = None
     pending_hazard_reason: str | None = None
     pending_hazard_evidence: str | None = None
     pending_hazard_clarification_question: str | None = None
     pending_hazard_clarification_answer: str | None = None
     suggested_duplicate_hazard: str | None = None
-    suggested_duplicate_hazard_record_id: int | None = None
+    suggested_duplicate_hazard_record_id: str | None = None
     pending_affected_population_profiles: list[dict[str, str]] | None = None
     custom_hazard: dict[str, object] | None = None
     pending_selection: dict[str, str | None] | None = None

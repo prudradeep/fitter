@@ -1149,8 +1149,8 @@ class ChatSelectionStepsMixin:
             logger.exception("Hazard-listing cache store failed")
 
     @staticmethod
-    def _hazard_cache_region_scope_key(session: ChatSession) -> int:
-        return int(session.region_id or 0)
+    def _hazard_cache_region_scope_key(session: ChatSession) -> str:
+        return str(session.region_id or "").strip()
 
     @staticmethod
     def _hazard_listing_cache_payload(session: ChatSession) -> dict[str, object]:
@@ -1222,7 +1222,7 @@ class ChatSelectionStepsMixin:
         parts: list[object] = [
             HAZARD_LISTING_CACHE_VERSION,
             session.country_id,
-            session.region_id or 0,
+            session.region_id or "",
             session.sector_id,
             self._hazard_source_stats(
                 SystemHazard,
@@ -1278,7 +1278,7 @@ class ChatSelectionStepsMixin:
         payload = json.dumps(parts, default=str, sort_keys=True)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def _hazard_source_stats(self, model, *conditions) -> tuple[int, int, str]:
+    def _hazard_source_stats(self, model, *conditions) -> tuple[int, str, str]:
         timestamp = getattr(model, "updated_at", None) or getattr(model, "created_at", None)
         max_timestamp = func.max(timestamp) if timestamp is not None else None
         row = self.db.execute(
@@ -1290,7 +1290,7 @@ class ChatSelectionStepsMixin:
         ).one()
         return (
             int(row[0] or 0),
-            int(row[1] or 0),
+            str(row[1] or ""),
             str(row[2] or ""),
         )
 
@@ -1625,7 +1625,7 @@ class ChatSelectionStepsMixin:
             query = query.where(Region.country_id == session.country_id)
         return [region.name for region in self.db.scalars(query).all()]
 
-    def _regions_for_country_id(self, country_id: int | None) -> list[Region]:
+    def _regions_for_country_id(self, country_id: str | None) -> list[Region]:
         if country_id is None:
             return []
         if hasattr(self, "_regions_for_country"):
@@ -1681,7 +1681,7 @@ class ChatSelectionStepsMixin:
         countries = self.db.scalars(select(Country).order_by(Country.name)).all()
         return next((country for country in countries if normalize(country.name) == target), None)
 
-    def _region_by_name(self, name: str | None, country_id: int) -> Region | None:
+    def _region_by_name(self, name: str | None, country_id: str) -> Region | None:
         if not name:
             return None
         matched = self._match_region(name, country_id)
@@ -1699,7 +1699,7 @@ class ChatSelectionStepsMixin:
         ).all()
         return self._match_by_id_or_name(list(countries), message)
 
-    def _match_region(self, message: str, country_id: int | None) -> Region | None:
+    def _match_region(self, message: str, country_id: str | None) -> Region | None:
         if country_id is None:
             return None
         regions = self.db.scalars(
@@ -1707,10 +1707,10 @@ class ChatSelectionStepsMixin:
         ).all()
         return self._match_by_id_or_name(list(regions), message)
 
-    def _match_sector(self, message: str, country_id: int | None) -> Sector | None:
+    def _match_sector(self, message: str, country_id: str | None) -> Sector | None:
         return self._match_by_id_or_name(self._sectors_for_country(country_id), message)
 
-    def _sectors_for_country(self, country_id: int | None) -> list[Sector]:
+    def _sectors_for_country(self, country_id: str | None) -> list[Sector]:
         if country_id is None:
             return []
         country = self.db.scalar(

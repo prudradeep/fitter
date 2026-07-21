@@ -1250,14 +1250,14 @@ class ChatHazardCreationMixin:
         if not hazard or not answers:
             return
         questions_by_id = {
-            int(question["id"]): question
+            str(question["id"]): question
             for question in (session.target_population_questions or [])
             if question.get("id") is not None
         }
         answers_by_id = {
-            int(answer.get("question_id") or 0): answer
+            str(answer.get("question_id") or ""): answer
             for answer in answers
-            if int(answer.get("question_id") or 0) > 0
+            if str(answer.get("question_id") or "").strip()
         }
         all_options_selected = bool(questions_by_id)
         structured_answers: list[dict[str, object]] = []
@@ -2337,14 +2337,12 @@ class ChatHazardCreationMixin:
         profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
         if not profile_name:
             return []
-        cache_ids: set[int] = set()
+        cache_ids: set[str] = set()
         for population_profile in population_profiles:
-            try:
-                cache_id = int(population_profile.get("eurostat_population_cache_id") or 0)
-            except (TypeError, ValueError):
+            cache_id = str(population_profile.get("eurostat_population_cache_id") or "").strip()
+            if not cache_id:
                 continue
-            if cache_id > 0:
-                cache_ids.add(cache_id)
+            cache_ids.add(cache_id)
         if not cache_ids:
             return []
         system_hazard = self.db.scalar(
@@ -2387,7 +2385,7 @@ class ChatHazardCreationMixin:
         return [
             population_profile
             for population_profile in population_profiles
-            if int(population_profile.get("eurostat_population_cache_id") or 0)
+            if str(population_profile.get("eurostat_population_cache_id") or "").strip()
             in matched_cache_ids
         ]
 
@@ -2463,13 +2461,10 @@ class ChatHazardCreationMixin:
         *match_groups: list[dict[str, object]],
     ) -> list[dict[str, object]]:
         matches: list[dict[str, object]] = []
-        seen: set[tuple[int, str]] = set()
+        seen: set[tuple[str, str]] = set()
         for group in match_groups:
             for profile in group:
-                try:
-                    cache_id = int(profile.get("eurostat_population_cache_id") or 0)
-                except (TypeError, ValueError):
-                    cache_id = 0
+                cache_id = str(profile.get("eurostat_population_cache_id") or "").strip()
                 key = (cache_id, normalize(str(profile.get("name") or "")))
                 if key in seen:
                     continue
@@ -3059,7 +3054,7 @@ class ChatHazardCreationMixin:
             .where(
                 CustomHazard.country_id == session.country_id,
                 CustomHazard.sector_id == session.sector_id,
-                CustomHazard.region_scope_key == (session.region_id or 0),
+                CustomHazard.region_scope_key == (session.region_id or ""),
                 or_(
                     CustomHazard.created_by_user_id == self.user_id,
                     and_(
@@ -3123,9 +3118,9 @@ class ChatHazardCreationMixin:
             )
         ).all()
         profile_ids = [
-            int(profile_row.id)
+            str(profile_row.id)
             for _, profile_row in rows
-            if profile_row is not None and isinstance(profile_row.id, int)
+            if profile_row is not None and profile_row.id is not None
         ]
         target_population_by_profile = (
             self._additional_hazard_profile_target_population_map(profile_ids)
@@ -3153,7 +3148,7 @@ class ChatHazardCreationMixin:
                 hazards.append(hazard)
             if profile_row is None or not str(profile_row.profile or "").strip():
                 continue
-            mapped_targets = target_population_by_profile.get(int(profile_row.id), [])
+            mapped_targets = target_population_by_profile.get(str(profile_row.id), [])
             profiles_by_hazard.setdefault(hazard, []).append(
                 {
                     "name": str(profile_row.profile).strip(),
@@ -3162,7 +3157,7 @@ class ChatHazardCreationMixin:
                     "statistical_basis": str(profile_row.reference or "").strip(),
                     "source": "d4_2_pdf",
                     "target_population_option_ids": [
-                        int(item["option_id"]) for item in mapped_targets
+                        str(item["option_id"]) for item in mapped_targets
                     ],
                     "target_population_labels": [
                         str(item["label"]) for item in mapped_targets
@@ -3197,7 +3192,7 @@ class ChatHazardCreationMixin:
             )
         }
         matched_hazard_ids = [
-            int(row.id)
+            str(row.id)
             for row in hazard_rows
             if normalize(str(row.name or "").strip()) in matched_names
         ]
@@ -3212,7 +3207,7 @@ class ChatHazardCreationMixin:
                 AdditionalHazardProfile.profile,
             )
         ).all()
-        profile_ids = [int(row.id) for row in profile_rows if isinstance(row.id, int)]
+        profile_ids = [str(row.id) for row in profile_rows if row.id is not None]
         target_population_by_profile = self._additional_hazard_profile_target_population_map(
             profile_ids
         )
@@ -3224,7 +3219,7 @@ class ChatHazardCreationMixin:
             if not name or key in seen:
                 continue
             seen.add(key)
-            mapped_targets = target_population_by_profile.get(int(row.id), [])
+            mapped_targets = target_population_by_profile.get(str(row.id), [])
             profiles.append(
                 {
                     "name": name,
@@ -3233,7 +3228,7 @@ class ChatHazardCreationMixin:
                     "statistical_basis": str(row.reference or "").strip(),
                     "source": "d4_2_pdf",
                     "target_population_option_ids": [
-                        int(item["option_id"]) for item in mapped_targets
+                        str(item["option_id"]) for item in mapped_targets
                     ],
                     "target_population_labels": [
                         str(item["label"]) for item in mapped_targets
@@ -3249,8 +3244,8 @@ class ChatHazardCreationMixin:
         return any(normalize(hazard) == normalize(item) for item in (session.additional_hazards or []))
 
     def _additional_hazard_profile_target_population_map(
-        self, profile_ids: list[int]
-    ) -> dict[int, list[dict[str, object]]]:
+        self, profile_ids: list[str]
+    ) -> dict[str, list[dict[str, object]]]:
         if not profile_ids:
             return {}
         rows = self.db.execute(
@@ -3279,12 +3274,12 @@ class ChatHazardCreationMixin:
                 QuestionOption.id,
             )
         ).all()
-        mapped: dict[int, list[dict[str, object]]] = {}
+        mapped: dict[str, list[dict[str, object]]] = {}
         for row in rows:
-            profile_id = int(row.additional_hazard_profile_id)
+            profile_id = str(row.additional_hazard_profile_id)
             mapped.setdefault(profile_id, []).append(
                 {
-                    "option_id": int(row.id),
+                    "option_id": str(row.id),
                     "label": f"{row.question}: {row.option}",
                 }
             )
@@ -3374,8 +3369,8 @@ class ChatHazardCreationMixin:
             logger.exception("Failed to load stored hazards and profiles")
             return []
 
-        items_by_hazard: dict[int, dict[str, object]] = {}
-        seen_profiles: dict[int, set[str]] = {}
+        items_by_hazard: dict[str, dict[str, object]] = {}
+        seen_profiles: dict[str, set[str]] = {}
         for hazard, profile_row in rows:
             item = items_by_hazard.setdefault(
                 hazard.id,
@@ -3503,7 +3498,7 @@ class ChatHazardCreationMixin:
         for batch_start in range(0, len(rows), batch_size):
             batch = rows[batch_start : batch_start + batch_size]
             hazard_items: list[dict[str, object]] = []
-            profiles_by_id: dict[int, dict[str, object]] = {}
+            profiles_by_id: dict[str, dict[str, object]] = {}
             for row, hazard_name in batch:
                 profile = {
                     "name": str(row.profile or ""),
@@ -3513,7 +3508,7 @@ class ChatHazardCreationMixin:
                     "explanation": str(row.explanation or ""),
                     "statistical_basis": str(row.statistical_basis or ""),
                 }
-                profiles_by_id[int(row.id)] = profile
+                profiles_by_id[str(row.id)] = profile
                 hazard_items.append(
                     {"hazard": str(hazard_name or ""), "profiles": [profile]}
                 )
@@ -3528,7 +3523,7 @@ class ChatHazardCreationMixin:
     @staticmethod
     def _deterministic_target_population_option_ids(
         profile: dict[str, object], option_rows: list[object]
-    ) -> set[int]:
+    ) -> set[str]:
         identity_text = normalize_for_match(
             " ".join(
                 str(profile.get(field) or "")
@@ -3543,14 +3538,14 @@ class ChatHazardCreationMixin:
         )
         padded_profile = f" {profile_text} "
         padded_explanation = f" {explanation_text} "
-        matched: set[int] = set()
+        matched: set[str] = set()
         for row in option_rows:
             question = normalize_for_match(str(row.question))
             option = normalize_for_match(str(row.option))
             if not option or option in {"yes", "no", "other"}:
                 continue
             if f" {option} " in padded_profile:
-                matched.add(int(row.id))
+                matched.add(str(row.id))
                 continue
             aliases = {
                 ("gender", "woman"): ("women", "female"),
@@ -3571,7 +3566,7 @@ class ChatHazardCreationMixin:
                 f" {normalize_for_match(alias)} " in padded_profile
                 for alias in aliases
             ):
-                matched.add(int(row.id))
+                matched.add(str(row.id))
 
         age_match = re.search(r"\bage(?: group)?\s+(\d{1,2})\s*(\+|and over)?", profile_text)
         if age_match:
@@ -3589,7 +3584,7 @@ class ChatHazardCreationMixin:
                     continue
                 option = normalize_for_match(str(row.option))
                 if option in allowed_age_options:
-                    matched.add(int(row.id))
+                    matched.add(str(row.id))
 
         yes_question_markers = {
             "living in a house with low energy efficiency": (
@@ -3611,7 +3606,7 @@ class ChatHazardCreationMixin:
                 continue
             markers = yes_question_markers.get(normalize_for_match(str(row.question)), ())
             if any(f" {normalize_for_match(marker)} " in padded_profile for marker in markers):
-                matched.add(int(row.id))
+                matched.add(str(row.id))
 
         explanation_markers = {
             ("living in a house with low energy efficiency", "yes"): (
@@ -3666,7 +3661,7 @@ class ChatHazardCreationMixin:
                 f" {normalize_for_match(marker)} " in padded_explanation
                 for marker in markers
             ):
-                matched.add(int(row.id))
+                matched.add(str(row.id))
         return matched
 
     def _historical_evaluation_series(
@@ -3675,7 +3670,7 @@ class ChatHazardCreationMixin:
         if self.user_id is None or not session.evaluation_answers or session.sector_id is None:
             return []
         question_ids = [
-            int(answer["question_id"])
+            str(answer["question_id"])
             for answer in session.evaluation_answers
             if answer.get("question_id") is not None
         ]
@@ -3713,9 +3708,9 @@ class ChatHazardCreationMixin:
         if session.mitigation_record_id is not None:
             query = query.where(UserMitigationMeasure.id != session.mitigation_record_id)
         rows = self.db.execute(query).all()
-        grouped: dict[int, dict[str, object]] = {}
+        grouped: dict[str, dict[str, object]] = {}
         for row in rows:
-            mitigation_id = int(row.id)
+            mitigation_id = str(row.id)
             if mitigation_id not in grouped and len(grouped) >= limit:
                 continue
             group = grouped.setdefault(
@@ -3728,7 +3723,7 @@ class ChatHazardCreationMixin:
             )
             scores = group["scores"]
             if isinstance(scores, dict):
-                scores[int(row.question_id)] = int(row.score)
+                scores[str(row.question_id)] = int(row.score)
 
         series: list[dict[str, object]] = []
         for group in grouped.values():
@@ -3865,7 +3860,7 @@ class ChatHazardCreationMixin:
             logger.exception("Failed to normalize stored socio-demographic variable names")
 
     def _delete_generated_system_socio_demographics(
-        self, system_hazard_id: int, session: ChatSession
+        self, system_hazard_id: str, session: ChatSession
     ) -> None:
         try:
             self.db.execute(
@@ -3933,7 +3928,7 @@ class ChatHazardCreationMixin:
     def _custom_hazard_name_key(name: str) -> str:
         return normalize_for_match(name)[:255]
 
-    def _custom_hazard_id_for_context(self, session: ChatSession, hazard: str) -> int | None:
+    def _custom_hazard_id_for_context(self, session: ChatSession, hazard: str) -> str | None:
         if session.country_id is None or session.sector_id is None or not hazard.strip():
             return None
         if normalize(hazard) == normalize(session.accepted_custom_hazard or ""):
@@ -3944,7 +3939,7 @@ class ChatHazardCreationMixin:
                 select(CustomHazard.id).where(
                     CustomHazard.country_id == session.country_id,
                     CustomHazard.sector_id == session.sector_id,
-                    CustomHazard.region_scope_key == (session.region_id or 0),
+                    CustomHazard.region_scope_key == (session.region_id or ""),
                     CustomHazard.name_key == self._custom_hazard_name_key(hazard),
                     or_(
                         CustomHazard.created_by_user_id == self.user_id,
@@ -3955,7 +3950,7 @@ class ChatHazardCreationMixin:
                     ),
                 )
             )
-            return int(hazard_id) if isinstance(hazard_id, int) else None
+            return str(hazard_id) if hazard_id else None
         except Exception:
             logger.exception("Failed to load shared custom hazard id")
             return None
@@ -3978,7 +3973,7 @@ class ChatHazardCreationMixin:
                 select(CustomHazard).where(
                     CustomHazard.country_id == session.country_id,
                     CustomHazard.sector_id == session.sector_id,
-                    CustomHazard.region_scope_key == (session.region_id or 0),
+                    CustomHazard.region_scope_key == (session.region_id or ""),
                     CustomHazard.name_key == name_key,
                     or_(
                         CustomHazard.created_by_user_id == self.user_id,
@@ -3994,7 +3989,7 @@ class ChatHazardCreationMixin:
                     country_id=session.country_id,
                     sector_id=session.sector_id,
                     region_id=session.region_id,
-                    region_scope_key=session.region_id or 0,
+                    region_scope_key=session.region_id or "",
                     name=name.strip(),
                     name_key=name_key,
                     source="user",
@@ -4003,7 +3998,7 @@ class ChatHazardCreationMixin:
                 self.db.add(hazard)
             hazard.name = name.strip()
             hazard.region_id = session.region_id
-            hazard.region_scope_key = session.region_id or 0
+            hazard.region_scope_key = session.region_id or ""
             if reason is not None:
                 hazard.reason = reason.strip() or None
             if evidence is not None:
@@ -4022,7 +4017,7 @@ class ChatHazardCreationMixin:
 
     def _store_custom_hazard_profile(
         self,
-        custom_hazard_id: int | None,
+        custom_hazard_id: str | None,
         profile: dict[str, object],
     ) -> None:
         if custom_hazard_id is None:
@@ -4191,7 +4186,7 @@ class ChatHazardCreationMixin:
             return "additional"
         return "system"
 
-    def _selected_additional_hazard_id(self, session: ChatSession, hazard: str) -> int | None:
+    def _selected_additional_hazard_id(self, session: ChatSession, hazard: str) -> str | None:
         if session.country_id is None or session.sector_id is None:
             return None
         hazard_id = self.db.scalar(
@@ -4201,17 +4196,17 @@ class ChatHazardCreationMixin:
                 func.lower(AdditionalHazard.name) == hazard.casefold(),
             )
         )
-        return int(hazard_id) if isinstance(hazard_id, int) else None
+        return str(hazard_id) if hazard_id else None
 
     def _store_socio_demographic(
         self,
         session: ChatSession,
         profile: str,
         *,
-        user_hazard_id: int | None = None,
-        custom_hazard_id: int | None = None,
-        system_hazard_id: int | None = None,
-        additional_hazard_id: int | None = None,
+        user_hazard_id: str | None = None,
+        custom_hazard_id: str | None = None,
+        system_hazard_id: str | None = None,
+        additional_hazard_id: str | None = None,
         source: str,
         variable_name: str | None = None,
         explanation: str | None = None,
@@ -4288,7 +4283,7 @@ class ChatHazardCreationMixin:
     def _store_system_socio_demographic(
         self,
         session: ChatSession,
-        system_hazard_id: int,
+        system_hazard_id: str,
         profile: dict[str, object],
     ) -> None:
         profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
@@ -4338,15 +4333,15 @@ class ChatHazardCreationMixin:
             logger.exception("Failed to persist system socio-demographic profile")
 
     def _store_system_target_population_matches(
-        self, system_profile_id: int, option_ids: object
+        self, system_profile_id: str, option_ids: object
     ) -> None:
-        requested_ids: set[int] = set()
+        requested_ids: set[str] = set()
         if isinstance(option_ids, list):
             for option_id in option_ids:
-                try:
-                    requested_ids.add(int(option_id))
-                except (TypeError, ValueError):
+                option_id_text = str(option_id or "").strip()
+                if not option_id_text:
                     continue
+                requested_ids.add(option_id_text)
         valid_ids = set(
             self.db.scalars(
                 select(QuestionOption.id)
@@ -4389,11 +4384,10 @@ class ChatHazardCreationMixin:
         if system_profile is None:
             return
         try:
-            valid_cache_ids: set[int] = set()
+            valid_cache_ids: set[str] = set()
             for matched_profile in matched_population_profiles:
-                try:
-                    cache_id = int(matched_profile.get("eurostat_population_cache_id") or 0)
-                except (TypeError, ValueError):
+                cache_id = str(matched_profile.get("eurostat_population_cache_id") or "").strip()
+                if not cache_id:
                     continue
                 cache_row = self.db.get(EurostatPopulationCache, cache_id)
                 if (

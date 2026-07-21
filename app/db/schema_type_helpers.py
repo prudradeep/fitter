@@ -51,5 +51,5 @@ def mysql_question_option_id_type(connection: Connection) -> str:
         connection,
         table_name="question_options",
         column_name="id",
-        default="INT",
+        default="CHAR(36)",
     )

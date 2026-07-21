@@ -311,7 +311,7 @@ class ChatContextRetrievalMixin:
             return evidence.strip()
         return ""
 
-    def _mitigation_measure_examples(self, sector_id: int | None, limit: int = 6) -> str:
+    def _mitigation_measure_examples(self, sector_id: str | None, limit: int = 6) -> str:
         if sector_id is None:
             return ""
         query = (

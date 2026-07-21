@@ -516,11 +516,11 @@ class ChatCustomHazardPopulationStepsMixin:
         if session.target_population_answers is None:
             session.target_population_answers = []
         answer_text = ", ".join(selected_labels)
-        question_id = int(question["id"])
+        question_id = str(question["id"])
         session.target_population_answers = [
             answer
             for answer in session.target_population_answers
-            if int(answer.get("question_id") or 0) != question_id
+            if str(answer.get("question_id") or "") != question_id
         ]
         session.target_population_answers.append(
             {
@@ -687,7 +687,7 @@ class ChatCustomHazardPopulationStepsMixin:
             )
         return response
 
-    def _clear_target_population_profiles(self, hazard_id: int | None) -> None:
+    def _clear_target_population_profiles(self, hazard_id: str | None) -> None:
         if hazard_id is None:
             return
         try:

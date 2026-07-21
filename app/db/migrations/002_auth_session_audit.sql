@@ -14,8 +14,8 @@ EXECUTE add_session_version_stmt;
 DEALLOCATE PREPARE add_session_version_stmt;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id CHAR(36) NULL,
   action VARCHAR(120) NOT NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'success',
   target_type VARCHAR(80) NULL,

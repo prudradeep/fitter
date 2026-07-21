@@ -5,7 +5,7 @@ CREATE DATABASE IF NOT EXISTS drtransition
 USE drtransition;
 
 CREATE TABLE IF NOT EXISTS countries (
-  id INT AUTO_INCREMENT PRIMARY KEY,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   name VARCHAR(120) NOT NULL UNIQUE,
   map_code VARCHAR(8) NULL,
   map_path VARCHAR(255) NULL,
@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS countries (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS regions (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  country_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  country_id CHAR(36) NOT NULL,
   name VARCHAR(120) NOT NULL,
   CONSTRAINT fk_regions_country
     FOREIGN KEY (country_id) REFERENCES countries(id)
@@ -26,15 +26,15 @@ CREATE TABLE IF NOT EXISTS regions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS sectors (
-  id INT AUTO_INCREMENT PRIMARY KEY,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   name VARCHAR(120) NOT NULL UNIQUE,
   INDEX ix_sectors_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS country_sectors (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  country_id INT NOT NULL,
-  sector_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  country_id CHAR(36) NOT NULL,
+  sector_id CHAR(36) NOT NULL,
   CONSTRAINT fk_country_sectors_country
     FOREIGN KEY (country_id) REFERENCES countries(id)
     ON DELETE CASCADE,
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS country_sectors (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS evaluation_questions (
-  id INT AUTO_INCREMENT PRIMARY KEY,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   category VARCHAR(120) NOT NULL,
   chart_title VARCHAR(160) NULL,
   question TEXT NOT NULL,
@@ -60,8 +60,8 @@ CREATE TABLE IF NOT EXISTS evaluation_questions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS question_options (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  questionId INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  questionId CHAR(36) NOT NULL,
   `option` VARCHAR(255) NOT NULL,
   CONSTRAINT fk_question_options_question
     FOREIGN KEY (questionId) REFERENCES evaluation_questions(id)
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS question_options (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS app_users (
-  id INT AUTO_INCREMENT PRIMARY KEY,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   email VARCHAR(255) NOT NULL UNIQUE,
   name VARCHAR(160) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
@@ -95,15 +95,15 @@ CREATE TABLE IF NOT EXISTS app_rate_limits (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_sessions (
-  id INT AUTO_INCREMENT PRIMARY KEY,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   session_key VARCHAR(64) NOT NULL UNIQUE,
   title VARCHAR(220) NULL,
   title_is_manual BOOLEAN NOT NULL DEFAULT FALSE,
   session_data TEXT NULL,
-  user_id INT NULL,
-  country_id INT NULL,
-  region_id INT NULL,
-  sector_id INT NULL,
+  user_id CHAR(36) NULL,
+  country_id CHAR(36) NULL,
+  region_id CHAR(36) NULL,
+  sector_id CHAR(36) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_user_sessions_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE SET NULL,
@@ -119,8 +119,8 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_chat_messages (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_session_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_session_id CHAR(36) NOT NULL,
   role VARCHAR(20) NOT NULL,
   content TEXT NOT NULL,
   is_error BOOLEAN NOT NULL DEFAULT FALSE,
@@ -132,8 +132,8 @@ CREATE TABLE IF NOT EXISTS user_chat_messages (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS system_hazards (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  sector_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  sector_id CHAR(36) NOT NULL,
   name VARCHAR(255) NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_system_hazards_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
@@ -142,9 +142,9 @@ CREATE TABLE IF NOT EXISTS system_hazards (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS additional_hazards (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  country_id INT NOT NULL,
-  sector_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  country_id CHAR(36) NOT NULL,
+  sector_id CHAR(36) NOT NULL,
   name VARCHAR(255) NOT NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'csv',
   csv_row_number INT NULL,
@@ -158,8 +158,8 @@ CREATE TABLE IF NOT EXISTS additional_hazards (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS additional_hazard_profiles (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  additional_hazard_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  additional_hazard_id CHAR(36) NOT NULL,
   profile VARCHAR(255) NOT NULL,
   evidence TEXT NULL,
   reference TEXT NULL,
@@ -174,9 +174,9 @@ CREATE TABLE IF NOT EXISTS additional_hazard_profiles (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS additional_hazard_profile_target_populations (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  additional_hazard_profile_id INT NOT NULL,
-  question_option_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  additional_hazard_profile_id CHAR(36) NOT NULL,
+  question_option_id CHAR(36) NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_additional_hazard_profile_target_profile
     FOREIGN KEY (additional_hazard_profile_id)
@@ -191,11 +191,11 @@ CREATE TABLE IF NOT EXISTS additional_hazard_profile_target_populations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS custom_hazards (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  country_id INT NOT NULL,
-  sector_id INT NOT NULL,
-  region_id INT NULL,
-  region_scope_key INT NOT NULL DEFAULT 0,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  country_id CHAR(36) NOT NULL,
+  sector_id CHAR(36) NOT NULL,
+  region_id CHAR(36) NULL,
+  region_scope_key CHAR(36) NOT NULL DEFAULT '',
   name VARCHAR(255) NOT NULL,
   name_key VARCHAR(255) NOT NULL,
   reason TEXT NULL,
@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS custom_hazards (
   source VARCHAR(40) NOT NULL DEFAULT 'user',
   validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
   is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,
-  created_by_user_id INT NULL,
+  created_by_user_id CHAR(36) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_custom_hazards_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE CASCADE,
   CONSTRAINT fk_custom_hazards_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
@@ -218,8 +218,8 @@ CREATE TABLE IF NOT EXISTS custom_hazards (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS custom_hazard_profiles (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  custom_hazard_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  custom_hazard_id CHAR(36) NOT NULL,
   profile TEXT NOT NULL,
   profile_key VARCHAR(255) NOT NULL,
   variable_name VARCHAR(160) NULL,
@@ -234,12 +234,12 @@ CREATE TABLE IF NOT EXISTS custom_hazard_profiles (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_hazards (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_session_id INT NOT NULL,
-  custom_hazard_id INT NULL,
-  system_hazard_id INT NULL,
-  sector_id INT NULL,
-  region_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_session_id CHAR(36) NOT NULL,
+  custom_hazard_id CHAR(36) NULL,
+  system_hazard_id CHAR(36) NULL,
+  sector_id CHAR(36) NULL,
+  region_id CHAR(36) NULL,
   name VARCHAR(255) NOT NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'custom',
   validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
@@ -262,15 +262,15 @@ CREATE TABLE IF NOT EXISTS user_hazards (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_hazard_socio_demographics (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_session_id INT NULL,
-  user_hazard_id INT NULL,
-  custom_hazard_id INT NULL,
-  system_hazard_id INT NULL,
-  additional_hazard_id INT NULL,
-  country_id INT NULL,
-  region_id INT NULL,
-  sector_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_session_id CHAR(36) NULL,
+  user_hazard_id CHAR(36) NULL,
+  custom_hazard_id CHAR(36) NULL,
+  system_hazard_id CHAR(36) NULL,
+  additional_hazard_id CHAR(36) NULL,
+  country_id CHAR(36) NULL,
+  region_id CHAR(36) NULL,
+  sector_id CHAR(36) NULL,
   variable_name VARCHAR(160) NULL,
   profile TEXT NOT NULL,
   explanation TEXT NULL,
@@ -299,9 +299,9 @@ CREATE TABLE IF NOT EXISTS user_hazard_socio_demographics (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS system_hazard_socio_demographics (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  system_hazard_id INT NOT NULL,
-  sector_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  system_hazard_id CHAR(36) NOT NULL,
+  sector_id CHAR(36) NULL,
   variable_name VARCHAR(160) NULL,
   variable_type VARCHAR(40) NOT NULL DEFAULT 'individual',
   profile TEXT NOT NULL,
@@ -316,9 +316,9 @@ CREATE TABLE IF NOT EXISTS system_hazard_socio_demographics (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_target_populations (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  system_hazard_socio_demographic_id INT NOT NULL,
-  question_option_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  system_hazard_socio_demographic_id CHAR(36) NOT NULL,
+  question_option_id CHAR(36) NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_system_dg_target_population_system_dg
     FOREIGN KEY (system_hazard_socio_demographic_id)
@@ -333,12 +333,12 @@ CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_target_populations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_mitigation_measures (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_session_id INT NULL,
-  user_hazard_id INT NULL,
-  custom_hazard_id INT NULL,
-  system_hazard_id INT NULL,
-  additional_hazard_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_session_id CHAR(36) NULL,
+  user_hazard_id CHAR(36) NULL,
+  custom_hazard_id CHAR(36) NULL,
+  system_hazard_id CHAR(36) NULL,
+  additional_hazard_id CHAR(36) NULL,
   measure TEXT NOT NULL,
   reason TEXT NOT NULL,
   target_population TEXT NULL,
@@ -361,10 +361,10 @@ CREATE TABLE IF NOT EXISTS user_mitigation_measures (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mitigation_measure_examples (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  sector_id INT NOT NULL,
-  system_hazard_id INT NULL,
-  system_hazard_socio_demographic_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  sector_id CHAR(36) NOT NULL,
+  system_hazard_id CHAR(36) NULL,
+  system_hazard_socio_demographic_id CHAR(36) NULL,
   profile_label VARCHAR(255) NULL,
   measure TEXT NOT NULL,
   policy_case_study TEXT NULL,
@@ -385,11 +385,11 @@ CREATE TABLE IF NOT EXISTS mitigation_measure_examples (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mitigation_measure_policies (
-  id INT AUTO_INCREMENT PRIMARY KEY,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   policy_code VARCHAR(80) NOT NULL,
   policy_title TEXT NOT NULL,
-  country_id INT NULL,
-  sector_id INT NULL,
+  country_id CHAR(36) NULL,
+  sector_id CHAR(36) NULL,
   policy_type VARCHAR(120) NULL,
   short_description TEXT NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
@@ -405,9 +405,9 @@ CREATE TABLE IF NOT EXISTS mitigation_measure_policies (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mitigation_measure_target_groups (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  mitigation_measure_policy_id INT NOT NULL,
-  question_option_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  mitigation_measure_policy_id CHAR(36) NOT NULL,
+  question_option_id CHAR(36) NOT NULL,
   match_value VARCHAR(40) NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
   excel_column_number INT NULL,
@@ -422,9 +422,9 @@ CREATE TABLE IF NOT EXISTS mitigation_measure_target_groups (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mitigation_measure_policy_additional_hazards (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  mitigation_measure_policy_id INT NOT NULL,
-  additional_hazard_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  mitigation_measure_policy_id CHAR(36) NOT NULL,
+  additional_hazard_id CHAR(36) NOT NULL,
   match_value VARCHAR(40) NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
   excel_row_number INT NULL,
@@ -440,9 +440,9 @@ CREATE TABLE IF NOT EXISTS mitigation_measure_policy_additional_hazards (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mitigation_measure_policy_system_hazards (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  mitigation_measure_policy_id INT NOT NULL,
-  system_hazard_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  mitigation_measure_policy_id CHAR(36) NOT NULL,
+  system_hazard_id CHAR(36) NOT NULL,
   mitigation_effect VARCHAR(40) NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
   excel_row_number INT NULL,
@@ -458,15 +458,15 @@ CREATE TABLE IF NOT EXISTS mitigation_measure_policy_system_hazards (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_question_responses (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_session_id INT NOT NULL,
-  user_hazard_id INT NULL,
-  custom_hazard_id INT NULL,
-  system_hazard_id INT NULL,
-  additional_hazard_id INT NULL,
-  mitigation_measure_id INT NULL,
-  question_id INT NULL,
-  question_option_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_session_id CHAR(36) NOT NULL,
+  user_hazard_id CHAR(36) NULL,
+  custom_hazard_id CHAR(36) NULL,
+  system_hazard_id CHAR(36) NULL,
+  additional_hazard_id CHAR(36) NULL,
+  mitigation_measure_id CHAR(36) NULL,
+  question_id CHAR(36) NULL,
+  question_option_id CHAR(36) NULL,
   category VARCHAR(120) NULL,
   response_text TEXT NULL,
   score INT NULL,
@@ -493,17 +493,17 @@ CREATE TABLE IF NOT EXISTS user_question_responses (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS knowledge_documents (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id CHAR(36) NULL,
   title VARCHAR(255) NOT NULL,
   source_type VARCHAR(40) NOT NULL,
   source_uri TEXT NULL,
   scope VARCHAR(20) NOT NULL DEFAULT 'main',
   session_key VARCHAR(64) NULL,
   scope_level VARCHAR(20) NOT NULL DEFAULT 'global',
-  country_id INT NULL,
-  region_id INT NULL,
-  sector_id INT NULL,
+  country_id CHAR(36) NULL,
+  region_id CHAR(36) NULL,
+  sector_id CHAR(36) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_knowledge_documents_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
   CONSTRAINT fk_knowledge_documents_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE SET NULL,
@@ -519,18 +519,18 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  document_id INT NOT NULL,
-  user_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  document_id CHAR(36) NOT NULL,
+  user_id CHAR(36) NULL,
   chunk_index INT NOT NULL,
   content TEXT NOT NULL,
   source_type VARCHAR(40) NOT NULL,
   source_uri TEXT NULL,
   page_number INT NULL,
   scope_level VARCHAR(20) NOT NULL DEFAULT 'global',
-  country_id INT NULL,
-  region_id INT NULL,
-  sector_id INT NULL,
+  country_id CHAR(36) NULL,
+  region_id CHAR(36) NULL,
+  sector_id CHAR(36) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_knowledge_chunks_document FOREIGN KEY (document_id) REFERENCES knowledge_documents(id) ON DELETE CASCADE,
   CONSTRAINT fk_knowledge_chunks_user FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
@@ -546,13 +546,13 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS eurostat_population_cache (
-  id INT AUTO_INCREMENT PRIMARY KEY,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   country VARCHAR(120) NOT NULL,
   region VARCHAR(120) NOT NULL,
-  country_id INT NULL,
-  region_id INT NULL,
-  sector_id INT NULL,
-  system_hazard_id INT NULL,
+  country_id CHAR(36) NULL,
+  region_id CHAR(36) NULL,
+  sector_id CHAR(36) NULL,
+  system_hazard_id CHAR(36) NULL,
   profile VARCHAR(255) NOT NULL,
   response_json TEXT NOT NULL,
   expires_at DATETIME NOT NULL,
@@ -574,9 +574,9 @@ CREATE TABLE IF NOT EXISTS eurostat_population_cache (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_population_matches (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  system_hazard_socio_demographic_id INT NOT NULL,
-  eurostat_population_cache_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  system_hazard_socio_demographic_id CHAR(36) NOT NULL,
+  eurostat_population_cache_id CHAR(36) NULL,
   match_status INT NOT NULL DEFAULT 1,
   attempt_count INT NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -594,11 +594,11 @@ CREATE TABLE IF NOT EXISTS system_hazard_socio_demographic_population_matches (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS hazard_listing_cache (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  country_id INT NOT NULL,
-  region_id INT NULL,
-  region_scope_key INT NOT NULL DEFAULT 0,
-  sector_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  country_id CHAR(36) NOT NULL,
+  region_id CHAR(36) NULL,
+  region_scope_key CHAR(36) NOT NULL DEFAULT '',
+  sector_id CHAR(36) NOT NULL,
   cache_version VARCHAR(40) NOT NULL DEFAULT 'v1',
   source_fingerprint VARCHAR(64) NOT NULL,
   payload_json LONGTEXT NOT NULL,
@@ -621,8 +621,8 @@ CREATE TABLE IF NOT EXISTS hazard_listing_cache (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_activities (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_session_id INT NOT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_session_id CHAR(36) NOT NULL,
   activity_type VARCHAR(80) NOT NULL,
   step VARCHAR(120) NULL,
   details TEXT NULL,
@@ -633,8 +633,8 @@ CREATE TABLE IF NOT EXISTS user_activities (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT NULL,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id CHAR(36) NULL,
   action VARCHAR(120) NOT NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'success',
   target_type VARCHAR(80) NULL,
@@ -654,7 +654,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS llm_exchange_logs (
-  id INT AUTO_INCREMENT PRIMARY KEY,
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   request_id VARCHAR(64) NOT NULL,
   provider VARCHAR(80) NOT NULL,
   endpoint VARCHAR(255) NOT NULL,

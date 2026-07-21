@@ -39,7 +39,7 @@ class EvidenceContradictionService:
     def __init__(
         self,
         db: Session | None,
-        user_id: int | None = None,
+        user_id: str | None = None,
         *,
         l1_scope: str = "main",
     ) -> None:

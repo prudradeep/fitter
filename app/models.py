@@ -1,4 +1,5 @@
 from datetime import datetime
+import uuid
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -10,15 +11,15 @@ class CountrySector(Base):
     __tablename__ = "country_sectors"
     __table_args__ = (UniqueConstraint("country_id", "sector_id", name="uq_country_sector"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    country_id: Mapped[int] = mapped_column(ForeignKey("countries.id", ondelete="CASCADE"), index=True)
-    sector_id: Mapped[int] = mapped_column(ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    country_id: Mapped[str] = mapped_column(String(36), ForeignKey("countries.id", ondelete="CASCADE"), index=True)
+    sector_id: Mapped[str] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
 
 
 class Country(Base):
     __tablename__ = "countries"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
     map_code: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
     map_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -39,8 +40,8 @@ class Region(Base):
     __tablename__ = "regions"
     __table_args__ = (UniqueConstraint("country_id", "name", name="uq_country_region"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    country_id: Mapped[int] = mapped_column(ForeignKey("countries.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    country_id: Mapped[str] = mapped_column(String(36), ForeignKey("countries.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
 
     country: Mapped["Country"] = relationship(back_populates="regions")
@@ -49,7 +50,7 @@ class Region(Base):
 class Sector(Base):
     __tablename__ = "sectors"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
 
     countries: Mapped[list["Country"]] = relationship(
@@ -63,7 +64,7 @@ class EvaluationQuestion(Base):
     __tablename__ = "evaluation_questions"
     __table_args__ = (UniqueConstraint("category", "sort_order", name="uq_eval_category_sort"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     category: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     chart_title: Mapped[str | None] = mapped_column(String(160), nullable=True)
     question: Mapped[str] = mapped_column(Text, nullable=False)
@@ -83,10 +84,10 @@ class QuestionOption(Base):
         UniqueConstraint("questionId", "option", name="uq_question_option"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    question_id: Mapped[int] = mapped_column(
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    question_id: Mapped[str] = mapped_column(
         "questionId",
-        ForeignKey("evaluation_questions.id", ondelete="CASCADE"),
+        String(36), ForeignKey("evaluation_questions.id", ondelete="CASCADE"),
         index=True,
     )
     option: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -97,22 +98,22 @@ class QuestionOption(Base):
 class UserSession(Base):
     __tablename__ = "user_sessions"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     session_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     title: Mapped[str | None] = mapped_column(String(220), index=True)
     title_is_manual: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     session_data: Mapped[str | None] = mapped_column(Text)
-    user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("app_users.id", ondelete="SET NULL"), index=True
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), index=True
     )
-    country_id: Mapped[int | None] = mapped_column(
-        ForeignKey("countries.id", ondelete="SET NULL"), index=True
+    country_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True
     )
-    region_id: Mapped[int | None] = mapped_column(
-        ForeignKey("regions.id", ondelete="SET NULL"), index=True
+    region_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True
     )
-    sector_id: Mapped[int | None] = mapped_column(
-        ForeignKey("sectors.id", ondelete="SET NULL"), index=True
+    sector_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("sectors.id", ondelete="SET NULL"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -126,9 +127,9 @@ class UserSession(Base):
 class UserChatMessage(Base):
     __tablename__ = "user_chat_messages"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_session_id: Mapped[int] = mapped_column(
-        ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    user_session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -139,7 +140,7 @@ class UserChatMessage(Base):
 class AppUser(Base):
     __tablename__ = "app_users"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -177,8 +178,8 @@ class SystemHazard(Base):
     __tablename__ = "system_hazards"
     __table_args__ = (UniqueConstraint("sector_id", "name", name="uq_system_hazard_sector_name"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    sector_id: Mapped[int] = mapped_column(ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    sector_id: Mapped[str] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
@@ -189,9 +190,9 @@ class AdditionalHazard(Base):
         UniqueConstraint("country_id", "sector_id", "name", name="uq_additional_hazard_scope_name"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    country_id: Mapped[int] = mapped_column(ForeignKey("countries.id", ondelete="CASCADE"), index=True)
-    sector_id: Mapped[int] = mapped_column(ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    country_id: Mapped[str] = mapped_column(String(36), ForeignKey("countries.id", ondelete="CASCADE"), index=True)
+    sector_id: Mapped[str] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="csv")
     csv_row_number: Mapped[int | None] = mapped_column(Integer)
@@ -204,9 +205,9 @@ class AdditionalHazardProfile(Base):
         UniqueConstraint("additional_hazard_id", "profile", name="uq_additional_hazard_profile"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    additional_hazard_id: Mapped[int] = mapped_column(
-        ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    additional_hazard_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
     )
     profile: Mapped[str] = mapped_column(String(255), nullable=False)
     evidence: Mapped[str | None] = mapped_column(Text)
@@ -226,12 +227,12 @@ class AdditionalHazardProfileTargetPopulation(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    additional_hazard_profile_id: Mapped[int] = mapped_column(
-        ForeignKey("additional_hazard_profiles.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    additional_hazard_profile_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("additional_hazard_profiles.id", ondelete="CASCADE"), index=True
     )
-    question_option_id: Mapped[int] = mapped_column(
-        ForeignKey("question_options.id", ondelete="CASCADE"), index=True
+    question_option_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("question_options.id", ondelete="CASCADE"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
@@ -248,11 +249,11 @@ class CustomHazard(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    country_id: Mapped[int] = mapped_column(ForeignKey("countries.id", ondelete="CASCADE"), index=True)
-    sector_id: Mapped[int] = mapped_column(ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
-    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
-    region_scope_key: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    country_id: Mapped[str] = mapped_column(String(36), ForeignKey("countries.id", ondelete="CASCADE"), index=True)
+    sector_id: Mapped[str] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    region_scope_key: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     name_key: Mapped[str] = mapped_column(String(255), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
@@ -260,7 +261,7 @@ class CustomHazard(Base):
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="user", server_default="user")
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict", server_default="strict")
     is_crowd_sourced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
-    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_users.id", ondelete="SET NULL"), index=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("app_users.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
@@ -270,8 +271,8 @@ class CustomHazardProfile(Base):
         UniqueConstraint("custom_hazard_id", "profile_key", name="uq_custom_hazard_profile"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    custom_hazard_id: Mapped[int] = mapped_column(ForeignKey("custom_hazards.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    custom_hazard_id: Mapped[str] = mapped_column(String(36), ForeignKey("custom_hazards.id", ondelete="CASCADE"), index=True)
     profile: Mapped[str] = mapped_column(Text, nullable=False)
     profile_key: Mapped[str] = mapped_column(String(255), nullable=False)
     variable_name: Mapped[str | None] = mapped_column(String(160))
@@ -286,12 +287,12 @@ class UserHazard(Base):
     __tablename__ = "user_hazards"
     __table_args__ = (UniqueConstraint("user_session_id", "name", name="uq_user_session_hazard"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_session_id: Mapped[int] = mapped_column(ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True)
-    custom_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True)
-    system_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True)
-    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
-    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    user_session_id: Mapped[str] = mapped_column(String(36), ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True)
+    custom_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True)
+    system_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="custom")
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict", server_default="strict")
@@ -304,21 +305,21 @@ class UserHazard(Base):
 class UserHazardSocioDemographic(Base):
     __tablename__ = "user_hazard_socio_demographics"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_session_id: Mapped[int | None] = mapped_column(
-        ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    user_session_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
     )
-    user_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
-    custom_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("custom_hazards.id", ondelete="CASCADE"), index=True)
-    system_hazard_id: Mapped[int | None] = mapped_column(
-        ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
+    user_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
+    custom_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("custom_hazards.id", ondelete="CASCADE"), index=True)
+    system_hazard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
     )
-    additional_hazard_id: Mapped[int | None] = mapped_column(
-        ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
+    additional_hazard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
     )
-    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
-    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
-    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     variable_name: Mapped[str | None] = mapped_column(String(160))
     profile: Mapped[str] = mapped_column(Text, nullable=False)
     explanation: Mapped[str | None] = mapped_column(Text)
@@ -333,9 +334,9 @@ class UserHazardSocioDemographic(Base):
 class SystemHazardSocioDemographic(Base):
     __tablename__ = "system_hazard_socio_demographics"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    system_hazard_id: Mapped[int] = mapped_column(ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True)
-    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    system_hazard_id: Mapped[str] = mapped_column(String(36), ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True)
+    sector_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     variable_name: Mapped[str | None] = mapped_column(String(160))
     variable_type: Mapped[str] = mapped_column(
         String(40), nullable=False, default="individual", server_default="individual"
@@ -357,12 +358,12 @@ class SystemHazardSocioDemographicTargetPopulation(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    system_hazard_socio_demographic_id: Mapped[int] = mapped_column(
-        ForeignKey("system_hazard_socio_demographics.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    system_hazard_socio_demographic_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("system_hazard_socio_demographics.id", ondelete="CASCADE"), index=True
     )
-    question_option_id: Mapped[int] = mapped_column(
-        ForeignKey("question_options.id", ondelete="CASCADE"), index=True
+    question_option_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("question_options.id", ondelete="CASCADE"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
@@ -370,17 +371,17 @@ class SystemHazardSocioDemographicTargetPopulation(Base):
 class UserMitigationMeasure(Base):
     __tablename__ = "user_mitigation_measures"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_session_id: Mapped[int | None] = mapped_column(
-        ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    user_session_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True
     )
-    user_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
-    custom_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("custom_hazards.id", ondelete="CASCADE"), index=True)
-    system_hazard_id: Mapped[int | None] = mapped_column(
-        ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
+    user_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("user_hazards.id", ondelete="CASCADE"), index=True)
+    custom_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("custom_hazards.id", ondelete="CASCADE"), index=True)
+    system_hazard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
     )
-    additional_hazard_id: Mapped[int | None] = mapped_column(
-        ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
+    additional_hazard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
     )
     measure: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
@@ -395,13 +396,13 @@ class UserMitigationMeasure(Base):
 class MitigationMeasureExample(Base):
     __tablename__ = "mitigation_measure_examples"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    sector_id: Mapped[int] = mapped_column(ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
-    system_hazard_id: Mapped[int | None] = mapped_column(
-        ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    sector_id: Mapped[str] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    system_hazard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True
     )
-    system_hazard_socio_demographic_id: Mapped[int | None] = mapped_column(
-        ForeignKey("system_hazard_socio_demographics.id", ondelete="SET NULL"), index=True
+    system_hazard_socio_demographic_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("system_hazard_socio_demographics.id", ondelete="SET NULL"), index=True
     )
     profile_label: Mapped[str | None] = mapped_column(String(255))
     measure: Mapped[str] = mapped_column(Text, nullable=False)
@@ -426,14 +427,14 @@ class MitigationMeasurePolicy(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     policy_code: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     policy_title: Mapped[str] = mapped_column(Text, nullable=False)
-    country_id: Mapped[int | None] = mapped_column(
-        ForeignKey("countries.id", ondelete="SET NULL"), nullable=True, index=True
+    country_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("countries.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    sector_id: Mapped[int | None] = mapped_column(
-        ForeignKey("sectors.id", ondelete="SET NULL"), nullable=True, index=True
+    sector_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("sectors.id", ondelete="SET NULL"), nullable=True, index=True
     )
     policy_type: Mapped[str | None] = mapped_column(String(120))
     short_description: Mapped[str | None] = mapped_column(Text)
@@ -452,12 +453,12 @@ class MitigationMeasureTargetGroup(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    mitigation_measure_policy_id: Mapped[int] = mapped_column(
-        ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    mitigation_measure_policy_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), index=True
     )
-    question_option_id: Mapped[int] = mapped_column(
-        ForeignKey("question_options.id", ondelete="CASCADE"), index=True
+    question_option_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("question_options.id", ondelete="CASCADE"), index=True
     )
     match_value: Mapped[str | None] = mapped_column(String(40), index=True)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="xlsx", server_default="xlsx")
@@ -475,12 +476,12 @@ class MitigationMeasurePolicyAdditionalHazard(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    mitigation_measure_policy_id: Mapped[int] = mapped_column(
-        ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    mitigation_measure_policy_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), index=True
     )
-    additional_hazard_id: Mapped[int] = mapped_column(
-        ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
+    additional_hazard_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True
     )
     match_value: Mapped[str | None] = mapped_column(String(40), index=True)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="xlsx", server_default="xlsx")
@@ -499,12 +500,12 @@ class MitigationMeasurePolicySystemHazard(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    mitigation_measure_policy_id: Mapped[int] = mapped_column(
-        ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    mitigation_measure_policy_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), index=True
     )
-    system_hazard_id: Mapped[int] = mapped_column(
-        ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
+    system_hazard_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True
     )
     mitigation_effect: Mapped[str | None] = mapped_column(String(40), index=True)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="xlsx", server_default="xlsx")
@@ -516,22 +517,22 @@ class MitigationMeasurePolicySystemHazard(Base):
 class UserQuestionResponse(Base):
     __tablename__ = "user_question_responses"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_session_id: Mapped[int] = mapped_column(ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True)
-    user_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("user_hazards.id", ondelete="SET NULL"), index=True)
-    custom_hazard_id: Mapped[int | None] = mapped_column(ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True)
-    system_hazard_id: Mapped[int | None] = mapped_column(
-        ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    user_session_id: Mapped[str] = mapped_column(String(36), ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True)
+    user_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("user_hazards.id", ondelete="SET NULL"), index=True)
+    custom_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True)
+    system_hazard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("system_hazards.id", ondelete="SET NULL"), index=True
     )
-    additional_hazard_id: Mapped[int | None] = mapped_column(
-        ForeignKey("additional_hazards.id", ondelete="SET NULL"), index=True
+    additional_hazard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("additional_hazards.id", ondelete="SET NULL"), index=True
     )
-    mitigation_measure_id: Mapped[int | None] = mapped_column(
-        ForeignKey("user_mitigation_measures.id", ondelete="SET NULL"),
+    mitigation_measure_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user_mitigation_measures.id", ondelete="SET NULL"),
         index=True,
     )
-    question_id: Mapped[int | None] = mapped_column(ForeignKey("evaluation_questions.id", ondelete="SET NULL"), index=True)
-    question_option_id: Mapped[int | None] = mapped_column(ForeignKey("question_options.id", ondelete="SET NULL"), index=True)
+    question_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("evaluation_questions.id", ondelete="SET NULL"), index=True)
+    question_option_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("question_options.id", ondelete="SET NULL"), index=True)
     category: Mapped[str | None] = mapped_column(String(120), index=True)
     response_text: Mapped[str | None] = mapped_column(Text)
     score: Mapped[int | None] = mapped_column(Integer)
@@ -543,9 +544,9 @@ class UserQuestionResponse(Base):
 class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("app_users.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -553,21 +554,21 @@ class KnowledgeDocument(Base):
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="main", index=True)
     session_key: Mapped[str | None] = mapped_column(String(64), index=True)
     scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="global", server_default="global", index=True)
-    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
-    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
-    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
 class KnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    document_id: Mapped[int] = mapped_column(
-        ForeignKey("knowledge_documents.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_documents.id", ondelete="CASCADE"), index=True
     )
-    user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("app_users.id", ondelete="CASCADE"), index=True
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="CASCADE"), index=True
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -575,9 +576,9 @@ class KnowledgeChunk(Base):
     source_uri: Mapped[str | None] = mapped_column(Text)
     page_number: Mapped[int | None] = mapped_column(Integer)
     scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="global", server_default="global", index=True)
-    country_id: Mapped[int | None] = mapped_column(ForeignKey("countries.id", ondelete="SET NULL"), index=True)
-    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id", ondelete="SET NULL"), index=True)
-    sector_id: Mapped[int | None] = mapped_column(ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
@@ -594,20 +595,20 @@ class EurostatPopulationCache(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     country: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     region: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
-    country_id: Mapped[int | None] = mapped_column(
-        ForeignKey("countries.id", ondelete="CASCADE"), nullable=True, index=True
+    country_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("countries.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    region_id: Mapped[int | None] = mapped_column(
-        ForeignKey("regions.id", ondelete="CASCADE"), nullable=True, index=True
+    region_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("regions.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    sector_id: Mapped[int | None] = mapped_column(
-        ForeignKey("sectors.id", ondelete="CASCADE"), nullable=True, index=True
+    sector_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("sectors.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    system_hazard_id: Mapped[int | None] = mapped_column(
-        ForeignKey("system_hazards.id", ondelete="CASCADE"), nullable=True, index=True
+    system_hazard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("system_hazards.id", ondelete="CASCADE"), nullable=True, index=True
     )
     profile: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     response_json: Mapped[str] = mapped_column(Text, nullable=False)
@@ -631,13 +632,13 @@ class SystemHazardSocioDemographicPopulationMatch(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    system_hazard_socio_demographic_id: Mapped[int] = mapped_column(
-        ForeignKey("system_hazard_socio_demographics.id", ondelete="CASCADE"),
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    system_hazard_socio_demographic_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("system_hazard_socio_demographics.id", ondelete="CASCADE"),
         index=True,
     )
-    eurostat_population_cache_id: Mapped[int | None] = mapped_column(
-        ForeignKey("eurostat_population_cache.id", ondelete="CASCADE"),
+    eurostat_population_cache_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("eurostat_population_cache.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -664,16 +665,16 @@ class HazardListingCache(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    country_id: Mapped[int] = mapped_column(
-        ForeignKey("countries.id", ondelete="CASCADE"), index=True
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    country_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("countries.id", ondelete="CASCADE"), index=True
     )
-    region_id: Mapped[int | None] = mapped_column(
-        ForeignKey("regions.id", ondelete="CASCADE"), nullable=True, index=True
+    region_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("regions.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    region_scope_key: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
-    sector_id: Mapped[int] = mapped_column(
-        ForeignKey("sectors.id", ondelete="CASCADE"), index=True
+    region_scope_key: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="", index=True)
+    sector_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sectors.id", ondelete="CASCADE"), index=True
     )
     cache_version: Mapped[str] = mapped_column(String(40), nullable=False, default="v1")
     source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -691,8 +692,8 @@ class HazardListingCache(Base):
 class UserActivity(Base):
     __tablename__ = "user_activities"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_session_id: Mapped[int] = mapped_column(ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    user_session_id: Mapped[str] = mapped_column(String(36), ForeignKey("user_sessions.id", ondelete="CASCADE"), index=True)
     activity_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     step: Mapped[str | None] = mapped_column(String(120))
     details: Mapped[str | None] = mapped_column(Text)
@@ -702,8 +703,8 @@ class UserActivity(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("app_users.id", ondelete="SET NULL"), index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("app_users.id", ondelete="SET NULL"), index=True)
     action: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="success", server_default="success")
     target_type: Mapped[str | None] = mapped_column(String(80), index=True)
@@ -718,7 +719,7 @@ class AuditLog(Base):
 class LlmExchangeLog(Base):
     __tablename__ = "llm_exchange_logs"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     provider: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     endpoint: Mapped[str] = mapped_column(String(255), nullable=False, index=True)

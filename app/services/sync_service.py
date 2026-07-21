@@ -29,7 +29,7 @@ SYNC_COLUMN_NAMES = {
     "sync_updated_at",
     "sync_deleted_at",
 }
-INTERNAL_TABLES = {"schema_migrations", "sync_state"}
+INTERNAL_TABLES = {"schema_migrations", "sync_state", "sync_clients"}
 DEFAULT_EXCLUDED_TABLES = {"app_rate_limits"}
 LOG_TABLES = {"audit_logs", "llm_exchange_logs"}
 KNOWLEDGE_TABLES = {"knowledge_documents", "knowledge_chunks"}
@@ -68,6 +68,20 @@ CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"validated_evidence"}
 ADMIN_CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt"}
 SERVER_ACCEPTED_INBOUND_KNOWLEDGE_SCOPES = {"validated_evidence"}
 SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt"}
+SYNC_CLIENT_COLUMNS = (
+    "id",
+    "client_name",
+    "token_hash",
+    "user_email",
+    "can_sync_main_kb",
+    "can_sync_sector_prompts",
+    "can_reindex_sector_prompts",
+    "can_sync_validated_kb",
+    "can_sync_user_data",
+    "active",
+    "created_at",
+    "updated_at",
+)
 
 
 @dataclass(frozen=True)
@@ -86,10 +100,11 @@ class SyncService:
     `sync_id` and describe foreign keys through referenced rows' `sync_id`s.
     """
 
-    def __init__(self, db: Session, *, device_id: str | None = None) -> None:
+    def __init__(self, db: Session, *, device_id: str | None = None, sync_token: str | None = None) -> None:
         self.db = db
         self.settings = get_settings()
         self.device_id = device_id or self._settings_device_id()
+        self.sync_token = str(sync_token or "").strip()
 
     def ensure_schema(self) -> None:
         self._ensure_metadata_columns()
@@ -101,6 +116,26 @@ class SyncService:
                 CREATE TABLE IF NOT EXISTS sync_state (
                   scope VARCHAR(120) PRIMARY KEY,
                   value TEXT NULL,
+                  updated_at DATETIME NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS sync_clients (
+                  id CHAR(36) PRIMARY KEY,
+                  client_name VARCHAR(160) NOT NULL,
+                  token_hash VARCHAR(64) NOT NULL UNIQUE,
+                  user_email VARCHAR(255) NULL,
+                  can_sync_main_kb BOOLEAN NOT NULL DEFAULT FALSE,
+                  can_sync_sector_prompts BOOLEAN NOT NULL DEFAULT FALSE,
+                  can_reindex_sector_prompts BOOLEAN NOT NULL DEFAULT FALSE,
+                  can_sync_validated_kb BOOLEAN NOT NULL DEFAULT TRUE,
+                  can_sync_user_data BOOLEAN NOT NULL DEFAULT TRUE,
+                  active BOOLEAN NOT NULL DEFAULT TRUE,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   updated_at DATETIME NULL
                 )
                 """
@@ -166,11 +201,13 @@ class SyncService:
         payload: dict[str, Any],
         *,
         current_user_email: str | None = None,
+        sync_client: dict[str, Any] | None = None,
     ) -> SyncApplyResult:
         self.ensure_schema()
         if payload.get("format") != "dr-transition-sync-v1":
             raise ValueError("Unsupported sync bundle format.")
-        admin_knowledge_sync = self._admin_knowledge_sync_allowed(payload)
+        admin_knowledge_scopes = self._admin_knowledge_sync_scopes(payload, sync_client=sync_client)
+        admin_knowledge_sync = bool(admin_knowledge_scopes)
         table_payloads = {
             str(item.get("name")): item.get("rows") or []
             for item in payload.get("tables") or []
@@ -196,6 +233,7 @@ class SyncService:
                     row,
                     admin_knowledge_sync=admin_knowledge_sync,
                     current_user_email=current_user_email,
+                    admin_knowledge_scopes=admin_knowledge_scopes,
                 )
                 if action == "inserted":
                     inserted += 1
@@ -235,7 +273,7 @@ class SyncService:
         outbound = self.export_bundle(
             include_admin_knowledge=include_admin_knowledge,
             admin_user_email=admin_user_email,
-            include_app_users=False,
+            include_app_users=True,
             include_user_data=user_data_enabled_at is not None,
             user_data_enabled_at=user_data_enabled_at,
         )
@@ -317,8 +355,8 @@ class SyncService:
             ):
                 if row.get("sync_id"):
                     continue
-                sync_id = self._deterministic_sync_id(table, row) or str(uuid.uuid4())
                 pk_col = only_pk(table)
+                sync_id = str(row.get(pk_col.name) or "").strip() or self._deterministic_sync_id(table, row) or str(uuid.uuid4())
                 self.db.execute(
                     update(table)
                     .where(pk_col == row[pk_col.name])
@@ -349,9 +387,6 @@ class SyncService:
             for row in rows
             if ":" in str(row[0])
         ]
-
-    def admin_sync_allowed(self, payload: dict[str, Any]) -> bool:
-        return self._admin_knowledge_sync_allowed(payload)
 
     def user_data_sync_status(self) -> dict[str, Any]:
         self.ensure_schema()
@@ -386,6 +421,7 @@ class SyncService:
         payload_row: dict[str, Any],
         *,
         admin_knowledge_sync: bool = False,
+        admin_knowledge_scopes: set[str] | None = None,
         current_user_email: str | None = None,
     ) -> str:
         sync_id = str(payload_row.get("sync_id") or "").strip()
@@ -399,14 +435,25 @@ class SyncService:
             )
         if table.name == "knowledge_documents":
             scope = str(payload_row.get("scope") or "").strip()
-            if self._should_skip_inbound_knowledge_scope(scope, admin_knowledge_sync=admin_knowledge_sync):
+            if self._should_skip_inbound_knowledge_scope(
+                scope,
+                admin_knowledge_sync=admin_knowledge_sync,
+                admin_knowledge_scopes=admin_knowledge_scopes,
+            ):
                 return "skipped"
         if table.name == "knowledge_chunks":
             scope = self._knowledge_scope_for_payload(table, payload_row)
-            if self._should_skip_inbound_knowledge_scope(scope, admin_knowledge_sync=admin_knowledge_sync):
+            if self._should_skip_inbound_knowledge_scope(
+                scope,
+                admin_knowledge_sync=admin_knowledge_sync,
+                admin_knowledge_scopes=admin_knowledge_scopes,
+            ):
                 return "skipped"
         pk_col = only_pk(table)
+        payload_pk = str(payload_row.get(pk_col.name) or "").strip()
         existing_pk = self._pk_for_sync_id(table, sync_id)
+        if existing_pk is None and payload_pk:
+            existing_pk = self.db.execute(select(pk_col).where(pk_col == payload_pk)).scalar_one_or_none()
         values: dict[str, Any] = {}
         fk_sync_ids = payload_row.get("__fk_sync_ids") if isinstance(payload_row.get("__fk_sync_ids"), dict) else {}
         for column in table.columns:
@@ -416,7 +463,11 @@ class SyncService:
                 values[column.name] = payload_row.get(column.name)
                 continue
             if column.name in fk_sync_ids:
-                resolved_fk = self._pk_for_sync_id(self._referenced_table(column), str(fk_sync_ids[column.name]))
+                resolved_fk = self._resolve_fk_value(
+                    column,
+                    str(fk_sync_ids[column.name]),
+                    payload_row.get(column.name),
+                )
                 if resolved_fk is None and not column.nullable:
                     return "skipped"
                 values[column.name] = resolved_fk
@@ -433,7 +484,10 @@ class SyncService:
         if natural_pk is not None:
             self.db.execute(update(table).where(pk_col == natural_pk).values(**values))
             return "updated"
-        self.db.execute(table.insert().values(**values))
+        insert_values = dict(values)
+        if payload_pk:
+            insert_values[pk_col.name] = payload_pk
+        self.db.execute(table.insert().values(**insert_values))
         return "inserted"
 
     def _serialize_row(self, table: Table, row: dict[str, Any]) -> dict[str, Any]:
@@ -441,8 +495,6 @@ class SyncService:
         fk_sync_ids: dict[str, str] = {}
         pk_name = only_pk(table).name
         for column in table.columns:
-            if column.name == pk_name:
-                continue
             value = row.get(column.name)
             if isinstance(value, datetime):
                 value = value.isoformat()
@@ -496,7 +548,7 @@ class SyncService:
         return decrypted if isinstance(decrypted, dict) else None
 
     def _sync_encryption_key(self) -> bytes:
-        secret = str(self.settings.sync_api_token or self.settings.secret_key or "").strip()
+        secret = str(self.sync_token or self.settings.sync_api_token or self.settings.secret_key or "").strip()
         if not secret:
             secret = self.device_id
         return hashlib.sha256(secret.encode("utf-8")).digest()
@@ -620,6 +672,17 @@ class SyncService:
         row = self.db.execute(select(pk_col).where(table.c.sync_id == sync_id)).first()
         return row[0] if row else None
 
+    def _resolve_fk_value(self, column: Column, ref_sync_id: str, raw_value: Any) -> Any | None:
+        ref_table = self._referenced_table(column)
+        resolved = self._pk_for_sync_id(ref_table, ref_sync_id)
+        if resolved is not None:
+            return resolved
+        if raw_value in (None, ""):
+            return None
+        pk_col = only_pk(ref_table)
+        row = self.db.execute(select(pk_col).where(pk_col == raw_value)).first()
+        return row[0] if row else None
+
     def _pk_for_natural_key(self, table: Table, payload_row: dict[str, Any]) -> Any | None:
         natural_key_columns = first_unique_key_columns(table)
         if not natural_key_columns:
@@ -628,7 +691,11 @@ class SyncService:
         fk_sync_ids = payload_row.get("__fk_sync_ids") if isinstance(payload_row.get("__fk_sync_ids"), dict) else {}
         for column in natural_key_columns:
             if column.name in fk_sync_ids:
-                ref_pk = self._pk_for_sync_id(self._referenced_table(column), str(fk_sync_ids[column.name]))
+                ref_pk = self._resolve_fk_value(
+                    column,
+                    str(fk_sync_ids[column.name]),
+                    payload_row.get(column.name),
+                )
                 if ref_pk is None:
                     return None
                 conditions.append(column == ref_pk)
@@ -668,25 +735,169 @@ class SyncService:
         scope: str | None,
         *,
         admin_knowledge_sync: bool = False,
+        admin_knowledge_scopes: set[str] | None = None,
     ) -> bool:
         if not scope or scope in EXCLUDED_KNOWLEDGE_SCOPES:
             return True
         if str(self.settings.sync_mode or "").strip().casefold() == "server":
             if admin_knowledge_sync:
-                return scope not in SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES
+                return scope not in (admin_knowledge_scopes or set())
             return scope not in SERVER_ACCEPTED_INBOUND_KNOWLEDGE_SCOPES
         return scope not in KNOWLEDGE_SCOPES
 
-    def _admin_knowledge_sync_allowed(self, payload: dict[str, Any]) -> bool:
+    def admin_sync_allowed(
+        self, payload: dict[str, Any], *, sync_client: dict[str, Any] | None = None
+    ) -> bool:
+        return bool(self._admin_knowledge_sync_scopes(payload, sync_client=sync_client))
+
+    def _admin_knowledge_sync_scopes(
+        self, payload: dict[str, Any], *, sync_client: dict[str, Any] | None = None
+    ) -> set[str]:
         if not bool(payload.get("admin_knowledge_sync")):
-            return False
+            return set()
         if str(self.settings.sync_mode or "").strip().casefold() != "server":
-            return True
-        email = str(payload.get("admin_user_email") or "").strip().casefold()
-        if not email:
-            return False
-        user = self.db.scalar(select(AppUser).where(AppUser.email == email))
-        return bool(user and str(user.role or "").strip().casefold() == "admin")
+            return set(SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES)
+        client = sync_client or {}
+        if not client or not bool(client.get("active")):
+            return set()
+        scopes: set[str] = set()
+        if bool(client.get("can_sync_validated_kb")):
+            scopes.add("validated_evidence")
+        if bool(client.get("can_sync_main_kb")):
+            scopes.add("main")
+        if bool(client.get("can_sync_sector_prompts")):
+            scopes.add("sector_prompt")
+        return scopes & SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES
+
+    def sync_client_for_token(self, token: str) -> dict[str, Any] | None:
+        token = str(token or "").strip()
+        if not token:
+            return None
+        self.ensure_schema()
+        token_hash = self._sync_token_hash(token)
+        row = self.db.execute(
+            text(
+                """
+                SELECT id, client_name, token_hash, user_email,
+                       can_sync_main_kb, can_sync_sector_prompts,
+                       can_reindex_sector_prompts, can_sync_validated_kb,
+                       can_sync_user_data, active
+                FROM sync_clients
+                WHERE token_hash = :token_hash
+                LIMIT 1
+                """
+            ),
+            {"token_hash": token_hash},
+        ).mappings().first()
+        if row is not None:
+            client = dict(row)
+            client["active"] = bool(client.get("active"))
+            for key in (
+                "can_sync_main_kb",
+                "can_sync_sector_prompts",
+                "can_reindex_sector_prompts",
+                "can_sync_validated_kb",
+                "can_sync_user_data",
+            ):
+                client[key] = bool(client.get(key))
+            return client if client["active"] else None
+        legacy = str(self.settings.sync_api_token or "").strip()
+        if legacy and token == legacy:
+            return {
+                "id": "legacy-env-token",
+                "client_name": "Legacy environment token",
+                "token_hash": token_hash,
+                "user_email": "",
+                "can_sync_main_kb": False,
+                "can_sync_sector_prompts": False,
+                "can_reindex_sector_prompts": False,
+                "can_sync_validated_kb": True,
+                "can_sync_user_data": True,
+                "active": True,
+            }
+        return None
+
+    def upsert_sync_client(
+        self,
+        *,
+        token: str,
+        client_name: str,
+        user_email: str | None = None,
+        can_sync_main_kb: bool = False,
+        can_sync_sector_prompts: bool = False,
+        can_reindex_sector_prompts: bool = False,
+        can_sync_validated_kb: bool = True,
+        can_sync_user_data: bool = True,
+        active: bool = True,
+    ) -> str:
+        token = str(token or "").strip()
+        if not token:
+            raise ValueError("Sync client token is required.")
+        self.ensure_schema()
+        client_id = str(uuid.uuid4())
+        token_hash = self._sync_token_hash(token)
+        now = utc_now()
+        values = {
+            "client_name": client_name.strip()[:160] or "Sync client",
+            "token_hash": token_hash,
+            "user_email": str(user_email or "").strip().casefold() or None,
+            "can_sync_main_kb": bool(can_sync_main_kb),
+            "can_sync_sector_prompts": bool(can_sync_sector_prompts),
+            "can_reindex_sector_prompts": bool(can_reindex_sector_prompts),
+            "can_sync_validated_kb": bool(can_sync_validated_kb),
+            "can_sync_user_data": bool(can_sync_user_data),
+            "active": bool(active),
+            "updated_at": now,
+        }
+        existing = self.db.execute(
+            text("SELECT id FROM sync_clients WHERE token_hash = :token_hash"),
+            {"token_hash": token_hash},
+        ).first()
+        if existing:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE sync_clients
+                    SET client_name = :client_name,
+                        user_email = :user_email,
+                        can_sync_main_kb = :can_sync_main_kb,
+                        can_sync_sector_prompts = :can_sync_sector_prompts,
+                        can_reindex_sector_prompts = :can_reindex_sector_prompts,
+                        can_sync_validated_kb = :can_sync_validated_kb,
+                        can_sync_user_data = :can_sync_user_data,
+                        active = :active,
+                        updated_at = :updated_at
+                    WHERE token_hash = :token_hash
+                    """
+                ),
+                values,
+            )
+        else:
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO sync_clients (
+                      id, client_name, token_hash, user_email,
+                      can_sync_main_kb, can_sync_sector_prompts,
+                      can_reindex_sector_prompts, can_sync_validated_kb,
+                      can_sync_user_data, active, updated_at
+                    )
+                    VALUES (
+                      :id, :client_name, :token_hash, :user_email,
+                      :can_sync_main_kb, :can_sync_sector_prompts,
+                      :can_reindex_sector_prompts, :can_sync_validated_kb,
+                      :can_sync_user_data, :active, :updated_at
+                    )
+                    """
+                ),
+                {"id": client_id, **values},
+            )
+        self.db.commit()
+        return token_hash
+
+    @staticmethod
+    def _sync_token_hash(token: str) -> str:
+        return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
 
     def _mark_knowledge_indexes_dirty(self, scopes: set[str]) -> None:
         for scope in sorted(scope for scope in scopes if scope in KNOWLEDGE_SCOPES):

@@ -75,13 +75,13 @@ def auth_serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(settings.secret_key, salt="dr-transition-auth")
 
 
-def create_auth_token(user_id: int, session_version: int = 1) -> str:
+def create_auth_token(user_id: str, session_version: int = 1) -> str:
     return auth_serializer().dumps(
-        {"user_id": user_id, "session_version": int(session_version or 1)}
+        {"user_id": str(user_id), "session_version": int(session_version or 1)}
     )
 
 
-def auth_payload_from_token(token: str | None) -> dict[str, int] | None:
+def auth_payload_from_token(token: str | None) -> dict[str, str | int] | None:
     if not token:
         return None
     try:
@@ -92,14 +92,14 @@ def auth_payload_from_token(token: str | None) -> dict[str, int] | None:
         return None
     user_id = data.get("user_id")
     session_version = data.get("session_version")
-    if not isinstance(user_id, int):
+    if not isinstance(user_id, str) or not user_id:
         return None
     if not isinstance(session_version, int):
         return None
     return {"user_id": user_id, "session_version": session_version}
 
 
-def user_id_from_token(token: str | None) -> int | None:
+def user_id_from_token(token: str | None) -> str | None:
     payload = auth_payload_from_token(token)
     return payload["user_id"] if payload else None
 

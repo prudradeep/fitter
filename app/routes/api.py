@@ -154,9 +154,9 @@ async def hazard_effect_size(
 
 @router.get("/hazards/ranked")
 async def ranked_hazards(
-    country_id: int = Query(..., gt=0),
-    region_id: int | None = Query(default=None, gt=0),
-    sector_id: int = Query(..., gt=0),
+    country_id: str = Query(..., min_length=1),
+    region_id: str | None = Query(default=None, min_length=1),
+    sector_id: str = Query(..., min_length=1),
     current_user: AppUser = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
@@ -356,9 +356,9 @@ async def import_session(
         title_is_manual=True,
         session_data=json.dumps(session_data, default=str),
         user_id=current_user.id,
-        country_id=_optional_int(exported_session.get("country_id") or session_data.get("country_id")),
-        region_id=_optional_int(exported_session.get("region_id") or session_data.get("region_id")),
-        sector_id=_optional_int(exported_session.get("sector_id") or session_data.get("sector_id")),
+        country_id=_optional_id(exported_session.get("country_id") or session_data.get("country_id")),
+        region_id=_optional_id(exported_session.get("region_id") or session_data.get("region_id")),
+        sector_id=_optional_id(exported_session.get("sector_id") or session_data.get("sector_id")),
     )
     db.add(user_session)
     db.flush()
@@ -704,7 +704,7 @@ async def sector_prompts_search(
 
 @router.delete("/knowledge/{document_id}")
 async def knowledge_delete(
-    document_id: int,
+    document_id: str,
     request: Request,
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
@@ -726,7 +726,7 @@ async def knowledge_delete(
     return {"error": not deleted, "deleted": deleted}
 
 
-async def _chat_payload(request: Request, db: Session, user_id: int) -> ChatRequest:
+async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequest:
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" not in content_type:
         payload = await _chat_request_from_json(request, "Chat payload")
@@ -837,13 +837,11 @@ def _truthy(value: object) -> bool:
     return str(value or "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
-def _optional_int(value: object) -> int | None:
+def _optional_id(value: object) -> str | None:
     if value is None or value == "":
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    value_text = str(value).strip()
+    return value_text or None
 
 
 def _knowledge_urls_from_payload(payload: dict[str, object]) -> list[str]:
@@ -881,7 +879,7 @@ def _content_length(request: Request) -> int | None:
     return limited_content_length(request)
 
 
-def _password_rate_limit_key(request: Request, user_id: int) -> str:
+def _password_rate_limit_key(request: Request, user_id: str) -> str:
     client = request.client.host if request.client else "unknown"
     return f"password:{client}:{user_id}"
 

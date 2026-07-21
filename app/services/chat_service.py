@@ -145,7 +145,7 @@ class ChatService(
     def __init__(
         self,
         db: Session,
-        user_id: int | None = None,
+        user_id: str | None = None,
         *,
         is_admin: bool = False,
     ) -> None:
@@ -1093,7 +1093,7 @@ class ChatService(
             )
 
         questions_by_id = {
-            int(question["id"]): question
+            str(question["id"]): question
             for question in (session.target_population_questions or [])
             if "id" in question
         }
@@ -1101,9 +1101,8 @@ class ChatService(
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            try:
-                question_id = int(item.get("question_id"))
-            except (TypeError, ValueError):
+            question_id = str(item.get("question_id") or "").strip()
+            if not question_id:
                 continue
             question = questions_by_id.get(question_id)
             if question is None:
@@ -1353,7 +1352,7 @@ class ChatService(
             )
 
         questions_by_id = {
-            int(question["id"]): question
+            str(question["id"]): question
             for question in (session.target_population_questions or [])
             if "id" in question
         }
@@ -1361,9 +1360,8 @@ class ChatService(
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            try:
-                question_id = int(item.get("question_id"))
-            except (TypeError, ValueError):
+            question_id = str(item.get("question_id") or "").strip()
+            if not question_id:
                 continue
             question = questions_by_id.get(question_id)
             if question is None:

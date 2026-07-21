@@ -1,7 +1,7 @@
 SET @add_response_custom_hazard_id_sql = (
   SELECT IF(
     COUNT(*) = 0,
-    'ALTER TABLE user_question_responses ADD COLUMN custom_hazard_id INT NULL AFTER user_hazard_id',
+    'ALTER TABLE user_question_responses ADD COLUMN custom_hazard_id CHAR(36) NULL AFTER user_hazard_id',
     'SELECT 1'
   )
   FROM information_schema.columns
@@ -16,7 +16,7 @@ DEALLOCATE PREPARE add_response_custom_hazard_id_stmt;
 SET @add_response_system_hazard_id_sql = (
   SELECT IF(
     COUNT(*) = 0,
-    'ALTER TABLE user_question_responses ADD COLUMN system_hazard_id INT NULL AFTER custom_hazard_id',
+    'ALTER TABLE user_question_responses ADD COLUMN system_hazard_id CHAR(36) NULL AFTER custom_hazard_id',
     'SELECT 1'
   )
   FROM information_schema.columns
@@ -31,7 +31,7 @@ DEALLOCATE PREPARE add_response_system_hazard_id_stmt;
 SET @add_response_additional_hazard_id_sql = (
   SELECT IF(
     COUNT(*) = 0,
-    'ALTER TABLE user_question_responses ADD COLUMN additional_hazard_id INT NULL AFTER system_hazard_id',
+    'ALTER TABLE user_question_responses ADD COLUMN additional_hazard_id CHAR(36) NULL AFTER system_hazard_id',
     'SELECT 1'
   )
   FROM information_schema.columns

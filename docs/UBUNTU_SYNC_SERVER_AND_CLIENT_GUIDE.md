@@ -37,17 +37,18 @@ Not synced:
 
 - `temporary`
 
-Main knowledge is centrally managed but can be pushed to the server by an
-authenticated admin during manual client sync. The central server accepts that
-Main KB upload only when the bundle's admin email exists as an admin user on the
-server. Validated evidence is bidirectional for clients. Sector-prompt knowledge
-is server-side only and flows from the server to clients; clients do not upload
-sector-prompt KB. Admins can reindex sector prompts on the server. Temporary KB
-data is session-local evidence and remains on the client.
+Main knowledge is centrally managed but can be pushed to the server by a client
+that has a server-issued sync credential with Main KB permission. The central
+server never trusts `app_users.role` from a client database for admin sync
+authorization. Sector-prompt knowledge is server-managed and flows from the
+server to clients; only credentials with sector-prompt permission may push
+sector-prompt rows to the server. Temporary KB data is session-local evidence
+and remains on the client.
 
 `app_users` rows are encrypted inside sync bundles with AES-GCM using a key
-derived from `SYNC_API_TOKEN`. The stored `password_hash` is synced as an
-encrypted value; plaintext passwords are never included in sync payloads.
+derived from the configured sync client token. The stored `password_hash` is
+synced as an encrypted value; plaintext passwords are never included in sync
+payloads.
 
 ## Assumptions
 
@@ -226,7 +227,7 @@ ACCESS_LOG_SAMPLE_RATE=1.0
 
 SYNC_ENABLED=true
 SYNC_MODE=server
-SYNC_API_TOKEN="long-random-sync-token"
+SYNC_API_TOKEN="optional-legacy-normal-sync-fallback-token"
 SYNC_INCLUDE_LOGS=false
 SYNC_SERVER_EXPOSE_APP_APIS=false
 
@@ -262,7 +263,25 @@ Generate strong secrets if needed:
 openssl rand -hex 32
 ```
 
-Use separate random values for `SECRET_KEY` and `SYNC_API_TOKEN`.
+Use separate random values for `SECRET_KEY` and any sync client tokens.
+
+After migrations, create server-owned sync credentials:
+
+```bash
+uv run python scripts/create_sync_client.py \
+  --name "Client 01" \
+  --token "client-01-token"
+
+uv run python scripts/create_sync_client.py \
+  --name "Admin workstation" \
+  --token "admin-client-token" \
+  --user-email "admin@example.com" \
+  --main-kb \
+  --sector-prompts \
+  --reindex-sector-prompts
+```
+
+Use the generated or supplied token as `SYNC_API_TOKEN` on that specific client.
 
 ## 7. Apply Database Schema And Seed Data
 

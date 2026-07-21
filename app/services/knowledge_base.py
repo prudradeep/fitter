@@ -1,4 +1,5 @@
 import ipaddress
+import hashlib
 import re
 import socket
 from dataclasses import dataclass
@@ -62,12 +63,12 @@ class KnowledgeBaseService:
     def __init__(
         self,
         db: Session,
-        user_id: int | None,
+        user_id: str | None,
         scope: str = MAIN_KB_SCOPE,
         session_key: str | None = None,
-        country_id: int | None = None,
-        region_id: int | None = None,
-        sector_id: int | None = None,
+        country_id: str | None = None,
+        region_id: str | None = None,
+        sector_id: str | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
@@ -230,7 +231,7 @@ class KnowledgeBaseService:
             for row in rows
         ]
 
-    async def delete_document(self, document_id: int) -> bool:
+    async def delete_document(self, document_id: str) -> bool:
         chunk_ids = self.db.scalars(
             select(KnowledgeChunk.id)
             .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
@@ -271,7 +272,7 @@ class KnowledgeBaseService:
         overfetch = max(limit * 25, 100)
         source_uri_filter = [item for item in (source_uris or []) if item]
         vector_scores = await self._vector_search_scores(query, overfetch)
-        candidates: dict[int, tuple[KnowledgeChunk, KnowledgeDocument, float]] = {}
+        candidates: dict[str, tuple[KnowledgeChunk, KnowledgeDocument, float]] = {}
         if vector_scores:
             for chunk, document in self._knowledge_rows(
                 source_uri_filter,
@@ -316,7 +317,7 @@ class KnowledgeBaseService:
             )
         return grounded
 
-    async def _vector_search_scores(self, query: str, overfetch: int) -> dict[int, float]:
+    async def _vector_search_scores(self, query: str, overfetch: int) -> dict[str, float]:
         if faiss is None or np is None or not self._index_path.exists():
             return {}
         try:
@@ -329,16 +330,23 @@ class KnowledgeBaseService:
                 scores, ids = index.search(vector, min(overfetch, index.ntotal))
         except (httpx.HTTPError, ValueError):
             return {}
-        return {
+        vector_scores = {
             int(chunk_id): float(score)
             for score, chunk_id in zip(scores[0], ids[0], strict=False)
             if int(chunk_id) >= 0
+        }
+        if not vector_scores:
+            return {}
+        chunk_id_by_vector_id = self._chunk_id_by_vector_id(set(vector_scores))
+        return {
+            chunk_id: vector_scores[vector_id]
+            for vector_id, chunk_id in chunk_id_by_vector_id.items()
         }
 
     def _knowledge_rows(
         self,
         source_uri_filter: list[str],
-        chunk_ids: list[int] | None = None,
+        chunk_ids: list[str] | None = None,
     ) -> list[tuple[KnowledgeChunk, KnowledgeDocument]]:
         filters = [
             KnowledgeDocument.scope == self.scope,
@@ -389,7 +397,7 @@ class KnowledgeBaseService:
     def _search_results(
         self,
         ranked: list[tuple[KnowledgeChunk, KnowledgeDocument, float]],
-        lexical_scores: dict[int, float],
+        lexical_scores: dict[str, float],
         limit: int,
     ) -> list[dict[str, object]]:
         results: list[dict[str, object]] = []
@@ -417,7 +425,7 @@ class KnowledgeBaseService:
             )
         return results
 
-    def delete_temporary_documents(self, document_ids: list[int] | None = None) -> int:
+    def delete_temporary_documents(self, document_ids: list[str] | None = None) -> int:
         if self.scope != TEMPORARY_KB_SCOPE or not self.session_key:
             return 0
         query = select(KnowledgeChunk.id).join(
@@ -471,9 +479,9 @@ class KnowledgeBaseService:
         *,
         target_scope: str = MAIN_KB_SCOPE,
         provenance: str | None = None,
-        country_id: int | None = None,
-        region_id: int | None = None,
-        sector_id: int | None = None,
+        country_id: str | None = None,
+        region_id: str | None = None,
+        sector_id: str | None = None,
     ) -> int:
         if self.scope != TEMPORARY_KB_SCOPE or not self.session_key:
             return 0
@@ -664,35 +672,53 @@ class KnowledgeBaseService:
         )
         return values
 
-    def _add_vectors(self, chunk_ids: list[int], embeddings: list[list[float]]) -> None:
+    def _add_vectors(self, chunk_ids: list[str], embeddings: list[list[float]]) -> None:
         vectors = normalize_vectors(embeddings)
-        ids = np.array(chunk_ids, dtype="int64")
+        ids = np.array([vector_id_for_chunk_id(chunk_id) for chunk_id in chunk_ids], dtype="int64")
         with FAISS_LOCK:
             index = self._load_index(vectors.shape[1])
             index.add_with_ids(vectors, ids)
             self._save_index(index)
 
-    def _remove_vectors(self, chunk_ids: list[int]) -> None:
+    def _remove_vectors(self, chunk_ids: list[str]) -> None:
         if not chunk_ids or not self._index_path.exists():
             return
-        ids = np.array(chunk_ids, dtype="int64")
+        ids = np.array([vector_id_for_chunk_id(chunk_id) for chunk_id in chunk_ids], dtype="int64")
         with FAISS_LOCK:
             index = self._load_existing_index()
             index.remove_ids(ids)
             self._save_index(index)
 
-    def _reconstruct_vectors(self, chunk_ids: list[int]) -> dict[int, list[float]]:
+    def _reconstruct_vectors(self, chunk_ids: list[str]) -> dict[str, list[float]]:
         if not chunk_ids or not self._index_path.exists():
             return {}
-        vectors: dict[int, list[float]] = {}
+        vectors: dict[str, list[float]] = {}
         with FAISS_LOCK:
             index = self._load_existing_index()
             for chunk_id in chunk_ids:
                 try:
-                    vectors[chunk_id] = index.reconstruct(int(chunk_id)).tolist()
+                    vectors[chunk_id] = index.reconstruct(vector_id_for_chunk_id(chunk_id)).tolist()
                 except Exception:
                     continue
         return vectors
+
+    def _chunk_id_by_vector_id(self, vector_ids: set[int]) -> dict[int, str]:
+        if not vector_ids:
+            return {}
+        chunk_ids = self.db.scalars(
+            select(KnowledgeChunk.id)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(
+                KnowledgeDocument.scope == self.scope,
+                *self._document_access_filters(),
+            )
+        ).all()
+        mapped: dict[int, str] = {}
+        for chunk_id in chunk_ids:
+            vector_id = vector_id_for_chunk_id(chunk_id)
+            if vector_id in vector_ids:
+                mapped[vector_id] = chunk_id
+        return mapped
 
     def reset_index(self) -> bool:
         if faiss is None or np is None or not self._index_path.exists():
@@ -753,7 +779,12 @@ def normalize_vectors(embeddings: list[list[float]]):
     return array / norms
 
 
-def validated_scope_level(country_id: int | None, region_id: int | None) -> str:
+def vector_id_for_chunk_id(chunk_id: str) -> int:
+    digest = hashlib.sha256(str(chunk_id).encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+
+
+def validated_scope_level(country_id: str | None, region_id: str | None) -> str:
     if region_id is not None:
         return "region"
     if country_id is not None:

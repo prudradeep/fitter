@@ -19,28 +19,33 @@ settings = get_settings()
 def require_sync_token(
     authorization: str | None = Header(default=None),
     x_sync_token: str | None = Header(default=None, alias="X-Sync-Token"),
-) -> None:
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
     if not settings.sync_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync is not enabled.")
-    expected = str(settings.sync_api_token or "").strip()
-    if not expected:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Sync token is not configured.")
     bearer = ""
     if authorization and authorization.casefold().startswith("bearer "):
         bearer = authorization.split(" ", 1)[1].strip()
     supplied = (x_sync_token or bearer or "").strip()
-    if supplied != expected:
+    client = SyncService(db).sync_client_for_token(supplied)
+    if client is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid sync token.")
+    client["_token"] = supplied
+    return client
 
 
 @router.get("/status")
-async def sync_status(_: None = Depends(require_sync_token), db: Session = Depends(get_db)) -> dict[str, object]:
-    service = SyncService(db)
+async def sync_status(
+    sync_client: dict[str, object] = Depends(require_sync_token),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    service = SyncService(db, sync_token=str(sync_client.get("_token") or ""))
     service.ensure_schema()
     return {
         "enabled": True,
         "mode": settings.sync_mode,
         "device_id": service.device_id,
+        "sync_client": _sync_client_status(sync_client),
         "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
         "client_to_server_knowledge_scopes": ["validated_evidence"],
         "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
@@ -51,20 +56,26 @@ async def sync_status(_: None = Depends(require_sync_token), db: Session = Depen
 
 
 @router.post("/pull")
-async def sync_pull(_: None = Depends(require_sync_token), db: Session = Depends(get_db)) -> dict[str, object]:
-    return SyncService(db).export_bundle()
+async def sync_pull(
+    sync_client: dict[str, object] = Depends(require_sync_token),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return SyncService(db, sync_token=str(sync_client.get("_token") or "")).export_bundle()
 
 
 @router.post("/push", response_model=None)
 async def sync_push(
     request: Request,
-    _: None = Depends(require_sync_token),
+    sync_client: dict[str, object] = Depends(require_sync_token),
     db: Session = Depends(get_db),
 ):
     payload = await _sync_payload_or_error(request)
     if isinstance(payload, JSONResponse):
         return payload
-    result = SyncService(db).apply_bundle(payload)
+    result = SyncService(db, sync_token=str(sync_client.get("_token") or "")).apply_bundle(
+        payload,
+        sync_client=sync_client,
+    )
     return {
         "error": False,
         "tables": result.tables,
@@ -78,15 +89,15 @@ async def sync_push(
 @router.post("/exchange", response_model=None)
 async def sync_exchange(
     request: Request,
-    _: None = Depends(require_sync_token),
+    sync_client: dict[str, object] = Depends(require_sync_token),
     db: Session = Depends(get_db),
 ):
     payload = await _sync_payload_or_error(request)
     if isinstance(payload, JSONResponse):
         return payload
-    service = SyncService(db)
-    admin_sync = service.admin_sync_allowed(payload)
-    result = service.apply_bundle(payload)
+    service = SyncService(db, sync_token=str(sync_client.get("_token") or ""))
+    admin_sync = service.admin_sync_allowed(payload, sync_client=sync_client)
+    result = service.apply_bundle(payload, sync_client=sync_client)
     bundle = service.export_bundle(
         include_app_users=True,
         include_user_data=admin_sync,
@@ -105,7 +116,7 @@ async def sync_exchange(
 
 
 @router.post("/run")
-async def sync_run(_: None = Depends(require_sync_token), db: Session = Depends(get_db)) -> dict[str, object]:
+async def sync_run(_: dict[str, object] = Depends(require_sync_token), db: Session = Depends(get_db)) -> dict[str, object]:
     try:
         return await SyncService(db).exchange_with_server()
     except (httpx.HTTPError, ValueError) as exc:
@@ -195,3 +206,16 @@ def _client_sync_configured() -> bool:
 
 def _redacted_server_url() -> str:
     return str(settings.sync_server_url or "").strip().rstrip("/")
+
+
+def _sync_client_status(sync_client: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": sync_client.get("id"),
+        "client_name": sync_client.get("client_name"),
+        "user_email": sync_client.get("user_email") or "",
+        "can_sync_main_kb": bool(sync_client.get("can_sync_main_kb")),
+        "can_sync_sector_prompts": bool(sync_client.get("can_sync_sector_prompts")),
+        "can_reindex_sector_prompts": bool(sync_client.get("can_reindex_sector_prompts")),
+        "can_sync_validated_kb": bool(sync_client.get("can_sync_validated_kb")),
+        "can_sync_user_data": bool(sync_client.get("can_sync_user_data")),
+    }

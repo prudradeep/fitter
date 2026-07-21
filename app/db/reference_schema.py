@@ -21,9 +21,9 @@ def ensure_additional_hazard_schema() -> None:
             text(
                 """
                 CREATE TABLE IF NOT EXISTS additional_hazards (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
-                  country_id INT NOT NULL,
-                  sector_id INT NOT NULL,
+                  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                  country_id CHAR(36) NOT NULL,
+                  sector_id CHAR(36) NOT NULL,
                   name VARCHAR(255) NOT NULL,
                   source VARCHAR(40) NOT NULL DEFAULT 'csv',
                   csv_row_number INT NULL,
@@ -45,8 +45,8 @@ def ensure_additional_hazard_schema() -> None:
             text(
                 """
                 CREATE TABLE IF NOT EXISTS additional_hazard_profiles (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
-                  additional_hazard_id INT NOT NULL,
+                  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                  additional_hazard_id CHAR(36) NOT NULL,
                   profile VARCHAR(255) NOT NULL,
                   evidence TEXT NULL,
                   reference TEXT NULL,
@@ -68,8 +68,8 @@ def ensure_additional_hazard_schema() -> None:
             text(
                 f"""
                 CREATE TABLE IF NOT EXISTS additional_hazard_profile_target_populations (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
-                  additional_hazard_profile_id INT NOT NULL,
+                  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                  additional_hazard_profile_id CHAR(36) NOT NULL,
                   question_option_id {question_option_id_type} NOT NULL,
                   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   CONSTRAINT fk_additional_hazard_profile_target_profile
@@ -105,10 +105,10 @@ def ensure_mitigation_measure_schema() -> None:
             text(
                 """
                 CREATE TABLE IF NOT EXISTS mitigation_measure_examples (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
-                  sector_id INT NOT NULL,
-                  system_hazard_id INT NULL,
-                  system_hazard_socio_demographic_id INT NULL,
+                  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                  sector_id CHAR(36) NOT NULL,
+                  system_hazard_id CHAR(36) NULL,
+                  system_hazard_socio_demographic_id CHAR(36) NULL,
                   profile_label VARCHAR(255) NULL,
                   measure TEXT NOT NULL,
                   policy_case_study TEXT NULL,
@@ -138,11 +138,11 @@ def ensure_mitigation_measure_schema() -> None:
             text(
                 """
                 CREATE TABLE IF NOT EXISTS mitigation_measure_policies (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
                   policy_code VARCHAR(80) NOT NULL,
                   policy_title TEXT NOT NULL,
-                  country_id INT NULL,
-                  sector_id INT NULL,
+                  country_id CHAR(36) NULL,
+                  sector_id CHAR(36) NULL,
                   policy_type VARCHAR(120) NULL,
                   short_description TEXT NULL,
                   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
@@ -165,8 +165,8 @@ def ensure_mitigation_measure_schema() -> None:
             text(
                 f"""
                 CREATE TABLE IF NOT EXISTS mitigation_measure_target_groups (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
-                  mitigation_measure_policy_id INT NOT NULL,
+                  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                  mitigation_measure_policy_id CHAR(36) NOT NULL,
                   question_option_id {question_option_id_type} NOT NULL,
                   match_value VARCHAR(40) NULL,
                   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
@@ -192,9 +192,9 @@ def ensure_mitigation_measure_schema() -> None:
             text(
                 """
                 CREATE TABLE IF NOT EXISTS mitigation_measure_policy_additional_hazards (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
-                  mitigation_measure_policy_id INT NOT NULL,
-                  additional_hazard_id INT NOT NULL,
+                  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                  mitigation_measure_policy_id CHAR(36) NOT NULL,
+                  additional_hazard_id CHAR(36) NOT NULL,
                   match_value VARCHAR(40) NULL,
                   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
                   excel_row_number INT NULL,
@@ -220,9 +220,9 @@ def ensure_mitigation_measure_schema() -> None:
             text(
                 """
                 CREATE TABLE IF NOT EXISTS mitigation_measure_policy_system_hazards (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
-                  mitigation_measure_policy_id INT NOT NULL,
-                  system_hazard_id INT NOT NULL,
+                  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+                  mitigation_measure_policy_id CHAR(36) NOT NULL,
+                  system_hazard_id CHAR(36) NOT NULL,
                   mitigation_effect VARCHAR(40) NULL,
                   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
                   excel_row_number INT NULL,
@@ -269,7 +269,7 @@ def _repair_mitigation_measure_schema() -> None:
             connection.execute(
                 text(
                     "ALTER TABLE mitigation_measure_policies "
-                    "ADD COLUMN country_id INT NULL AFTER policy_title"
+                    "ADD COLUMN country_id CHAR(36) NULL AFTER policy_title"
                 )
             )
             policy_columns.add("country_id")
@@ -342,7 +342,7 @@ def _repair_mitigation_measure_schema() -> None:
             connection.execute(
                 text(
                     "ALTER TABLE mitigation_measure_examples "
-                    "ADD COLUMN sector_id INT NULL AFTER id"
+                    "ADD COLUMN sector_id CHAR(36) NULL AFTER id"
                 )
             )
             columns.add("sector_id")
@@ -424,7 +424,7 @@ def _repair_mitigation_measure_schema() -> None:
             connection.execute(
                 text(
                     "ALTER TABLE mitigation_measure_examples "
-                    "MODIFY COLUMN sector_id INT NOT NULL"
+                    "MODIFY COLUMN sector_id CHAR(36) NOT NULL"
                 )
             )
             connection.execute(

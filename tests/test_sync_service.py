@@ -122,6 +122,27 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(self._rows(bundle, "app_users"), [])
         self.assertEqual(self._rows(bundle, "user_sessions"), [])
 
+    def test_client_can_export_app_users_when_user_data_sync_is_disabled(self) -> None:
+        user = self._add_user("client-user@example.com")
+        self.db.add(
+            UserSession(
+                session_key="local-session",
+                title="Local Session",
+                user_id=user.id,
+                session_data="{}",
+            )
+        )
+        self.db.commit()
+
+        bundle = SyncService(self.db, device_id="client-device").export_bundle(
+            include_app_users=True,
+            include_user_data=False,
+        )
+
+        self.assertEqual(len(self._rows(bundle, "app_users")), 1)
+        self.assertIn("__encrypted_row", self._rows(bundle, "app_users")[0])
+        self.assertEqual(self._rows(bundle, "user_sessions"), [])
+
     def test_encrypted_app_user_rows_apply_with_original_hash(self) -> None:
         original_token = sync_routes.settings.sync_api_token
         sync_routes.settings.sync_api_token = "shared-sync-token"
@@ -324,6 +345,55 @@ class SyncServiceTests(unittest.TestCase):
             Base.metadata.drop_all(bind=target_engine)
             target_engine.dispose()
 
+    def test_apply_bundle_preserves_user_session_user_id_when_app_users_not_in_bundle(self) -> None:
+        user = self._add_user("existing-server-user@example.com")
+        service = SyncService(self.db, device_id="server-device")
+        service.ensure_schema()
+        user_table = AppUser.__table__
+        self.db.execute(
+            user_table.update()
+            .where(user_table.c.id == user.id)
+            .values(sync_id=None)
+        )
+        self.db.commit()
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "client-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "tables": [
+                {
+                    "name": "user_sessions",
+                    "rows": [
+                        {
+                            "id": "11111111-1111-4111-8111-111111111111",
+                            "sync_id": "11111111-1111-4111-8111-111111111111",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "sync_updated_at": "2026-07-20T00:00:00Z",
+                            "sync_deleted_at": None,
+                            "session_key": "client-session-a",
+                            "title": "Client Session A",
+                            "title_is_manual": False,
+                            "session_data": "{}",
+                            "user_id": user.id,
+                            "__fk_sync_ids": {
+                                "user_id": "client-user-sync-id-not-present-in-server"
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        result = service.apply_bundle(bundle)
+        imported_session = self.db.scalar(
+            select(UserSession).where(UserSession.session_key == "client-session-a")
+        )
+
+        self.assertEqual(result.inserted, 1)
+        self.assertIsNotNone(imported_session)
+        self.assertEqual(imported_session.user_id, user.id)
+
     def test_knowledge_sync_marks_scope_indexes_dirty(self) -> None:
         original_mode = sync_routes.settings.sync_mode
         sync_routes.settings.sync_mode = "server"
@@ -507,7 +577,6 @@ class SyncServiceTests(unittest.TestCase):
     def test_server_accepts_admin_main_sector_and_validated_knowledge(self) -> None:
         original_mode = sync_routes.settings.sync_mode
         sync_routes.settings.sync_mode = "server"
-        self._add_user("admin@example.com", role="admin")
         bundle = {
             "format": "dr-transition-sync-v1",
             "device_id": "client-device",
@@ -553,7 +622,15 @@ class SyncServiceTests(unittest.TestCase):
             ],
         }
         try:
-            result = SyncService(self.db, device_id="server-device").apply_bundle(bundle)
+            result = SyncService(self.db, device_id="server-device").apply_bundle(
+                bundle,
+                sync_client={
+                    "active": True,
+                    "can_sync_main_kb": True,
+                    "can_sync_sector_prompts": True,
+                    "can_sync_validated_kb": True,
+                },
+            )
         finally:
             sync_routes.settings.sync_mode = original_mode
 
@@ -561,10 +638,10 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(result.inserted, 3)
         self.assertEqual(scopes, {"main", "sector_prompt", "validated_evidence"})
 
-    def test_server_rejects_admin_main_when_admin_email_is_not_server_admin(self) -> None:
+    def test_server_rejects_admin_main_when_only_synced_user_role_claims_admin(self) -> None:
         original_mode = sync_routes.settings.sync_mode
         sync_routes.settings.sync_mode = "server"
-        self._add_user("user@example.com", role="user")
+        self._add_user("user@example.com", role="admin")
         bundle = {
             "format": "dr-transition-sync-v1",
             "device_id": "client-device",
@@ -822,6 +899,59 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(self._rows(response.json()["bundle"], "app_users")), 1)
 
+    def test_exchange_accepts_admin_knowledge_only_with_server_sync_client_permission(self) -> None:
+        SyncService(self.db).upsert_sync_client(
+            token="admin-sync-client-token",
+            client_name="Admin sync client",
+            user_email="admin@example.com",
+            can_sync_main_kb=True,
+            can_sync_sector_prompts=True,
+        )
+        response = self._exchange_response(
+            {
+                "format": "dr-transition-sync-v1",
+                "device_id": "client-device",
+                "exported_at": "2026-07-20T00:00:00Z",
+                "admin_knowledge_sync": True,
+                "admin_user_email": "locally-edited-admin@example.com",
+                "tables": [
+                    {
+                        "name": "knowledge_documents",
+                        "rows": [
+                            {
+                                "sync_id": "11111111-1111-4111-8111-111111111111",
+                                "origin_device_id": "client-device",
+                                "sync_revision": 1,
+                                "scope": "main",
+                                "title": "Credential Main",
+                                "source_type": "txt",
+                                "source_uri": "credential-main.txt",
+                                "scope_level": "global",
+                            },
+                            {
+                                "sync_id": "22222222-2222-4222-8222-222222222222",
+                                "origin_device_id": "client-device",
+                                "sync_revision": 1,
+                                "scope": "sector_prompt",
+                                "title": "Credential Sector",
+                                "source_type": "txt",
+                                "source_uri": "credential-sector.txt",
+                                "scope_level": "global",
+                            },
+                        ],
+                    }
+                ],
+            },
+            token="admin-sync-client-token",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["applied"]["inserted"], 2)
+        self.assertEqual(
+            {row.scope for row in self.db.query(KnowledgeDocument).all()},
+            {"main", "sector_prompt"},
+        )
+
     def _add_user(self, email: str, *, role: str = "admin") -> AppUser:
         user = AppUser(
             email=email,
@@ -840,7 +970,7 @@ class SyncServiceTests(unittest.TestCase):
     def _override_db(self) -> Iterator[Session]:
         yield self.db
 
-    def _exchange_response(self, payload: dict[str, object]):
+    def _exchange_response(self, payload: dict[str, object], *, token: str = "secret"):
         app = FastAPI()
         app.include_router(sync_routes.router)
         app.dependency_overrides[sync_routes.get_db] = self._override_db
@@ -855,7 +985,7 @@ class SyncServiceTests(unittest.TestCase):
             return client.post(
                 "/api/sync/exchange",
                 json=payload,
-                headers={"Authorization": "Bearer secret"},
+                headers={"Authorization": f"Bearer {token}"},
             )
         finally:
             sync_routes.settings.sync_enabled = original_enabled

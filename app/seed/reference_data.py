@@ -1,6 +1,7 @@
 import csv
 import logging
 import re
+import uuid
 from pathlib import Path
 
 from sqlalchemy import text
@@ -302,7 +303,7 @@ def _seed_additional_hazards(connection) -> None:
 
     inserted = 0
     skipped = 0
-    seen: set[tuple[int, int, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for csv_index, row in enumerate(rows, start=2):
         country_name = (row.get("country") or "").strip()
         sector_name = (row.get("sector") or "").strip()
@@ -313,7 +314,7 @@ def _seed_additional_hazards(connection) -> None:
         if not country_id or not sector_id or not hazard_name:
             skipped += 1
             continue
-        scope_key = (int(country_id), int(sector_id), hazard_key)
+        scope_key = (str(country_id), str(sector_id), hazard_key)
         if scope_key in seen:
             skipped += 1
             continue
@@ -368,10 +369,10 @@ def _seed_additional_hazard_profiles(connection) -> None:
     }
     hazard_by_scope = {
         (
-            int(row["country_id"]),
-            int(row["sector_id"]),
+            str(row["country_id"]),
+            str(row["sector_id"]),
             _normalize_mitigation_example_key(row["name"]),
-        ): int(row["id"])
+        ): str(row["id"])
         for row in connection.execute(
             text("SELECT id, country_id, sector_id, name FROM additional_hazards")
         ).mappings()
@@ -383,7 +384,7 @@ def _seed_additional_hazard_profiles(connection) -> None:
 
     inserted = 0
     skipped = 0
-    seen: set[tuple[int, str]] = set()
+    seen: set[tuple[str, str]] = set()
     for csv_index, row in enumerate(rows, start=2):
         country_id = country_by_key.get(
             _normalize_mitigation_example_key((row.get("country") or "").strip())
@@ -398,7 +399,7 @@ def _seed_additional_hazard_profiles(connection) -> None:
         if not country_id or not sector_id or not hazard_key or not profile:
             skipped += 1
             continue
-        additional_hazard_id = hazard_by_scope.get((int(country_id), int(sector_id), hazard_key))
+        additional_hazard_id = hazard_by_scope.get((str(country_id), str(sector_id), hazard_key))
         if additional_hazard_id is None:
             skipped += 1
             continue
@@ -450,7 +451,7 @@ def _seed_additional_hazard_profile_target_populations(connection) -> None:
         (
             _normalize_mitigation_example_key(row["question"]),
             _normalize_mitigation_example_key(row["option"]),
-        ): int(row["id"])
+        ): str(row["id"])
         for row in connection.execute(
             text(
                 """
@@ -473,7 +474,7 @@ def _seed_additional_hazard_profile_target_populations(connection) -> None:
 
     inserted = 0
     for row in profile_rows:
-        option_ids: set[int] = set()
+        option_ids: set[str] = set()
         for question, option in _target_population_pairs_for_profile(str(row["profile"] or "")):
             option_id = option_by_key.get(
                 (
@@ -494,7 +495,7 @@ def _seed_additional_hazard_profile_target_populations(connection) -> None:
                     VALUES (:profile_id, :option_id)
                     """
                 ),
-                {"profile_id": int(row["id"]), "option_id": option_id},
+                {"profile_id": str(row["id"]), "option_id": option_id},
             )
             inserted += 1
 
@@ -583,9 +584,9 @@ def _normalize_profile_phrase(value: str) -> str:
 
 def _resolve_mitigation_profile_id(
     profile_label: str,
-    system_hazard_id: int | None,
+    system_hazard_id: str | None,
     profile_rows: list[dict[str, object]],
-) -> int | None:
+) -> str | None:
     if system_hazard_id is None:
         return None
 
@@ -596,11 +597,11 @@ def _resolve_mitigation_profile_id(
     same_hazard_rows = [
         row for row in profile_rows if row.get("system_hazard_id") == system_hazard_id
     ]
-    exact_matches: list[int] = []
-    fallback_matches: list[int] = []
+    exact_matches: list[str] = []
+    fallback_matches: list[str] = []
     for row in same_hazard_rows:
         row_id = row.get("id")
-        if not isinstance(row_id, int):
+        if row_id is None:
             continue
         row_keys = {
             _normalize_mitigation_example_key(str(row.get("profile") or "")),
@@ -669,7 +670,7 @@ def _seed_mm_csv_mitigation_measure_examples(connection) -> None:
         )
         profile_id = _resolve_mitigation_profile_id(
             profile_label,
-            system_hazard_id if isinstance(system_hazard_id, int) else None,
+            system_hazard_id if system_hazard_id else None,
             profile_rows,
         )
         connection.execute(
@@ -750,7 +751,7 @@ def _seed_mm_target_group_xlsx(connection) -> None:
         for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
     }
     country_by_map_code = {
-        str(row["map_code"] or "").casefold(): int(row["id"])
+        str(row["map_code"] or "").casefold(): str(row["id"])
         for row in connection.execute(
             text("SELECT id, map_code FROM countries WHERE map_code IS NOT NULL")
         ).mappings()
@@ -768,8 +769,8 @@ def _seed_mm_target_group_xlsx(connection) -> None:
     )
     connection.execute(text("DELETE FROM mitigation_measure_policies WHERE source = 'xlsx'"))
 
-    policy_ids: dict[tuple[str, int | None], int] = {}
-    policy_rows: dict[tuple[str, int | None], dict[str, object]] = {}
+    policy_ids: dict[tuple[str, str | None], str] = {}
+    policy_rows: dict[tuple[str, str | None], dict[str, object]] = {}
     for row in rows:
         policy_code = str(row.get("policy_code") or "").strip()
         if not policy_code:
@@ -790,10 +791,12 @@ def _seed_mm_target_group_xlsx(connection) -> None:
                 "excel_row_number": row.get("excel_row_number"),
             }
     for policy_row in policy_rows.values():
-        result = connection.execute(
+        policy_id = str(uuid.uuid4())
+        connection.execute(
             text(
                 """
                 INSERT INTO mitigation_measure_policies (
+                    id,
                     policy_code,
                     policy_title,
                     country_id,
@@ -804,6 +807,7 @@ def _seed_mm_target_group_xlsx(connection) -> None:
                     excel_row_number
                 )
                 VALUES (
+                    :id,
                     :policy_code,
                     :policy_title,
                     :country_id,
@@ -815,11 +819,11 @@ def _seed_mm_target_group_xlsx(connection) -> None:
                 )
                 """
             ),
-            policy_row,
+            {"id": policy_id, **policy_row},
         )
         policy_ids[
             (str(policy_row["policy_code"]), policy_row.get("sector_id"))
-        ] = int(result.lastrowid)
+        ] = policy_id
 
     inserted = 0
     skipped = 0
@@ -889,7 +893,7 @@ def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
     if not rows:
         return
 
-    policy_ids_by_code_country: dict[tuple[str, int], list[int]] = {}
+    policy_ids_by_code_country: dict[tuple[str, str], list[str]] = {}
     for row in connection.execute(
         text(
             """
@@ -901,14 +905,14 @@ def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
         )
     ).mappings():
         policy_ids_by_code_country.setdefault(
-            (str(row["policy_code"]), int(row["country_id"])),
+            (str(row["policy_code"]), str(row["country_id"])),
             [],
-        ).append(int(row["id"]))
+        ).append(str(row["id"]))
     hazard_by_country_name = {
         (
-            int(row["country_id"]),
+            str(row["country_id"]),
             _normalize_mitigation_example_key(str(row["name"] or "")),
-        ): int(row["id"])
+        ): str(row["id"])
         for row in connection.execute(
             text(
                 """
@@ -990,7 +994,7 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
     if not rows:
         return
 
-    policy_ids_by_code_country: dict[tuple[str, int], list[int]] = {}
+    policy_ids_by_code_country: dict[tuple[str, str], list[str]] = {}
     for row in connection.execute(
         text(
             """
@@ -1002,15 +1006,15 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
         )
     ).mappings():
         policy_ids_by_code_country.setdefault(
-            (str(row["policy_code"]), int(row["country_id"])),
+            (str(row["policy_code"]), str(row["country_id"])),
             [],
-        ).append(int(row["id"]))
+        ).append(str(row["id"]))
 
     hazard_by_sector_name = {
         (
             _normalize_mitigation_example_key(str(row["sector_name"] or "")),
             _normalize_mitigation_example_key(str(row["name"] or "")),
-        ): int(row["id"])
+        ): str(row["id"])
         for row in connection.execute(
             text(
                 """
@@ -1130,17 +1134,17 @@ def _ensure_hazards_xlsx_policy_system_hazards(connection) -> None:
 
 def _mm_target_group_sector_ids(
     sector_name: str,
-    sector_by_key: dict[str, int],
-) -> list[int | None]:
+    sector_by_key: dict[str, str],
+) -> list[str | None]:
     exact_sector_id = sector_by_key.get(_normalize_mitigation_example_key(sector_name))
     if exact_sector_id is not None:
-        return [int(exact_sector_id)]
+        return [str(exact_sector_id)]
 
     normalized = _normalize_mitigation_example_key(sector_name)
-    sector_ids: list[int] = []
+    sector_ids: list[str] = []
     for sector_label, sector_id in sector_by_key.items():
         if sector_label and sector_label in normalized:
-            sector_ids.append(int(sector_id))
+            sector_ids.append(str(sector_id))
     if sector_ids:
         return sorted(set(sector_ids))
     return [None]
@@ -1148,8 +1152,8 @@ def _mm_target_group_sector_ids(
 
 def _mm_policy_country_id(
     policy_code: str,
-    country_by_map_code: dict[str, int],
-) -> int | None:
+    country_by_map_code: dict[str, str],
+) -> str | None:
     prefix = str(policy_code or "").split("_", 1)[0].strip().casefold()
     if prefix == "h":
         prefix = "hu"
@@ -1180,7 +1184,7 @@ def _ensure_mm_target_group_question_options(connection) -> None:
             LIMIT 1
             """
         ),
-        {"question_id": int(age_question_id)},
+        {"question_id": str(age_question_id)},
     ).scalar()
     if existing is None:
         connection.execute(
@@ -1190,11 +1194,11 @@ def _ensure_mm_target_group_question_options(connection) -> None:
                 VALUES (:question_id, '18-25')
                 """
             ),
-            {"question_id": int(age_question_id)},
+            {"question_id": str(age_question_id)},
         )
 
 
-def _mm_target_group_option_map(connection) -> dict[tuple[str, str], int]:
+def _mm_target_group_option_map(connection) -> dict[tuple[str, str], str]:
     rows = connection.execute(
         text(
             """
@@ -1211,7 +1215,7 @@ def _mm_target_group_option_map(connection) -> dict[tuple[str, str], int]:
         (
             _normalize_mitigation_example_key(str(row["question"] or "")),
             _normalize_mitigation_example_key(str(row["option"] or "")),
-        ): int(row["id"])
+        ): str(row["id"])
         for row in rows
     }
     aliases: dict[tuple[str, str], tuple[str, str]] = {

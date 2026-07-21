@@ -9,7 +9,7 @@ class ChatRequest(BaseModel):
 
 
 class Option(BaseModel):
-    id: int
+    id: str | int
     label: str
 
     model_config = ConfigDict(from_attributes=True)

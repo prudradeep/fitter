@@ -338,10 +338,10 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload --reload-dir a
 
 $env:ENV_FILE=".env.client.dev"
 $env:SYNC_SERVER_URL="http://127.0.0.1:8001"
-$env:DRTRANSITION_APP_PORT="8002"
-$env:SYNC_DEVICE_ID="localhost-8000-002"
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8002 --reload --reload-dir app
-DrTransition-AKncB26f5WZ6lzqIG4WfYQHn!1aA
+$env:DRTRANSITION_APP_PORT="8000"
+$env:SYNC_DEVICE_ID="localhost-8000-001"
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app
+DrTransition-ZsxZMwQBr5CkG2g573SflWDV!1aA
 
 
 $env:ENV_FILE=".env.server.dev"

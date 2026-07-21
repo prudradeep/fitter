@@ -48,18 +48,20 @@ Admin client-to-server KB scopes:
 
 - `main`
 - `validated_evidence`
+- `sector_prompt`
 
 Excluded KB scopes:
 
 - `temporary`
 
-Main knowledge is centrally managed, but an authenticated admin can push Main KB
-changes during a manual client sync. The sync bundle includes the admin email,
-and the central server accepts Main KB only when that email exists as an admin
-user on the server. Validated evidence is bidirectional for clients.
-Sector-prompt knowledge is server-side only; it is distributed from the server
-to clients and is not accepted from client sync bundles. Admins can reindex
-sector prompts on the server through the admin sector-prompt reindex endpoint/UI.
+Main knowledge is centrally managed, but a client with a server-issued sync
+credential can push Main KB changes during a manual client sync. The central
+server never trusts `app_users.role` from a client database for admin sync
+authorization. Admin KB sync is accepted only when the bearer token matches a
+server-owned `sync_clients` row with the relevant permission flags. Validated
+evidence is bidirectional for clients. Sector-prompt knowledge is normally
+server-managed and distributed from the server to clients; only credentials with
+`can_sync_sector_prompts` may push sector-prompt rows to the server.
 Temporary KB data is session-local evidence and is intentionally not exported.
 The receiver also skips temporary KB rows defensively if an older client sends
 them.
@@ -81,8 +83,8 @@ that marker.
 
 Each synced row uses:
 
-- `id`: local database primary key, never treated as global
-- `sync_id`: global UUID identity used by sync
+- `id`: UUID primary key shared across clients and server
+- `sync_id`: sync metadata identity; for UUID rows this normally matches `id`
 - `origin_device_id`: installation/device that first assigned the sync identity
 - `sync_revision`: row revision for future conflict checks
 - `sync_updated_at`: sync-layer update timestamp
@@ -92,12 +94,13 @@ Reference rows with natural unique keys receive deterministic `sync_id` values.
 User-created rows receive random UUIDs when no stable natural key is available.
 
 Sync payloads include foreign-key references as `__fk_sync_ids`. On import, the
-receiver maps those global IDs back to its own local integer IDs.
+receiver first resolves those sync IDs and then falls back to the raw UUID FK
+when the referenced UUID row already exists locally.
 
 `app_users` rows are encrypted inside sync bundles with AES-GCM using a key
-derived from the shared `SYNC_API_TOKEN`. Passwords are never synced in
-plaintext; the stored `password_hash` value is encrypted in transit, decrypted
-by the receiver, and written back as the same hash.
+derived from the client sync token. Passwords are never synced in plaintext; the
+stored `password_hash` value is encrypted in transit, decrypted by the receiver,
+and written back as the same hash.
 
 ## Server Topology
 
@@ -144,13 +147,34 @@ Enable sync on the central server:
 ```env
 SYNC_ENABLED=true
 SYNC_MODE=server
-SYNC_API_TOKEN="<long random shared sync token>"
+SYNC_API_TOKEN="<optional legacy normal-sync fallback token>"
 SYNC_INCLUDE_LOGS=false
 SYNC_SERVER_EXPOSE_APP_APIS=false
 ```
 
-Use a high-entropy token, store it in a secret manager where possible, and rotate
-it if it is exposed.
+Create server-owned sync credentials after migrations. Give normal clients no
+Main/Sector permissions:
+
+```bash
+uv run python scripts/create_sync_client.py \
+  --name "Client 01" \
+  --token "<client-01-token>"
+```
+
+Give an admin workstation explicit KB permissions:
+
+```bash
+uv run python scripts/create_sync_client.py \
+  --name "Admin workstation" \
+  --token "<admin-client-token>" \
+  --user-email "admin@example.com" \
+  --main-kb \
+  --sector-prompts \
+  --reindex-sector-prompts
+```
+
+Use high-entropy per-client tokens, store them in a secret manager where
+possible, and rotate them if exposed.
 
 ## Client Environment
 
@@ -160,7 +184,7 @@ On each local installation that should sync to the central backend:
 SYNC_ENABLED=true
 SYNC_MODE=client
 SYNC_SERVER_URL="https://your-sync-host.example"
-SYNC_API_TOKEN="<same shared sync token or per-client token>"
+SYNC_API_TOKEN="<server-issued sync client token>"
 SYNC_DEVICE_ID="<stable UUID for this installation>"
 SYNC_INCLUDE_LOGS=false
 SYNC_AUTO_ON_STARTUP=true
@@ -172,11 +196,11 @@ settings. For managed fleets, explicitly set a UUID per installation so device
 identity remains clear during troubleshooting.
 
 Local clients can run sync manually from **Settings -> Sync Now**. Manual sync
-uses the signed-in user's role: admins may upload Main KB plus Validated KB when
-the same email is also an admin on the central server, while non-admin users
-upload only Validated KB. Automatic startup and interval sync has no signed-in
-admin context, so it uploads only Validated KB. Configure automatic sync through
-`SYNC_AUTO_ON_STARTUP` and `SYNC_INTERVAL_SECONDS`.
+may request admin KB upload when the signed-in local user is an admin, but the
+central server accepts Main/Sector KB only if the sync token also has those
+server-side `sync_clients` permissions. Automatic startup and interval sync has
+no signed-in admin context, so it uploads only normal client scopes. Configure
+automatic sync through `SYNC_AUTO_ON_STARTUP` and `SYNC_INTERVAL_SECONDS`.
 
 ## Database Setup
 
