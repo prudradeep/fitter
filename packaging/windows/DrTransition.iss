@@ -48,6 +48,7 @@ var
   DatabasePage: TInputQueryWizardPage;
   EditDatabaseDefaultsCheck: TNewCheckBox;
   ModelPage: TInputQueryWizardPage;
+  ModelRecommendationProgressPage: TOutputProgressWizardPage;
   DependencySetupFailed: Boolean;
   SetupStoppedByCompatibility: Boolean;
 
@@ -126,6 +127,11 @@ begin
   ModelPage.Add('Embedding model:', False);
   ModelPage.Values[0] := 'auto';
   ModelPage.Values[1] := 'nomic-embed-text';
+
+  ModelRecommendationProgressPage := CreateOutputProgressPage(
+    'Model Recommendation',
+    'Checking this computer''s RAM and GPU to choose the best local model.'
+  );
 end;
 
 function JsonEscape(Value: String): String;
@@ -145,6 +151,24 @@ end;
 function IsAutoModel(Value: String): Boolean;
 begin
   Result := (CompareText(Value, '') = 0) or (CompareText(Value, 'auto') = 0) or (CompareText(Value, 'none') = 0);
+end;
+
+procedure ShowModelRecommendationProgress();
+begin
+  ModelRecommendationProgressPage.SetText(
+    'Checking this computer''s RAM and GPU to choose the best local model.' + #13#10#13#10 +
+    'This can take a minute; setup is still working.',
+    ''
+  );
+  ModelRecommendationProgressPage.SetProgress(35, 100);
+  ModelRecommendationProgressPage.Show;
+  WizardForm.Refresh;
+end;
+
+procedure HideModelRecommendationProgress();
+begin
+  ModelRecommendationProgressPage.Hide;
+  WizardForm.Refresh;
 end;
 
 function CleanModelName(Value: String): String;
@@ -292,7 +316,13 @@ begin
   if not IsAutoModel(ModelPage.Values[0]) then
     Exit;
 
-  ResultCode := RunRecommendedModelCheck(Reason, RecommendedModel);
+  ShowModelRecommendationProgress();
+  try
+    ResultCode := RunRecommendedModelCheck(Reason, RecommendedModel);
+  finally
+    HideModelRecommendationProgress();
+  end;
+
   if ResultCode = -1 then
   begin
     MsgBox('Dr Transition could not check this computer for local LLM support. Setup will close without installing the app.', mbError, MB_OK);
@@ -331,7 +361,13 @@ begin
   if not IsAutoModel(ModelPage.Values[0]) then
     Exit;
 
-  ResultCode := RunRecommendedModelCheck(Reason, RecommendedModel);
+  ShowModelRecommendationProgress();
+  try
+    ResultCode := RunRecommendedModelCheck(Reason, RecommendedModel);
+  finally
+    HideModelRecommendationProgress();
+  end;
+
   if ResultCode = 0 then
   begin
     ModelPage.Values[0] := CleanModelName(RecommendedModel);

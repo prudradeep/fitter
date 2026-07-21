@@ -17,7 +17,8 @@ $ErrorActionPreference = "Stop"
 # -------------------------------------------------------
 
 $MinimumRamGb = 8
-$MinimumGpuVramGb = 2
+$CpuFallbackModel = "qwen3.5:2b"
+$CpuFallbackContextLength = 4096
 
 # -------------------------------------------------------
 # GPU detection patterns
@@ -52,14 +53,14 @@ $UnsupportedGpuPatterns = @(
 )
 
 # -------------------------------------------------------
-# Model tiers
+# GPU-accelerated model tiers
 #
 # Keep tiers ordered from highest to lowest.
-# Both RAM and dedicated GPU VRAM requirements must pass.
+# These tiers are considered only when a supported GPU is
+# detected. Both RAM and GPU VRAM requirements must pass.
 #
-# Multiple tiers may use the same RAM requirement with
-# different VRAM requirements. The highest compatible
-# tier is selected automatically.
+# If no supported GPU is available, the script falls back
+# to qwen3.5:2b in CPU mode.
 # -------------------------------------------------------
 
 $ModelTiers = @(
@@ -69,7 +70,7 @@ $ModelTiers = @(
         MinGpuVramGb = 24
         RecommendedModel = "qwen3.5:27b"
         ContextLength = 16384
-        Reason = "Enthusiast-class hardware detected. Qwen 3.5 27B is recommended for the strongest reasoning, multilingual processing, tool use, and structured generation supported by this hardware."
+        Reason = "Enthusiast-class hardware detected. Qwen 3.5 27B is recommended for advanced reasoning, multilingual processing, tool use, and structured generation."
     },
     [ordered]@{
         Tier = "professional"
@@ -85,7 +86,7 @@ $ModelTiers = @(
         MinGpuVramGb = 12
         RecommendedModel = "ministral-3:14b"
         ContextLength = 16384
-        Reason = "Workstation-class hardware detected. Ministral 3 14B provides strong reasoning, multimodal support, structured generation, and efficient local deployment."
+        Reason = "Workstation-class hardware detected. Ministral 3 14B provides strong reasoning, structured generation, and efficient local deployment."
     },
     [ordered]@{
         Tier = "high"
@@ -112,12 +113,12 @@ $ModelTiers = @(
         Reason = "Mid-range dedicated GPU hardware detected. Qwen 3.5 4B provides reliable instruction following, structured output, and efficient local inference."
     },
     [ordered]@{
-        Tier = "entry"
+        Tier = "entry-gpu"
         MinRamGb = 8
         MinGpuVramGb = 2
         RecommendedModel = "qwen3.5:2b"
         ContextLength = 4096
-        Reason = "Entry-level supported hardware detected. Qwen 3.5 2B is selected to minimize memory pressure while maintaining acceptable local performance."
+        Reason = "Entry-level GPU hardware detected. Qwen 3.5 2B is selected for efficient GPU-assisted local inference."
     }
 )
 
@@ -157,8 +158,13 @@ function Get-CompatibleModelTiers {
     [CmdletBinding()]
     param(
         [double]$RamGb,
-        [double]$GpuVramGb
+        [double]$GpuVramGb,
+        [bool]$GpuSupported
     )
+
+    if (-not $GpuSupported) {
+        return @()
+    }
 
     return @(
         $ModelTiers |
@@ -176,6 +182,7 @@ function New-Recommendation {
         [object[]]$CompatibleTiers = @(),
         [string]$Tier,
         [string]$Reason,
+        [string]$InferenceMode,
         [int]$ContextLength = 0,
         [double]$RamGb,
         [double]$GpuVramGb,
@@ -203,63 +210,56 @@ function New-Recommendation {
             }
     )
 
+    if (
+        $RecommendedModel -ne "none" -and
+        $CompatibleModels -notcontains $RecommendedModel
+    ) {
+        $compatibleModels = @($RecommendedModel) + $compatibleModels
+
+        $compatibleModelDetails = @(
+            [ordered]@{
+                model = $RecommendedModel
+                tier = $Tier
+                contextLength = $ContextLength
+                minimumRamGb = $MinimumRamGb
+                minimumGpuVramGb = if ($InferenceMode -eq "cpu") { 0 } else { $GpuVramGb }
+            }
+        ) + $compatibleModelDetails
+    }
+
     return [ordered]@{
         recommendedModel = $RecommendedModel
         compatibleModels = $compatibleModels
         compatibleModelDetails = $compatibleModelDetails
         tier = $Tier
         reason = $Reason
+        inferenceMode = $InferenceMode
         contextLength = $ContextLength
         ramGb = [Math]::Round($RamGb, 2)
         gpuVramGb = [Math]::Round($GpuVramGb, 2)
         gpuName = $GpuName.Trim()
         gpuSupported = $GpuSupported
         minimumRamGb = $MinimumRamGb
-        minimumGpuVramGb = $MinimumGpuVramGb
+        gpuRequired = $false
     }
 }
 
 # -------------------------------------------------------
-# Hardware validation
+# Hardware detection
 # -------------------------------------------------------
 
 $GpuSupported = Test-GpuSupported -Name $GpuName
+
+# -------------------------------------------------------
+# Model selection
+# -------------------------------------------------------
 
 if ($RamGb -lt $MinimumRamGb) {
     $recommendation = New-Recommendation `
         -RecommendedModel "none" `
         -Tier "unsupported" `
         -Reason "The system has $RamGb GB RAM. At least $MinimumRamGb GB RAM is required for local Dr. Transition model inference." `
-        -RamGb $RamGb `
-        -GpuVramGb $GpuVramGb `
-        -GpuName $GpuName `
-        -GpuSupported $GpuSupported
-}
-elseif ([string]::IsNullOrWhiteSpace($GpuName)) {
-    $recommendation = New-Recommendation `
-        -RecommendedModel "none" `
-        -Tier "unsupported" `
-        -Reason "GPU information was not provided. A supported dedicated GPU with at least $MinimumGpuVramGb GB VRAM is required." `
-        -RamGb $RamGb `
-        -GpuVramGb $GpuVramGb `
-        -GpuName $GpuName `
-        -GpuSupported $false
-}
-elseif (-not $GpuSupported) {
-    $recommendation = New-Recommendation `
-        -RecommendedModel "none" `
-        -Tier "unsupported" `
-        -Reason "The detected GPU '$($GpuName.Trim())' is not recognized as a supported dedicated GPU. A supported NVIDIA, AMD Radeon, or Intel Arc GPU is required." `
-        -RamGb $RamGb `
-        -GpuVramGb $GpuVramGb `
-        -GpuName $GpuName `
-        -GpuSupported $GpuSupported
-}
-elseif ($GpuVramGb -lt $MinimumGpuVramGb) {
-    $recommendation = New-Recommendation `
-        -RecommendedModel "none" `
-        -Tier "unsupported" `
-        -Reason "The detected GPU has $GpuVramGb GB VRAM. At least $MinimumGpuVramGb GB dedicated GPU VRAM is required for local Dr. Transition model inference." `
+        -InferenceMode "unsupported" `
         -RamGb $RamGb `
         -GpuVramGb $GpuVramGb `
         -GpuName $GpuName `
@@ -268,27 +268,44 @@ elseif ($GpuVramGb -lt $MinimumGpuVramGb) {
 else {
     $compatibleTiers = Get-CompatibleModelTiers `
         -RamGb $RamGb `
-        -GpuVramGb $GpuVramGb
+        -GpuVramGb $GpuVramGb `
+        -GpuSupported $GpuSupported
 
     $selectedTier = $compatibleTiers | Select-Object -First 1
 
-    if ($null -eq $selectedTier) {
+    if ($null -ne $selectedTier) {
         $recommendation = New-Recommendation `
-            -RecommendedModel "none" `
-            -Tier "unsupported" `
-            -Reason "The hardware does not match a supported local model tier after strict RAM and dedicated GPU VRAM validation." `
+            -RecommendedModel $selectedTier["RecommendedModel"] `
+            -CompatibleTiers $compatibleTiers `
+            -Tier $selectedTier["Tier"] `
+            -Reason $selectedTier["Reason"] `
+            -InferenceMode "gpu" `
+            -ContextLength $selectedTier["ContextLength"] `
             -RamGb $RamGb `
             -GpuVramGb $GpuVramGb `
             -GpuName $GpuName `
             -GpuSupported $GpuSupported
     }
     else {
+        if ([string]::IsNullOrWhiteSpace($GpuName)) {
+            $fallbackReason = "No GPU was detected. Qwen 3.5 2B is selected for CPU-only inference."
+        }
+        elseif (-not $GpuSupported) {
+            $fallbackReason = "The detected GPU '$($GpuName.Trim())' is not supported for GPU acceleration. Qwen 3.5 2B is selected for CPU-only inference."
+        }
+        elseif ($GpuVramGb -lt 2) {
+            $fallbackReason = "The supported GPU has only $GpuVramGb GB VRAM, which is insufficient for the GPU model tiers. Qwen 3.5 2B is selected for CPU-only inference."
+        }
+        else {
+            $fallbackReason = "The available RAM and GPU VRAM do not satisfy a larger model tier. Qwen 3.5 2B is selected as the safe fallback model."
+        }
+
         $recommendation = New-Recommendation `
-            -RecommendedModel $selectedTier["RecommendedModel"] `
-            -CompatibleTiers $compatibleTiers `
-            -Tier $selectedTier["Tier"] `
-            -Reason $selectedTier["Reason"] `
-            -ContextLength $selectedTier["ContextLength"] `
+            -RecommendedModel $CpuFallbackModel `
+            -Tier "cpu-fallback" `
+            -Reason $fallbackReason `
+            -InferenceMode "cpu" `
+            -ContextLength $CpuFallbackContextLength `
             -RamGb $RamGb `
             -GpuVramGb $GpuVramGb `
             -GpuName $GpuName `
