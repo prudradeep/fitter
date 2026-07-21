@@ -117,6 +117,24 @@
                     Main Knowledge Base
                   </button>
                 {% endif %}
+                <div id="syncSettingsPanel" class="settings-export-panel" hidden>
+                  <label class="settings-row">
+                    <span>
+                      <strong>Sync my Data</strong>
+                      <small>Share new sessions, activity, and user-created analysis data from this point forward.</small>
+                    </span>
+                    <span class="voice-switch">
+                      <input id="syncMyDataToggle" type="checkbox" />
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  {% if sync_enabled %}
+                    <button id="syncNowButton" class="settings-action-button" type="button">
+                      Sync Now
+                    </button>
+                  {% endif %}
+                  <small id="syncStatus" hidden></small>
+                </div>
                 <div class="settings-export-panel">
                   <button id="exportSessionButton" class="settings-action-button" type="button">
                     Export Current Session
@@ -733,6 +751,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260709-settings"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260708-session-import"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260720-sync-my-data-switch-fix"></script>
   </body>
 </html>

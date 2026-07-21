@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    CSRF_COOKIE_NAME,
     clear_auth_cookie,
     hash_password,
     password_rule_errors,
@@ -17,6 +18,7 @@ from app.config import get_settings
 from app.db.session import get_db
 from app.models import AppUser
 from app.resource_paths import resource_path
+from app.security import create_csrf_token, csrf_token_valid
 from app.services.coverage import get_coverage_map_rows
 from app.services.rate_limit import record_failed_attempt, reset_rate_limit, retry_after_seconds
 
@@ -32,7 +34,7 @@ async def login_page(
     redirect = redirect_if_authenticated(request, db)
     if redirect is not None:
         return redirect
-    return templates.TemplateResponse(
+    return _auth_template_response(
         request,
         "login.html",
         {
@@ -97,7 +99,7 @@ async def signup_page(
     redirect = redirect_if_authenticated(request, db)
     if redirect is not None:
         return redirect
-    return templates.TemplateResponse(
+    return _auth_template_response(
         request,
         "signup.html",
         {
@@ -136,13 +138,29 @@ async def signup(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
-    missing = [label for label, value in values.items() if not value]
+    field_labels = {
+        "email": "Email",
+        "name": "Name",
+        "designation": "Designation",
+        "organisation_type": "Organisation type",
+        "organisation_name": "Organisation name",
+    }
+    missing = [field_labels[key] for key, value in values.items() if not value]
+    if not password:
+        missing.append("Password")
+    if not confirm_password:
+        missing.append("Confirm password")
     if missing or not password or not confirm_password:
         retry_after = _record_signup_failure(rate_limit_key, db)
         if retry_after is not None:
             return _signup_lockout_error(request, values, retry_after)
-        step = 2 if not any(field in missing for field in ["email", "name"]) and password else 1
-        return _signup_error(request, values, "Please complete all signup fields.", step)
+        step = 2 if not any(label in missing for label in ["Email", "Name", "Password", "Confirm password"]) else 1
+        return _signup_error(
+            request,
+            values,
+            "Please complete: " + ", ".join(missing) + ".",
+            step,
+        )
     if password != confirm_password:
         retry_after = _record_signup_failure(rate_limit_key, db)
         if retry_after is not None:
@@ -199,7 +217,7 @@ def _signup_error(
     step: int = 1,
     status_code: int = status.HTTP_400_BAD_REQUEST,
 ) -> HTMLResponse:
-    return templates.TemplateResponse(
+    return _auth_template_response(
         request,
         "signup.html",
         {
@@ -217,7 +235,7 @@ def _signup_error(
 
 
 def _login_error(request: Request, email: str, error: str, status_code: int) -> HTMLResponse:
-    return templates.TemplateResponse(
+    return _auth_template_response(
         request,
         "login.html",
         {
@@ -232,6 +250,37 @@ def _login_error(request: Request, email: str, error: str, status_code: int) -> 
         },
         status_code=status_code,
     )
+
+
+def _auth_template_response(
+    request: Request,
+    template_name: str,
+    context: dict[str, object],
+    *,
+    status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse:
+    csrf_token = request.cookies.get(CSRF_COOKIE_NAME)
+    set_csrf_cookie = False
+    if settings.use_csrf_protection and not csrf_token_valid(csrf_token, settings):
+        csrf_token = create_csrf_token(settings)
+        set_csrf_cookie = True
+    context = {**context, "csrf_token": csrf_token or ""}
+    response = templates.TemplateResponse(
+        request,
+        template_name,
+        context,
+        status_code=status_code,
+    )
+    if set_csrf_cookie:
+        response.set_cookie(
+            CSRF_COOKIE_NAME,
+            csrf_token,
+            max_age=settings.auth_cookie_max_age_seconds,
+            httponly=False,
+            samesite="lax",
+            secure=settings.use_secure_auth_cookie,
+        )
+    return response
 
 
 def _login_rate_limit_key(request: Request, email: str) -> str:

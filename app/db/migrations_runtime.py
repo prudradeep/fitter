@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from pathlib import Path
 
+from app.config import get_settings
 from app.db.reference_schema import ensure_reference_data_schema
 from app.db.schema_type_helpers import mysql_question_option_id_type
 from app.db.session import Base, engine
@@ -22,16 +23,25 @@ logger = logging.getLogger(__name__)
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema.sql"
 
 
-def run_schema_sql() -> None:
+def default_seed_user_role() -> str:
+    mode = str(get_settings().sync_mode or "").strip().casefold()
+    return "admin" if mode == "server" else "user"
+
+
+def run_schema_sql(*, include_basic_data: bool | None = None) -> None:
     if not SCHEMA_PATH.exists():
         raise FileNotFoundError(f"Schema file not found: {SCHEMA_PATH}")
 
+    if include_basic_data is None:
+        include_basic_data = should_apply_schema_basic_data()
     statements = split_sql_statements(SCHEMA_PATH.read_text(encoding="utf-8"))
     try:
         with engine.begin() as connection:
             for statement in statements:
                 normalized = statement.lstrip().casefold()
                 if normalized.startswith(("create database", "use ")):
+                    continue
+                if is_schema_data_statement(statement) and not include_basic_data:
                     continue
                 statement = _adapt_question_option_fk_type(connection, statement)
                 connection.execute(text(statement))
@@ -78,6 +88,15 @@ def split_sql_statements(sql: str) -> list[str]:
     return [statement for statement in statements if not statement.startswith("--")]
 
 
+def should_apply_schema_basic_data() -> bool:
+    return str(get_settings().sync_mode or "").strip().casefold() == "server"
+
+
+def is_schema_data_statement(statement: str) -> bool:
+    normalized = statement.lstrip().casefold()
+    return normalized.startswith(("insert ", "replace "))
+
+
 def _adapt_question_option_fk_type(connection, statement: str) -> str:
     normalized = statement.casefold()
     if (
@@ -111,6 +130,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                       organisation_type VARCHAR(160) NOT NULL,
                       organisation_name VARCHAR(220) NOT NULL,
                       role VARCHAR(40) NOT NULL DEFAULT 'user',
+                      sync_encrypted_payload TEXT NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                       INDEX ix_app_users_email (email)
@@ -137,14 +157,19 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "INT NOT NULL DEFAULT 1 AFTER password_hash"
                         )
                     )
+                if "sync_encrypted_payload" not in user_columns:
+                    connection.execute(
+                        text("ALTER TABLE app_users ADD COLUMN sync_encrypted_payload TEXT NULL AFTER role")
+                    )
                 connection.execute(
                     text(
                         """
                         UPDATE app_users
-                        SET role = 'admin'
+                        SET role = :role
                         WHERE LOWER(email) = 'admin@drtransition.local'
                         """
-                    )
+                    ),
+                    {"role": default_seed_user_role()},
                 )
             connection.execute(
                 text(

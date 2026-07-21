@@ -51,6 +51,15 @@ function showStep(stepNumber) {
   });
 }
 
+function stepFields(stepNumber) {
+  const step = signupForm?.querySelector(`[data-step="${stepNumber}"]`);
+  return Array.from(step?.querySelectorAll("input, select") || []);
+}
+
+function validateFields(fields) {
+  return fields.every((field) => field.reportValidity());
+}
+
 function validatePasswordRules() {
   const password = passwordInput?.value || "";
   const confirmPassword = confirmPasswordInput?.value || "";
@@ -80,9 +89,7 @@ authTabs.forEach((tab) => {
 });
 
 nextButton?.addEventListener("click", () => {
-  const firstStep = signupForm?.querySelector('[data-step="1"]');
-  const fields = Array.from(firstStep?.querySelectorAll("input, select") || []);
-  const valid = fields.every((field) => field.reportValidity()) && validatePasswordRules();
+  const valid = validateFields(stepFields(1)) && validatePasswordRules();
   if (valid) showStep(2);
 });
 
@@ -91,13 +98,19 @@ prevButton?.addEventListener("click", () => {
 });
 
 signupForm?.addEventListener("submit", (event) => {
-  const secondStep = signupForm.querySelector('[data-step="2"]');
-  const fields = Array.from(secondStep?.querySelectorAll("input, select") || []);
-  const valid = fields.every((field) => field.reportValidity()) && validatePasswordRules();
+  const firstStepFields = stepFields(1);
+  const secondStepFields = stepFields(2);
+  const firstStepValid = validateFields(firstStepFields) && validatePasswordRules();
+  const secondStepValid = validateFields(secondStepFields);
+  const valid = firstStepValid && secondStepValid;
   if (!valid) {
     event.preventDefault();
-    showStep(fields.some((field) => !field.validity.valid) ? 2 : 1);
+    showStep(firstStepValid ? 2 : 1);
+    return;
   }
+  steps.forEach((step) => {
+    step.hidden = false;
+  });
 });
 
 passwordInput?.addEventListener("input", validatePasswordRules);

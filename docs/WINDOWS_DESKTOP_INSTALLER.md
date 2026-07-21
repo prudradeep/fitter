@@ -164,14 +164,17 @@ order:
 %LOCALAPPDATA%\DrTransition\.env
 ```
 
-When a build-time `.env` exists in the repository root, the installer copies it
-to:
+When a build-time `.env.client.dev` exists in the repository root, the installer
+packages it as the client runtime `.env` template and copies it to:
 
 ```text
 %ProgramData%\DrTransition\.env
 ```
 
-The copy is conditional and does not overwrite an existing runtime `.env`.
+The copy is conditional and does not overwrite an existing runtime `.env`. During
+dependency setup, the installer preserves an existing `SYNC_DEVICE_ID`; if it is
+missing or still has a sample value, setup generates a new GUID and writes it to
+`SYNC_DEVICE_ID`.
 
 For installed desktop use, prefer one of:
 
@@ -209,10 +212,9 @@ The installer now performs the first dependency setup pass:
 - Checks for Ollama before installing it; if `ollama.exe` already exists, the installer skips installation and only starts/checks the API
 - Asks for the database name and MySQL credentials
 - Creates the application database/user
-- Creates a default app login if it does not already exist
 - Updates `%ProgramData%\DrTransition\.env`
-- Seeds the schema and bundled CSV/XLSX reference data through the packaged backend
-- Ingests bundled `kb/*.pdf` files into the Main knowledge base after the backend starts successfully; failures are logged and do not halt installation or app startup
+- Applies schema/migrations only; reference, user, and policy data are pulled from the central sync server on app startup
+- Does not ingest bundled `kb/*.pdf` files locally; Main KB is pulled from the central server
 - Pulls the required Ollama chat and embedding models
 
 If a custom Ollama model directory is already configured through `OLLAMA_MODELS`
@@ -237,15 +239,9 @@ The desktop launcher still checks the external dependencies before starting the
 bundled services. If setup did not complete, it opens the diagnostics window
 instead of starting the backend.
 
-Default app login created during seed:
-
-```text
-Email: admin@drtransition.local
-Password: DrTransition@123
-```
-
-The seed step is idempotent. If that email already exists, the installer does
-not reset its password.
+The client installer does not create a default app user or seed reference data.
+When sync is configured, users and reference data are pulled from the central
+server on app startup.
 
 Manual checks:
 

@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
+import os
 import uuid
+from binascii import Error as BinasciiError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import Column, DateTime, Integer, String, Table, inspect, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import UniqueConstraint
 
 from app.config import get_settings
 from app.db.session import Base
+from app.models import AppUser
 
 SYNC_NAMESPACE = uuid.UUID("6b09c4c5-8a21-491f-9f52-98df34b63bd8")
 SYNC_COLUMN_NAMES = {
@@ -26,8 +33,41 @@ INTERNAL_TABLES = {"schema_migrations", "sync_state"}
 DEFAULT_EXCLUDED_TABLES = {"app_rate_limits"}
 LOG_TABLES = {"audit_logs", "llm_exchange_logs"}
 KNOWLEDGE_TABLES = {"knowledge_documents", "knowledge_chunks"}
+ENCRYPTED_SYNC_TABLES = {"app_users"}
+USER_DATA_TABLES = {
+    "app_users",
+    "custom_hazards",
+    "custom_hazard_profiles",
+    "user_activities",
+    "user_chat_messages",
+    "user_hazards",
+    "user_hazard_socio_demographics",
+    "user_mitigation_measures",
+    "user_question_responses",
+    "user_sessions",
+}
+ENCRYPTED_ROW_MARKER = "__encrypted_row"
+ENCRYPTED_ROW_ALGORITHM = "aesgcm-sha256-v1"
+APP_USER_ENCRYPTED_AT_REST_ALGORITHM = "aesgcm-sha256-db-v1"
+APP_USER_PLACEHOLDER_DOMAIN = "synced-user.local"
+APP_USER_ENCRYPTED_COLUMNS = (
+    "email",
+    "name",
+    "password_hash",
+    "session_version",
+    "designation",
+    "organisation_type",
+    "organisation_name",
+    "role",
+)
+USER_DATA_SYNC_ENABLED_SCOPE = "client_user_data_sync:enabled"
+USER_DATA_SYNC_ENABLED_AT_SCOPE = "client_user_data_sync:enabled_at"
 KNOWLEDGE_SCOPES = ("main", "validated_evidence", "sector_prompt")
 EXCLUDED_KNOWLEDGE_SCOPES = {"temporary"}
+CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"validated_evidence"}
+ADMIN_CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt"}
+SERVER_ACCEPTED_INBOUND_KNOWLEDGE_SCOPES = {"validated_evidence"}
+SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt"}
 
 
 @dataclass(frozen=True)
@@ -67,6 +107,10 @@ class SyncService:
             )
         )
         inspector = inspect(connection)
+        if "app_users" in inspector.get_table_names():
+            existing_user_columns = {column["name"] for column in inspector.get_columns("app_users")}
+            if "sync_encrypted_payload" not in existing_user_columns:
+                connection.execute(text("ALTER TABLE app_users ADD COLUMN sync_encrypted_payload TEXT NULL"))
         for table in self.sync_tables():
             existing = {column["name"] for column in inspector.get_columns(table.name)}
             for column_name, ddl in self._sync_column_ddls(dialect).items():
@@ -78,27 +122,55 @@ class SyncService:
                 connection.execute(text(f"CREATE UNIQUE INDEX {index_name} ON {table.name} (sync_id)"))
         self.db.commit()
 
-    def export_bundle(self) -> dict[str, Any]:
+    def export_bundle(
+        self,
+        *,
+        include_admin_knowledge: bool = False,
+        admin_user_email: str | None = None,
+        include_app_users: bool = True,
+        include_user_data: bool = True,
+        user_data_enabled_at: datetime | None = None,
+    ) -> dict[str, Any]:
         self.ensure_schema()
-        self.ensure_row_sync_ids()
+        self.ensure_row_sync_ids(
+            include_admin_knowledge=include_admin_knowledge,
+            include_user_data=include_user_data,
+            user_data_enabled_at=user_data_enabled_at,
+        )
         exported_at = utc_now()
         return {
             "format": "dr-transition-sync-v1",
             "device_id": self.device_id,
             "exported_at": exported_at.isoformat().replace("+00:00", "Z"),
+            "admin_knowledge_sync": bool(include_admin_knowledge),
+            "admin_user_email": str(admin_user_email or "").strip().casefold() if include_admin_knowledge else "",
             "tables": [
                 {
                     "name": table.name,
-                    "rows": [self._serialize_row(table, row) for row in self._table_rows(table)],
+                    "rows": [
+                        self._serialize_payload_row(table, row)
+                        for row in self._table_rows(
+                            table,
+                            include_admin_knowledge=include_admin_knowledge,
+                            include_user_data=include_user_data,
+                            user_data_enabled_at=user_data_enabled_at,
+                        )
+                    ],
                 }
-                for table in self.sync_tables()
+                for table in self._export_tables(include_app_users=include_app_users)
             ],
         }
 
-    def apply_bundle(self, payload: dict[str, Any]) -> SyncApplyResult:
+    def apply_bundle(
+        self,
+        payload: dict[str, Any],
+        *,
+        current_user_email: str | None = None,
+    ) -> SyncApplyResult:
         self.ensure_schema()
         if payload.get("format") != "dr-transition-sync-v1":
             raise ValueError("Unsupported sync bundle format.")
+        admin_knowledge_sync = self._admin_knowledge_sync_allowed(payload)
         table_payloads = {
             str(item.get("name")): item.get("rows") or []
             for item in payload.get("tables") or []
@@ -115,7 +187,16 @@ class SyncService:
                 if not isinstance(row, dict):
                     skipped += 1
                     continue
-                action = self._upsert_row(table, row)
+                row = self._decrypt_payload_row(table, row)
+                if row is None:
+                    skipped += 1
+                    continue
+                action = self._upsert_row(
+                    table,
+                    row,
+                    admin_knowledge_sync=admin_knowledge_sync,
+                    current_user_email=current_user_email,
+                )
                 if action == "inserted":
                     inserted += 1
                 elif action == "updated":
@@ -136,7 +217,13 @@ class SyncService:
             knowledge_scopes_dirty=tuple(sorted(dirty_knowledge_scopes)),
         )
 
-    async def exchange_with_server(self) -> dict[str, Any]:
+    async def exchange_with_server(
+        self,
+        *,
+        include_admin_knowledge: bool = False,
+        admin_user_email: str | None = None,
+        current_user_email: str | None = None,
+    ) -> dict[str, Any]:
         server_url = str(self.settings.sync_server_url or "").strip().rstrip("/")
         token = str(self.settings.sync_api_token or "").strip()
         if not server_url:
@@ -144,7 +231,14 @@ class SyncService:
         if not token:
             raise ValueError("SYNC_API_TOKEN is not configured.")
 
-        outbound = self.export_bundle()
+        user_data_enabled_at = self.user_data_sync_enabled_at()
+        outbound = self.export_bundle(
+            include_admin_knowledge=include_admin_knowledge,
+            admin_user_email=admin_user_email,
+            include_app_users=False,
+            include_user_data=user_data_enabled_at is not None,
+            user_data_enabled_at=user_data_enabled_at,
+        )
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
                 f"{server_url}/api/sync/exchange",
@@ -156,7 +250,7 @@ class SyncService:
         bundle = data.get("bundle") if isinstance(data, dict) else None
         if not isinstance(bundle, dict):
             raise ValueError("Sync server response did not include a bundle.")
-        applied = self.apply_bundle(bundle)
+        applied = self.apply_bundle(bundle, current_user_email=current_user_email)
         return {
             "error": False,
             "pushed": {
@@ -186,6 +280,13 @@ class SyncService:
             tables.append(table)
         return tables
 
+    def _export_tables(self, *, include_app_users: bool = True) -> list[Table]:
+        return [
+            table
+            for table in self.sync_tables()
+            if include_app_users or table.name != "app_users"
+        ]
+
     def _ensure_metadata_columns(self) -> None:
         for table in self.sync_tables():
             if "sync_id" not in table.c:
@@ -199,10 +300,21 @@ class SyncService:
             if "sync_deleted_at" not in table.c:
                 table.append_column(Column("sync_deleted_at", DateTime, nullable=True))
 
-    def ensure_row_sync_ids(self) -> None:
+    def ensure_row_sync_ids(
+        self,
+        *,
+        include_admin_knowledge: bool = False,
+        include_user_data: bool = True,
+        user_data_enabled_at: datetime | None = None,
+    ) -> None:
         now = utc_now()
         for table in self.sync_tables():
-            for row in self._table_rows(table):
+            for row in self._table_rows(
+                table,
+                include_admin_knowledge=include_admin_knowledge,
+                include_user_data=include_user_data,
+                user_data_enabled_at=user_data_enabled_at,
+            ):
                 if row.get("sync_id"):
                     continue
                 sync_id = self._deterministic_sync_id(table, row) or str(uuid.uuid4())
@@ -238,17 +350,60 @@ class SyncService:
             if ":" in str(row[0])
         ]
 
-    def _upsert_row(self, table: Table, payload_row: dict[str, Any]) -> str:
+    def admin_sync_allowed(self, payload: dict[str, Any]) -> bool:
+        return self._admin_knowledge_sync_allowed(payload)
+
+    def user_data_sync_status(self) -> dict[str, Any]:
+        self.ensure_schema()
+        enabled_at = self.user_data_sync_enabled_at()
+        return {
+            "enabled": enabled_at is not None,
+            "enabled_at": enabled_at.isoformat() + "Z" if enabled_at else None,
+        }
+
+    def user_data_sync_enabled_at(self) -> datetime | None:
+        self.ensure_schema()
+        enabled = self._sync_state_value(USER_DATA_SYNC_ENABLED_SCOPE) == "1"
+        if not enabled:
+            return None
+        return coerce_datetime(self._sync_state_value(USER_DATA_SYNC_ENABLED_AT_SCOPE)) or utc_now()
+
+    def set_user_data_sync_enabled(self, enabled: bool) -> dict[str, Any]:
+        self.ensure_schema()
+        enabled_at = self.user_data_sync_enabled_at()
+        now = utc_now()
+        if enabled:
+            self._set_sync_state(USER_DATA_SYNC_ENABLED_SCOPE, "1", now)
+            self._set_sync_state(USER_DATA_SYNC_ENABLED_AT_SCOPE, (enabled_at or now).isoformat(), now)
+        else:
+            self._set_sync_state(USER_DATA_SYNC_ENABLED_SCOPE, "0", now)
+        self.db.commit()
+        return self.user_data_sync_status()
+
+    def _upsert_row(
+        self,
+        table: Table,
+        payload_row: dict[str, Any],
+        *,
+        admin_knowledge_sync: bool = False,
+        current_user_email: str | None = None,
+    ) -> str:
         sync_id = str(payload_row.get("sync_id") or "").strip()
         if not sync_id:
             return "skipped"
+        if table.name == "app_users":
+            payload_row = self._app_user_payload_for_client_storage(
+                table,
+                payload_row,
+                current_user_email=current_user_email,
+            )
         if table.name == "knowledge_documents":
             scope = str(payload_row.get("scope") or "").strip()
-            if scope in EXCLUDED_KNOWLEDGE_SCOPES:
+            if self._should_skip_inbound_knowledge_scope(scope, admin_knowledge_sync=admin_knowledge_sync):
                 return "skipped"
         if table.name == "knowledge_chunks":
             scope = self._knowledge_scope_for_payload(table, payload_row)
-            if scope in EXCLUDED_KNOWLEDGE_SCOPES:
+            if self._should_skip_inbound_knowledge_scope(scope, admin_knowledge_sync=admin_knowledge_sync):
                 return "skipped"
         pk_col = only_pk(table)
         existing_pk = self._pk_for_sync_id(table, sync_id)
@@ -301,19 +456,158 @@ class SyncService:
             serialized["__fk_sync_ids"] = fk_sync_ids
         return serialized
 
-    def _table_rows(self, table: Table) -> list[dict[str, Any]]:
+    def _serialize_payload_row(self, table: Table, row: dict[str, Any]) -> dict[str, Any]:
+        serialized = self._serialize_row(table, row)
+        if table.name not in ENCRYPTED_SYNC_TABLES:
+            return serialized
+        return self._encrypt_payload_row(table, serialized)
+
+    def _encrypt_payload_row(self, table: Table, row: dict[str, Any]) -> dict[str, str]:
+        nonce = os.urandom(12)
+        plaintext = json.dumps(row, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ciphertext = AESGCM(self._sync_encryption_key()).encrypt(
+            nonce,
+            plaintext,
+            self._sync_encryption_aad(table),
+        )
+        return {
+            "__encryption": ENCRYPTED_ROW_ALGORITHM,
+            ENCRYPTED_ROW_MARKER: base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii"),
+        }
+
+    def _decrypt_payload_row(self, table: Table, row: dict[str, Any]) -> dict[str, Any] | None:
+        if table.name not in ENCRYPTED_SYNC_TABLES:
+            return row
+        if ENCRYPTED_ROW_MARKER not in row:
+            return row
+        if row.get("__encryption") != ENCRYPTED_ROW_ALGORITHM:
+            return None
+        try:
+            encrypted = base64.urlsafe_b64decode(str(row[ENCRYPTED_ROW_MARKER]).encode("ascii"))
+            nonce, ciphertext = encrypted[:12], encrypted[12:]
+            plaintext = AESGCM(self._sync_encryption_key()).decrypt(
+                nonce,
+                ciphertext,
+                self._sync_encryption_aad(table),
+            )
+            decrypted = json.loads(plaintext.decode("utf-8"))
+        except (BinasciiError, InvalidTag, ValueError, TypeError, json.JSONDecodeError):
+            return None
+        return decrypted if isinstance(decrypted, dict) else None
+
+    def _sync_encryption_key(self) -> bytes:
+        secret = str(self.settings.sync_api_token or self.settings.secret_key or "").strip()
+        if not secret:
+            secret = self.device_id
+        return hashlib.sha256(secret.encode("utf-8")).digest()
+
+    def _sync_encryption_aad(self, table: Table) -> bytes:
+        return f"dr-transition-sync:{table.name}:{ENCRYPTED_ROW_ALGORITHM}".encode("utf-8")
+
+    def _app_user_payload_for_client_storage(
+        self,
+        table: Table,
+        payload_row: dict[str, Any],
+        *,
+        current_user_email: str | None = None,
+    ) -> dict[str, Any]:
+        if str(self.settings.sync_mode or "").strip().casefold() != "client":
+            return payload_row
+        if self._should_store_app_user_clear(table, payload_row, current_user_email=current_user_email):
+            row = dict(payload_row)
+            row["sync_encrypted_payload"] = None
+            return row
+        sync_id = str(payload_row.get("sync_id") or "").strip()
+        encrypted_payload = self._encrypt_app_user_at_rest(payload_row)
+        row = dict(payload_row)
+        row["email"] = self._encrypted_app_user_placeholder_email(sync_id)
+        row["name"] = "Encrypted synced user"
+        row["password_hash"] = "encrypted-synced-user"
+        row["session_version"] = 1
+        row["designation"] = "Encrypted"
+        row["organisation_type"] = "Encrypted"
+        row["organisation_name"] = "Encrypted"
+        row["role"] = "user"
+        row["sync_encrypted_payload"] = encrypted_payload
+        return row
+
+    def _should_store_app_user_clear(
+        self,
+        table: Table,
+        payload_row: dict[str, Any],
+        *,
+        current_user_email: str | None = None,
+    ) -> bool:
+        origin_device_id = str(payload_row.get("origin_device_id") or "").strip()
+        if origin_device_id and origin_device_id == self.device_id:
+            return True
+        email = str(payload_row.get("email") or "").strip().casefold()
+        if email and email == str(current_user_email or "").strip().casefold():
+            return True
+        if not email:
+            return False
+        existing = self.db.execute(
+            select(table.c.sync_encrypted_payload).where(table.c.email == email)
+        ).first()
+        return bool(existing and existing[0] is None)
+
+    def _encrypt_app_user_at_rest(self, payload_row: dict[str, Any]) -> str:
+        nonce = os.urandom(12)
+        stored = {
+            column: payload_row.get(column)
+            for column in APP_USER_ENCRYPTED_COLUMNS
+            if column in payload_row
+        }
+        plaintext = json.dumps(stored, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ciphertext = AESGCM(self._sync_encryption_key()).encrypt(
+            nonce,
+            plaintext,
+            b"dr-transition-sync:app_users:db-at-rest",
+        )
+        return json.dumps(
+            {
+                "__encryption": APP_USER_ENCRYPTED_AT_REST_ALGORITHM,
+                "payload": base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii"),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _encrypted_app_user_placeholder_email(sync_id: str) -> str:
+        safe_sync_id = "".join(ch for ch in sync_id.lower() if ch.isalnum() or ch == "-") or str(uuid.uuid4())
+        return f"encrypted-sync-user+{safe_sync_id}@{APP_USER_PLACEHOLDER_DOMAIN}"
+
+    def _table_rows(
+        self,
+        table: Table,
+        *,
+        include_admin_knowledge: bool = False,
+        include_user_data: bool = True,
+        user_data_enabled_at: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        if table.name in USER_DATA_TABLES and table.name != "app_users" and not include_user_data:
+            return []
         query = select(table)
         if table.name == "knowledge_documents":
-            query = query.where(table.c.scope.notin_(EXCLUDED_KNOWLEDGE_SCOPES))
+            query = query.where(table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge)))
         elif table.name == "knowledge_chunks":
             document_table = Base.metadata.tables["knowledge_documents"]
             query = query.where(
                 table.c.document_id.in_(
                     select(document_table.c.id).where(
-                        document_table.c.scope.notin_(EXCLUDED_KNOWLEDGE_SCOPES)
+                        document_table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge))
                     )
                 )
             )
+        if table.name in USER_DATA_TABLES and user_data_enabled_at is not None and "created_at" in table.c:
+            query = query.where(table.c.created_at >= user_data_enabled_at)
+        if (
+            table.name == "app_users"
+            and str(self.settings.sync_mode or "").strip().casefold() == "client"
+            and "sync_encrypted_payload" in table.c
+        ):
+            query = query.where(table.c.sync_encrypted_payload.is_(None))
         return [dict(row._mapping) for row in self.db.execute(query).all()]
 
     def _sync_id_for_pk(self, table: Table, pk_value: Any) -> str | None:
@@ -327,15 +621,12 @@ class SyncService:
         return row[0] if row else None
 
     def _pk_for_natural_key(self, table: Table, payload_row: dict[str, Any]) -> Any | None:
-        constraint = first_unique_constraint(table)
-        if constraint is None:
-            if table.name == "app_users" and payload_row.get("email"):
-                row = self.db.execute(select(only_pk(table)).where(table.c.email == payload_row["email"])).first()
-                return row[0] if row else None
+        natural_key_columns = first_unique_key_columns(table)
+        if not natural_key_columns:
             return None
         conditions = []
         fk_sync_ids = payload_row.get("__fk_sync_ids") if isinstance(payload_row.get("__fk_sync_ids"), dict) else {}
-        for column in constraint.columns:
+        for column in natural_key_columns:
             if column.name in fk_sync_ids:
                 ref_pk = self._pk_for_sync_id(self._referenced_table(column), str(fk_sync_ids[column.name]))
                 if ref_pk is None:
@@ -351,7 +642,7 @@ class SyncService:
     def _knowledge_scope_for_payload(self, table: Table, payload_row: dict[str, Any]) -> str | None:
         if table.name == "knowledge_documents":
             scope = str(payload_row.get("scope") or "").strip()
-            return scope if scope in KNOWLEDGE_SCOPES else None
+            return scope if scope in {*KNOWLEDGE_SCOPES, *EXCLUDED_KNOWLEDGE_SCOPES} else None
         if table.name != "knowledge_chunks":
             return None
         fk_sync_ids = payload_row.get("__fk_sync_ids") if isinstance(payload_row.get("__fk_sync_ids"), dict) else {}
@@ -363,7 +654,39 @@ class SyncService:
             select(document_table.c.scope).where(document_table.c.sync_id == document_sync_id)
         ).first()
         scope = str(row[0] if row else "").strip()
-        return scope if scope in KNOWLEDGE_SCOPES else None
+        return scope if scope in {*KNOWLEDGE_SCOPES, *EXCLUDED_KNOWLEDGE_SCOPES} else None
+
+    def _exportable_knowledge_scopes(self, include_admin_knowledge: bool = False) -> tuple[str, ...]:
+        if str(self.settings.sync_mode or "").strip().casefold() == "client":
+            if include_admin_knowledge:
+                return tuple(sorted(ADMIN_CLIENT_EXPORT_KNOWLEDGE_SCOPES))
+            return tuple(sorted(CLIENT_EXPORT_KNOWLEDGE_SCOPES))
+        return KNOWLEDGE_SCOPES
+
+    def _should_skip_inbound_knowledge_scope(
+        self,
+        scope: str | None,
+        *,
+        admin_knowledge_sync: bool = False,
+    ) -> bool:
+        if not scope or scope in EXCLUDED_KNOWLEDGE_SCOPES:
+            return True
+        if str(self.settings.sync_mode or "").strip().casefold() == "server":
+            if admin_knowledge_sync:
+                return scope not in SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES
+            return scope not in SERVER_ACCEPTED_INBOUND_KNOWLEDGE_SCOPES
+        return scope not in KNOWLEDGE_SCOPES
+
+    def _admin_knowledge_sync_allowed(self, payload: dict[str, Any]) -> bool:
+        if not bool(payload.get("admin_knowledge_sync")):
+            return False
+        if str(self.settings.sync_mode or "").strip().casefold() != "server":
+            return True
+        email = str(payload.get("admin_user_email") or "").strip().casefold()
+        if not email:
+            return False
+        user = self.db.scalar(select(AppUser).where(AppUser.email == email))
+        return bool(user and str(user.role or "").strip().casefold() == "admin")
 
     def _mark_knowledge_indexes_dirty(self, scopes: set[str]) -> None:
         for scope in sorted(scope for scope in scopes if scope in KNOWLEDGE_SCOPES):
@@ -385,16 +708,31 @@ class SyncService:
                 },
             )
 
+    def _sync_state_value(self, scope: str) -> str | None:
+        row = self.db.execute(
+            text("SELECT value FROM sync_state WHERE scope = :scope"),
+            {"scope": scope},
+        ).first()
+        return str(row[0]) if row and row[0] is not None else None
+
+    def _set_sync_state(self, scope: str, value: str, updated_at: datetime) -> None:
+        self.db.execute(text("DELETE FROM sync_state WHERE scope = :scope"), {"scope": scope})
+        self.db.execute(
+            text(
+                """
+                INSERT INTO sync_state (scope, value, updated_at)
+                VALUES (:scope, :value, :updated_at)
+                """
+            ),
+            {"scope": scope, "value": value, "updated_at": updated_at},
+        )
+
     def _deterministic_sync_id(self, table: Table, row: dict[str, Any]) -> str | None:
-        constraint = first_unique_constraint(table)
-        if constraint is None:
-            if table.name == "user_sessions" and row.get("session_key"):
-                return deterministic_uuid(table.name, [row["session_key"]])
-            if table.name == "app_users" and row.get("email"):
-                return None
+        natural_key_columns = first_unique_key_columns(table)
+        if not natural_key_columns:
             return None
         parts: list[str] = []
-        for column in constraint.columns:
+        for column in natural_key_columns:
             value = row.get(column.name)
             if value is None:
                 return None
@@ -442,6 +780,16 @@ def first_unique_constraint(table: Table) -> UniqueConstraint | None:
         if isinstance(constraint, UniqueConstraint) and constraint.columns
     ]
     return sorted(constraints, key=lambda constraint: len(constraint.columns))[0] if constraints else None
+
+
+def first_unique_key_columns(table: Table) -> tuple[Column[Any], ...]:
+    constraint = first_unique_constraint(table)
+    constraint_columns = tuple(constraint.columns) if constraint is not None else tuple()
+    unique_columns = tuple(column for column in table.columns if column.unique)
+    candidates = [columns for columns in (constraint_columns, *[(column,) for column in unique_columns]) if columns]
+    if not candidates:
+        return tuple()
+    return tuple(sorted(candidates, key=lambda columns: (len(columns), [column.name for column in columns]))[0])
 
 
 def deterministic_uuid(table_name: str, parts: list[Any]) -> str:

@@ -1,8 +1,10 @@
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import Settings, _env_files
 
 
 class SettingsSafetyTests(unittest.TestCase):
@@ -22,6 +24,10 @@ class SettingsSafetyTests(unittest.TestCase):
             app_debug=False,
             secret_key="strong-production-secret",
             database_url="mysql+pymysql://user:strong-password@db.example/app",
+            llm_log_enabled=None,
+            llm_log_to_file=None,
+            llm_log_to_db=None,
+            llm_log_include_payloads=None,
         )
 
         self.assertTrue(settings.use_csrf_protection)
@@ -53,6 +59,10 @@ class SettingsSafetyTests(unittest.TestCase):
         self.assertEqual(settings.database_max_overflow, 12)
         self.assertEqual(settings.database_pool_timeout_seconds, 5)
         self.assertEqual(settings.database_connect_timeout_seconds, 3)
+
+    def test_env_file_override_is_supported_for_parallel_dev_runs(self) -> None:
+        with patch.dict("os.environ", {"ENV_FILE": ".env.server.dev"}):
+            self.assertEqual(_env_files(), (Path(".env.server.dev"),))
 
 
 if __name__ == "__main__":

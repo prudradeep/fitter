@@ -62,6 +62,10 @@ const exportSessionButton = document.querySelector("#exportSessionButton");
 const importSessionButton = document.querySelector("#importSessionButton");
 const importSessionInput = document.querySelector("#importSessionInput");
 const exportSessionStatus = document.querySelector("#exportSessionStatus");
+const syncSettingsPanel = document.querySelector("#syncSettingsPanel");
+const syncMyDataToggle = document.querySelector("#syncMyDataToggle");
+const syncNowButton = document.querySelector("#syncNowButton");
+const syncStatus = document.querySelector("#syncStatus");
 const voiceAnalyzerElement = document.querySelector("#voiceAnalyzer");
 const sessionsButton = document.querySelector("#sessionsButton");
 const sessionsPanel = document.querySelector("#sessionsPanel");
@@ -3783,6 +3787,139 @@ async function importSessionFile() {
   }
 }
 
+function showSyncStatus(message, isError = false) {
+  if (!syncStatus) return;
+  syncStatus.textContent = message;
+  syncStatus.hidden = false;
+  syncStatus.classList.toggle("success", !isError);
+}
+
+function syncSummary(data) {
+  const pushedRows = Number(data?.pushed?.rows || 0);
+  const pulled = data?.pulled || {};
+  const inserted = Number(pulled.inserted || 0);
+  const updated = Number(pulled.updated || 0);
+  const skipped = Number(pulled.skipped || 0);
+  const dirtyScopes = Array.isArray(pulled.knowledge_scopes_dirty)
+    ? pulled.knowledge_scopes_dirty
+    : [];
+  const changes = [];
+  if (inserted) changes.push(`${inserted} added`);
+  if (updated) changes.push(`${updated} updated`);
+  if (skipped) changes.push(`${skipped} skipped`);
+  const pulledText = changes.length ? changes.join(", ") : "no inbound changes";
+  const kbText = dirtyScopes.length ? ` KB index refresh: ${dirtyScopes.join(", ")}.` : "";
+  return `Synced ${pushedRows} local row(s); ${pulledText}.${kbText}`;
+}
+
+function setSyncPanelVisible(visible) {
+  if (syncSettingsPanel) syncSettingsPanel.hidden = !visible;
+  if (!visible && syncStatus) {
+    syncStatus.hidden = true;
+    syncStatus.textContent = "";
+  }
+}
+
+async function loadSyncStatus() {
+  if (!syncStatus || !syncSettingsPanel) return;
+  setSyncPanelVisible(false);
+  try {
+    const response = await fetch("/api/sync/client/status");
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    const data = await response.json();
+    setSyncPanelVisible(true);
+    if (syncMyDataToggle) {
+      syncMyDataToggle.disabled = false;
+      syncMyDataToggle.checked = Boolean(data.user_data_sync?.enabled);
+    }
+    if (!data.enabled) {
+      if (syncNowButton) syncNowButton.hidden = true;
+      const userDataText = data.user_data_sync?.enabled
+        ? "Sync my Data is on. It will apply when sync is enabled."
+        : "Sync is disabled. Sync my Data is off.";
+      showSyncStatus(userDataText, !data.user_data_sync?.enabled);
+      return;
+    }
+    if (syncNowButton) syncNowButton.hidden = false;
+    if (!data.configured) {
+      if (syncNowButton) syncNowButton.disabled = true;
+      const userDataText = data.user_data_sync?.enabled
+        ? " Sync my Data is on for new data."
+        : " Sync my Data is off.";
+      showSyncStatus(`Sync is not configured. Add server URL and token in .env.${userDataText}`, true);
+      return;
+    }
+    if (syncNowButton) syncNowButton.disabled = false;
+    const interval = Number(data.interval_seconds || 0);
+    const intervalText = interval > 0 ? ` Auto-sync every ${Math.round(interval / 60)} min.` : "";
+    const userDataText = data.user_data_sync?.enabled
+      ? " Sync my Data is on for new data."
+      : " Sync my Data is off.";
+    showSyncStatus(`Connected to ${data.server_url || "sync server"}.${intervalText}${userDataText}`);
+  } catch (error) {
+    if (syncNowButton) syncNowButton.disabled = true;
+    if (syncMyDataToggle) syncMyDataToggle.disabled = true;
+    setSyncPanelVisible(true);
+    showSyncStatus("Could not read sync status.", true);
+  }
+}
+
+async function updateSyncMyDataPreference() {
+  if (!syncMyDataToggle) return;
+  const enabled = syncMyDataToggle.checked;
+  syncMyDataToggle.disabled = true;
+  showSyncStatus(enabled ? "Enabling Sync my Data..." : "Disabling Sync my Data...");
+  try {
+    const response = await csrfFetch("/api/sync/client/user-data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || "Could not update Sync my Data.");
+    }
+    syncMyDataToggle.checked = Boolean(data.user_data_sync?.enabled);
+    await loadSyncStatus();
+  } catch (error) {
+    syncMyDataToggle.checked = !enabled;
+    showSyncStatus(error.message || "Could not update Sync my Data.", true);
+  } finally {
+    syncMyDataToggle.disabled = false;
+  }
+}
+
+async function runManualSync() {
+  if (!syncNowButton) return;
+  if (syncNowButton.hidden) return;
+  syncNowButton.disabled = true;
+  showSyncStatus("Syncing...");
+  try {
+    const response = await csrfFetch("/api/sync/client/run", { method: "POST" });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.detail || "Could not sync with the server.");
+    }
+    showSyncStatus(syncSummary(data));
+    await loadSessions();
+  } catch (error) {
+    showSyncStatus(error.message || "Could not sync with the server.", true);
+  } finally {
+    syncNowButton.disabled = false;
+  }
+}
+
 function showKnowledgeMessage(message, isError = true) {
   if (!knowledgeMessage) return;
   knowledgeMessage.textContent = message;
@@ -3831,8 +3968,15 @@ function uploadKnowledgeFile(file, row) {
   return new Promise((resolve) => {
     const formData = new FormData();
     formData.append("files", file);
+    const csrfToken = cookieValue("dr_transition_csrf");
+    if (csrfToken) {
+      formData.append("csrf_token", csrfToken);
+    }
     const request = new XMLHttpRequest();
     request.open("POST", "/api/knowledge/upload");
+    if (csrfToken) {
+      request.setRequestHeader("X-CSRF-Token", csrfToken);
+    }
     request.upload.addEventListener("progress", (event) => {
       if (!event.lengthComputable) {
         updateKnowledgeProgressRow(row, "Uploading...", 12);
@@ -3850,6 +3994,13 @@ function uploadKnowledgeFile(file, row) {
         data = JSON.parse(request.responseText || "{}");
       } catch (error) {
         console.error("Knowledge file response parse failed", error);
+      }
+      if (request.status >= 400) {
+        data = {
+          ...data,
+          error: true,
+          detail: data.detail || `Upload failed with status ${request.status}.`,
+        };
       }
       resolve(data);
     });
@@ -4496,6 +4647,7 @@ voicePreferenceSelect?.addEventListener("change", () => {
 settingsButton?.addEventListener("click", () => {
   if (settingsDrawer?.hidden) {
     openSettingsDrawer();
+    loadSyncStatus();
   } else {
     closeSettingsDrawer();
   }
@@ -4505,6 +4657,8 @@ closeSettingsButton?.addEventListener("click", closeSettingsDrawer);
 exportSessionButton?.addEventListener("click", exportCurrentSession);
 importSessionButton?.addEventListener("click", chooseSessionImportFile);
 importSessionInput?.addEventListener("change", importSessionFile);
+syncNowButton?.addEventListener("click", runManualSync);
+syncMyDataToggle?.addEventListener("change", updateSyncMyDataPreference);
 
 document.addEventListener("click", (event) => {
   if (
@@ -4823,6 +4977,7 @@ document.addEventListener("DOMContentLoaded", () => {
   configureWorkspaceResizer();
   clearCurrentInputState();
   loadSessions();
+  loadSyncStatus();
   if (sessionId) {
     restoreSession(sessionId);
   } else {

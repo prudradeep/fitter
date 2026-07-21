@@ -14,6 +14,8 @@ def build_request(
     origin: str | None = None,
     cookie: str | None = None,
     csrf_header: str | None = None,
+    content_type: str | None = None,
+    body: bytes = b"",
 ) -> Request:
     headers: list[tuple[bytes, bytes]] = [(b"host", b"example.com")]
     if origin is not None:
@@ -22,6 +24,8 @@ def build_request(
         headers.append((b"cookie", cookie.encode("ascii")))
     if csrf_header is not None:
         headers.append((b"x-csrf-token", csrf_header.encode("ascii")))
+    if content_type is not None:
+        headers.append((b"content-type", content_type.encode("ascii")))
     return Request(
         {
             "type": "http",
@@ -30,8 +34,13 @@ def build_request(
             "server": ("example.com", 443),
             "path": "/api/chat",
             "headers": headers,
-        }
+        },
+        receive=lambda: _receive_body(body),
     )
+
+
+async def _receive_body(body: bytes) -> dict[str, object]:
+    return {"type": "http.request", "body": body, "more_body": False}
 
 
 class CsrfProtectionTests(unittest.TestCase):
@@ -42,6 +51,7 @@ class CsrfProtectionTests(unittest.TestCase):
             secret_key="strong-production-secret",
             database_url="mysql+pymysql://user:strong-password@db.example/app",
             cors_origins="https://example.com",
+            llm_log_include_payloads=False,
         )
 
     def test_authenticated_unsafe_request_requires_origin(self) -> None:
@@ -84,6 +94,22 @@ class CsrfProtectionTests(unittest.TestCase):
 
         self.assertFalse(asyncio.run(csrf_request_allowed(request, self.settings)))
 
+    def test_form_csrf_validation_replays_body_for_route_handler(self) -> None:
+        token = create_csrf_token(self.settings)
+        body = (
+            f"csrf_token={token}&email=pradeep%40localhost.com&name=Pradeep+Rajput"
+        ).encode("utf-8")
+        request = build_request(
+            "POST",
+            origin="https://example.com",
+            cookie=f"dr_transition_auth=value; dr_transition_csrf={token}",
+            content_type="application/x-www-form-urlencoded",
+            body=body,
+        )
+
+        self.assertTrue(asyncio.run(csrf_request_allowed(request, self.settings)))
+        self.assertEqual(asyncio.run(request.body()), body)
+
 
 class SecurityHeaderTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -93,6 +119,7 @@ class SecurityHeaderTests(unittest.TestCase):
             secret_key="strong-production-secret",
             database_url="mysql+pymysql://user:strong-password@db.example/app",
             cors_origins="https://example.com",
+            llm_log_include_payloads=False,
         )
 
     def test_security_headers_are_added_for_https(self) -> None:

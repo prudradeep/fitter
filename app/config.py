@@ -38,6 +38,9 @@ DEFAULT_PRODUCTION_CSP = (
 
 
 def _env_files() -> tuple[Path, ...]:
+    explicit_env_file = os.getenv("ENV_FILE")
+    if explicit_env_file:
+        return (Path(explicit_env_file),)
     if getattr(sys, "frozen", False):
         base = os.getenv("PROGRAMDATA")
         return (Path(base) / "DrTransition" / ".env",) if base else tuple()
@@ -136,6 +139,9 @@ class Settings(BaseSettings):
     sync_device_id: str = ""
     sync_batch_size: int = 500
     sync_include_logs: bool = False
+    sync_server_expose_app_apis: bool = False
+    sync_auto_on_startup: bool = True
+    sync_interval_seconds: int = 3600
 
     model_config = SettingsConfigDict(env_file=_env_files(), env_file_encoding="utf-8", extra="ignore")
 

@@ -3,6 +3,12 @@
 This document describes how to deploy a central Dr Transition backend for
 syncing user data and shared knowledge-base data from local installations.
 
+For a complete Ubuntu server and local client setup walkthrough, see:
+
+```text
+docs/UBUNTU_SYNC_SERVER_AND_CLIENT_GUIDE.md
+```
+
 The sync design keeps each installation's local integer primary keys intact.
 Rows are matched across machines by `sync_id`, while foreign keys in sync
 payloads are resolved through referenced rows' `sync_id` values.
@@ -28,16 +34,32 @@ Knowledge-base rows are stored in two DB tables:
 - `knowledge_documents`
 - `knowledge_chunks`
 
-Synced KB scopes:
+Server-to-client KB scopes:
 
 - `main`
 - `validated_evidence`
 - `sector_prompt`
 
+Client-to-server KB scopes:
+
+- `validated_evidence`
+
+Admin client-to-server KB scopes:
+
+- `main`
+- `validated_evidence`
+
 Excluded KB scopes:
 
 - `temporary`
 
+Main knowledge is centrally managed, but an authenticated admin can push Main KB
+changes during a manual client sync. The sync bundle includes the admin email,
+and the central server accepts Main KB only when that email exists as an admin
+user on the server. Validated evidence is bidirectional for clients.
+Sector-prompt knowledge is server-side only; it is distributed from the server
+to clients and is not accepted from client sync bundles. Admins can reindex
+sector prompts on the server through the admin sector-prompt reindex endpoint/UI.
 Temporary KB data is session-local evidence and is intentionally not exported.
 The receiver also skips temporary KB rows defensively if an older client sends
 them.
@@ -72,6 +94,11 @@ User-created rows receive random UUIDs when no stable natural key is available.
 Sync payloads include foreign-key references as `__fk_sync_ids`. On import, the
 receiver maps those global IDs back to its own local integer IDs.
 
+`app_users` rows are encrypted inside sync bundles with AES-GCM using a key
+derived from the shared `SYNC_API_TOKEN`. Passwords are never synced in
+plaintext; the stored `password_hash` value is encrypted in transit, decrypted
+by the receiver, and written back as the same hash.
+
 ## Server Topology
 
 Deploy the same FastAPI application as the central sync server:
@@ -91,6 +118,10 @@ Recommended central services:
 The central server does not need to run Ollama or grounding services for sync
 endpoints alone. It needs them only if users will also use the full chat and
 knowledge search experience directly on the server.
+
+With `SYNC_MODE=server` and `SYNC_SERVER_EXPOSE_APP_APIS=false`, normal app APIs
+are hidden and LLM-dependent startup work is skipped. Do not install, start, or
+configure Ollama, reranker, or NLI services for a sync-only central backend.
 
 ## Server Environment
 
@@ -115,6 +146,7 @@ SYNC_ENABLED=true
 SYNC_MODE=server
 SYNC_API_TOKEN="<long random shared sync token>"
 SYNC_INCLUDE_LOGS=false
+SYNC_SERVER_EXPOSE_APP_APIS=false
 ```
 
 Use a high-entropy token, store it in a secret manager where possible, and rotate
@@ -131,11 +163,20 @@ SYNC_SERVER_URL="https://your-sync-host.example"
 SYNC_API_TOKEN="<same shared sync token or per-client token>"
 SYNC_DEVICE_ID="<stable UUID for this installation>"
 SYNC_INCLUDE_LOGS=false
+SYNC_AUTO_ON_STARTUP=true
+SYNC_INTERVAL_SECONDS=3600
 ```
 
 If `SYNC_DEVICE_ID` is omitted, the app derives a stable value from local
 settings. For managed fleets, explicitly set a UUID per installation so device
 identity remains clear during troubleshooting.
+
+Local clients can run sync manually from **Settings -> Sync Now**. Manual sync
+uses the signed-in user's role: admins may upload Main KB plus Validated KB when
+the same email is also an admin on the central server, while non-admin users
+upload only Validated KB. Automatic startup and interval sync has no signed-in
+admin context, so it uploads only Validated KB. Configure automatic sync through
+`SYNC_AUTO_ON_STARTUP` and `SYNC_INTERVAL_SECONDS`.
 
 ## Database Setup
 
@@ -266,6 +307,8 @@ server {
 ## Security Checklist
 
 - Use HTTPS only for central sync traffic.
+- Keep `SYNC_SERVER_EXPOSE_APP_APIS=false` for sync-only central servers so chat, LLM, auth, and normal app APIs are not exposed.
+- Do not run Ollama, reranker, or NLI on sync-only central servers.
 - Keep `APP_ENV=production` on the central server.
 - Use a strong `SECRET_KEY`.
 - Use a long random `SYNC_API_TOKEN`.
@@ -306,7 +349,7 @@ After a sync run, inspect dirty KB scopes:
 
 ```json
 {
-  "knowledge_index_dirty_scopes": ["main", "sector_prompt"]
+  "knowledge_index_dirty_scopes": ["main", "validated_evidence"]
 }
 ```
 

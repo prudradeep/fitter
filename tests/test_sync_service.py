@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta
 from typing import Iterator
 
 from fastapi import FastAPI
@@ -9,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.auth import hash_password
 from app.db.session import Base
-from app.models import AppUser, KnowledgeChunk, KnowledgeDocument, UserChatMessage, UserSession
+from app.models import AppUser, Country, KnowledgeChunk, KnowledgeDocument, UserChatMessage, UserSession
 from app.routes import sync as sync_routes
 from app.services.sync_service import SyncService
 
@@ -55,6 +56,238 @@ class SyncServiceTests(unittest.TestCase):
         self.assertTrue(sessions[0]["sync_id"])
         self.assertEqual(messages[0]["__fk_sync_ids"]["user_session_id"], sessions[0]["sync_id"])
 
+    def test_app_user_rows_are_encrypted_in_sync_payload(self) -> None:
+        original_token = sync_routes.settings.sync_api_token
+        sync_routes.settings.sync_api_token = "shared-sync-token"
+        try:
+            user = self._add_user("secure@example.com")
+            password_hash = user.password_hash
+            bundle = SyncService(self.db, device_id="device-a").export_bundle()
+        finally:
+            sync_routes.settings.sync_api_token = original_token
+
+        users = self._rows(bundle, "app_users")
+        self.assertEqual(len(users), 1)
+        self.assertIn("__encrypted_row", users[0])
+        self.assertNotIn("password_hash", users[0])
+        self.assertNotIn(password_hash, str(users[0]))
+
+    def test_user_data_export_respects_sync_my_data_cutoff(self) -> None:
+        service = SyncService(self.db, device_id="device-a")
+        status = service.set_user_data_sync_enabled(True)
+        enabled_at = datetime.fromisoformat(str(status["enabled_at"]).replace("Z", ""))
+        user = self._add_user("cutoff@example.com")
+        old_session = UserSession(
+            session_key="old-session",
+            title="Old Session",
+            user_id=user.id,
+            session_data="{}",
+            created_at=enabled_at - timedelta(seconds=1),
+        )
+        new_session = UserSession(
+            session_key="new-session",
+            title="New Session",
+            user_id=user.id,
+            session_data="{}",
+            created_at=enabled_at + timedelta(seconds=1),
+        )
+        self.db.add_all([old_session, new_session])
+        self.db.commit()
+
+        bundle = service.export_bundle(
+            include_user_data=True,
+            user_data_enabled_at=enabled_at,
+        )
+
+        session_keys = {row["session_key"] for row in self._rows(bundle, "user_sessions")}
+        self.assertEqual(session_keys, {"new-session"})
+
+    def test_user_data_export_can_be_disabled(self) -> None:
+        user = self._add_user("disabled-export@example.com")
+        self.db.add(
+            UserSession(
+                session_key="local-session",
+                title="Local Session",
+                user_id=user.id,
+                session_data="{}",
+            )
+        )
+        self.db.commit()
+
+        bundle = SyncService(self.db, device_id="device-a").export_bundle(
+            include_app_users=False,
+            include_user_data=False,
+        )
+
+        self.assertEqual(self._rows(bundle, "app_users"), [])
+        self.assertEqual(self._rows(bundle, "user_sessions"), [])
+
+    def test_encrypted_app_user_rows_apply_with_original_hash(self) -> None:
+        original_token = sync_routes.settings.sync_api_token
+        sync_routes.settings.sync_api_token = "shared-sync-token"
+        try:
+            user = self._add_user("secure@example.com")
+            password_hash = user.password_hash
+            bundle = SyncService(self.db, device_id="source-device").export_bundle()
+
+            target_engine = create_engine(
+                "sqlite://",
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+            Base.metadata.create_all(bind=target_engine)
+            TargetSession = sessionmaker(bind=target_engine, expire_on_commit=False)
+            target_db = TargetSession()
+            try:
+                result = SyncService(target_db, device_id="target-device").apply_bundle(
+                    bundle,
+                    current_user_email="secure@example.com",
+                )
+                imported_user = target_db.scalar(select(AppUser).where(AppUser.email == "secure@example.com"))
+
+                self.assertGreater(result.inserted, 0)
+                self.assertIsNotNone(imported_user)
+                self.assertEqual(imported_user.password_hash, password_hash)
+            finally:
+                target_db.close()
+                Base.metadata.drop_all(bind=target_engine)
+                target_engine.dispose()
+        finally:
+            sync_routes.settings.sync_api_token = original_token
+
+    def test_client_stores_non_current_synced_app_users_encrypted_at_rest(self) -> None:
+        original_token = sync_routes.settings.sync_api_token
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_api_token = "shared-sync-token"
+        sync_routes.settings.sync_mode = "client"
+        try:
+            current_user = self._add_user("current@example.com")
+            other_user = self._add_user("other@example.com")
+            bundle = SyncService(self.db, device_id="server-device").export_bundle()
+
+            target_engine = create_engine(
+                "sqlite://",
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+            Base.metadata.create_all(bind=target_engine)
+            TargetSession = sessionmaker(bind=target_engine, expire_on_commit=False)
+            target_db = TargetSession()
+            try:
+                result = SyncService(target_db, device_id="client-device").apply_bundle(
+                    bundle,
+                    current_user_email=current_user.email,
+                )
+                clear_user = target_db.scalar(select(AppUser).where(AppUser.email == current_user.email))
+                encrypted_users = target_db.scalars(
+                    select(AppUser).where(AppUser.sync_encrypted_payload.is_not(None))
+                ).all()
+
+                self.assertGreater(result.inserted, 0)
+                self.assertIsNotNone(clear_user)
+                self.assertEqual(clear_user.sync_encrypted_payload, None)
+                self.assertEqual(len(encrypted_users), 1)
+                self.assertNotEqual(encrypted_users[0].email, other_user.email)
+                self.assertNotIn(other_user.email, str(encrypted_users[0].__dict__))
+                self.assertIn("__encryption", encrypted_users[0].sync_encrypted_payload or "")
+            finally:
+                target_db.close()
+                Base.metadata.drop_all(bind=target_engine)
+                target_engine.dispose()
+        finally:
+            sync_routes.settings.sync_api_token = original_token
+            sync_routes.settings.sync_mode = original_mode
+
+    def test_client_keeps_same_origin_device_app_users_available_for_login(self) -> None:
+        original_token = sync_routes.settings.sync_api_token
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_api_token = "shared-sync-token"
+        sync_routes.settings.sync_mode = "client"
+        try:
+            local_user = self._add_user("local-device-user@example.com")
+            local_second_user = self._add_user("local-device-second@example.com")
+            remote_user = self._add_user("remote-device-user@example.com")
+            service = SyncService(self.db, device_id="local-device")
+            service.ensure_schema()
+            user_table = AppUser.__table__
+            self.db.execute(
+                user_table.update()
+                .where(user_table.c.email.in_([local_user.email, local_second_user.email]))
+                .values(origin_device_id="local-device")
+            )
+            self.db.execute(
+                user_table.update()
+                .where(user_table.c.email == remote_user.email)
+                .values(origin_device_id="remote-device")
+            )
+            self.db.commit()
+            bundle = service.export_bundle()
+
+            target_engine = create_engine(
+                "sqlite://",
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+            Base.metadata.create_all(bind=target_engine)
+            TargetSession = sessionmaker(bind=target_engine, expire_on_commit=False)
+            target_db = TargetSession()
+            try:
+                SyncService(target_db, device_id="local-device").apply_bundle(bundle)
+                local_imported = target_db.scalar(select(AppUser).where(AppUser.email == local_user.email))
+                local_second_imported = target_db.scalar(select(AppUser).where(AppUser.email == local_second_user.email))
+                encrypted_users = target_db.scalars(
+                    select(AppUser).where(AppUser.sync_encrypted_payload.is_not(None))
+                ).all()
+
+                self.assertIsNotNone(local_imported)
+                self.assertIsNotNone(local_second_imported)
+                self.assertEqual(local_imported.sync_encrypted_payload, None)
+                self.assertEqual(local_second_imported.sync_encrypted_payload, None)
+                self.assertEqual(len(encrypted_users), 1)
+                self.assertNotEqual(encrypted_users[0].email, remote_user.email)
+            finally:
+                target_db.close()
+                Base.metadata.drop_all(bind=target_engine)
+                target_engine.dispose()
+        finally:
+            sync_routes.settings.sync_api_token = original_token
+            sync_routes.settings.sync_mode = original_mode
+
+    def test_apply_bundle_uses_column_unique_key_before_insert(self) -> None:
+        self.db.add(Country(name="Germany", map_code="DE", map_path="old.geo.json"))
+        self.db.commit()
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "client-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "tables": [
+                {
+                    "name": "countries",
+                    "rows": [
+                        {
+                            "sync_id": "33a14422-dbb3-42f4-a3d6-67532e1ba570",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "sync_updated_at": "2026-07-20T00:00:00Z",
+                            "sync_deleted_at": None,
+                            "name": "Germany",
+                            "map_code": "DE",
+                            "map_path": "countries/de/de-all.geo.json",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        result = SyncService(self.db, device_id="server-device").apply_bundle(bundle)
+        countries = self.db.query(Country).all()
+        sync_id = self.db.execute(select(Country.__table__.c.sync_id)).scalar_one()
+
+        self.assertEqual(result.updated, 1)
+        self.assertEqual(len(countries), 1)
+        self.assertEqual(countries[0].map_path, "countries/de/de-all.geo.json")
+        self.assertEqual(sync_id, "33a14422-dbb3-42f4-a3d6-67532e1ba570")
+
     def test_apply_bundle_remaps_foreign_keys_to_local_ids(self) -> None:
         user = self._add_user("admin@example.com")
         session = UserSession(
@@ -92,6 +325,8 @@ class SyncServiceTests(unittest.TestCase):
             target_engine.dispose()
 
     def test_knowledge_sync_marks_scope_indexes_dirty(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "server"
         document = KnowledgeDocument(
             user_id=None,
             title="Main KB",
@@ -112,7 +347,10 @@ class SyncServiceTests(unittest.TestCase):
             )
         )
         self.db.commit()
-        bundle = SyncService(self.db, device_id="source-device").export_bundle()
+        try:
+            bundle = SyncService(self.db, device_id="source-device").export_bundle()
+        finally:
+            sync_routes.settings.sync_mode = original_mode
 
         target_engine = create_engine(
             "sqlite://",
@@ -123,15 +361,252 @@ class SyncServiceTests(unittest.TestCase):
         TargetSession = sessionmaker(bind=target_engine, expire_on_commit=False)
         target_db = TargetSession()
         try:
+            sync_routes.settings.sync_mode = "client"
             service = SyncService(target_db, device_id="target-device")
             result = service.apply_bundle(bundle)
 
             self.assertIn("main", result.knowledge_scopes_dirty)
             self.assertIn("main", service.knowledge_index_dirty_scopes())
         finally:
+            sync_routes.settings.sync_mode = original_mode
             target_db.close()
             Base.metadata.drop_all(bind=target_engine)
             target_engine.dispose()
+
+    def test_client_exports_only_validated_knowledge_scope(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "client"
+        try:
+            for scope in ("main", "validated_evidence", "sector_prompt", "temporary"):
+                document = KnowledgeDocument(
+                    user_id=None,
+                    title=f"{scope} KB",
+                    source_type="txt",
+                    source_uri=f"{scope}.txt",
+                    scope=scope,
+                    session_key="session-a" if scope == "temporary" else None,
+                )
+                self.db.add(document)
+                self.db.flush()
+                self.db.add(
+                    KnowledgeChunk(
+                        document_id=document.id,
+                        user_id=None,
+                        chunk_index=0,
+                        content=f"{scope} content",
+                        source_type="txt",
+                        source_uri=f"{scope}.txt",
+                    )
+                )
+            self.db.commit()
+
+            bundle = SyncService(self.db, device_id="client-device").export_bundle()
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        document_scopes = {row["scope"] for row in self._rows(bundle, "knowledge_documents")}
+        chunk_sources = {row["source_uri"] for row in self._rows(bundle, "knowledge_chunks")}
+        self.assertEqual(document_scopes, {"validated_evidence"})
+        self.assertEqual(chunk_sources, {"validated_evidence.txt"})
+
+    def test_admin_client_exports_main_validated_and_sector_knowledge_scope(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "client"
+        try:
+            for scope in ("main", "validated_evidence", "sector_prompt", "temporary"):
+                document = KnowledgeDocument(
+                    user_id=None,
+                    title=f"{scope} KB",
+                    source_type="txt",
+                    source_uri=f"{scope}.txt",
+                    scope=scope,
+                    session_key="session-a" if scope == "temporary" else None,
+                )
+                self.db.add(document)
+                self.db.flush()
+                self.db.add(
+                    KnowledgeChunk(
+                        document_id=document.id,
+                        user_id=None,
+                        chunk_index=0,
+                        content=f"{scope} content",
+                        source_type="txt",
+                        source_uri=f"{scope}.txt",
+                    )
+                )
+            self.db.commit()
+
+            bundle = SyncService(self.db, device_id="client-device").export_bundle(
+                include_admin_knowledge=True,
+                admin_user_email="admin@example.com",
+            )
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        document_scopes = {row["scope"] for row in self._rows(bundle, "knowledge_documents")}
+        chunk_sources = {row["source_uri"] for row in self._rows(bundle, "knowledge_chunks")}
+        self.assertTrue(bundle["admin_knowledge_sync"])
+        self.assertEqual(bundle["admin_user_email"], "admin@example.com")
+        self.assertEqual(document_scopes, {"main", "validated_evidence", "sector_prompt"})
+        self.assertEqual(chunk_sources, {"main.txt", "validated_evidence.txt", "sector_prompt.txt"})
+
+    def test_server_rejects_inbound_main_and_sector_knowledge(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "server"
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "client-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "tables": [
+                {
+                    "name": "knowledge_documents",
+                    "rows": [
+                        {
+                            "sync_id": "11111111-1111-4111-8111-111111111111",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "scope": "main",
+                            "title": "Client Main",
+                            "source_type": "txt",
+                            "source_uri": "client-main.txt",
+                            "scope_level": "global",
+                        },
+                        {
+                            "sync_id": "22222222-2222-4222-8222-222222222222",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "scope": "sector_prompt",
+                            "title": "Client Sector",
+                            "source_type": "txt",
+                            "source_uri": "client-sector.txt",
+                            "scope_level": "global",
+                        },
+                        {
+                            "sync_id": "33333333-3333-4333-8333-333333333333",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "scope": "validated_evidence",
+                            "title": "Client Validated",
+                            "source_type": "txt",
+                            "source_uri": "client-validated.txt",
+                            "scope_level": "global",
+                        },
+                    ],
+                }
+            ],
+        }
+        try:
+            result = SyncService(self.db, device_id="server-device").apply_bundle(bundle)
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        scopes = {row.scope for row in self.db.query(KnowledgeDocument).all()}
+        self.assertEqual(result.inserted, 1)
+        self.assertEqual(scopes, {"validated_evidence"})
+
+    def test_server_accepts_admin_main_sector_and_validated_knowledge(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "server"
+        self._add_user("admin@example.com", role="admin")
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "client-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "admin_knowledge_sync": True,
+            "admin_user_email": "admin@example.com",
+            "tables": [
+                {
+                    "name": "knowledge_documents",
+                    "rows": [
+                        {
+                            "sync_id": "11111111-1111-4111-8111-111111111111",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "scope": "main",
+                            "title": "Admin Main",
+                            "source_type": "txt",
+                            "source_uri": "admin-main.txt",
+                            "scope_level": "global",
+                        },
+                        {
+                            "sync_id": "22222222-2222-4222-8222-222222222222",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "scope": "sector_prompt",
+                            "title": "Admin Sector",
+                            "source_type": "txt",
+                            "source_uri": "admin-sector.txt",
+                            "scope_level": "global",
+                        },
+                        {
+                            "sync_id": "33333333-3333-4333-8333-333333333333",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "scope": "validated_evidence",
+                            "title": "Admin Validated",
+                            "source_type": "txt",
+                            "source_uri": "admin-validated.txt",
+                            "scope_level": "global",
+                        },
+                    ],
+                }
+            ],
+        }
+        try:
+            result = SyncService(self.db, device_id="server-device").apply_bundle(bundle)
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        scopes = {row.scope for row in self.db.query(KnowledgeDocument).all()}
+        self.assertEqual(result.inserted, 3)
+        self.assertEqual(scopes, {"main", "sector_prompt", "validated_evidence"})
+
+    def test_server_rejects_admin_main_when_admin_email_is_not_server_admin(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "server"
+        self._add_user("user@example.com", role="user")
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "client-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "admin_knowledge_sync": True,
+            "admin_user_email": "user@example.com",
+            "tables": [
+                {
+                    "name": "knowledge_documents",
+                    "rows": [
+                        {
+                            "sync_id": "11111111-1111-4111-8111-111111111111",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "scope": "main",
+                            "title": "Main",
+                            "source_type": "txt",
+                            "source_uri": "main.txt",
+                            "scope_level": "global",
+                        },
+                        {
+                            "sync_id": "33333333-3333-4333-8333-333333333333",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "scope": "validated_evidence",
+                            "title": "Validated",
+                            "source_type": "txt",
+                            "source_uri": "validated.txt",
+                            "scope_level": "global",
+                        },
+                    ],
+                }
+            ],
+        }
+        try:
+            result = SyncService(self.db, device_id="server-device").apply_bundle(bundle)
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        scopes = {row.scope for row in self.db.query(KnowledgeDocument).all()}
+        self.assertEqual(result.inserted, 1)
+        self.assertEqual(scopes, {"validated_evidence"})
 
     def test_temporary_knowledge_scope_is_not_exported(self) -> None:
         document = KnowledgeDocument(
@@ -177,16 +652,177 @@ class SyncServiceTests(unittest.TestCase):
             self.assertEqual(denied.status_code, 401)
             self.assertEqual(allowed.status_code, 200)
             self.assertIn("user_sessions", allowed.json()["tables"])
-            self.assertEqual(
-                allowed.json()["knowledge_scopes"],
-                ["main", "validated_evidence", "sector_prompt"],
-            )
+            self.assertEqual(allowed.json()["server_to_client_knowledge_scopes"], ["main", "validated_evidence", "sector_prompt"])
+            self.assertEqual(allowed.json()["client_to_server_knowledge_scopes"], ["validated_evidence"])
+            self.assertEqual(allowed.json()["admin_client_to_server_knowledge_scopes"], ["main", "validated_evidence", "sector_prompt"])
             self.assertEqual(allowed.json()["excluded_knowledge_scopes"], ["temporary"])
         finally:
             sync_routes.settings.sync_enabled = original_enabled
             sync_routes.settings.sync_api_token = original_token
 
-    def _add_user(self, email: str) -> AppUser:
+    def test_client_sync_status_uses_authenticated_session_not_sync_token(self) -> None:
+        user = self._add_user("sync-user@example.com")
+        app = FastAPI()
+        app.include_router(sync_routes.router)
+        app.dependency_overrides[sync_routes.get_db] = self._override_db
+        app.dependency_overrides[sync_routes.require_current_user] = lambda: user
+        original_enabled = sync_routes.settings.sync_enabled
+        original_mode = sync_routes.settings.sync_mode
+        original_url = sync_routes.settings.sync_server_url
+        original_token = sync_routes.settings.sync_api_token
+        try:
+            sync_routes.settings.sync_enabled = True
+            sync_routes.settings.sync_mode = "client"
+            sync_routes.settings.sync_server_url = "https://sync.example"
+            sync_routes.settings.sync_api_token = "secret"
+            client = TestClient(app)
+
+            response = client.get("/api/sync/client/status")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["configured"])
+            self.assertEqual(response.json()["server_url"], "https://sync.example")
+        finally:
+            sync_routes.settings.sync_enabled = original_enabled
+            sync_routes.settings.sync_mode = original_mode
+            sync_routes.settings.sync_server_url = original_url
+            sync_routes.settings.sync_api_token = original_token
+
+    def test_client_sync_status_reports_disabled_sync(self) -> None:
+        user = self._add_user("disabled-sync-user@example.com")
+        app = FastAPI()
+        app.include_router(sync_routes.router)
+        app.dependency_overrides[sync_routes.get_db] = self._override_db
+        app.dependency_overrides[sync_routes.require_current_user] = lambda: user
+        original_enabled = sync_routes.settings.sync_enabled
+        try:
+            sync_routes.settings.sync_enabled = False
+            client = TestClient(app)
+
+            response = client.get("/api/sync/client/status")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json()["enabled"])
+            self.assertFalse(response.json()["configured"])
+        finally:
+            sync_routes.settings.sync_enabled = original_enabled
+
+    def test_client_user_data_sync_preference_works_when_sync_disabled(self) -> None:
+        user = self._add_user("disabled-local-preference-user@example.com")
+        app = FastAPI()
+        app.include_router(sync_routes.router)
+        app.dependency_overrides[sync_routes.get_db] = self._override_db
+        app.dependency_overrides[sync_routes.require_current_user] = lambda: user
+        original_enabled = sync_routes.settings.sync_enabled
+        try:
+            sync_routes.settings.sync_enabled = False
+            client = TestClient(app)
+
+            updated = client.post("/api/sync/client/user-data", json={"enabled": True})
+            status = client.get("/api/sync/client/status")
+
+            self.assertEqual(updated.status_code, 200)
+            self.assertFalse(updated.json()["error"])
+            self.assertTrue(updated.json()["user_data_sync"]["enabled"])
+            self.assertFalse(status.json()["enabled"])
+            self.assertTrue(status.json()["user_data_sync"]["enabled"])
+        finally:
+            sync_routes.settings.sync_enabled = original_enabled
+
+    def test_client_user_data_sync_preference_can_be_enabled(self) -> None:
+        user = self._add_user("preference-user@example.com")
+        app = FastAPI()
+        app.include_router(sync_routes.router)
+        app.dependency_overrides[sync_routes.get_db] = self._override_db
+        app.dependency_overrides[sync_routes.require_current_user] = lambda: user
+        original_enabled = sync_routes.settings.sync_enabled
+        original_mode = sync_routes.settings.sync_mode
+        original_url = sync_routes.settings.sync_server_url
+        original_token = sync_routes.settings.sync_api_token
+        try:
+            sync_routes.settings.sync_enabled = True
+            sync_routes.settings.sync_mode = "client"
+            sync_routes.settings.sync_server_url = "https://sync.example"
+            sync_routes.settings.sync_api_token = "secret"
+            client = TestClient(app)
+
+            updated = client.post("/api/sync/client/user-data", json={"enabled": True})
+            status = client.get("/api/sync/client/status")
+
+            self.assertEqual(updated.status_code, 200)
+            self.assertFalse(updated.json()["error"])
+            self.assertTrue(updated.json()["user_data_sync"]["enabled"])
+            self.assertTrue(status.json()["user_data_sync"]["enabled"])
+        finally:
+            sync_routes.settings.sync_enabled = original_enabled
+            sync_routes.settings.sync_mode = original_mode
+            sync_routes.settings.sync_server_url = original_url
+            sync_routes.settings.sync_api_token = original_token
+
+    def test_client_user_data_sync_preference_works_before_server_config(self) -> None:
+        user = self._add_user("local-preference-user@example.com")
+        app = FastAPI()
+        app.include_router(sync_routes.router)
+        app.dependency_overrides[sync_routes.get_db] = self._override_db
+        app.dependency_overrides[sync_routes.require_current_user] = lambda: user
+        original_enabled = sync_routes.settings.sync_enabled
+        original_mode = sync_routes.settings.sync_mode
+        original_url = sync_routes.settings.sync_server_url
+        original_token = sync_routes.settings.sync_api_token
+        try:
+            sync_routes.settings.sync_enabled = True
+            sync_routes.settings.sync_mode = "client"
+            sync_routes.settings.sync_server_url = ""
+            sync_routes.settings.sync_api_token = ""
+            client = TestClient(app)
+
+            updated = client.post("/api/sync/client/user-data", json={"enabled": True})
+            status = client.get("/api/sync/client/status")
+
+            self.assertEqual(updated.status_code, 200)
+            self.assertFalse(updated.json()["error"])
+            self.assertTrue(updated.json()["user_data_sync"]["enabled"])
+            self.assertFalse(status.json()["configured"])
+            self.assertTrue(status.json()["user_data_sync"]["enabled"])
+        finally:
+            sync_routes.settings.sync_enabled = original_enabled
+            sync_routes.settings.sync_mode = original_mode
+            sync_routes.settings.sync_server_url = original_url
+            sync_routes.settings.sync_api_token = original_token
+
+    def test_exchange_includes_encrypted_app_users_in_normal_server_response(self) -> None:
+        self._add_user("server-admin@example.com", role="admin")
+        response = self._exchange_response(
+            {
+                "format": "dr-transition-sync-v1",
+                "device_id": "client-device",
+                "exported_at": "2026-07-20T00:00:00Z",
+                "tables": [],
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        users = self._rows(response.json()["bundle"], "app_users")
+        self.assertEqual(len(users), 1)
+        self.assertIn("__encrypted_row", users[0])
+
+    def test_exchange_includes_app_users_for_server_approved_admin_sync(self) -> None:
+        self._add_user("server-admin@example.com", role="admin")
+        response = self._exchange_response(
+            {
+                "format": "dr-transition-sync-v1",
+                "device_id": "client-device",
+                "exported_at": "2026-07-20T00:00:00Z",
+                "admin_knowledge_sync": True,
+                "admin_user_email": "server-admin@example.com",
+                "tables": [],
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self._rows(response.json()["bundle"], "app_users")), 1)
+
+    def _add_user(self, email: str, *, role: str = "admin") -> AppUser:
         user = AppUser(
             email=email,
             name="Admin",
@@ -194,7 +830,7 @@ class SyncServiceTests(unittest.TestCase):
             designation="Lead",
             organisation_type="Local",
             organisation_name="Dr Transition",
-            role="admin",
+            role=role,
         )
         self.db.add(user)
         self.db.commit()
@@ -203,6 +839,28 @@ class SyncServiceTests(unittest.TestCase):
 
     def _override_db(self) -> Iterator[Session]:
         yield self.db
+
+    def _exchange_response(self, payload: dict[str, object]):
+        app = FastAPI()
+        app.include_router(sync_routes.router)
+        app.dependency_overrides[sync_routes.get_db] = self._override_db
+        original_enabled = sync_routes.settings.sync_enabled
+        original_mode = sync_routes.settings.sync_mode
+        original_token = sync_routes.settings.sync_api_token
+        try:
+            sync_routes.settings.sync_enabled = True
+            sync_routes.settings.sync_mode = "server"
+            sync_routes.settings.sync_api_token = "secret"
+            client = TestClient(app)
+            return client.post(
+                "/api/sync/exchange",
+                json=payload,
+                headers={"Authorization": "Bearer secret"},
+            )
+        finally:
+            sync_routes.settings.sync_enabled = original_enabled
+            sync_routes.settings.sync_mode = original_mode
+            sync_routes.settings.sync_api_token = original_token
 
     @staticmethod
     def _rows(bundle: dict[str, object], table_name: str) -> list[dict[str, object]]:

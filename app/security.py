@@ -1,4 +1,4 @@
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 import secrets
 
 from fastapi import Request
@@ -93,9 +93,37 @@ async def csrf_request_allowed(request: Request, settings: Settings) -> bool:
         if content_type.startswith(
             ("application/x-www-form-urlencoded", "multipart/form-data")
         ):
-            form = await request.form()
-            submitted_token = str(form.get(CSRF_FIELD_NAME) or "")
+            submitted_token = await _csrf_token_from_form_body(request, content_type)
     return bool(submitted_token and secrets.compare_digest(submitted_token, cookie_token))
+
+
+async def _csrf_token_from_form_body(request: Request, content_type: str) -> str:
+    body = await request.body()
+    _replay_request_body(request, body)
+    if content_type.startswith("application/x-www-form-urlencoded"):
+        values = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True)
+        return values.get(CSRF_FIELD_NAME, [""])[0]
+    if content_type.startswith("multipart/form-data"):
+        marker = f'name="{CSRF_FIELD_NAME}"'.encode("utf-8")
+        marker_index = body.find(marker)
+        if marker_index < 0:
+            return ""
+        value_start = body.find(b"\r\n\r\n", marker_index)
+        if value_start < 0:
+            return ""
+        value_start += 4
+        value_end = body.find(b"\r\n--", value_start)
+        if value_end < 0:
+            value_end = len(body)
+        return body[value_start:value_end].decode("utf-8", errors="replace").strip()
+    return ""
+
+
+def _replay_request_body(request: Request, body: bytes) -> None:
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request._receive = receive
 
 
 def allowed_csrf_origins(request: Request, settings: Settings) -> set[str]:

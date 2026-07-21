@@ -326,3 +326,28 @@ mistral-small3.2:24b
 qwen3.5:27b
 
 Dynamic prompting for each model:
+
+uv run python tests/run_open_conversation_selection_cases.py --models qwen3.5:2b qwen3.5:4b ministral-3:8b qwen3.5:9b ministral-3:14b
+
+
+$env:ENV_FILE=".env.server.dev"
+$env:DRTRANSITION_APP_PORT="8001"
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload --reload-dir app
+
+
+
+$env:ENV_FILE=".env.client.dev"
+$env:SYNC_SERVER_URL="http://127.0.0.1:8001"
+$env:DRTRANSITION_APP_PORT="8002"
+$env:SYNC_DEVICE_ID="localhost-8000-002"
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8002 --reload --reload-dir app
+DrTransition-AKncB26f5WZ6lzqIG4WfYQHn!1aA
+
+
+$env:ENV_FILE=".env.server.dev"
+uv run python scripts/apply_migrations.py --apply-base-schema
+uv run python -m app.seed_data --skip-schema
+.\scripts\seed_database.ps1 -SkipSchema
+
+$env:ENV_FILE=".env.client.dev"
+uv run python scripts/apply_migrations.py --apply-base-schema

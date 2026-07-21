@@ -1,5 +1,9 @@
 import argparse
 import logging
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db.legacy_schema_repair import run_legacy_schema_repair
 from app.db.session import validate_database_connection

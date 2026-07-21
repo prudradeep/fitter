@@ -90,12 +90,15 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         app.dependency_overrides[api_routes.get_db] = self._override_db
         app.dependency_overrides[api_routes.require_current_user] = lambda: self.user
         app.dependency_overrides[api_routes.require_admin_user] = lambda: self.user
+        self.coverage_patcher = patch.object(auth_routes, "get_coverage_map_rows", return_value=[])
+        self.coverage_patcher.start()
         self.app = app
         self.client = TestClient(app)
         clear_rate_limits()
 
     def tearDown(self) -> None:
         clear_rate_limits()
+        self.coverage_patcher.stop()
         self.client.close()
         self.db.close()
         Base.metadata.drop_all(bind=self.engine)
@@ -113,6 +116,26 @@ class ApiRouteIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 303)
         self.assertIn("dr_transition_auth", response.headers.get("set-cookie", ""))
+
+    def test_signup_page_sets_matching_csrf_cookie_and_form_field(self) -> None:
+        original_csrf_enabled = auth_routes.settings.csrf_protection_enabled
+        original_secret_key = auth_routes.settings.secret_key
+        try:
+            auth_routes.settings.csrf_protection_enabled = True
+            auth_routes.settings.secret_key = "test-secret-for-csrf"
+
+            response = self.client.get("/signup")
+
+            cookie_token = response.cookies.get("dr_transition_csrf")
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(cookie_token)
+            self.assertIn(
+                f'name="csrf_token" value="{cookie_token}"',
+                response.text,
+            )
+        finally:
+            auth_routes.settings.csrf_protection_enabled = original_csrf_enabled
+            auth_routes.settings.secret_key = original_secret_key
 
     def test_auth_login_locks_out_after_repeated_failures(self) -> None:
         with self._temporary_auth_limits(login_rate_limit_attempts=2, login_rate_limit_lockout_seconds=60):
@@ -158,6 +181,27 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(second.status_code, 429)
         self.assertIn("Too many signup attempts", second.text)
         self.assertIsNotNone(self.db.get(AppRateLimit, "signup:testclient:new@example.com"))
+
+    def test_signup_creates_user_when_all_fields_are_submitted(self) -> None:
+        response = self.client.post(
+            "/signup",
+            data={
+                "email": "new@example.com",
+                "name": "New User",
+                "password": "StrongPassword!1",
+                "confirm_password": "StrongPassword!1",
+                "designation": "Policy Lead",
+                "organisation_type": "Public sector",
+                "organisation_name": "Transition Office",
+            },
+            follow_redirects=False,
+        )
+
+        created = self.db.query(AppUser).filter(AppUser.email == "new@example.com").one_or_none()
+        self.assertEqual(response.status_code, 303)
+        self.assertIsNotNone(created)
+        self.assertEqual(created.role, "user")
+        self.assertIn("dr_transition_auth", response.headers.get("set-cookie", ""))
 
     def test_password_change_updates_hash(self) -> None:
         original_version = int(self.user.session_version or 1)

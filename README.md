@@ -251,6 +251,7 @@ Central sync backend deployment is documented in:
 
 ```text
 docs/BACKEND_SYNC_DEPLOYMENT.md
+docs/UBUNTU_SYNC_SERVER_AND_CLIENT_GUIDE.md
 ```
 
 ## Ollama Setup

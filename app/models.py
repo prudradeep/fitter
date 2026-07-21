@@ -148,6 +148,7 @@ class AppUser(Base):
     organisation_type: Mapped[str] = mapped_column(String(160), nullable=False)
     organisation_name: Mapped[str] = mapped_column(String(220), nullable=False)
     role: Mapped[str] = mapped_column(String(40), nullable=False, default="user", server_default="user")
+    sync_encrypted_payload: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,

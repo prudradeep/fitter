@@ -29,6 +29,8 @@ async def ask_llm_chat(
     max_tokens: int = 700,
 ) -> str:
     settings = get_settings()
+    if sync_server_llm_disabled():
+        return "LLM requests are disabled on this sync-only server."
     chat_messages = [{"role": "system", "content": context}] + messages
     payload = {
         "model": settings.ollama_model,
@@ -166,3 +168,12 @@ def should_disable_thinking(model: str | None) -> bool:
     if not model:
         return False
     return model.strip().casefold().startswith("qwen3.5:")
+
+
+def sync_server_llm_disabled() -> bool:
+    settings = get_settings()
+    return (
+        settings.sync_enabled
+        and str(settings.sync_mode or "").strip().casefold() == "server"
+        and not settings.sync_server_expose_app_apis
+    )

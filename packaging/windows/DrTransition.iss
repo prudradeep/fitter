@@ -31,7 +31,7 @@ Name: "{commonappdata}\DrTransition\uploads"; Permissions: users-modify
 
 [Files]
 Source: "..\..\build\windows-installer\payload\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\..\.env"; DestDir: "{app}\config"; DestName: "runtime.env"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\..\.env.client.dev"; DestDir: "{app}\config"; DestName: ".env"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "scripts\Get-ModelRecommendation.ps1"; Flags: dontcopy
 
 [Icons]
@@ -39,7 +39,7 @@ Name: "{group}\Dr Transition"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\Dr Transition"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{cmd}"; Parameters: "/C if exist ""{app}\config\runtime.env"" if not exist ""{commonappdata}\DrTransition\.env"" copy /Y ""{app}\config\runtime.env"" ""{commonappdata}\DrTransition\.env"""; Flags: runhidden
+Filename: "{cmd}"; Parameters: "/C if exist ""{app}\config\.env"" if not exist ""{commonappdata}\DrTransition\.env"" copy /Y ""{app}\config\.env"" ""{commonappdata}\DrTransition\.env"""; Flags: runhidden
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Dr Transition"; Flags: nowait postinstall skipifsilent; Check: CanLaunchApp
 
 [Code]
@@ -406,18 +406,14 @@ begin
     '  "MySqlAdminPassword": "' + JsonEscape(DatabasePage.Values[2]) + '",' + #13#10 +
     '  "AppDbUser": "' + JsonEscape(DatabasePage.Values[3]) + '",' + #13#10 +
     '  "AppDbPassword": "' + JsonEscape(DatabasePage.Values[4]) + '",' + #13#10 +
-    '  "DefaultAppUserEmail": "admin@drtransition.local",' + #13#10 +
-    '  "DefaultAppUserPassword": "DrTransition@123",' + #13#10 +
-    '  "DefaultAppUserName": "Dr Transition Admin",' + #13#10 +
-    '  "DefaultAppUserDesignation": "Administrator",' + #13#10 +
-    '  "DefaultAppUserOrganisationType": "Local",' + #13#10 +
-    '  "DefaultAppUserOrganisationName": "Dr Transition",' + #13#10 +
     '  "OllamaModel": "' + JsonEscape(ModelPage.Values[0]) + '",' + #13#10 +
     '  "OllamaEmbeddingModel": "' + JsonEscape(ModelPage.Values[1]) + '",' + #13#10 +
     '  "OllamaBaseUrl": "http://127.0.0.1:11434",' + #13#10 +
     '  "InstallMySql": true,' + #13#10 +
     '  "InstallOllama": true,' + #13#10 +
     '  "PullModels": true,' + #13#10 +
+    '  "SkipDefaultAppUser": true,' + #13#10 +
+    '  "SkipReferenceData": true,' + #13#10 +
     '  "SkipDatabaseSeed": false' + #13#10 +
     '}';
 end;
@@ -460,10 +456,7 @@ begin
   begin
     MsgBox(
       'Dr Transition setup completed.' + #13#10#13#10 +
-      'Default app login:' + #13#10 +
-      'Email: admin@drtransition.local' + #13#10 +
-      'Password: DrTransition@123' + #13#10#13#10 +
-      'Change this password after first login.',
+      'No default app user was created. Create your account from the sign-up screen when you first open the app.',
       mbInformation,
       MB_OK
     );

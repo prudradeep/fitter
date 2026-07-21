@@ -27,8 +27,8 @@ from app.routes.api import router as api_router
 from app.routes.auth import router as auth_router
 from app.routes.sync import router as sync_router
 from app.security import apply_security_headers, create_csrf_token, csrf_request_allowed, csrf_token_valid
-from app.services.bundled_knowledge_base import ingest_bundled_main_kb_pdfs
 from app.services.coverage import get_coverage_rows
+from app.services.sync_service import SyncService
 
 settings = get_settings()
 
@@ -61,6 +61,14 @@ async def log_api_request(request: Request, call_next):
     started_at = perf_counter()
     request_id = request.headers.get(settings.request_id_header) or new_request_id()
     set_request_id(request_id)
+    if _sync_server_blocks_app_api(request.url.path):
+        response = JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"error": True, "detail": "Endpoint is not available on this sync server."},
+            headers={settings.request_id_header: request_id},
+        )
+        apply_security_headers(response, request, settings)
+        return response
     if not await csrf_request_allowed(request, settings):
         increment_metric("csrf_rejected")
         response = JSONResponse(
@@ -128,6 +136,26 @@ def _should_log_access(path: str) -> bool:
     return random.random() < sample_rate
 
 
+def _sync_server_blocks_app_api(path: str) -> bool:
+    if not settings.sync_enabled:
+        return False
+    if str(settings.sync_mode or "").strip().casefold() != "server":
+        return False
+    if settings.sync_server_expose_app_apis:
+        return False
+    if path in {"/health", "/health/live", "/health/ready", "/metrics"}:
+        return False
+    return not path.startswith("/api/sync")
+
+
+def _sync_server_disables_llm_services() -> bool:
+    return (
+        settings.sync_enabled
+        and str(settings.sync_mode or "").strip().casefold() == "server"
+        and not settings.sync_server_expose_app_apis
+    )
+
+
 @app.on_event("startup")
 async def startup() -> None:
     validate_database_connection()
@@ -136,22 +164,48 @@ async def startup() -> None:
     else:
         logger.info("Database auto-migration is disabled; checking installer schema health only")
         repair_partial_installer_schema()
-    app.state.bundled_kb_ingest_task = asyncio.create_task(
-        _ingest_bundled_main_kb_pdfs_after_startup()
-    )
+    if _sync_server_disables_llm_services():
+        logger.info("Sync-only server mode enabled; skipping LLM-dependent startup work")
+        app.state.client_sync_task = None
+        return
+    app.state.client_sync_task = asyncio.create_task(_client_sync_loop_after_startup())
 
 
-async def _ingest_bundled_main_kb_pdfs_after_startup() -> None:
+async def _client_sync_loop_after_startup() -> None:
+    if not _client_sync_configured():
+        app.state.client_sync_task = None
+        return
+    if settings.sync_auto_on_startup:
+        await _run_configured_client_sync("startup")
+    interval = int(settings.sync_interval_seconds or 0)
+    if interval <= 0:
+        return
+    while True:
+        await asyncio.sleep(interval)
+        if not _client_sync_configured():
+            continue
+        await _run_configured_client_sync("interval")
+
+
+async def _run_configured_client_sync(trigger: str) -> None:
     try:
         with SessionLocal() as db:
-            result = await ingest_bundled_main_kb_pdfs(db)
-        failures = result.get("failures") if isinstance(result.get("failures"), list) else []
-        if failures:
-            logger.warning(
-                "Bundled Main KB PDF ingest finished with %s failure(s)", len(failures)
-            )
+            result = await SyncService(db).exchange_with_server()
+        if result.get("error"):
+            logger.warning("Client sync failed trigger=%s detail=%s", trigger, result.get("detail"))
+            return
+        logger.info("Client sync completed trigger=%s result=%s", trigger, result)
     except Exception:
-        logger.exception("Bundled Main KB PDF ingest failed after startup")
+        logger.exception("Client sync failed trigger=%s", trigger)
+
+
+def _client_sync_configured() -> bool:
+    return (
+        settings.sync_enabled
+        and str(settings.sync_mode or "").strip().casefold() == "client"
+        and bool(str(settings.sync_server_url or "").strip())
+        and bool(str(settings.sync_api_token or "").strip())
+    )
 
 
 @app.exception_handler(SQLAlchemyError)
@@ -181,6 +235,7 @@ async def index(
             "coverage_rows": coverage_rows,
             "current_user": current_user,
             "csrf_token": csrf_token,
+            "sync_enabled": bool(settings.sync_enabled),
         },
     )
     response.set_cookie(

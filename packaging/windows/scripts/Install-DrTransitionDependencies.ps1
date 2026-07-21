@@ -10,7 +10,7 @@ param(
     [string]$AppDbUser = "dr_transition",
     [string]$AppDbPassword = "",
     [string]$DefaultAppUserEmail = "admin@drtransition.local",
-    [string]$DefaultAppUserPassword = "DrTransition@123",
+    [string]$DefaultAppUserPassword = "",
     [string]$DefaultAppUserName = "Dr Transition Admin",
     [string]$DefaultAppUserDesignation = "Administrator",
     [string]$DefaultAppUserOrganisationType = "Local",
@@ -21,6 +21,8 @@ param(
     [switch]$InstallMySql,
     [switch]$InstallOllama,
     [switch]$PullModels,
+    [switch]$SkipDefaultAppUser,
+    [switch]$SkipReferenceData,
     [switch]$SkipDatabaseSeed
 )
 
@@ -31,7 +33,7 @@ $logDir = Join-Path $env:LOCALAPPDATA "DrTransition\logs"
 $runtimeDataDir = Join-Path $programData "data"
 $runtimeLogDir = Join-Path $runtimeDataDir "logs"
 $envPath = Join-Path $programData ".env"
-$runtimeTemplate = Join-Path $InstallDir "config\runtime.env"
+$runtimeTemplate = Join-Path $InstallDir "config\.env"
 $backendExe = Join-Path $InstallDir "backend\drtransition-backend\drtransition-backend.exe"
 $setupLog = Join-Path $logDir "installer-setup.log"
 
@@ -60,6 +62,8 @@ if (-not [string]::IsNullOrWhiteSpace($ConfigPath) -and (Test-Path -LiteralPath 
             "InstallMySql" { if ([bool]$property.Value) { $InstallMySql = $true } }
             "InstallOllama" { if ([bool]$property.Value) { $InstallOllama = $true } }
             "PullModels" { if ([bool]$property.Value) { $PullModels = $true } }
+            "SkipDefaultAppUser" { if ([bool]$property.Value) { $SkipDefaultAppUser = $true } }
+            "SkipReferenceData" { if ([bool]$property.Value) { $SkipReferenceData = $true } }
             "SkipDatabaseSeed" { if ([bool]$property.Value) { $SkipDatabaseSeed = $true } }
         }
     }
@@ -219,6 +223,52 @@ function Format-EnvAssignment {
     $escaped = $escaped.Replace("`r", "\r")
     $escaped = $escaped.Replace("`n", "\n")
     return "$Key=""$escaped"""
+}
+
+function Ensure-RuntimeEnvFile {
+    if (-not (Test-Path -LiteralPath $envPath)) {
+        if (Test-Path -LiteralPath $runtimeTemplate) {
+            Copy-Item -LiteralPath $runtimeTemplate -Destination $envPath -Force
+        } else {
+            New-Item -ItemType File -Path $envPath -Force | Out-Null
+        }
+    }
+}
+
+function Get-EnvAssignmentValue {
+    param(
+        [string[]]$Lines,
+        [string]$Key
+    )
+
+    foreach ($line in $Lines) {
+        if ($line -match ('^\s*' + [regex]::Escape($Key) + '\s*=\s*(.*)\s*$')) {
+            $value = [string]$Matches[1]
+            $value = $value.Trim()
+            if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+            return $value.Trim()
+        }
+    }
+    return ""
+}
+
+function Get-OrCreate-SyncDeviceId {
+    Ensure-RuntimeEnvFile
+    $lines = Get-Content -LiteralPath $envPath
+    $existing = Get-EnvAssignmentValue -Lines $lines -Key "SYNC_DEVICE_ID"
+    if (
+        -not [string]::IsNullOrWhiteSpace($existing) -and
+        $existing -ne "localhost-8000-001" -and
+        $existing -ne "client-specific-stable-uuid"
+    ) {
+        Write-SetupLog "Preserving existing SYNC_DEVICE_ID"
+        return $existing
+    }
+    $deviceId = [guid]::NewGuid().ToString()
+    Write-SetupLog "Generated SYNC_DEVICE_ID for this installation: $deviceId"
+    return $deviceId
 }
 
 function Find-CommandPath {
@@ -892,13 +942,7 @@ function Update-RuntimeEnv {
     param([hashtable]$Updates)
 
     Write-SetupLog "Updating runtime environment file"
-    if (-not (Test-Path -LiteralPath $envPath)) {
-        if (Test-Path -LiteralPath $runtimeTemplate) {
-            Copy-Item -LiteralPath $runtimeTemplate -Destination $envPath -Force
-        } else {
-            New-Item -ItemType File -Path $envPath -Force | Out-Null
-        }
-    }
+    Ensure-RuntimeEnvFile
 
     $lines = if (Test-Path -LiteralPath $envPath) {
         Get-Content -LiteralPath $envPath
@@ -995,19 +1039,28 @@ function Invoke-DatabaseSeed {
     $seedErr = Join-Path $logDir "seed-database.err.log"
     Write-SetupLog "Seeding database through bundled backend"
     $seedArgs = @(
-        "--seed-database",
-        "--default-user-email", $DefaultAppUserEmail,
-        "--default-user-password", $DefaultAppUserPassword,
-        "--default-user-name", $DefaultAppUserName,
-        "--default-user-designation", $DefaultAppUserDesignation,
-        "--default-user-organisation-type", $DefaultAppUserOrganisationType,
-        "--default-user-organisation-name", $DefaultAppUserOrganisationName
+        "--seed-database"
     )
+    if ($SkipDefaultAppUser) {
+        $seedArgs += "--skip-default-user"
+    } else {
+        $seedArgs += @(
+            "--default-user-email", $DefaultAppUserEmail,
+            "--default-user-password", $DefaultAppUserPassword,
+            "--default-user-name", $DefaultAppUserName,
+            "--default-user-designation", $DefaultAppUserDesignation,
+            "--default-user-organisation-type", $DefaultAppUserOrganisationType,
+            "--default-user-organisation-name", $DefaultAppUserOrganisationName
+        )
+    }
+    if ($SkipReferenceData) {
+        $seedArgs += "--skip-reference-data"
+    }
     $process = Start-Process -FilePath $backendExe -ArgumentList (Join-ProcessArguments $seedArgs) -WorkingDirectory $InstallDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $seedOut -RedirectStandardError $seedErr
     $exitCode = Wait-SetupProcess -Process $process -Activity "Database seed" -HeartbeatSeconds 15
     $seedSucceeded = $false
     if (Test-Path -LiteralPath $seedOut) {
-        $seedSucceeded = [bool](Select-String -LiteralPath $seedOut -Pattern "Database reference data seeded successfully." -Quiet)
+        $seedSucceeded = [bool](Select-String -LiteralPath $seedOut -Pattern "Database reference data seeded successfully.|Database schema prepared successfully." -Quiet)
     }
     if (($null -eq $exitCode -and -not $seedSucceeded) -or ($null -ne $exitCode -and $exitCode -ne 0)) {
         if (Test-Path -LiteralPath $seedOut) {
@@ -1024,8 +1077,15 @@ function Invoke-DatabaseSeed {
     if ($null -eq $exitCode -and $seedSucceeded) {
         Write-SetupLog "Database seed process exit code was unavailable; seed success output was detected"
     }
-    Write-SetupLog "Default app user is ready: $DefaultAppUserEmail"
-    Write-SetupLog "Database seed completed"
+    if ($SkipDefaultAppUser) {
+        Write-SetupLog "Default app user creation skipped"
+    } else {
+        Write-SetupLog "Default app user is ready: $DefaultAppUserEmail"
+    }
+    if ($SkipReferenceData) {
+        Write-SetupLog "Reference data seed skipped; schema is ready for startup sync"
+    }
+    Write-SetupLog "Database setup completed"
 }
 
 function Get-OllamaModels {
@@ -1077,6 +1137,7 @@ try {
     }
 
     $databaseUrl = "mysql+pymysql://$(ConvertTo-DatabaseUrlComponent $AppDbUser):$(ConvertTo-DatabaseUrlComponent $AppDbPassword)@localhost:3306/$(ConvertTo-DatabaseUrlComponent $DbName)"
+    $syncDeviceId = Get-OrCreate-SyncDeviceId
     Update-RuntimeEnv -Updates @{
         DATABASE_URL = $databaseUrl
         FAISS_INDEX_PATH = (Join-Path $runtimeDataDir "knowledge.faiss")
@@ -1084,6 +1145,7 @@ try {
         OLLAMA_BASE_URL = $OllamaBaseUrl
         OLLAMA_MODEL = $OllamaModel
         OLLAMA_EMBEDDING_MODEL = $OllamaEmbeddingModel
+        SYNC_DEVICE_ID = $syncDeviceId
     }
 
     $mysqlExe = Ensure-MySql

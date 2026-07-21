@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from starlette.requests import ClientDisconnect
 
 
 def content_length(request: Request) -> int | None:
@@ -42,7 +43,10 @@ async def read_limited_json(
     if too_large is not None:
         raise RequestTooLarge(label)
 
-    body = await request.body()
+    try:
+        body = await request.body()
+    except ClientDisconnect as exc:
+        raise ClientDisconnected(label) from exc
     if len(body) > max_bytes:
         raise RequestTooLarge(label)
     if not body:
@@ -65,6 +69,15 @@ class RequestTooLarge(ValueError):
 class InvalidJsonPayload(ValueError):
     def __init__(self, label: str) -> None:
         super().__init__(f"{label} must be a JSON object.")
+        self.label = label
+
+
+class ClientDisconnected(InvalidJsonPayload):
+    def __init__(self, label: str) -> None:
+        ValueError.__init__(
+            self,
+            f"{label} upload was interrupted before the request body was fully received.",
+        )
         self.label = label
 
 
