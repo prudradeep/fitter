@@ -1,110 +1,50 @@
 import asyncio
-import json
 import logging
 import re
-from dataclasses import asdict
 from datetime import datetime, timezone
-from html import escape
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import select
 
 from app.llm import ask_llm_chat
 from app.models import (
-    AdditionalHazard,
-    AdditionalHazardProfile,
-    AdditionalHazardProfileTargetPopulation,
-    CustomHazard,
-    CustomHazardProfile,
     EvaluationQuestion,
-    EurostatPopulationCache,
-    MitigationMeasureExample,
-    MitigationMeasurePolicy,
-    MitigationMeasurePolicySystemHazard,
-    MitigationMeasureTargetGroup,
     QuestionOption,
-    Region,
-    Sector,
-    SystemHazard,
-    SystemHazardSocioDemographic,
-    SystemHazardSocioDemographicPopulationMatch,
-    SystemHazardSocioDemographicTargetPopulation,
-    UserHazard,
-    UserHazardSocioDemographic,
-    UserMitigationMeasure,
-    UserQuestionResponse,
-    UserSession,
 )
-from app.schemas import ChatResponse, Option
+from app.schemas import ChatResponse
 from app.services.chat_formatters import (
-    format_additional_dgs,
     format_all_dgs,
-    format_evaluation_answers,
-    hazard_names,
     normalize_markdown_text,
 )
 from app.services.chat_json import (
     parse_json_object,
 )
 from app.services.chat_options import (
-    ADD_DGS_OPTIONS,
     DG_REASON_EVIDENCE_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
-    EVALUATION_CATEGORIES,
-    FUZZY_CONFIRMATION_OPTIONS,
-    HAZARD_DUPLICATE_OPTIONS,
-    HAZARD_POPULATION_REVIEW_OPTIONS,
-    MITIGATION_DUPLICATE_OPTIONS,
-    MITIGATION_REVIEW_OPTIONS,
     SOCIO_DEMOGRAPHIC_OPTIONS,
-    best_fuzzy_label,
     compact_for_match,
     exact_option_label,
-    fuzzy_score,
     match_option_label,
     normalize,
     normalize_for_match,
-    option_list,
 )
 from app.services.chat_parsers import (
     is_llm_unavailable_response,
     parse_duplicate_check_response,
     parse_entailment_response,
-    parse_evaluation_answer,
     parse_grounded_claims_response,
     parse_grounded_validation_response,
-    parse_llm_hazard_list,
-    parse_mitigation_clarity_response,
-    parse_mitigation_reason,
     parse_reason_evidence,
     parse_validation_response,
 )
-from app.services.chat_population_edits import (
-    clean_affected_group_label,
-    clean_population_edit_items,
-    fallback_population_edits,
-    parse_custom_affected_group_edit_message,
-    split_affected_group_labels,
-)
 from app.services.chat_session import ChatSession
-from app.services.custom_hazard_validation import (
-    build_custom_hazard_grounding_status,
-    custom_hazard_validation_details,
-    default_custom_hazard_state,
-    frontend_custom_hazard_payload,
-    normalize_custom_group,
-    validate_custom_hazard_dimensions,
-)
 from app.services.custom_hazard_text_rules import (
     custom_hazard_sector_mismatch_reason,
     custom_hazard_sector_rewrite_suggestion,
     plain_custom_hazard_rejection_reason,
     sector_signal_scores,
 )
-from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.evidence_contradiction_service import EvidenceContradictionService
-from app.services.grounding_models import GroundingModelService
-from app.services.hazard_effect_size import hazard_predictor_effect_rows
-from app.services.hazard_ranking_service import HazardRankingService, slugify_hazard
 from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
 from app.services.mitigation_text_rules import (
     local_mitigation_field_error,
@@ -113,13 +53,7 @@ from app.services.mitigation_text_rules import (
     mitigations_are_similar,
 )
 from app.services.message_renderer import markdown_to_html, render_message
-from app.services.profile_metadata import compact_profile_metadata
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
-from app.services.sector_prompt_rag import (
-    SectorPromptRagService,
-    section_five_primary_data,
-    strip_rule_lines,
-)
 
 logger = logging.getLogger(__name__)
 

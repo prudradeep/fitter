@@ -378,7 +378,7 @@ def make_test_cases() -> list[dict[str, str | bool]]:
             "Country=Germany; Region=Bavaria",
             "Italy",
             expected_country="Italy",
-            bot_response=f"Italy selected. Please choose a region.",
+            bot_response="Italy selected. Please choose a region.",
             action="SELECT_COUNTRY",
         )
     )

@@ -4227,7 +4227,6 @@ class ChatHazardCreationMixin:
             if user_session is None:
                 return
             clean_profile = profile.strip()
-            hazard_name = session.selected_hazard or session.accepted_custom_hazard
             context_query = (
                 select(UserHazardSocioDemographic)
                 .where(

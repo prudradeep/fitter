@@ -4,9 +4,8 @@ import uuid
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import MetaData, Table, inspect, select, text
+from sqlalchemy import MetaData, inspect, select, text
 
-import app.models  # noqa: F401
 from app.db.session import Base, engine
 
 

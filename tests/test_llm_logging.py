@@ -63,6 +63,7 @@ class LlmLoggingTests(unittest.TestCase):
         handle = MagicMock()
         handle.__enter__.return_value.write.side_effect = writes.append
         settings = Settings(
+            _env_file=None,
             app_env="production",
             app_debug=False,
             secret_key="strong-production-secret",

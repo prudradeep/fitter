@@ -19,7 +19,6 @@ from sqlalchemy.schema import UniqueConstraint
 
 from app.config import get_settings
 from app.db.session import Base
-from app.models import AppUser
 
 SYNC_NAMESPACE = uuid.UUID("6b09c4c5-8a21-491f-9f52-98df34b63bd8")
 SYNC_COLUMN_NAMES = {
@@ -493,7 +492,6 @@ class SyncService:
     def _serialize_row(self, table: Table, row: dict[str, Any]) -> dict[str, Any]:
         serialized: dict[str, Any] = {}
         fk_sync_ids: dict[str, str] = {}
-        pk_name = only_pk(table).name
         for column in table.columns:
             value = row.get(column.name)
             if isinstance(value, datetime):

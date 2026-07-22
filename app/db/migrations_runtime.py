@@ -9,7 +9,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.db.reference_schema import ensure_reference_data_schema
 from app.db.schema_type_helpers import mysql_question_option_id_type
-from app.db.session import Base, engine
+from app.db.session import Base, engine  # noqa: F401
 from app.db.versioned_migrations import apply_versioned_migrations
 from app.seed.reference_data import (
     ensure_additional_hazards,
@@ -1233,10 +1233,6 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 column["name"]
                 for column in inspector.get_columns("system_hazard_socio_demographics")
             }
-            system_dg_indexes = {
-                index["name"]
-                for index in inspector.get_indexes("system_hazard_socio_demographics")
-            }
             foreign_key_rows = connection.execute(
                 text(
                     """
@@ -1262,10 +1258,6 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
             system_dg_columns = {
                 column["name"]
                 for column in inspector.get_columns("system_hazard_socio_demographics")
-            }
-            system_dg_indexes = {
-                index["name"]
-                for index in inspector.get_indexes("system_hazard_socio_demographics")
             }
             if "affected_population_pct_regional" in system_dg_columns:
                 connection.execute(

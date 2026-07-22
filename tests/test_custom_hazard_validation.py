@@ -110,7 +110,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.chat_service.ask_llm_chat",
+            "app.services.validation_service.ask_llm_chat",
             AsyncMock(return_value='{"valid": false, "reason": "Please clarify the policy link."}'),
         ):
             result = _run(
@@ -1324,8 +1324,8 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         self.assertEqual(response, "done")
         profiles = session.hazard_profiles["Coal phase-out job shock"]
-        self.assertEqual(profiles[0]["target_population_option_ids"], [1, 2])
-        self.assertEqual(profiles[1]["target_population_option_ids"], [3])
+        self.assertEqual(profiles[0]["target_population_option_ids"], ["1", "2"])
+        self.assertEqual(profiles[1]["target_population_option_ids"], ["3"])
         self.assertIn("Level of income: Low income", profiles[0]["target_population_labels"])
         self.assertIn("Age range: 65+", profiles[1]["target_population_labels"])
 
@@ -1347,7 +1347,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(profiles[0]["target_population_option_ids"], [1])
+        self.assertEqual(profiles[0]["target_population_option_ids"], ["1"])
         self.assertIn("Level of income: Low income", profiles[0]["target_population_labels"])
 
 

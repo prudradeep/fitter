@@ -12,7 +12,6 @@ from app.services.chat_options import (
     HAZARD_POPULATION_REVIEW_OPTIONS,
     POST_SECTOR_OPTIONS,
     exact_option_label,
-    match_option_label,
     normalize,
 )
 from app.services.chat_parsers import is_llm_unavailable_response

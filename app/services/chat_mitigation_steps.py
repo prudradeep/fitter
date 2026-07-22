@@ -1,7 +1,6 @@
 from app.schemas import ChatResponse, Option
 from app.services.chat_formatters import format_all_dgs
 from app.services.chat_options import (
-    MITIGATION_DUPLICATE_OPTIONS,
     REASON_CONFIRMATION_OPTIONS,
     exact_option_label,
     fuzzy_score,
