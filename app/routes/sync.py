@@ -106,7 +106,8 @@ async def sync_exchange(
     service = SyncService(db, sync_token=str(sync_client.get("_token") or ""))
     admin_sync = service.admin_sync_allowed(payload, sync_client=sync_client)
     result = service.apply_bundle(payload, sync_client=sync_client)
-    can_sync_user_data = bool(sync_client.get("can_sync_user_data"))
+    client_requested_user_data = bool(payload.get("request_user_data_sync", True))
+    can_sync_user_data = bool(sync_client.get("can_sync_user_data")) and client_requested_user_data
     bundle = service.export_bundle(
         include_app_users=can_sync_user_data,
         include_user_data=can_sync_user_data,

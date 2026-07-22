@@ -4,6 +4,9 @@ const sessionKey = storageKeys.session || "dr_transition_session_id";
 const inputStateKeyPrefix = storageKeys.inputStatePrefix || "dr_transition_input_state_";
 const voiceEnabledKey = storageKeys.voiceEnabled || "dr_transition_voice_enabled";
 const voicePreferenceKey = storageKeys.voicePreference || "dr_transition_voice_preference";
+const voiceLanguageKey = storageKeys.voiceLanguage || "dr_transition_voice_language";
+const voiceRateKey = storageKeys.voiceRate || "dr_transition_voice_rate";
+const voiceVolumeKey = storageKeys.voiceVolume || "dr_transition_voice_volume";
 const typingEffectKey = storageKeys.typingEffect || "dr_transition_typing_effect_enabled";
 const autoConversationKey = storageKeys.autoConversation || "dr_transition_auto_conversation_enabled";
 const validationModeKey = storageKeys.validationMode || "dr_transition_validation_mode";
@@ -57,7 +60,17 @@ const autoConversationToggle = document.querySelector("#autoConversationToggle")
 const validationModeToggle = document.querySelector("#validationModeToggle");
 const validationModeLabel = document.querySelector("#validationModeLabel");
 const crowdSourcingToggle = document.querySelector("#crowdSourcingToggle");
+const voicePreferenceButton = document.querySelector("#voicePreferenceButton");
+const voicePreferenceDialog = document.querySelector("#voicePreferenceDialog");
+const closeVoicePreferenceButton = document.querySelector("#closeVoicePreferenceButton");
+const voicePreferenceSummary = document.querySelector("#voicePreferenceSummary");
 const voicePreferenceSelect = document.querySelector("#voicePreferenceSelect");
+const voiceLanguageSelect = document.querySelector("#voiceLanguageSelect");
+const speechRateInput = document.querySelector("#speechRateInput");
+const speechRateValue = document.querySelector("#speechRateValue");
+const speechVolumeInput = document.querySelector("#speechVolumeInput");
+const speechVolumeValue = document.querySelector("#speechVolumeValue");
+const previewVoiceButton = document.querySelector("#previewVoiceButton");
 const exportSessionButton = document.querySelector("#exportSessionButton");
 const importSessionButton = document.querySelector("#importSessionButton");
 const importSessionInput = document.querySelector("#importSessionInput");
@@ -87,6 +100,8 @@ const knowledgeMessage = document.querySelector("#knowledgeMessage");
 const knowledgeProgressSection = document.querySelector("#knowledgeProgressSection");
 const knowledgeProgressList = document.querySelector("#knowledgeProgressList");
 const knowledgeDocuments = document.querySelector("#knowledgeDocuments");
+const knowledgeDocumentCount = document.querySelector("#knowledgeDocumentCount");
+const knowledgeDropzone = document.querySelector(".knowledge-dropzone");
 const knowledgeResults = document.querySelector("#knowledgeResults");
 const canManageMainKnowledge = knowledgeDialog?.dataset.canManageMainKb === "true";
 const canManagePrompts = promptLibraryDialog?.dataset.canManagePrompts === "true";
@@ -100,6 +115,7 @@ const promptLibrarySection = document.querySelector("#promptLibrarySection");
 const newPromptButton = document.querySelector("#newPromptButton");
 const refreshPromptsButton = document.querySelector("#refreshPromptsButton");
 const promptSearchInput = document.querySelector("#promptSearchInput");
+const promptCatalogueCount = document.querySelector("#promptCatalogueCount");
 const promptList = document.querySelector("#promptList");
 const promptEditorForm = document.querySelector("#promptEditorForm");
 const promptEditorTitle = document.querySelector("#promptEditorTitle");
@@ -193,6 +209,7 @@ let statsDialogStarted = false;
 let pendingRenameSessionId = "";
 let pendingRenameTitleElement = null;
 let availableVoices = [];
+let populatingVoicePreferenceControls = false;
 let recognition = null;
 let listening = false;
 let micSupported = false;
@@ -1243,15 +1260,131 @@ function renderStageIcons(key, session = {}, options = appState.currentOptions, 
 function loadVoices() {
   if (!("speechSynthesis" in window)) return;
   availableVoices = window.speechSynthesis.getVoices();
+  populateVoicePreferenceControls();
+}
+
+function voiceLabel(voice) {
+  const name = String(voice?.name || "Browser voice").trim();
+  const lang = String(voice?.lang || "").trim();
+  return lang ? `${name} (${lang})` : name;
+}
+
+function currentVoiceLanguage() {
+  return localStorage.getItem(voiceLanguageKey) || voiceLanguageSelect?.value || navigator.language || "en-US";
+}
+
+function currentVoiceRate() {
+  const value = Number.parseFloat(localStorage.getItem(voiceRateKey) || speechRateInput?.value || "1");
+  return Number.isFinite(value) ? Math.min(1.6, Math.max(0.6, value)) : 1;
+}
+
+function currentVoiceVolume() {
+  const value = Number.parseFloat(localStorage.getItem(voiceVolumeKey) || speechVolumeInput?.value || "1");
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+}
+
+function voicePreferenceValue() {
+  return localStorage.getItem(voicePreferenceKey) || voicePreferenceSelect?.value || "auto";
+}
+
+function populateVoicePreferenceControls() {
+  if (populatingVoicePreferenceControls) return;
+  populatingVoicePreferenceControls = true;
+  const speechSupported = "speechSynthesis" in window;
+  try {
+    const savedVoice = voicePreferenceValue();
+    const savedLanguage = currentVoiceLanguage();
+    if (voiceLanguageSelect) {
+      const languages = Array.from(
+        new Set([
+          savedLanguage,
+          navigator.language || "en-US",
+          "en-US",
+          ...availableVoices.map((voice) => voice.lang).filter(Boolean),
+        ]),
+      ).sort((a, b) => a.localeCompare(b));
+      clearElement(voiceLanguageSelect);
+      languages.forEach((language) => {
+        voiceLanguageSelect.appendChild(
+          createElement("option", {
+            text: languageDisplayName(language),
+            attrs: { value: language },
+          }),
+        );
+      });
+      voiceLanguageSelect.value = languages.includes(savedLanguage) ? savedLanguage : "en-US";
+      voiceLanguageSelect.disabled = !speechSupported;
+    }
+    if (voicePreferenceSelect) {
+      clearElement(voicePreferenceSelect);
+      voicePreferenceSelect.appendChild(
+        createElement("option", {
+          text: "Automatic browser voice",
+          attrs: { value: "auto" },
+        }),
+      );
+      const language = voiceLanguageSelect?.value || savedLanguage;
+      const matchingVoices = availableVoices.filter((voice) => !language || voice.lang === language);
+      const voices = matchingVoices.length ? matchingVoices : availableVoices;
+      voices.forEach((voice) => {
+        voicePreferenceSelect.appendChild(
+          createElement("option", {
+            text: voiceLabel(voice),
+            attrs: { value: voice.voiceURI || voice.name },
+          }),
+        );
+      });
+      const optionValues = Array.from(voicePreferenceSelect.options).map((option) => option.value);
+      voicePreferenceSelect.value = optionValues.includes(savedVoice) ? savedVoice : "auto";
+      voicePreferenceSelect.disabled = !speechSupported;
+    }
+    if (speechRateInput) {
+      speechRateInput.value = String(currentVoiceRate());
+      speechRateInput.disabled = !speechSupported;
+    }
+    if (speechVolumeInput) {
+      speechVolumeInput.value = String(currentVoiceVolume());
+      speechVolumeInput.disabled = !speechSupported;
+    }
+    if (previewVoiceButton) previewVoiceButton.disabled = !speechSupported;
+    updateVoicePreferenceDisplay();
+  } finally {
+    populatingVoicePreferenceControls = false;
+  }
+}
+
+function languageDisplayName(language) {
+  const value = String(language || "en-US");
+  try {
+    const displayNames = new Intl.DisplayNames([navigator.language || "en"], { type: "language" });
+    const [languageCode, region] = value.split("-");
+    const name = displayNames.of(languageCode) || value;
+    return region ? `${name} (${region})` : name;
+  } catch {
+    return value;
+  }
+}
+
+function updateVoicePreferenceDisplay() {
+  if (speechRateValue) speechRateValue.textContent = `${currentVoiceRate().toFixed(1)}x`;
+  if (speechVolumeValue) speechVolumeValue.textContent = `${Math.round(currentVoiceVolume() * 100)}%`;
+  if (!voicePreferenceSummary) return;
+  const voice = populatingVoicePreferenceControls ? null : selectedVoice();
+  const summary = voice ? voiceLabel(voice) : languageDisplayName(currentVoiceLanguage());
+  voicePreferenceSummary.textContent = summary;
 }
 
 function selectedVoice() {
   if (!availableVoices.length) loadVoices();
-  const preference = voicePreferenceSelect?.value || "auto";
+  const preference = voicePreferenceValue();
+  const language = currentVoiceLanguage();
+  const languageVoices = availableVoices.filter((voice) => voice.lang === language);
   const englishVoices = availableVoices.filter((voice) => voice.lang?.startsWith("en"));
-  const voices = englishVoices.length ? englishVoices : availableVoices;
+  const voices = languageVoices.length ? languageVoices : englishVoices.length ? englishVoices : availableVoices;
   if (!voices.length) return null;
 
+  const exactVoice = voices.find((voice) => voice.voiceURI === preference || voice.name === preference);
+  if (exactVoice) return exactVoice;
   if (preference === "female") {
     return (
       voices.find((voice) => /female|woman|zira|susan|samantha|victoria|karen/i.test(voice.name)) ||
@@ -1265,6 +1398,19 @@ function selectedVoice() {
     );
   }
   return voices.find((voice) => voice.default) || voices[0];
+}
+
+function previewSelectedVoice() {
+  if (!("speechSynthesis" in window)) return;
+  pauseSpeech();
+  const utterance = new SpeechSynthesisUtterance("This is a sample of the selected assistant voice.");
+  const voice = selectedVoice();
+  if (voice) utterance.voice = voice;
+  utterance.lang = currentVoiceLanguage();
+  utterance.rate = currentVoiceRate();
+  utterance.volume = currentVoiceVolume();
+  utterance.pitch = 1;
+  window.speechSynthesis.speak(utterance);
 }
 
 function voiceAssistantEnabled() {
@@ -1496,8 +1642,10 @@ function speakServerMessage(html, voiceSummary = "") {
   const utterance = new SpeechSynthesisUtterance(text);
   const voice = selectedVoice();
   if (voice) utterance.voice = voice;
-  utterance.rate = 1;
-  utterance.pitch = voicePreferenceSelect?.value === "male" ? 0.92 : 1.02;
+  utterance.lang = currentVoiceLanguage();
+  utterance.rate = currentVoiceRate();
+  utterance.volume = currentVoiceVolume();
+  utterance.pitch = 1;
   utterance.onstart = () => startVoiceAnalyzer(text);
   utterance.onboundary = (event) => syncVoiceAnalyzerToSpeech(event, text);
   utterance.onend = stopVoiceAnalyzer;
@@ -1507,14 +1655,13 @@ function speakServerMessage(html, voiceSummary = "") {
 
 function configureVoiceControls() {
   const speechSupported = "speechSynthesis" in window;
-  if (!voiceAssistantToggle || !voicePreferenceSelect) return;
+  if (!voiceAssistantToggle) return;
   voiceAssistantToggle.checked = localStorage.getItem(voiceEnabledKey) === "true";
   if (autoConversationToggle) {
     autoConversationToggle.checked = localStorage.getItem(autoConversationKey) === "true";
   }
-  voicePreferenceSelect.value = localStorage.getItem(voicePreferenceKey) || "auto";
   voiceAssistantToggle.disabled = !speechSupported;
-  voicePreferenceSelect.disabled = !speechSupported;
+  populateVoicePreferenceControls();
   syncVoicePreferenceVisibility();
   syncVoiceAnalyzerVisibility();
   if (speechSupported) {
@@ -1524,9 +1671,12 @@ function configureVoiceControls() {
 }
 
 function syncVoicePreferenceVisibility() {
-  const voiceSelectWrap = voicePreferenceSelect?.closest(".voice-select");
-  if (!voiceSelectWrap) return;
-  voiceSelectWrap.hidden = !voiceAssistantToggle?.checked;
+  if (!voicePreferenceButton) return;
+  const visible = Boolean(voiceAssistantToggle?.checked);
+  voicePreferenceButton.hidden = !visible;
+  if (!visible && voicePreferenceDialog?.open) {
+    closeVoicePreferenceDialog();
+  }
 }
 
 function openSettingsDrawer() {
@@ -1539,6 +1689,26 @@ function closeSettingsDrawer() {
   if (!settingsDrawer || !settingsButton) return;
   settingsDrawer.hidden = true;
   settingsButton.setAttribute("aria-expanded", "false");
+}
+
+function openVoicePreferenceDialog() {
+  if (!voicePreferenceDialog) return;
+  if (!voiceAssistantEnabled()) return;
+  populateVoicePreferenceControls();
+  if (typeof voicePreferenceDialog.showModal === "function") {
+    voicePreferenceDialog.showModal();
+  } else {
+    voicePreferenceDialog.setAttribute("open", "");
+  }
+}
+
+function closeVoicePreferenceDialog() {
+  if (!voicePreferenceDialog) return;
+  if (typeof voicePreferenceDialog.close === "function") {
+    voicePreferenceDialog.close();
+  } else {
+    voicePreferenceDialog.removeAttribute("open");
+  }
 }
 
 function configureMic() {
@@ -3954,6 +4124,28 @@ function showSectorPromptMessage(message, isError = true) {
   sectorPromptMessage.classList.toggle("success", !isError);
 }
 
+function knowledgeSvgIcon(pathData, className = "knowledge-inline-icon") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.classList.add(className);
+  const paths = Array.isArray(pathData) ? pathData : [pathData];
+  paths.forEach((pathValue) => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathValue);
+    svg.appendChild(path);
+  });
+  return svg;
+}
+
+function assignKnowledgeFiles(files) {
+  if (!knowledgeFileInput || !files?.length) return;
+  const transfer = new DataTransfer();
+  Array.from(files).forEach((file) => transfer.items.add(file));
+  knowledgeFileInput.files = transfer.files;
+}
+
 function resetKnowledgeProgress() {
   if (!knowledgeProgressSection || !knowledgeProgressList) return;
   clearElement(knowledgeProgressList);
@@ -3964,10 +4156,13 @@ function addKnowledgeProgressRow(label, status = "Queued") {
   if (!knowledgeProgressSection || !knowledgeProgressList) return null;
   knowledgeProgressSection.hidden = false;
   const row = createElement("article", { className: "knowledge-progress-row" }, [
-    createElement("strong", { text: label, attrs: { title: label } }),
-    createElement("small", { text: status }),
-    createElement("div", { className: "knowledge-progress-track", attrs: { "aria-hidden": "true" } }, [
-      createElement("span"),
+    knowledgeSvgIcon(["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"]),
+    createElement("div", { className: "knowledge-progress-main" }, [
+      createElement("strong", { text: label, attrs: { title: label } }),
+      createElement("small", { text: status }),
+      createElement("div", { className: "knowledge-progress-track", attrs: { "aria-hidden": "true" } }, [
+        createElement("span"),
+      ]),
     ]),
   ]);
   knowledgeProgressList.appendChild(row);
@@ -4060,6 +4255,7 @@ async function loadKnowledgeDocuments() {
     const data = await response.json();
     renderKnowledgeDocuments(data.documents || []);
   } catch (error) {
+    if (knowledgeDocumentCount) knowledgeDocumentCount.textContent = "0";
     renderEmptyState(knowledgeDocuments, "Could not load documents.");
     console.error("Knowledge documents failed", error);
   }
@@ -4068,25 +4264,32 @@ async function loadKnowledgeDocuments() {
 function renderKnowledgeDocuments(documents) {
   if (!knowledgeDocuments) return;
   clearElement(knowledgeDocuments);
+  if (knowledgeDocumentCount) knowledgeDocumentCount.textContent = String(documents.length || 0);
   if (!documents.length) {
     renderEmptyState(knowledgeDocuments, "No main knowledge documents yet.");
     return;
   }
   documents.forEach((documentItem) => {
     const title = String(documentItem.title || "");
+    const sourceType = String(documentItem.source_type || "document").toUpperCase();
     const row = createElement("article", { className: "knowledge-item knowledge-document-row" }, [
+      createElement("span", { className: "knowledge-document-icon" }, [
+        knowledgeSvgIcon(["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M8 13h8", "M8 17h5"], "knowledge-document-svg"),
+      ]),
       createElement("div", { className: "knowledge-document-main" }, [
         createElement("strong", { text: title, attrs: { title } }),
-        createElement("small", { text: documentItem.source_type || "document" }),
+        createElement("small", { text: sourceType }),
       ]),
     ]);
     if (canManageMainKnowledge) {
       const deleteButton = document.createElement("button");
       deleteButton.type = "button";
       deleteButton.className = "knowledge-delete-button";
-      deleteButton.textContent = "×";
       deleteButton.setAttribute("aria-label", `Delete ${title}`);
       deleteButton.title = "Delete document";
+      deleteButton.appendChild(
+        knowledgeSvgIcon(["M3 6h18", "M8 6V4h8v2", "M10 11v6", "M14 11v6", "M5 6l1 15h12l1-15"], "knowledge-delete-svg"),
+      );
       deleteButton.addEventListener("click", () => deleteKnowledgeDocument(documentItem.id));
       row.appendChild(deleteButton);
     }
@@ -4105,9 +4308,12 @@ function renderKnowledgeResults(results) {
     const sourceParts = [result.source_type || "document"];
     if (result.page_number) sourceParts.push(`page ${result.page_number}`);
     const row = createElement("article", { className: "knowledge-item" }, [
-      createElement("strong", { text: result.title || "" }),
-      createElement("small", { text: `${sourceParts.join(" - ")} - Score: ${result.score}` }),
-      createElement("p", { text: result.content || "" }),
+      knowledgeSvgIcon(["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"], "knowledge-result-svg"),
+      createElement("div", { className: "knowledge-result-main" }, [
+        createElement("strong", { text: result.title || "" }),
+        createElement("small", { text: `${sourceParts.join(" - ")} - Score: ${result.score}` }),
+        createElement("p", { text: result.content || "" }),
+      ]),
     ]);
     knowledgeResults.appendChild(row);
   });
@@ -4128,9 +4334,12 @@ function renderSectorPromptResults(results) {
         ? "lexical/DB"
         : result.score;
     const row = createElement("article", { className: "knowledge-item" }, [
-      createElement("strong", { text: result.title || "Sector prompt" }),
-      createElement("small", { text: `${sourceParts.join(" - ")} - Score: ${scoreLabel}` }),
-      createElement("p", { text: result.content || "" }),
+      knowledgeSvgIcon(["M12 3 20 7.5 12 12 4 7.5 12 3Z", "M4 12l8 4.5 8-4.5", "M4 16.5 12 21l8-4.5"], "knowledge-result-svg"),
+      createElement("div", { className: "knowledge-result-main" }, [
+        createElement("strong", { text: result.title || "Sector prompt" }),
+        createElement("small", { text: `${sourceParts.join(" - ")} - Score: ${scoreLabel}` }),
+        createElement("p", { text: result.content || "" }),
+      ]),
     ]);
     sectorPromptResults.appendChild(row);
   });
@@ -4265,6 +4474,7 @@ async function loadPrompts() {
   } catch (error) {
     console.error("Prompt list failed", error);
     promptRows = [];
+    if (promptCatalogueCount) promptCatalogueCount.textContent = "0";
     renderEmptyState(promptList, "Could not load prompts.");
   }
 }
@@ -4286,6 +4496,7 @@ function renderPromptList() {
     ].join(" ").toLowerCase();
     return !filter || haystack.includes(filter);
   });
+  if (promptCatalogueCount) promptCatalogueCount.textContent = String(rows.length);
   clearElement(promptList);
   if (!rows.length) {
     renderEmptyState(promptList, "No prompts match this filter.");
@@ -4297,13 +4508,19 @@ function renderPromptList() {
       text: "",
       attrs: { type: "button" },
     }, [
-      createElement("span", { className: "prompt-list-title", text: prompt.display_name || prompt.prompt_key }),
-      createElement("span", { className: "prompt-list-meta" }, [
-        createElement("span", { text: prompt.category || "prompt" }),
-        ...(prompt.model ? [createElement("span", { text: prompt.model })] : []),
-        ...(prompt.updated_at ? [createElement("span", { text: promptUpdatedLabel(prompt.updated_at) })] : []),
+      createElement("span", { className: "prompt-list-icon" }, [
+        promptSvgIcon(["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M8 13h8", "M8 17h5"], "prompt-document-svg"),
       ]),
-      createElement("span", { className: "prompt-list-preview", text: prompt.content_preview || "" }),
+      createElement("span", { className: "prompt-list-main" }, [
+        createElement("span", { className: "prompt-list-title", text: prompt.display_name || prompt.prompt_key }),
+        createElement("span", { className: "prompt-list-meta" }, [
+          createElement("span", { text: prompt.category || "prompt" }),
+          ...(prompt.model ? [createElement("span", { text: prompt.model })] : []),
+          ...(prompt.updated_at ? [createElement("span", { text: promptUpdatedLabel(prompt.updated_at) })] : []),
+        ]),
+        createElement("span", { className: "prompt-list-preview", text: prompt.content_preview || "" }),
+      ]),
+      promptSvgIcon("m9 18 6-6-6-6", "prompt-chevron-svg"),
     ]);
     row.classList.toggle("active", !creatingPrompt && prompt.id === selectedPromptId);
     row.addEventListener("click", () => loadPromptDetail(prompt.id));
@@ -4328,6 +4545,21 @@ function promptUpdatedLabel(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function promptSvgIcon(pathData, className = "prompt-inline-icon") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.classList.add(className);
+  const paths = Array.isArray(pathData) ? pathData : [pathData];
+  paths.forEach((pathValue) => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathValue);
+    svg.appendChild(path);
+  });
+  return svg;
 }
 
 async function loadPromptDetail(promptId) {
@@ -4927,6 +5159,23 @@ autoConversationToggle?.addEventListener("change", () => {
 
 voicePreferenceSelect?.addEventListener("change", () => {
   localStorage.setItem(voicePreferenceKey, voicePreferenceSelect.value);
+  updateVoicePreferenceDisplay();
+});
+
+voiceLanguageSelect?.addEventListener("change", () => {
+  localStorage.setItem(voiceLanguageKey, voiceLanguageSelect.value);
+  localStorage.setItem(voicePreferenceKey, "auto");
+  populateVoicePreferenceControls();
+});
+
+speechRateInput?.addEventListener("input", () => {
+  localStorage.setItem(voiceRateKey, speechRateInput.value);
+  updateVoicePreferenceDisplay();
+});
+
+speechVolumeInput?.addEventListener("input", () => {
+  localStorage.setItem(voiceVolumeKey, speechVolumeInput.value);
+  updateVoicePreferenceDisplay();
 });
 
 settingsButton?.addEventListener("click", () => {
@@ -4939,6 +5188,17 @@ settingsButton?.addEventListener("click", () => {
 });
 
 closeSettingsButton?.addEventListener("click", closeSettingsDrawer);
+voicePreferenceButton?.addEventListener("click", () => {
+  closeSettingsDrawer();
+  openVoicePreferenceDialog();
+});
+closeVoicePreferenceButton?.addEventListener("click", closeVoicePreferenceDialog);
+previewVoiceButton?.addEventListener("click", previewSelectedVoice);
+voicePreferenceDialog?.addEventListener("click", (event) => {
+  if (event.target === voicePreferenceDialog) {
+    closeVoicePreferenceDialog();
+  }
+});
 exportSessionButton?.addEventListener("click", exportCurrentSession);
 importSessionButton?.addEventListener("click", chooseSessionImportFile);
 importSessionInput?.addEventListener("change", importSessionFile);
@@ -5013,6 +5273,24 @@ promptsButton?.addEventListener("click", () => {
 });
 closeKnowledgeButton?.addEventListener("click", closeKnowledgeDialog);
 closePromptLibraryButton?.addEventListener("click", closePromptLibraryDialog);
+
+knowledgeDropzone?.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  knowledgeDropzone.classList.add("is-dragging");
+});
+
+knowledgeDropzone?.addEventListener("dragleave", () => {
+  knowledgeDropzone.classList.remove("is-dragging");
+});
+
+knowledgeDropzone?.addEventListener("drop", (event) => {
+  event.preventDefault();
+  knowledgeDropzone.classList.remove("is-dragging");
+  assignKnowledgeFiles(event.dataTransfer?.files);
+  if (knowledgeFileInput?.files?.length) {
+    knowledgeUploadForm?.requestSubmit();
+  }
+});
 
 knowledgeUploadForm?.addEventListener("submit", async (event) => {
   event.preventDefault();

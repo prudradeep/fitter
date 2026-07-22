@@ -79,9 +79,55 @@
     border-bottom: 1px solid #e2e8f0;
   }
 
-  .prompt-dialog-header,
-  .prompt-editor-toolbar,
+  .voice-preference-dialog {
+    width: min(100vw - 24px, 560px);
+  }
+
+  .voice-preference-panel {
+    padding: 14px;
+  }
+
+  .voice-preference-header {
+    grid-template-columns: 42px 1fr 38px;
+    gap: 12px;
+  }
+
+  .voice-preference-icon {
+    width: 42px;
+    height: 42px;
+  }
+
+  .voice-preference-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    min-height: auto;
+  }
+
+  .voice-slider-control {
+    grid-template-columns: 20px 1fr 20px 64px;
+    gap: 10px;
+  }
+
+  .voice-preview-button {
+    justify-self: stretch;
+    justify-content: center;
+  }
+
+  .prompt-dialog-header {
+    grid-template-columns: 42px 1fr;
+    align-items: stretch;
+  }
+
+  .prompt-dialog-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
   .prompt-editor-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .prompt-editor-toolbar {
     align-items: stretch;
     flex-direction: column;
   }

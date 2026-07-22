@@ -1104,6 +1104,43 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self._rows(response.json()["bundle"], "app_users"), [])
 
+    def test_exchange_excludes_user_data_when_client_sync_my_data_is_off(self) -> None:
+        user = self._add_user("server-admin@example.com", role="admin")
+        self.db.add(
+            UserSession(
+                session_key="other-user-session",
+                title="Other user session",
+                user_id=user.id,
+                session_data="{}",
+            )
+        )
+        self.db.add(
+            Prompt(
+                prompt_key="llm/server_owned.txt",
+                category="llm",
+                display_name="Server owned",
+                content="Server/admin prompt",
+            )
+        )
+        self.db.commit()
+        SyncService(self.db).upsert_sync_client(token="secret", client_name="Normal sync client")
+
+        response = self._exchange_response(
+            {
+                "format": "dr-transition-sync-v1",
+                "device_id": "client-device",
+                "exported_at": "2026-07-20T00:00:00Z",
+                "request_user_data_sync": False,
+                "tables": [],
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        bundle = response.json()["bundle"]
+        self.assertEqual(self._rows(bundle, "app_users"), [])
+        self.assertEqual(self._rows(bundle, "user_sessions"), [])
+        self.assertEqual(self._rows(bundle, "prompts")[0]["prompt_key"], "llm/server_owned.txt")
+
     def test_exchange_includes_app_users_for_server_approved_admin_sync(self) -> None:
         self._add_user("server-admin@example.com", role="admin")
         SyncService(self.db).upsert_sync_client(

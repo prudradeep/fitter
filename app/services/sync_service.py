@@ -187,6 +187,7 @@ class SyncService:
             "exported_at": exported_at.isoformat().replace("+00:00", "Z"),
             "admin_knowledge_sync": bool(include_admin_knowledge),
             "admin_user_email": str(admin_user_email or "").strip().casefold() if include_admin_knowledge else "",
+            "request_user_data_sync": bool(include_user_data),
             "tables": [
                 {
                     "name": table.name,
@@ -297,7 +298,7 @@ class SyncService:
         outbound = self.export_bundle(
             include_admin_knowledge=include_admin_knowledge,
             admin_user_email=admin_user_email,
-            include_app_users=True,
+            include_app_users=user_data_enabled_at is not None,
             include_user_data=user_data_enabled_at is not None,
             user_data_enabled_at=user_data_enabled_at,
         )

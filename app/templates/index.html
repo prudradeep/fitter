@@ -152,14 +152,21 @@
                     </span>
                   </label>
                 {% endif %}
-                <label class="settings-select voice-select">
-                  <span>Voice preference</span>
-                  <select id="voicePreferenceSelect" aria-label="Voice preference">
-                    <option value="auto" selected>Auto</option>
-                    <option value="female">Female</option>
-                    <option value="male">Male</option>
-                  </select>
-                </label>
+                <button id="voicePreferenceButton" class="settings-action-button voice-preference-entry" type="button" hidden>
+                  <span class="settings-action-icon settings-action-icon-blue" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" role="img" focusable="false">
+                      <path d="M4 9v6h4l6 5V4L8 9H4Z" />
+                      <path d="M17 8.5a5 5 0 0 1 0 7" />
+                    </svg>
+                  </span>
+                  <span>
+                    <strong>Voice preference</strong>
+                    <small id="voicePreferenceSummary">Choose how the assistant speaks.</small>
+                  </span>
+                  <span class="settings-action-arrow" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" role="img" focusable="false"><path d="m9 18 6-6-6-6" /></svg>
+                  </span>
+                </button>
                 {% if current_user.role == 'admin' %}
                   <button id="knowledgeButton" class="settings-action-button" type="button">
                     <span class="settings-action-icon settings-action-icon-blue" aria-hidden="true">
@@ -731,71 +738,132 @@
 
     <dialog
       id="knowledgeDialog"
-      class="target-dialog"
+      class="target-dialog knowledge-dialog"
       data-can-manage-main-kb="{{ 'true' if can_manage_main_knowledge else 'false' }}"
     >
-      <section class="target-dialog-panel" aria-label="Knowledge base">
-        <header class="stats-dialog-header">
+      <section class="target-dialog-panel knowledge-dialog-panel" aria-label="Knowledge base">
+        <header class="stats-dialog-header knowledge-dialog-header">
+          <span class="knowledge-dialog-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img" focusable="false">
+              <path d="M5 4h5a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H5V4Z" />
+              <path d="M19 4h-5a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h5V4Z" />
+            </svg>
+          </span>
           <div>
             <h2>Main knowledge base</h2>
             <p>Admin-managed core knowledge available to all users.</p>
           </div>
-          <button id="closeKnowledgeButton" type="button" aria-label="Close knowledge base">×</button>
+          <button id="closeKnowledgeButton" type="button" aria-label="Close knowledge base">
+            <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
+              <path d="M6 6l12 12" />
+              <path d="M18 6 6 18" />
+            </svg>
+          </button>
         </header>
         <div class="knowledge-layout">
           <aside class="knowledge-sidebar">
-            <h3>Documents</h3>
+            <div class="knowledge-sidebar-heading">
+              <h3>Documents</h3>
+              <span id="knowledgeDocumentCount">0</span>
+            </div>
             <div id="knowledgeDocuments" class="knowledge-list"></div>
+            {% if can_manage_main_knowledge %}
+            <label class="knowledge-dropzone" for="knowledgeFileInput">
+              <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
+                <path d="M17 18a4 4 0 0 0 0-8h-.5A6.5 6.5 0 0 0 4 12a3 3 0 0 0 1 5.83" />
+                <path d="M12 12v7" />
+                <path d="m9 15 3-3 3 3" />
+              </svg>
+              <span>Drag & drop files here</span>
+              <small>or click to browse</small>
+            </label>
+            {% endif %}
           </aside>
           <div class="knowledge-body">
             {% if can_manage_main_knowledge %}
-            <section class="knowledge-panel">
+            <section class="knowledge-panel knowledge-add-panel">
+              <div class="knowledge-section-heading">
+                <span class="knowledge-section-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false"><path d="M12 3v12" /><path d="m7 8 5-5 5 5" /><path d="M5 21h14" /></svg>
+                </span>
+                <h3>Add knowledge</h3>
+              </div>
               <form id="knowledgeUploadForm" class="knowledge-form">
-                <label>
-                  <span>Upload supported files: PDF, DOCX, MD, or TXT</span>
+                <label class="knowledge-field">
+                  <span>Upload files</span>
+                  <small>Supported files: PDF, DOCX, MD, or TXT</small>
                   <input id="knowledgeFileInput" type="file" multiple accept=".pdf,.docx,.md,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" />
                 </label>
-                <button type="submit">Ingest files</button>
+                <button type="submit">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M17 18a4 4 0 0 0 0-8h-.5A6.5 6.5 0 0 0 4 12a3 3 0 0 0 1 5.83" /><path d="M12 12v7" /><path d="m9 15 3-3 3 3" /></svg>
+                  Ingest files
+                </button>
               </form>
+              <div class="knowledge-or"><span>OR</span></div>
               <form id="knowledgeUrlForm" class="knowledge-form">
-                <label>
+                <label class="knowledge-field">
                   <span>Ingest URLs</span>
+                  <small>Add one or more URLs, one per line</small>
                   <textarea id="knowledgeUrlInput" rows="3" placeholder="https://example.org/report&#10;https://example.org/policy.pdf"></textarea>
                 </label>
-                <button type="submit">Ingest URLs</button>
+                <button type="submit">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" /><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1" /></svg>
+                  Ingest URLs
+                </button>
               </form>
               <p id="knowledgeMessage" class="dialog-message" hidden></p>
             </section>
             <section id="knowledgeProgressSection" class="knowledge-panel" hidden>
-              <h3>Ingestion progress</h3>
+              <div class="knowledge-section-heading">
+                <span class="knowledge-section-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false"><path d="M12 3v3" /><path d="M12 18v3" /><path d="M3 12h3" /><path d="M18 12h3" /><path d="m5.6 5.6 2.1 2.1" /><path d="m16.3 16.3 2.1 2.1" /></svg>
+                </span>
+                <h3>Ingestion progress</h3>
+              </div>
               <div id="knowledgeProgressList" class="knowledge-progress-list"></div>
             </section>
             {% else %}
             <p id="knowledgeMessage" class="dialog-message" hidden></p>
             {% endif %}
             <section class="knowledge-panel">
+              <div class="knowledge-section-heading">
+                <span class="knowledge-section-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false"><path d="m21 21-4.3-4.3" /><path d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+                </span>
+                <h3>Search main knowledge base</h3>
+              </div>
               <form id="knowledgeSearchForm" class="knowledge-form">
-                <label>
-                  <span>Search main knowledge base</span>
+                <label class="knowledge-field knowledge-field-compact">
                   <input id="knowledgeSearchInput" type="search" placeholder="Search main knowledge..." />
                 </label>
-                <button type="submit">Search</button>
+                <button type="submit">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="m21 21-4.3-4.3" /><path d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+                  Search
+                </button>
               </form>
               <div id="knowledgeResults" class="knowledge-list knowledge-results"></div>
             </section>
             {% if current_user.role == 'admin' %}
             <section class="knowledge-panel sector-prompt-panel">
               <div class="knowledge-panel-heading">
-                <div>
+                <div class="knowledge-section-heading">
+                  <span class="knowledge-section-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" role="img" focusable="false"><path d="m12 3 8 4.5-8 4.5-8-4.5 8-4.5Z" /><path d="m4 12 8 4.5 8-4.5" /><path d="m4 16.5 8 4.5 8-4.5" /></svg>
+                  </span>
+                  <div>
                   <h3>Sector prompt RAG</h3>
                   <p>Search the indexed Energy, Housing, or Transport sector prompt chunks.</p>
+                  </div>
                 </div>
                 {% if can_reindex_sector_prompts %}
-                <button id="sectorPromptReindexButton" class="knowledge-action-button" type="button">Reindex sector prompts</button>
+                <button id="sectorPromptReindexButton" class="knowledge-action-button" type="button">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.3 6.4" /><path d="M3 12A9 9 0 0 1 18.3 5.6" /><path d="M18 2v4h-4" /><path d="M6 22v-4h4" /></svg>
+                  Reindex sector prompts
+                </button>
                 {% endif %}
               </div>
               <form id="sectorPromptSearchForm" class="knowledge-form sector-prompt-search-form">
-                <label>
+                <label class="knowledge-field">
                   <span>Sector</span>
                   <select id="sectorPromptSectorInput">
                     <option value="Energy">Energy</option>
@@ -803,11 +871,14 @@
                     <option value="Transport">Transport</option>
                   </select>
                 </label>
-                <label>
+                <label class="knowledge-field">
                   <span>Search sector prompts</span>
                   <input id="sectorPromptSearchInput" type="search" placeholder="Search hazards, predictors, or statistics..." />
                 </label>
-                <button type="submit">Search</button>
+                <button type="submit">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="m21 21-4.3-4.3" /><path d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+                  Search
+                </button>
               </form>
               <p id="sectorPromptMessage" class="dialog-message" hidden></p>
               <div id="sectorPromptResults" class="knowledge-list knowledge-results"></div>
@@ -826,23 +897,45 @@
     >
       <section class="prompt-dialog-panel" aria-label="Prompt library">
         <header class="prompt-dialog-header">
+          <span class="prompt-dialog-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img" focusable="false">
+              <path d="M12 2 14.2 8.8 21 11l-6.8 2.2L12 20l-2.2-6.8L3 11l6.8-2.2L12 2Z" />
+            </svg>
+          </span>
           <div>
             <h2>Prompt Library</h2>
             <p>Database-backed prompts distributed from the sync server to clients.</p>
           </div>
           <div class="prompt-dialog-actions">
-            <button id="newPromptButton" class="prompt-primary-button" type="button">New Prompt</button>
-            <button id="refreshPromptsButton" class="prompt-secondary-button" type="button">Refresh</button>
-            <button id="closePromptLibraryButton" type="button" aria-label="Close prompt library">×</button>
+            <button id="newPromptButton" class="prompt-primary-button" type="button">
+              <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
+              New Prompt
+            </button>
+            <button id="refreshPromptsButton" class="prompt-secondary-button" type="button">
+              <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.3 6.4" /><path d="M3 12A9 9 0 0 1 18.3 5.6" /><path d="M18 2v4h-4" /><path d="M6 22v-4h4" /></svg>
+              Refresh
+            </button>
+            <button id="closePromptLibraryButton" type="button" aria-label="Close prompt library">
+              <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M6 6l12 12" /><path d="M18 6 6 18" /></svg>
+            </button>
           </div>
         </header>
         <div id="promptLibrarySection" class="prompt-library-layout">
           <aside class="prompt-list-shell" aria-label="Prompt list">
             <div class="prompt-search-shell">
-              <label>
+              <div class="prompt-catalogue-heading">
                 <span>Prompt catalogue</span>
-                <input id="promptSearchInput" type="search" placeholder="Filter by key, model, or content..." aria-label="Filter prompts" />
-              </label>
+                <strong id="promptCatalogueCount">0</strong>
+              </div>
+              <div class="prompt-search-row">
+                <label class="prompt-search-field">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="m21 21-4.3-4.3" /><path d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" /></svg>
+                  <input id="promptSearchInput" type="search" placeholder="Search by key, model, or content..." aria-label="Filter prompts" />
+                </label>
+                <button class="prompt-filter-button" type="button" aria-label="Filter prompts">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M3 5h18" /><path d="M6 12h12" /><path d="M10 19h4" /></svg>
+                </button>
+              </div>
             </div>
             <div id="promptList" class="knowledge-list prompt-list"></div>
           </aside>
@@ -856,18 +949,126 @@
             </div>
             <label id="promptKeyField" class="prompt-key-field" hidden>
               <span>Prompt key</span>
-              <input id="promptKeyInput" type="text" maxlength="255" placeholder="llm/custom_prompt.txt" />
+              <span class="prompt-key-control">
+                <input id="promptKeyInput" type="text" maxlength="255" placeholder="llm/custom_prompt.txt" />
+                <button type="button" aria-label="Copy prompt key" disabled>
+                  <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M8 8h10v12H8z" /><path d="M6 16H4V4h12v2" /></svg>
+                </button>
+              </span>
             </label>
             <textarea id="promptContentInput" rows="18" spellcheck="false" aria-label="Prompt content" disabled></textarea>
             <footer class="prompt-editor-footer">
-              <span id="promptEditorHint">Server-owned prompts sync down to client installations.</span>
-              <button id="savePromptButton" type="submit" disabled>Save prompt</button>
+              <span id="promptEditorHint">
+                <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M12 3 5.5 5.6v5.1c0 4.2 2.6 8 6.5 9.3 3.9-1.3 6.5-5.1 6.5-9.3V5.6L12 3Z" /><path d="m9 12 2 2 4-4" /></svg>
+                Server-owned prompts sync down to client installations.
+              </span>
+              <button id="savePromptButton" type="submit" disabled>
+                <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M5 3h12l2 2v16H5z" /><path d="M8 3v6h8" /><path d="M8 17h8" /></svg>
+                Save prompt
+              </button>
             </footer>
           </form>
         </div>
       </section>
     </dialog>
     {% endif %}
+
+    <dialog id="voicePreferenceDialog" class="voice-preference-dialog">
+      <section class="voice-preference-panel" aria-label="Voice preference">
+        <header class="voice-preference-header">
+          <span class="voice-preference-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img" focusable="false">
+              <path d="M4 9v6h4l6 5V4L8 9H4Z" />
+              <path d="M17 8.5a5 5 0 0 1 0 7" />
+              <path d="M19.5 6a8.5 8.5 0 0 1 0 12" />
+            </svg>
+          </span>
+          <div>
+            <h2>Voice preference</h2>
+            <p>Choose how the assistant speaks to you in the browser.</p>
+          </div>
+          <button id="closeVoicePreferenceButton" type="button" aria-label="Close voice preference">
+            <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
+              <path d="M6 6l12 12" />
+              <path d="M18 6 6 18" />
+            </svg>
+          </button>
+        </header>
+        <div class="voice-preference-card">
+          <label class="voice-preference-row">
+            <span>
+              <strong>Browser voice</strong>
+              <small>Select a voice available in your browser.</small>
+            </span>
+            <span class="voice-preference-control voice-select-control">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 9v6h4l6 5V4L8 9H4Z" />
+                <path d="M17 8.5a5 5 0 0 1 0 7" />
+              </svg>
+              <select id="voicePreferenceSelect" aria-label="Browser voice">
+                <option value="auto" selected>Automatic browser voice</option>
+              </select>
+            </span>
+          </label>
+          <label class="voice-preference-row">
+            <span>
+              <strong>Language</strong>
+              <small>Set the language for voice responses.</small>
+            </span>
+            <span class="voice-preference-control voice-select-control">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" />
+                <path d="M3.6 9h16.8" />
+                <path d="M3.6 15h16.8" />
+                <path d="M12 3a15 15 0 0 1 0 18" />
+                <path d="M12 3a15 15 0 0 0 0 18" />
+              </svg>
+              <select id="voiceLanguageSelect" aria-label="Voice language">
+                <option value="en-US" selected>English (US)</option>
+              </select>
+            </span>
+          </label>
+          <label class="voice-preference-row">
+            <span>
+              <strong>Speech rate</strong>
+              <small>Speed at which the assistant speaks.</small>
+            </span>
+            <span class="voice-slider-control">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 16c1.2-5 4.7-7 9-7h5" /><path d="M5 16h14" /><path d="M8 19h3" /></svg>
+              <input id="speechRateInput" type="range" min="0.6" max="1.6" step="0.1" value="1" aria-label="Speech rate" />
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 17h4l3-8 3 8h6" /><path d="M16 10h4" /><path d="M18 8v4" /></svg>
+              <output id="speechRateValue" for="speechRateInput">1.0x</output>
+            </span>
+          </label>
+          <label class="voice-preference-row">
+            <span>
+              <strong>Volume</strong>
+              <small>Adjust the playback volume.</small>
+            </span>
+            <span class="voice-slider-control">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9v6h4l5 4V5L8 9H4Z" /><path d="m18 9-4 6" /><path d="m14 9 4 6" /></svg>
+              <input id="speechVolumeInput" type="range" min="0" max="1" step="0.05" value="1" aria-label="Voice volume" />
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9v6h4l5 4V5L8 9H4Z" /><path d="M17 8.5a5 5 0 0 1 0 7" /></svg>
+              <output id="speechVolumeValue" for="speechVolumeInput">100%</output>
+            </span>
+          </label>
+          <div class="voice-preference-row">
+            <span>
+              <strong>Preview voice</strong>
+              <small>Listen to a sample of the selected voice.</small>
+            </span>
+            <button id="previewVoiceButton" class="voice-preview-button" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7-11-7Z" /></svg>
+              Play sample
+            </button>
+          </div>
+        </div>
+        <p class="voice-preference-note">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17v-5" /><path d="M12 8h.01" /><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" /></svg>
+          Voices are provided by your browser. The list may vary by device and system language.
+        </p>
+      </section>
+    </dialog>
 
     <dialog id="changePasswordDialog" class="rename-dialog">
       <form id="changePasswordForm" class="rename-dialog-form">
