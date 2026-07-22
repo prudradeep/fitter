@@ -7,15 +7,18 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 from unittest.mock import patch
 
 from app.auth import create_auth_token, get_current_user, hash_password, verify_password
 from app.db.session import Base
-from app.models import AppRateLimit, AppUser, AuditLog, UserChatMessage, UserSession
+from app.models import AppRateLimit, AppUser, AuditLog, Prompt, UserChatMessage, UserSession
 from app.resource_paths import resource_path
 from app.services.rate_limit import clear_rate_limits
+from app.services.sync_service import SyncService
+from app.services import sync_permissions
 import app.routes.api as api_routes
 import app.routes.auth as auth_routes
 
@@ -326,6 +329,331 @@ class ApiRouteIntegrationTests(unittest.TestCase):
             for row in self.db.query(AuditLog).filter(AuditLog.action.like("knowledge.%")).all()
         }
         self.assertEqual(actions, {"knowledge.upload", "knowledge.delete"})
+
+    def test_main_knowledge_mutation_requires_sync_main_permission_when_sync_enabled(self) -> None:
+        original_enabled = api_routes.settings.sync_enabled
+        original_mode = api_routes.settings.sync_mode
+        try:
+            api_routes.settings.sync_enabled = True
+            api_routes.settings.sync_mode = "server"
+            with patch.object(api_routes, "KnowledgeBaseService", FakeKnowledgeBaseService):
+                denied = self.client.delete("/api/knowledge/7")
+            SyncService(self.db).upsert_sync_client(
+                token="admin-token",
+                client_name="Admin workstation",
+                user_email=self.user.email,
+                can_sync_main_kb=True,
+            )
+            with patch.object(api_routes, "KnowledgeBaseService", FakeKnowledgeBaseService):
+                allowed = self.client.delete("/api/knowledge/7")
+        finally:
+            api_routes.settings.sync_enabled = original_enabled
+            api_routes.settings.sync_mode = original_mode
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertTrue(allowed.json()["deleted"])
+
+    def test_main_knowledge_mutation_uses_server_token_permission_on_sync_client(self) -> None:
+        original_enabled = api_routes.settings.sync_enabled
+        original_mode = api_routes.settings.sync_mode
+        original_url = api_routes.settings.sync_server_url
+        original_token = api_routes.settings.sync_api_token
+
+        class FakeStatusResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {"sync_client": {"can_sync_main_kb": True}}
+
+        class FakeAsyncClient:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            async def get(self, *args, **kwargs) -> FakeStatusResponse:
+                return FakeStatusResponse()
+
+        try:
+            api_routes.settings.sync_enabled = True
+            api_routes.settings.sync_mode = "client"
+            api_routes.settings.sync_server_url = "https://sync.example"
+            api_routes.settings.sync_api_token = "raw-client-token"
+            with (
+                patch.object(sync_permissions.httpx, "AsyncClient", FakeAsyncClient),
+                patch.object(api_routes, "KnowledgeBaseService", FakeKnowledgeBaseService),
+            ):
+                response = self.client.delete("/api/knowledge/7")
+        finally:
+            api_routes.settings.sync_enabled = original_enabled
+            api_routes.settings.sync_mode = original_mode
+            api_routes.settings.sync_server_url = original_url
+            api_routes.settings.sync_api_token = original_token
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["deleted"])
+
+    def test_admin_prompt_routes_list_detail_and_update(self) -> None:
+        prompt = Prompt(
+            prompt_key="llm/test_prompt.txt",
+            category="llm",
+            display_name="llm / test_prompt.txt",
+            content="Original prompt",
+            source_path="llm/test_prompt.txt",
+        )
+        self.db.add(prompt)
+        self.db.commit()
+        self.db.refresh(prompt)
+
+        list_response = self.client.get("/api/prompts")
+        detail_response = self.client.get(f"/api/prompts/{prompt.id}")
+        update_response = self.client.patch(
+            f"/api/prompts/{prompt.id}",
+            json={"content": "Updated prompt"},
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json()["prompts"][0]["prompt_key"], "llm/test_prompt.txt")
+        self.assertEqual(detail_response.json()["prompt"]["content"], "Original prompt")
+        self.assertFalse(update_response.json()["error"])
+        self.db.refresh(prompt)
+        self.assertEqual(prompt.content, "Updated prompt")
+        audit = self.db.query(AuditLog).filter(AuditLog.action == "prompts.update").one()
+        self.assertEqual(audit.target_id, "llm/test_prompt.txt")
+
+    def test_admin_can_create_prompt(self) -> None:
+        original_enabled = api_routes.settings.sync_enabled
+        original_mode = api_routes.settings.sync_mode
+        try:
+            api_routes.settings.sync_enabled = True
+            api_routes.settings.sync_mode = "server"
+            denied = self.client.post(
+                "/api/prompts",
+                json={"prompt_key": "llm/denied_prompt.txt", "content": "Denied prompt"},
+            )
+            SyncService(self.db).upsert_sync_client(
+                token="admin-token",
+                client_name="Admin workstation",
+                user_email=self.user.email,
+                can_manage_prompts=True,
+            )
+            response = self.client.post(
+                "/api/prompts",
+                json={"prompt_key": "llm/custom_prompt.txt", "content": "Custom prompt"},
+            )
+        finally:
+            api_routes.settings.sync_enabled = original_enabled
+            api_routes.settings.sync_mode = original_mode
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["error"])
+        prompt = self.db.scalar(select(Prompt).where(Prompt.prompt_key == "llm/custom_prompt.txt"))
+        self.assertIsNotNone(prompt)
+        self.assertEqual(prompt.content, "Custom prompt")
+        audit = self.db.query(AuditLog).filter(AuditLog.action == "prompts.create").one()
+        self.assertEqual(audit.target_id, "llm/custom_prompt.txt")
+
+    def test_admin_cannot_create_prompt_on_sync_client(self) -> None:
+        original_enabled = api_routes.settings.sync_enabled
+        original_mode = api_routes.settings.sync_mode
+        try:
+            api_routes.settings.sync_enabled = True
+            api_routes.settings.sync_mode = "client"
+            response = self.client.post(
+                "/api/prompts",
+                json={"prompt_key": "llm/client_prompt.txt", "content": "Client prompt"},
+            )
+        finally:
+            api_routes.settings.sync_enabled = original_enabled
+            api_routes.settings.sync_mode = original_mode
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.db.query(Prompt).count(), 0)
+
+    def test_sector_prompt_reindex_requires_sync_client_permission_when_sync_enabled(self) -> None:
+        original_enabled = api_routes.settings.sync_enabled
+        original_mode = api_routes.settings.sync_mode
+        try:
+            api_routes.settings.sync_enabled = True
+            api_routes.settings.sync_mode = "server"
+            denied = self.client.post("/api/sector-prompts/reindex")
+            SyncService(self.db).upsert_sync_client(
+                token="admin-token",
+                client_name="Admin workstation",
+                user_email=self.user.email,
+                can_reindex_sector_prompts=True,
+            )
+            with patch.object(
+                api_routes.SectorPromptRagService,
+                "rebuild",
+                return_value={"error": False, "indexed": 3},
+            ):
+                allowed = self.client.post("/api/sector-prompts/reindex")
+        finally:
+            api_routes.settings.sync_enabled = original_enabled
+            api_routes.settings.sync_mode = original_mode
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertFalse(allowed.json()["error"])
+
+    def test_sector_prompt_reindex_uses_server_token_permission_on_sync_client(self) -> None:
+        original_enabled = api_routes.settings.sync_enabled
+        original_mode = api_routes.settings.sync_mode
+        original_url = api_routes.settings.sync_server_url
+        original_token = api_routes.settings.sync_api_token
+
+        class FakeStatusResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {"sync_client": {"can_reindex_sector_prompts": True}}
+
+        class FakeAsyncClient:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            async def get(self, *args, **kwargs) -> FakeStatusResponse:
+                return FakeStatusResponse()
+
+        try:
+            api_routes.settings.sync_enabled = True
+            api_routes.settings.sync_mode = "client"
+            api_routes.settings.sync_server_url = "https://sync.example"
+            api_routes.settings.sync_api_token = "raw-client-token"
+            with (
+                patch.object(sync_permissions.httpx, "AsyncClient", FakeAsyncClient),
+                patch.object(
+                    api_routes.SectorPromptRagService,
+                    "rebuild",
+                    return_value={"error": False, "indexed": 3},
+                ),
+            ):
+                response = self.client.post("/api/sector-prompts/reindex")
+        finally:
+            api_routes.settings.sync_enabled = original_enabled
+            api_routes.settings.sync_mode = original_mode
+            api_routes.settings.sync_server_url = original_url
+            api_routes.settings.sync_api_token = original_token
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["error"])
+
+    def test_prompt_create_on_sync_client_uses_server_prompt_permission(self) -> None:
+        original_enabled = api_routes.settings.sync_enabled
+        original_mode = api_routes.settings.sync_mode
+        original_url = api_routes.settings.sync_server_url
+        original_token = api_routes.settings.sync_api_token
+
+        class FakeStatusResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {"sync_client": {"can_manage_prompts": True}}
+
+        class FakePromptResponse:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return {
+                    "error": False,
+                    "prompt": {
+                        "id": "11111111-1111-4111-8111-111111111111",
+                        "prompt_key": "llm/client_prompt.txt",
+                        "category": "llm",
+                        "model": None,
+                        "display_name": "llm / client_prompt.txt",
+                        "source_path": None,
+                        "updated_at": None,
+                        "content_preview": "Client prompt",
+                        "content": "Client prompt",
+                    },
+                    "detail": "Prompt created.",
+                }
+
+        class FakeAsyncClient:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            async def get(self, *args, **kwargs) -> FakeStatusResponse:
+                return FakeStatusResponse()
+
+            async def request(self, *args, **kwargs) -> FakePromptResponse:
+                return FakePromptResponse()
+
+        try:
+            api_routes.settings.sync_enabled = True
+            api_routes.settings.sync_mode = "client"
+            api_routes.settings.sync_server_url = "https://sync.example"
+            api_routes.settings.sync_api_token = "raw-client-token"
+            with (
+                patch.object(sync_permissions.httpx, "AsyncClient", FakeAsyncClient),
+                patch.object(api_routes.httpx, "AsyncClient", FakeAsyncClient),
+            ):
+                response = self.client.post(
+                    "/api/prompts",
+                    json={"prompt_key": "llm/client_prompt.txt", "content": "Client prompt"},
+                )
+        finally:
+            api_routes.settings.sync_enabled = original_enabled
+            api_routes.settings.sync_mode = original_mode
+            api_routes.settings.sync_server_url = original_url
+            api_routes.settings.sync_api_token = original_token
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["error"])
+        prompt = self.db.get(Prompt, "11111111-1111-4111-8111-111111111111")
+        self.assertIsNotNone(prompt)
+        self.assertEqual(prompt.content, "Client prompt")
+
+    def test_prompt_routes_require_admin_user(self) -> None:
+        regular_user = AppUser(
+            email="user@example.com",
+            name="User",
+            password_hash=hash_password("OldPassword!1"),
+            designation="Analyst",
+            organisation_type="Local",
+            organisation_name="Dr Transition",
+            role="user",
+        )
+        self.db.add(regular_user)
+        self.db.commit()
+        self.db.refresh(regular_user)
+        app = FastAPI()
+        app.include_router(api_routes.router)
+        app.dependency_overrides[api_routes.get_db] = self._override_db
+        app.dependency_overrides[api_routes.require_current_user] = lambda: regular_user
+        client = TestClient(app)
+        try:
+            response = client.get("/api/prompts")
+        finally:
+            client.close()
+
+        self.assertEqual(response.status_code, 403)
 
     def test_json_endpoint_rejects_oversized_body_before_parse(self) -> None:
         with self._temporary_route_limits(max_json_bytes=32):

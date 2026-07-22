@@ -174,6 +174,26 @@ class AppRateLimit(Base):
     )
 
 
+class Prompt(Base):
+    __tablename__ = "prompts"
+    __table_args__ = (UniqueConstraint("prompt_key", name="uq_prompts_prompt_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    prompt_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(80), nullable=False, default="llm", server_default="llm", index=True)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class SystemHazard(Base):
     __tablename__ = "system_hazards"
     __table_args__ = (UniqueConstraint("sector_id", "name", name="uq_system_hazard_sector_name"),)

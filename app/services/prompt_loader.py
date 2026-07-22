@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.resource_paths import resource_path
+from app.services.prompt_store import load_prompt_from_db, prompt_key_for_path
 
 PROMPT_DIR = resource_path("app/prompts")
 
@@ -37,6 +38,9 @@ def load_sector_prompt(sector: str | None) -> str:
     )
     if not prompt_path.exists():
         prompt_path = PROMPT_DIR / "Default_system_prompt.txt"
+    prompt = load_prompt_from_db(prompt_key_for_path(prompt_path))
+    if prompt is not None:
+        return prompt
     return prompt_path.read_text(encoding="utf-8").strip()
 
 
@@ -45,6 +49,9 @@ def load_prompt_file(filename: str) -> str:
     prompt_path = (PROMPT_DIR / filename).resolve()
     if not prompt_path.exists() or prompt_path.parent != PROMPT_DIR.resolve():
         raise FileNotFoundError(f"Prompt file not found: {filename}")
+    prompt = load_prompt_from_db(prompt_key_for_path(prompt_path))
+    if prompt is not None:
+        return prompt
     return prompt_path.read_text(encoding="utf-8").strip()
 
 
@@ -55,6 +62,9 @@ def load_nested_prompt_file(filename: str) -> str:
 @lru_cache
 def _load_nested_prompt_file(filename: str, model: str | None) -> str:
     prompt_path = resolve_nested_prompt_path(filename, model)
+    prompt = load_prompt_from_db(prompt_key_for_path(prompt_path))
+    if prompt is not None:
+        return prompt
     return prompt_path.read_text(encoding="utf-8").strip()
 
 
@@ -87,3 +97,9 @@ def resolve_model_prompt_path(filename: str, model: str | None) -> Path | None:
     if model_prompt_path.exists() and model_prompt_path.parent == model_prompt_root:
         return model_prompt_path
     return None
+
+
+def clear_prompt_caches() -> None:
+    load_sector_prompt.cache_clear()
+    load_prompt_file.cache_clear()
+    _load_nested_prompt_file.cache_clear()

@@ -6,6 +6,8 @@ import bleach
 import markdown
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
+from app.services.prompt_store import load_prompt_from_db
+
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "chat"
 
 ALLOWED_TAGS = [
@@ -76,7 +78,12 @@ def get_message_environment() -> Environment:
 
 
 def render_message(template_name: str, **context: object) -> str:
-    template = get_message_environment().get_template(template_name)
+    prompt = load_prompt_from_db(f"chat/{template_name}")
+    template = (
+        get_message_environment().from_string(prompt)
+        if prompt is not None
+        else get_message_environment().get_template(template_name)
+    )
     return markdown_to_html(template.render(**context).strip())
 
 

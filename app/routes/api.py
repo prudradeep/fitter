@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, set_auth_cookie, verify_password
 from app.config import get_settings
 from app.db.session import get_db
-from app.models import AppUser, Country, Region, Sector, UserChatMessage, UserSession
+from app.models import AppUser, Country, Prompt, Region, Sector, UserChatMessage, UserSession
 from app.routes.request_limits import (
     InvalidJsonPayload,
     RequestTooLarge,
@@ -30,8 +30,11 @@ from app.services.hazard_effect_size import hazard_effect_size_rows
 from app.services.hazard_ranking_service import HazardRankingService
 from app.services.knowledge_base import MAIN_KB_SCOPE, KnowledgeBaseService
 from app.services.hazard_salience import country_hazard_salience
+from app.services.prompt_loader import clear_prompt_caches
+from app.services.prompt_store import list_prompts, prompt_metadata, seed_prompts_from_files_for_session
 from app.services.rate_limit import record_failed_attempt, reset_rate_limit, retry_after_seconds
-from app.services.sector_prompt_rag import SectorPromptRagService
+from app.services.sector_prompt_rag import SectorPromptRagService, SECTOR_PROMPT_SCOPE
+from app.services.sync_permissions import sync_client_permission_enabled
 
 router = APIRouter(prefix="/api", tags=["chat"])
 settings = get_settings()
@@ -525,6 +528,8 @@ async def knowledge_upload(
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    if not await _can_manage_main_knowledge(db, current_user):
+        raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
     too_large = payload_too_large_response(
         request,
         settings.max_upload_bytes,
@@ -594,6 +599,8 @@ async def knowledge_url(
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    if not await _can_manage_main_knowledge(db, current_user):
+        raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
     payload = await _json_payload_or_error(request, "Knowledge URL payload")
     if isinstance(payload, JSONResponse):
         return payload
@@ -666,6 +673,8 @@ async def sector_prompts_reindex(
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    if not await _can_reindex_sector_prompts(db, current_user):
+        raise HTTPException(status_code=403, detail="Sector prompt reindex permission is required.")
     try:
         result = await SectorPromptRagService(db).rebuild()
     except (httpx.HTTPError, ValueError) as exc:
@@ -702,6 +711,123 @@ async def sector_prompts_search(
     return {"error": False, "results": results}
 
 
+@router.get("/prompts")
+async def prompts_list(
+    current_user: AppUser = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    _ = current_user
+    if _should_seed_prompts_from_files() and not db.scalar(select(Prompt.id).limit(1)):
+        seed_prompts_from_files_for_session(db)
+        db.commit()
+    return {
+        "error": False,
+        "prompts": [_prompt_summary(row) for row in list_prompts(db)],
+    }
+
+
+@router.post("/prompts")
+async def prompt_create(
+    request: Request,
+    current_user: AppUser = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if not await _can_manage_prompts(db, current_user):
+        raise HTTPException(status_code=403, detail="Prompts are managed on the sync server.")
+    payload = await _json_payload_or_error(request, "Prompt create payload")
+    if isinstance(payload, JSONResponse):
+        return payload
+    if _is_sync_client_mode():
+        return await _proxy_prompt_create_to_server(payload, db)
+    prompt_key = _clean_prompt_key(payload.get("prompt_key"))
+    if not prompt_key:
+        return {"error": True, "detail": "Prompt key is required."}
+    if db.scalar(select(Prompt.id).where(Prompt.prompt_key == prompt_key)):
+        return {"error": True, "detail": "A prompt already exists for this key."}
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        return {"error": True, "detail": "Prompt content is required."}
+    category, model, display_name = prompt_metadata(prompt_key)
+    prompt = Prompt(
+        prompt_key=prompt_key,
+        category=category,
+        model=model,
+        display_name=str(payload.get("display_name") or "").strip()[:255] or display_name,
+        content=content,
+        source_path=None,
+    )
+    db.add(prompt)
+    db.commit()
+    db.refresh(prompt)
+    clear_prompt_caches()
+    record_audit_event(
+        db,
+        user=current_user,
+        action="prompts.create",
+        request=request,
+        target_type="prompt",
+        target_id=prompt.prompt_key,
+        details={"prompt_id": prompt.id, "category": prompt.category, "model": prompt.model},
+    )
+    return {"error": False, "prompt": _prompt_detail(prompt), "detail": "Prompt created."}
+
+
+@router.get("/prompts/{prompt_id}")
+async def prompt_detail(
+    prompt_id: str,
+    current_user: AppUser = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    _ = current_user
+    prompt = db.get(Prompt, prompt_id)
+    if prompt is None:
+        return {"error": True, "detail": "Prompt not found."}
+    return {"error": False, "prompt": _prompt_detail(prompt)}
+
+
+@router.patch("/prompts/{prompt_id}")
+async def prompt_update(
+    prompt_id: str,
+    request: Request,
+    current_user: AppUser = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if not await _can_manage_prompts(db, current_user):
+        raise HTTPException(status_code=403, detail="Prompts are managed on the sync server.")
+    payload = await _json_payload_or_error(request, "Prompt update payload")
+    if isinstance(payload, JSONResponse):
+        return payload
+    if _is_sync_client_mode():
+        return await _proxy_prompt_update_to_server(prompt_id, payload, db)
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        return {"error": True, "detail": "Prompt content is required."}
+
+    prompt = db.get(Prompt, prompt_id)
+    if prompt is None:
+        return {"error": True, "detail": "Prompt not found."}
+    prompt.content = content
+    db.commit()
+    db.refresh(prompt)
+    clear_prompt_caches()
+    invalidated_sector_prompt_chunks = _invalidate_sector_prompt_index(db, prompt)
+    record_audit_event(
+        db,
+        user=current_user,
+        action="prompts.update",
+        request=request,
+        target_type="prompt",
+        target_id=prompt.prompt_key,
+        details={
+            "prompt_id": prompt.id,
+            "category": prompt.category,
+            "model": prompt.model,
+            "invalidated_sector_prompt_chunks": invalidated_sector_prompt_chunks,
+        },
+    )
+    return {"error": False, "prompt": _prompt_detail(prompt), "detail": "Prompt updated."}
+
+
 @router.delete("/knowledge/{document_id}")
 async def knowledge_delete(
     document_id: str,
@@ -709,6 +835,8 @@ async def knowledge_delete(
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    if not await _can_manage_main_knowledge(db, current_user):
+        raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
     service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
     try:
         deleted = await service.delete_document(document_id)
@@ -892,6 +1020,173 @@ def _knowledge_ingest_detail(
     if ingested_count:
         return f"Ingested {ingested_count} {source_label}(s) into {chunks} chunks."
     return f"No {source_label}s were ingested."
+
+
+def _prompt_summary(prompt: Prompt) -> dict[str, object]:
+    return {
+        "id": prompt.id,
+        "prompt_key": prompt.prompt_key,
+        "category": prompt.category,
+        "model": prompt.model,
+        "display_name": prompt.display_name,
+        "source_path": prompt.source_path,
+        "updated_at": prompt.updated_at.isoformat() if prompt.updated_at else None,
+        "content_preview": prompt.content[:180],
+    }
+
+
+def _prompt_detail(prompt: Prompt) -> dict[str, object]:
+    return {
+        **_prompt_summary(prompt),
+        "content": prompt.content,
+    }
+
+
+def _clean_prompt_key(value: object) -> str:
+    prompt_key = str(value or "").strip().replace("\\", "/")
+    if (
+        not prompt_key
+        or len(prompt_key) > 255
+        or prompt_key.startswith("/")
+        or ".." in prompt_key.split("/")
+        or not re.fullmatch(r"[A-Za-z0-9._:/-]+", prompt_key)
+    ):
+        return ""
+    return prompt_key
+
+
+def _should_seed_prompts_from_files() -> bool:
+    return str(settings.sync_mode or "").strip().casefold() == "server"
+
+
+def _is_sync_client_mode() -> bool:
+    return bool(settings.sync_enabled) and str(settings.sync_mode or "").strip().casefold() == "client"
+
+
+async def _proxy_prompt_create_to_server(payload: dict[str, object], db: Session) -> dict[str, object]:
+    response_payload = await _request_server_prompt_mutation("POST", "/api/sync/prompts", payload)
+    prompt_data = response_payload.get("prompt")
+    if isinstance(prompt_data, dict):
+        _upsert_prompt_from_payload(prompt_data, db)
+    return response_payload
+
+
+async def _proxy_prompt_update_to_server(
+    prompt_id: str,
+    payload: dict[str, object],
+    db: Session,
+) -> dict[str, object]:
+    response_payload = await _request_server_prompt_mutation(
+        "PATCH",
+        f"/api/sync/prompts/{prompt_id}",
+        payload,
+    )
+    prompt_data = response_payload.get("prompt")
+    if isinstance(prompt_data, dict):
+        _upsert_prompt_from_payload(prompt_data, db)
+    return response_payload
+
+
+async def _request_server_prompt_mutation(
+    method: str,
+    path: str,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    server_url = str(settings.sync_server_url or "").strip().rstrip("/")
+    token = str(settings.sync_api_token or "").strip()
+    if not server_url or not token:
+        raise HTTPException(status_code=503, detail="Client sync server and token are required for prompt management.")
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.request(
+                method,
+                f"{server_url}{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+            )
+        if response.status_code in {401, 403}:
+            raise HTTPException(status_code=response.status_code, detail="Prompt management permission is required.")
+        response.raise_for_status()
+        response_payload = response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail=f"Could not update prompt on sync server: {exc}") from exc
+    if not isinstance(response_payload, dict):
+        raise HTTPException(status_code=502, detail="Invalid prompt response from sync server.")
+    return response_payload
+
+
+def _upsert_prompt_from_payload(data: dict[str, object], db: Session) -> Prompt | None:
+    prompt_id = str(data.get("id") or "").strip()
+    prompt_key = _clean_prompt_key(data.get("prompt_key"))
+    content = str(data.get("content") or "").strip()
+    if not prompt_id or not prompt_key or not content:
+        return None
+    prompt = db.get(Prompt, prompt_id)
+    if prompt is None:
+        prompt = db.scalar(select(Prompt).where(Prompt.prompt_key == prompt_key))
+    if prompt is None:
+        prompt = Prompt(id=prompt_id)
+        db.add(prompt)
+    prompt.prompt_key = prompt_key
+    prompt.category = str(data.get("category") or "custom").strip()[:80] or "custom"
+    model = str(data.get("model") or "").strip()
+    prompt.model = model[:120] or None
+    prompt.display_name = str(data.get("display_name") or prompt_key).strip()[:255] or prompt_key
+    prompt.source_path = str(data.get("source_path") or "").strip()[:500] or None
+    prompt.content = content
+    db.commit()
+    db.refresh(prompt)
+    clear_prompt_caches()
+    return prompt
+
+
+async def _can_manage_prompts(db: Session, user: AppUser) -> bool:
+    if not bool(settings.sync_enabled):
+        return True
+    return await sync_client_permission_enabled(
+        db,
+        user,
+        "can_manage_prompts",
+        settings=settings,
+    )
+
+
+async def _can_reindex_sector_prompts(db: Session, user: AppUser) -> bool:
+    return await sync_client_permission_enabled(
+        db,
+        user,
+        "can_reindex_sector_prompts",
+        settings=settings,
+    )
+
+
+async def _can_manage_main_knowledge(db: Session, user: AppUser) -> bool:
+    return await sync_client_permission_enabled(
+        db,
+        user,
+        "can_sync_main_kb",
+        settings=settings,
+    )
+
+
+def _invalidate_sector_prompt_index(db: Session, prompt: Prompt) -> int:
+    if prompt.category != "sector":
+        return 0
+    prompt_files_by_name = {
+        "Energy_truth.txt": "energy",
+        "Housing_truth.txt": "housing",
+        "Transport_truth.txt": "transport",
+        "Default_system_prompt.txt": "default",
+    }
+    sector_key = prompt_files_by_name.get(prompt.prompt_key)
+    if not sector_key:
+        return 0
+    service = KnowledgeBaseService(db, None, scope=SECTOR_PROMPT_SCOPE)
+    return service.delete_documents_by_source_uris(
+        [SectorPromptRagService._source_uri(sector_key)]
+    )
 
 
 def _allowed_evidence_file(filename: str) -> bool:

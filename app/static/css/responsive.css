@@ -69,6 +69,23 @@
     border-bottom: 1px solid #e2e8f0;
   }
 
+  .prompt-library-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .prompt-list-shell {
+    max-height: 260px;
+    border-right: 0;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .prompt-dialog-header,
+  .prompt-editor-toolbar,
+  .prompt-editor-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .target-dialog {
     width: min(100vw - 18px, 720px);
     height: min(88vh, 720px);

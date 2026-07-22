@@ -13,7 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.auth import AUTH_COOKIE_NAME, CSRF_COOKIE_NAME, get_current_user, require_admin_user
 from app.config import get_settings
 from app.db.migrations_runtime import repair_partial_installer_schema, run_runtime_migrations
-from app.db.session import SessionLocal, validate_database_connection
+from app.db.session import SessionLocal, get_db, validate_database_connection
 from app.models import AppUser
 from app.observability import (
     configure_logging,
@@ -28,6 +28,8 @@ from app.routes.auth import router as auth_router
 from app.routes.sync import router as sync_router
 from app.security import apply_security_headers, create_csrf_token, csrf_request_allowed, csrf_token_valid
 from app.services.coverage import get_coverage_rows
+from app.services.prompt_store import enable_prompt_db_reads_if_rows, seed_prompts_from_files
+from app.services.sync_permissions import sync_client_permission_enabled
 from app.services.sync_service import SyncService
 
 settings = get_settings()
@@ -156,6 +158,10 @@ def _sync_server_disables_llm_services() -> bool:
     )
 
 
+def _should_seed_prompts_from_files() -> bool:
+    return str(settings.sync_mode or "").strip().casefold() == "server"
+
+
 @app.on_event("startup")
 async def startup() -> None:
     validate_database_connection()
@@ -164,6 +170,15 @@ async def startup() -> None:
     else:
         logger.info("Database auto-migration is disabled; checking installer schema health only")
         repair_partial_installer_schema()
+    try:
+        if _should_seed_prompts_from_files():
+            seeded_prompts = seed_prompts_from_files()
+            if seeded_prompts:
+                logger.info("Seeded %s prompt rows from packaged prompt files", seeded_prompts)
+        elif enable_prompt_db_reads_if_rows():
+            logger.info("Enabled database prompt reads from existing prompt rows")
+    except SQLAlchemyError:
+        logger.exception("Prompt database initialization failed; falling back to packaged prompt files")
     if _sync_server_disables_llm_services():
         logger.info("Sync-only server mode enabled; skipping LLM-dependent startup work")
         app.state.client_sync_task = None
@@ -219,7 +234,9 @@ async def database_exception_handler(_: Request, exc: SQLAlchemyError) -> JSONRe
 
 @app.get("/", response_class=HTMLResponse)
 async def index(
-    request: Request, current_user: AppUser | None = Depends(get_current_user)
+    request: Request,
+    current_user: AppUser | None = Depends(get_current_user),
+    db = Depends(get_db),
 ) -> Response:
     if current_user is None:
         return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
@@ -236,6 +253,10 @@ async def index(
             "current_user": current_user,
             "csrf_token": csrf_token,
             "sync_enabled": bool(settings.sync_enabled),
+            "can_manage_main_knowledge": await _can_manage_main_knowledge(db, current_user),
+            "can_view_prompt_library": await _can_view_prompt_library(db, current_user),
+            "can_manage_prompts": await _can_manage_prompts(db, current_user),
+            "can_reindex_sector_prompts": await _can_reindex_sector_prompts(db, current_user),
         },
     )
     response.set_cookie(
@@ -247,6 +268,52 @@ async def index(
         secure=settings.use_secure_auth_cookie,
     )
     return response
+
+
+async def _can_reindex_sector_prompts(db, user: AppUser) -> bool:
+    if str(user.role or "").strip().casefold() != "admin":
+        return False
+    return await sync_client_permission_enabled(
+        db,
+        user,
+        "can_reindex_sector_prompts",
+        settings=settings,
+    )
+
+
+async def _can_manage_main_knowledge(db, user: AppUser) -> bool:
+    if str(user.role or "").strip().casefold() != "admin":
+        return False
+    return await sync_client_permission_enabled(
+        db,
+        user,
+        "can_sync_main_kb",
+        settings=settings,
+    )
+
+
+async def _can_manage_prompts(db, user: AppUser) -> bool:
+    if str(user.role or "").strip().casefold() != "admin":
+        return False
+    if not bool(settings.sync_enabled):
+        return True
+    return await sync_client_permission_enabled(
+        db,
+        user,
+        "can_manage_prompts",
+        settings=settings,
+    )
+
+
+async def _can_view_prompt_library(db, user: AppUser) -> bool:
+    if str(user.role or "").strip().casefold() != "admin":
+        return False
+    return await sync_client_permission_enabled(
+        db,
+        user,
+        "can_manage_prompts",
+        settings=settings,
+    )
 
 
 @app.get("/health")

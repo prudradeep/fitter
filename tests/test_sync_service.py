@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.auth import hash_password
 from app.db.session import Base
-from app.models import AppUser, Country, KnowledgeChunk, KnowledgeDocument, UserChatMessage, UserSession
+from app.models import AppUser, Country, KnowledgeChunk, KnowledgeDocument, Prompt, UserChatMessage, UserSession
 from app.routes import sync as sync_routes
 from app.services.sync_service import SyncService
 
@@ -102,6 +102,12 @@ class SyncServiceTests(unittest.TestCase):
         session_keys = {row["session_key"] for row in self._rows(bundle, "user_sessions")}
         self.assertEqual(session_keys, {"new-session"})
 
+    def test_user_data_sync_defaults_enabled(self) -> None:
+        status = SyncService(self.db, device_id="device-a").user_data_sync_status()
+
+        self.assertTrue(status["enabled"])
+        self.assertIsNotNone(status["enabled_at"])
+
     def test_user_data_export_can_be_disabled(self) -> None:
         user = self._add_user("disabled-export@example.com")
         self.db.add(
@@ -121,6 +127,121 @@ class SyncServiceTests(unittest.TestCase):
 
         self.assertEqual(self._rows(bundle, "app_users"), [])
         self.assertEqual(self._rows(bundle, "user_sessions"), [])
+
+    def test_server_exports_prompts_to_clients(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "server"
+        try:
+            self.db.add(
+                Prompt(
+                    prompt_key="llm/custom_prompt.txt",
+                    category="llm",
+                    display_name="llm / custom_prompt.txt",
+                    content="Server prompt",
+                )
+            )
+            self.db.commit()
+
+            bundle = SyncService(self.db, device_id="server-device").export_bundle()
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        prompts = self._rows(bundle, "prompts")
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(prompts[0]["prompt_key"], "llm/custom_prompt.txt")
+
+    def test_client_does_not_export_prompts(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "client"
+        try:
+            self.db.add(
+                Prompt(
+                    prompt_key="llm/client_prompt.txt",
+                    category="llm",
+                    display_name="llm / client_prompt.txt",
+                    content="Client prompt",
+                )
+            )
+            self.db.commit()
+
+            bundle = SyncService(self.db, device_id="client-device").export_bundle()
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        self.assertEqual(self._rows(bundle, "prompts"), [])
+
+    def test_server_rejects_inbound_prompt_rows(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "server"
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "client-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "tables": [
+                {
+                    "name": "prompts",
+                    "rows": [
+                        {
+                            "sync_id": "11111111-1111-4111-8111-111111111111",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "prompt_key": "llm/client_prompt.txt",
+                            "category": "llm",
+                            "display_name": "Client Prompt",
+                            "content": "Client prompt",
+                            "source_path": None,
+                        }
+                    ],
+                }
+            ],
+        }
+        try:
+            result = SyncService(self.db, device_id="server-device").apply_bundle(
+                bundle,
+                sync_client={"active": True, "can_sync_validated_kb": True, "can_sync_user_data": True},
+            )
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        self.assertEqual(result.inserted, 0)
+        self.assertEqual(result.skipped, 1)
+        self.assertEqual(self.db.query(Prompt).count(), 0)
+
+    def test_client_applies_server_prompt_rows(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "client"
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "server-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "tables": [
+                {
+                    "name": "prompts",
+                    "rows": [
+                        {
+                            "sync_id": "11111111-1111-4111-8111-111111111111",
+                            "origin_device_id": "server-device",
+                            "sync_revision": 1,
+                            "prompt_key": "llm/server_prompt.txt",
+                            "category": "llm",
+                            "display_name": "Server Prompt",
+                            "content": "Server prompt",
+                            "source_path": None,
+                        }
+                    ],
+                }
+            ],
+        }
+        try:
+            result = SyncService(self.db, device_id="client-device").apply_bundle(bundle)
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        prompt = self.db.scalar(select(Prompt).where(Prompt.prompt_key == "llm/server_prompt.txt"))
+        self.assertEqual(result.inserted, 1)
+        self.assertTrue(result.prompts_dirty)
+        self.assertIsNotNone(prompt)
+        self.assertEqual(prompt.content, "Server prompt")
 
     def test_client_can_export_app_users_when_user_data_sync_is_disabled(self) -> None:
         user = self._add_user("client-user@example.com")
@@ -566,13 +687,86 @@ class SyncServiceTests(unittest.TestCase):
             ],
         }
         try:
-            result = SyncService(self.db, device_id="server-device").apply_bundle(bundle)
+            result = SyncService(self.db, device_id="server-device").apply_bundle(
+                bundle,
+                sync_client={"active": True, "can_sync_validated_kb": True, "can_sync_user_data": True},
+            )
         finally:
             sync_routes.settings.sync_mode = original_mode
 
         scopes = {row.scope for row in self.db.query(KnowledgeDocument).all()}
         self.assertEqual(result.inserted, 1)
         self.assertEqual(scopes, {"validated_evidence"})
+
+    def test_server_rejects_validated_knowledge_when_token_disallows_validated_kb(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "server"
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "client-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "tables": [
+                {
+                    "name": "knowledge_documents",
+                    "rows": [
+                        {
+                            "sync_id": "33333333-3333-4333-8333-333333333333",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "scope": "validated_evidence",
+                            "title": "Client Validated",
+                            "source_type": "txt",
+                            "source_uri": "client-validated.txt",
+                            "scope_level": "global",
+                        },
+                    ],
+                }
+            ],
+        }
+        try:
+            result = SyncService(self.db, device_id="server-device").apply_bundle(
+                bundle,
+                sync_client={"active": True, "can_sync_validated_kb": False, "can_sync_user_data": True},
+            )
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        self.assertEqual(result.inserted, 0)
+        self.assertEqual(self.db.query(KnowledgeDocument).count(), 0)
+
+    def test_server_rejects_user_data_when_token_disallows_user_data(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        sync_routes.settings.sync_mode = "server"
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "client-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "tables": [
+                {
+                    "name": "user_sessions",
+                    "rows": [
+                        {
+                            "sync_id": "44444444-4444-4444-8444-444444444444",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "session_key": "client-session",
+                            "title": "Client Session",
+                            "session_data": "{}",
+                        },
+                    ],
+                }
+            ],
+        }
+        try:
+            result = SyncService(self.db, device_id="server-device").apply_bundle(
+                bundle,
+                sync_client={"active": True, "can_sync_validated_kb": True, "can_sync_user_data": False},
+            )
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+
+        self.assertEqual(result.inserted, 0)
+        self.assertEqual(self.db.query(UserSession).count(), 0)
 
     def test_server_accepts_admin_main_sector_and_validated_knowledge(self) -> None:
         original_mode = sync_routes.settings.sync_mode
@@ -677,7 +871,10 @@ class SyncServiceTests(unittest.TestCase):
             ],
         }
         try:
-            result = SyncService(self.db, device_id="server-device").apply_bundle(bundle)
+            result = SyncService(self.db, device_id="server-device").apply_bundle(
+                bundle,
+                sync_client={"active": True, "can_sync_validated_kb": True, "can_sync_user_data": True},
+            )
         finally:
             sync_routes.settings.sync_mode = original_mode
 
@@ -722,11 +919,14 @@ class SyncServiceTests(unittest.TestCase):
         try:
             sync_routes.settings.sync_enabled = True
             sync_routes.settings.sync_api_token = "secret"
+            SyncService(self.db).upsert_sync_client(token="saved-secret", client_name="Saved client")
             client = TestClient(app)
             denied = client.get("/api/sync/status", headers={"X-Sync-Token": "wrong"})
-            allowed = client.get("/api/sync/status", headers={"X-Sync-Token": "secret"})
+            legacy_denied = client.get("/api/sync/status", headers={"X-Sync-Token": "secret"})
+            allowed = client.get("/api/sync/status", headers={"X-Sync-Token": "saved-secret"})
 
             self.assertEqual(denied.status_code, 401)
+            self.assertEqual(legacy_denied.status_code, 401)
             self.assertEqual(allowed.status_code, 200)
             self.assertIn("user_sessions", allowed.json()["tables"])
             self.assertEqual(allowed.json()["server_to_client_knowledge_scopes"], ["main", "validated_evidence", "sector_prompt"])
@@ -869,6 +1069,7 @@ class SyncServiceTests(unittest.TestCase):
 
     def test_exchange_includes_encrypted_app_users_in_normal_server_response(self) -> None:
         self._add_user("server-admin@example.com", role="admin")
+        SyncService(self.db).upsert_sync_client(token="secret", client_name="Normal sync client")
         response = self._exchange_response(
             {
                 "format": "dr-transition-sync-v1",
@@ -883,8 +1084,33 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(len(users), 1)
         self.assertIn("__encrypted_row", users[0])
 
+    def test_exchange_excludes_user_data_when_sync_client_disallows_user_data(self) -> None:
+        self._add_user("server-admin@example.com", role="admin")
+        SyncService(self.db).upsert_sync_client(
+            token="no-user-data-token",
+            client_name="No user data client",
+            can_sync_user_data=False,
+        )
+        response = self._exchange_response(
+            {
+                "format": "dr-transition-sync-v1",
+                "device_id": "client-device",
+                "exported_at": "2026-07-20T00:00:00Z",
+                "tables": [],
+            },
+            token="no-user-data-token",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._rows(response.json()["bundle"], "app_users"), [])
+
     def test_exchange_includes_app_users_for_server_approved_admin_sync(self) -> None:
         self._add_user("server-admin@example.com", role="admin")
+        SyncService(self.db).upsert_sync_client(
+            token="secret",
+            client_name="Admin sync client",
+            can_sync_validated_kb=True,
+        )
         response = self._exchange_response(
             {
                 "format": "dr-transition-sync-v1",

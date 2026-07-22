@@ -27,6 +27,16 @@ The sync service does not sync local FAISS files. FAISS indexes are derived from
 `knowledge_documents` and `knowledge_chunks`, and should be rebuilt after synced
 knowledge rows are imported.
 
+The sync service also does not sync internal control tables:
+
+- `sync_clients`
+- `sync_state`
+- `schema_migrations`
+
+`sync_clients` is server-owned credential state. Create or rotate those rows on
+the central server only; clients receive only their raw token in local
+configuration.
+
 ## Knowledge Base Sync
 
 Knowledge-base rows are stored in two DB tables:
@@ -147,18 +157,22 @@ Enable sync on the central server:
 ```env
 SYNC_ENABLED=true
 SYNC_MODE=server
-SYNC_API_TOKEN="<optional legacy normal-sync fallback token>"
 SYNC_INCLUDE_LOGS=false
 SYNC_SERVER_EXPOSE_APP_APIS=false
 ```
 
-Create server-owned sync credentials after migrations. Give normal clients no
-Main/Sector permissions:
+Do not set a server-wide legacy `SYNC_API_TOKEN` on the central server. Sync
+tokens are created as server-owned `sync_clients` rows. The server stores only
+the SHA-256 hash; the raw token is printed once and goes into the matching
+client's environment.
+
+Create server-owned sync credentials after migrations. If `--token` is omitted,
+the script generates a strong token with Python `secrets.token_urlsafe(32)`.
+Give normal clients no Main/Sector permissions:
 
 ```bash
 uv run python scripts/create_sync_client.py \
-  --name "Client 01" \
-  --token "<client-01-token>"
+  --name "Client 01"
 ```
 
 Give an admin workstation explicit KB permissions:
@@ -166,15 +180,34 @@ Give an admin workstation explicit KB permissions:
 ```bash
 uv run python scripts/create_sync_client.py \
   --name "Admin workstation" \
-  --token "<admin-client-token>" \
   --user-email "admin@example.com" \
   --main-kb \
   --sector-prompts \
-  --reindex-sector-prompts
+  --reindex-sector-prompts \
+  --manage-prompts
 ```
 
 Use high-entropy per-client tokens, store them in a secret manager where
 possible, and rotate them if exposed.
+
+`--reindex-sector-prompts` controls whether the admin user named by
+`--user-email` may run the sector prompt reindex action when sync is enabled.
+In client mode, the local app checks the configured raw `SYNC_API_TOKEN`
+against the central server's `/api/sync/status` response and uses that
+server-owned permission. Without that flag, the Reindex button is hidden and
+the API returns `403`.
+
+Main KB management uses the same pattern. When sync is enabled, Main KB upload,
+URL ingest, and delete actions require `can_sync_main_kb=true` for the
+server-owned sync credential. In client mode this is checked against the central
+server using the configured raw client token.
+
+Validated-evidence uploads during sync require `can_sync_validated_kb=true`.
+User data and app-user rows require `can_sync_user_data=true` for both inbound
+server apply and server response bundles. Prompt create/update requires
+`can_manage_prompts=true`. In client mode, prompt create/update is proxied to
+the central server through `/api/sync/prompts`, then cached locally from the
+server response.
 
 ## Client Environment
 
@@ -184,7 +217,7 @@ On each local installation that should sync to the central backend:
 SYNC_ENABLED=true
 SYNC_MODE=client
 SYNC_SERVER_URL="https://your-sync-host.example"
-SYNC_API_TOKEN="<server-issued sync client token>"
+SYNC_API_TOKEN="<raw token printed by scripts/create_sync_client.py>"
 SYNC_DEVICE_ID="<stable UUID for this installation>"
 SYNC_INCLUDE_LOGS=false
 SYNC_AUTO_ON_STARTUP=true
@@ -201,6 +234,8 @@ central server accepts Main/Sector KB only if the sync token also has those
 server-side `sync_clients` permissions. Automatic startup and interval sync has
 no signed-in admin context, so it uploads only normal client scopes. Configure
 automatic sync through `SYNC_AUTO_ON_STARTUP` and `SYNC_INTERVAL_SECONDS`.
+Client user-data sync is enabled by default. Users can disable it from the
+client sync settings; disabling writes a local `sync_state` opt-out.
 
 ## Database Setup
 

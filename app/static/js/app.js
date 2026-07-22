@@ -72,7 +72,10 @@ const sessionsPanel = document.querySelector("#sessionsPanel");
 const closeSessionsButton = document.querySelector("#closeSessionsButton");
 const sessionsList = document.querySelector("#sessionsList");
 const knowledgeButton = document.querySelector("#knowledgeButton");
+const promptsButton = document.querySelector("#promptsButton");
 const knowledgeDialog = document.querySelector("#knowledgeDialog");
+const promptLibraryDialog = document.querySelector("#promptLibraryDialog");
+const closePromptLibraryButton = document.querySelector("#closePromptLibraryButton");
 const closeKnowledgeButton = document.querySelector("#closeKnowledgeButton");
 const knowledgeUploadForm = document.querySelector("#knowledgeUploadForm");
 const knowledgeUrlForm = document.querySelector("#knowledgeUrlForm");
@@ -86,12 +89,26 @@ const knowledgeProgressList = document.querySelector("#knowledgeProgressList");
 const knowledgeDocuments = document.querySelector("#knowledgeDocuments");
 const knowledgeResults = document.querySelector("#knowledgeResults");
 const canManageMainKnowledge = knowledgeDialog?.dataset.canManageMainKb === "true";
+const canManagePrompts = promptLibraryDialog?.dataset.canManagePrompts === "true";
 const sectorPromptReindexButton = document.querySelector("#sectorPromptReindexButton");
 const sectorPromptSearchForm = document.querySelector("#sectorPromptSearchForm");
 const sectorPromptSectorInput = document.querySelector("#sectorPromptSectorInput");
 const sectorPromptSearchInput = document.querySelector("#sectorPromptSearchInput");
 const sectorPromptMessage = document.querySelector("#sectorPromptMessage");
 const sectorPromptResults = document.querySelector("#sectorPromptResults");
+const promptLibrarySection = document.querySelector("#promptLibrarySection");
+const newPromptButton = document.querySelector("#newPromptButton");
+const refreshPromptsButton = document.querySelector("#refreshPromptsButton");
+const promptSearchInput = document.querySelector("#promptSearchInput");
+const promptList = document.querySelector("#promptList");
+const promptEditorForm = document.querySelector("#promptEditorForm");
+const promptEditorTitle = document.querySelector("#promptEditorTitle");
+const promptEditorMeta = document.querySelector("#promptEditorMeta");
+const promptKeyField = document.querySelector("#promptKeyField");
+const promptKeyInput = document.querySelector("#promptKeyInput");
+const promptContentInput = document.querySelector("#promptContentInput");
+const promptEditorMessage = document.querySelector("#promptEditorMessage");
+const savePromptButton = document.querySelector("#savePromptButton");
 const renameSessionDialog = document.querySelector("#renameSessionDialog");
 const renameSessionForm = document.querySelector("#renameSessionForm");
 const renameSessionInput = document.querySelector("#renameSessionInput");
@@ -205,6 +222,9 @@ let optionTooltipElement = null;
 let optionTooltipTarget = null;
 let sourceCitationTooltipTarget = null;
 let listedHazardOptions = [];
+let promptRows = [];
+let selectedPromptId = "";
+let creatingPrompt = false;
 
 const defaultPlaceholder = "Type a country, region, or sector...";
 const panelWidthKey = storageKeys.panelWidth || "dr_transition_visual_panel_width";
@@ -4201,6 +4221,271 @@ async function searchSectorPrompts() {
   }
 }
 
+async function openPromptLibraryDialog() {
+  if (!promptLibraryDialog) return;
+  if (typeof promptLibraryDialog.showModal === "function") {
+    promptLibraryDialog.showModal();
+  } else {
+    promptLibraryDialog.removeAttribute("hidden");
+  }
+  await loadPrompts();
+  promptSearchInput?.focus();
+}
+
+function closePromptLibraryDialog() {
+  if (!promptLibraryDialog) return;
+  if (typeof promptLibraryDialog.close === "function") {
+    promptLibraryDialog.close();
+  } else {
+    promptLibraryDialog.setAttribute("hidden", "");
+  }
+}
+
+function showPromptEditorMessage(message, isError = true) {
+  if (!promptEditorMessage) return;
+  promptEditorMessage.textContent = message;
+  promptEditorMessage.hidden = false;
+  promptEditorMessage.classList.toggle("success", !isError);
+}
+
+async function loadPrompts() {
+  if (!promptList) return;
+  renderEmptyState(promptList, "Loading prompts...");
+  try {
+    const response = await fetch("/api/prompts");
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    promptRows = data.prompts || [];
+    renderPromptList();
+    configurePromptMutationControls();
+  } catch (error) {
+    console.error("Prompt list failed", error);
+    promptRows = [];
+    renderEmptyState(promptList, "Could not load prompts.");
+  }
+}
+
+function configurePromptMutationControls() {
+  if (newPromptButton) newPromptButton.disabled = !canManagePrompts;
+}
+
+function renderPromptList() {
+  if (!promptList) return;
+  const filter = (promptSearchInput?.value || "").trim().toLowerCase();
+  const rows = promptRows.filter((prompt) => {
+    const haystack = [
+      prompt.prompt_key,
+      prompt.display_name,
+      prompt.category,
+      prompt.model,
+      prompt.content_preview,
+    ].join(" ").toLowerCase();
+    return !filter || haystack.includes(filter);
+  });
+  clearElement(promptList);
+  if (!rows.length) {
+    renderEmptyState(promptList, "No prompts match this filter.");
+    return;
+  }
+  rows.forEach((prompt) => {
+    const row = createElement("button", {
+      className: "knowledge-item prompt-list-item",
+      text: "",
+      attrs: { type: "button" },
+    }, [
+      createElement("span", { className: "prompt-list-title", text: prompt.display_name || prompt.prompt_key }),
+      createElement("span", { className: "prompt-list-meta" }, [
+        createElement("span", { text: prompt.category || "prompt" }),
+        ...(prompt.model ? [createElement("span", { text: prompt.model })] : []),
+        ...(prompt.updated_at ? [createElement("span", { text: promptUpdatedLabel(prompt.updated_at) })] : []),
+      ]),
+      createElement("span", { className: "prompt-list-preview", text: prompt.content_preview || "" }),
+    ]);
+    row.classList.toggle("active", !creatingPrompt && prompt.id === selectedPromptId);
+    row.addEventListener("click", () => loadPromptDetail(prompt.id));
+    promptList.appendChild(row);
+  });
+}
+
+function promptMetaLabel(prompt) {
+  return [prompt.category || "prompt", prompt.model || "", prompt.updated_at ? promptUpdatedLabel(prompt.updated_at) : ""]
+    .filter(Boolean)
+    .join(" - ");
+}
+
+function promptUpdatedLabel(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).replace("T", " ").slice(0, 16);
+  return date.toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+async function loadPromptDetail(promptId) {
+  if (!promptId) return;
+  creatingPrompt = false;
+  selectedPromptId = promptId;
+  renderPromptList();
+  if (promptContentInput) {
+    promptContentInput.disabled = true;
+    promptContentInput.value = "Loading prompt...";
+  }
+  if (savePromptButton) savePromptButton.disabled = true;
+  try {
+    const response = await fetch(`/api/prompts/${encodeURIComponent(promptId)}`);
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    if (data.error || !data.prompt) throw new Error(data.detail || "Prompt not found.");
+    renderPromptEditor(data.prompt);
+  } catch (error) {
+    console.error("Prompt detail failed", error);
+    showPromptEditorMessage("Could not load prompt.");
+  }
+}
+
+function renderPromptEditor(prompt) {
+  creatingPrompt = false;
+  selectedPromptId = prompt.id;
+  if (promptEditorTitle) promptEditorTitle.textContent = prompt.display_name || prompt.prompt_key;
+  if (promptEditorMeta) promptEditorMeta.textContent = promptMetaLabel(prompt);
+  if (promptKeyField) promptKeyField.hidden = false;
+  if (promptKeyInput) {
+    promptKeyInput.value = prompt.prompt_key || "";
+    promptKeyInput.disabled = false;
+    promptKeyInput.readOnly = true;
+  }
+  if (promptContentInput) {
+    promptContentInput.value = prompt.content || "";
+    promptContentInput.disabled = !canManagePrompts;
+    if (canManagePrompts) promptContentInput.focus();
+  }
+  if (savePromptButton) savePromptButton.disabled = !canManagePrompts;
+  if (promptEditorMessage) {
+    promptEditorMessage.hidden = true;
+  }
+  renderPromptList();
+}
+
+function startNewPrompt() {
+  if (!canManagePrompts) {
+    showPromptEditorMessage("Prompts are managed on the sync server and synced to this client.");
+    return;
+  }
+  creatingPrompt = true;
+  selectedPromptId = "";
+  if (promptEditorTitle) promptEditorTitle.textContent = "New prompt";
+  if (promptEditorMeta) promptEditorMeta.textContent = "Create a database-backed prompt row";
+  if (promptKeyField) promptKeyField.hidden = false;
+  if (promptKeyInput) {
+    promptKeyInput.value = "";
+    promptKeyInput.disabled = false;
+    promptKeyInput.readOnly = false;
+  }
+  if (promptContentInput) {
+    promptContentInput.value = "";
+    promptContentInput.disabled = false;
+  }
+  if (savePromptButton) savePromptButton.disabled = false;
+  if (promptEditorMessage) promptEditorMessage.hidden = true;
+  renderPromptList();
+  promptKeyInput?.focus();
+}
+
+async function saveSelectedPrompt() {
+  if (!canManagePrompts) {
+    showPromptEditorMessage("Prompts are managed on the sync server and synced to this client.");
+    return;
+  }
+  if (!selectedPromptId || !promptContentInput) return;
+  const content = promptContentInput.value.trim();
+  if (!content) {
+    flashRequiredField(promptContentInput);
+    return;
+  }
+  if (savePromptButton) savePromptButton.disabled = true;
+  showPromptEditorMessage("Saving prompt...", false);
+  try {
+    const response = await csrfFetch(`/api/prompts/${encodeURIComponent(selectedPromptId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    if (data.error) throw new Error(data.detail || "Could not save prompt.");
+    const index = promptRows.findIndex((prompt) => prompt.id === selectedPromptId);
+    if (index >= 0) promptRows[index] = data.prompt;
+    renderPromptEditor(data.prompt);
+    showPromptEditorMessage("Prompt saved.", false);
+  } catch (error) {
+    console.error("Prompt save failed", error);
+    showPromptEditorMessage(error.message || "Could not save prompt.");
+  } finally {
+    if (savePromptButton) savePromptButton.disabled = false;
+  }
+}
+
+async function createPrompt() {
+  if (!canManagePrompts) {
+    showPromptEditorMessage("Prompts are managed on the sync server and synced to this client.");
+    return;
+  }
+  if (!promptKeyInput || !promptContentInput) return;
+  const promptKey = promptKeyInput.value.trim();
+  const content = promptContentInput.value.trim();
+  if (!promptKey) {
+    flashRequiredField(promptKeyInput);
+    return;
+  }
+  if (!content) {
+    flashRequiredField(promptContentInput);
+    return;
+  }
+  if (savePromptButton) savePromptButton.disabled = true;
+  showPromptEditorMessage("Creating prompt...", false);
+  try {
+    const response = await csrfFetch("/api/prompts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt_key: promptKey, content }),
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    if (data.error) throw new Error(data.detail || "Could not create prompt.");
+    promptRows = [data.prompt, ...promptRows.filter((prompt) => prompt.id !== data.prompt.id)];
+    renderPromptEditor(data.prompt);
+    showPromptEditorMessage("Prompt created.", false);
+    await loadPrompts();
+    await loadPromptDetail(data.prompt.id);
+  } catch (error) {
+    console.error("Prompt create failed", error);
+    showPromptEditorMessage(error.message || "Could not create prompt.");
+  } finally {
+    if (savePromptButton) savePromptButton.disabled = false;
+  }
+}
+
 async function deleteKnowledgeDocument(documentId) {
   const response = await csrfFetch(`/api/knowledge/${encodeURIComponent(documentId)}`, {
     method: "DELETE",
@@ -4722,7 +5007,12 @@ knowledgeButton?.addEventListener("click", () => {
   closeSettingsDrawer();
   openKnowledgeDialog();
 });
+promptsButton?.addEventListener("click", () => {
+  closeSettingsDrawer();
+  openPromptLibraryDialog();
+});
 closeKnowledgeButton?.addEventListener("click", closeKnowledgeDialog);
+closePromptLibraryButton?.addEventListener("click", closePromptLibraryDialog);
 
 knowledgeUploadForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -4815,6 +5105,18 @@ sectorPromptReindexButton?.addEventListener("click", reindexSectorPrompts);
 sectorPromptSearchForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   await searchSectorPrompts();
+});
+
+refreshPromptsButton?.addEventListener("click", loadPrompts);
+newPromptButton?.addEventListener("click", startNewPrompt);
+promptSearchInput?.addEventListener("input", renderPromptList);
+promptEditorForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (creatingPrompt) {
+    await createPrompt();
+  } else {
+    await saveSelectedPrompt();
+  }
 });
 
 profileButton?.addEventListener("click", () => {

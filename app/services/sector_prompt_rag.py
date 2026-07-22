@@ -1,7 +1,6 @@
 import logging
 import re
 import time
-from pathlib import Path
 
 import httpx
 from sqlalchemy import delete, func, select
@@ -9,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import KnowledgeChunk, KnowledgeDocument
 from app.services.knowledge_base import ChunkDraft, KnowledgeBaseService, chunk_text
-from app.services.prompt_loader import PROMPT_DIR, PROMPT_FILES, sector_prompt_name
+from app.services.prompt_loader import PROMPT_FILES, load_sector_prompt, sector_prompt_name
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +58,8 @@ class SectorPromptRagService:
             )
             existing_uris = set()
 
-        for sector, source_uri, prompt_path in prompt_sources:
+        for sector, source_uri, text in prompt_sources:
             try:
-                text = prompt_path.read_text(encoding="utf-8").strip()
                 chunks = self._sector_prompt_chunks(text)
                 expected_hazard_blocks = sum(
                     1 for chunk in chunks if chunk.content.startswith("HAZARD")
@@ -264,15 +262,15 @@ class SectorPromptRagService:
         return "\n".join(lines)
 
     @classmethod
-    def _prompt_sources(cls) -> list[tuple[str, str, Path]]:
-        sources: list[tuple[str, str, Path]] = []
-        for sector, filename in PROMPT_FILES.items():
-            prompt_path = PROMPT_DIR / filename
-            if prompt_path.exists():
-                sources.append((sector, cls._source_uri(sector), prompt_path))
-        default_path = PROMPT_DIR / "Default_system_prompt.txt"
-        if default_path.exists():
-            sources.append(("default", cls._source_uri("default"), default_path))
+    def _prompt_sources(cls) -> list[tuple[str, str, str]]:
+        sources: list[tuple[str, str, str]] = []
+        for sector in PROMPT_FILES:
+            text = load_sector_prompt(sector)
+            if text:
+                sources.append((sector, cls._source_uri(sector), text))
+        default_text = load_sector_prompt("default")
+        if default_text:
+            sources.append(("default", cls._source_uri("default"), default_text))
         return sources
 
     @staticmethod

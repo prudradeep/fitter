@@ -32,6 +32,7 @@ Admin client-to-server knowledge-base scopes:
 
 - `main`
 - `validated_evidence`
+- `sector_prompt`
 
 Not synced:
 
@@ -58,7 +59,7 @@ Replace these placeholders throughout:
 your-domain.example
 strong-db-password
 long-random-secret-key
-long-random-sync-token
+client-raw-sync-token
 deploy-user
 ```
 
@@ -227,7 +228,6 @@ ACCESS_LOG_SAMPLE_RATE=1.0
 
 SYNC_ENABLED=true
 SYNC_MODE=server
-SYNC_API_TOKEN="optional-legacy-normal-sync-fallback-token"
 SYNC_INCLUDE_LOGS=false
 SYNC_SERVER_EXPOSE_APP_APIS=false
 
@@ -269,19 +269,44 @@ After migrations, create server-owned sync credentials:
 
 ```bash
 uv run python scripts/create_sync_client.py \
-  --name "Client 01" \
-  --token "client-01-token"
+  --name "Client 01"
 
 uv run python scripts/create_sync_client.py \
   --name "Admin workstation" \
-  --token "admin-client-token" \
   --user-email "admin@example.com" \
   --main-kb \
   --sector-prompts \
-  --reindex-sector-prompts
+  --reindex-sector-prompts \
+  --manage-prompts
 ```
 
-Use the generated or supplied token as `SYNC_API_TOKEN` on that specific client.
+If `--token` is omitted, the script generates a strong token with Python
+`secrets.token_urlsafe(32)`. The central server stores only the SHA-256 hash in
+`sync_clients`; use the printed raw `Token:` value as `SYNC_API_TOKEN` on that
+specific client. Do not use the printed `Token SHA256:` value on the client.
+
+`sync_clients` is server-owned credential state and is not synced to clients or
+back from clients. Create, revoke, or rotate sync-client credentials on the
+central server only.
+
+`--reindex-sector-prompts` controls whether the admin user named by
+`--user-email` may run sector prompt reindex when sync is enabled. In client
+mode, the local app checks the configured raw `SYNC_API_TOKEN` against the
+central server's `/api/sync/status` response and uses that server-owned
+permission. Without that flag, the Reindex button is hidden and the API returns
+`403`.
+
+Main KB management uses the same pattern. When sync is enabled, Main KB upload,
+URL ingest, and delete actions require `can_sync_main_kb=true` for the
+server-owned sync credential. In client mode this is checked against the central
+server using the configured raw client token.
+
+Validated-evidence uploads during sync require `can_sync_validated_kb=true`.
+User data and app-user rows require `can_sync_user_data=true` for both inbound
+server apply and server response bundles. Prompt create/update requires
+`can_manage_prompts=true`. In client mode, prompt create/update is proxied to
+the central server through `/api/sync/prompts`, then cached locally from the
+server response.
 
 ## 7. Apply Database Schema And Seed Data
 
@@ -433,7 +458,7 @@ curl https://your-domain.example/health/ready
 Check sync status:
 
 ```bash
-curl -H "Authorization: Bearer long-random-sync-token" \
+curl -H "Authorization: Bearer client-raw-sync-token" \
   https://your-domain.example/api/sync/status
 ```
 
@@ -489,7 +514,7 @@ Client example:
 SYNC_ENABLED=true
 SYNC_MODE=client
 SYNC_SERVER_URL="https://your-domain.example"
-SYNC_API_TOKEN="long-random-sync-token"
+SYNC_API_TOKEN="client-raw-sync-token"
 SYNC_DEVICE_ID="client-specific-stable-uuid"
 SYNC_INCLUDE_LOGS=false
 SYNC_AUTO_ON_STARTUP=true
@@ -519,7 +544,7 @@ From a local client with the backend running:
 
 ```bash
 curl -X POST \
-  -H "Authorization: Bearer long-random-sync-token" \
+  -H "Authorization: Bearer client-raw-sync-token" \
   http://127.0.0.1:8000/api/sync/run
 ```
 
@@ -547,6 +572,8 @@ Automatic client sync:
 - Set `SYNC_INTERVAL_SECONDS=0` to disable interval sync.
 - Auto-sync only runs in `SYNC_MODE=client` when `SYNC_SERVER_URL` and
   `SYNC_API_TOKEN` are configured.
+- Client user-data sync is enabled by default. Users can disable it from the
+  client sync settings; disabling writes a local `sync_state` opt-out.
 
 ## 14. Knowledge Base After Sync
 
@@ -561,7 +588,7 @@ Why:
 After sync, inspect dirty KB scopes:
 
 ```bash
-curl -H "Authorization: Bearer long-random-sync-token" \
+curl -H "Authorization: Bearer client-raw-sync-token" \
   https://your-domain.example/api/sync/status
 ```
 
@@ -750,7 +777,7 @@ Check sync token:
 
 ```bash
 curl -i https://your-domain.example/api/sync/status
-curl -i -H "Authorization: Bearer long-random-sync-token" \
+curl -i -H "Authorization: Bearer client-raw-sync-token" \
   https://your-domain.example/api/sync/status
 ```
 
@@ -760,7 +787,6 @@ Common issues:
 - `404` from `/login` or `/api/chat` on the central server: expected when `SYNC_MODE=server` and `SYNC_SERVER_EXPOSE_APP_APIS=false`.
 - LLM/Ollama requests appearing in central server logs: check that `SYNC_MODE=server` and `SYNC_SERVER_EXPOSE_APP_APIS=false`, then restart `dr-transition`.
 - `401`: wrong or missing sync token.
-- `503`: `SYNC_API_TOKEN` is not configured on the server.
 - `/health/ready` fails: database URL, credentials, MySQL service, or schema is wrong.
 - Client sync fails with HTTPS error: DNS, certificate, proxy, or firewall issue.
 
@@ -768,7 +794,7 @@ Common issues:
 
 - Use HTTPS for all central sync traffic.
 - Keep `/etc/dr-transition.env` readable only by root and the deploy user.
-- Use different strong values for `SECRET_KEY`, DB password, and `SYNC_API_TOKEN`.
+- Use different strong values for `SECRET_KEY`, DB password, and every client `SYNC_API_TOKEN`.
 - Keep `DATABASE_AUTO_MIGRATE=false` in production.
 - Keep `SYNC_SERVER_EXPOSE_APP_APIS=false` on central sync-only servers.
 - Do not install or start Ollama, reranker, or NLI on sync-only central servers.

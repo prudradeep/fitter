@@ -1,5 +1,11 @@
 import argparse
 import secrets
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from app.db.session import SessionLocal
 from app.services.sync_service import SyncService
@@ -13,6 +19,7 @@ def main() -> None:
     parser.add_argument("--main-kb", action="store_true", help="Allow syncing Main Knowledge Base to server.")
     parser.add_argument("--sector-prompts", action="store_true", help="Allow syncing Sector Prompt KB to server.")
     parser.add_argument("--reindex-sector-prompts", action="store_true", help="Allow sector prompt reindex actions.")
+    parser.add_argument("--manage-prompts", action="store_true", help="Allow prompt create/update actions on the sync server.")
     parser.add_argument(
         "--no-validated-kb",
         action="store_true",
@@ -35,6 +42,7 @@ def main() -> None:
             can_sync_main_kb=args.main_kb,
             can_sync_sector_prompts=args.sector_prompts,
             can_reindex_sector_prompts=args.reindex_sector_prompts,
+            can_manage_prompts=args.manage_prompts,
             can_sync_validated_kb=not args.no_validated_kb,
             can_sync_user_data=not args.no_user_data,
             active=not args.inactive,
