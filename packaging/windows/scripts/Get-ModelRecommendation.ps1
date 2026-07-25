@@ -100,7 +100,7 @@ $ModelTiers = @(
         Tier = "upper-mid"
         MinRamGb = 24
         MinGpuVramGb = 6
-        RecommendedModel = "ministral-3:8b"
+        RecommendedModel = "mistral-nemo"
         ContextLength = 8192
         Reason = "Upper mid-range hardware detected. Ministral 3 8B provides efficient multilingual reasoning and strong local response quality."
     },

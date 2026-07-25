@@ -82,6 +82,7 @@ from app.services.custom_hazard_validation import (
     frontend_custom_hazard_payload,
     validate_custom_hazard_dimensions,
 )
+from app.services.custom_hazard_text_rules import deterministic_custom_hazard_input_review
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.knowledge_base import TEMPORARY_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html, render_message
@@ -669,27 +670,19 @@ class ChatHazardCreationMixin:
                 error=True,
             )
 
-        hazard_review = await self._review_custom_hazard_input(session, hazard)
-        if hazard_review is None:
-            return self._custom_hazard_response(
-                session_id=session_id,
-                session=session,
-                step="hazards",
-                bot_message=(
-                    "I could not review this hazard for clarity and policy fit because "
-                    "the local LLM is unavailable. Please try again."
-                ),
-                options=HAZARD_ENTRY_OPTIONS,
-                error=True,
-            )
-        if not hazard_review["valid"]:
+        deterministic_review = deterministic_custom_hazard_input_review(
+            selected_sector=session.sector,
+            hazard=hazard,
+        )
+        if deterministic_review is not None and not bool(deterministic_review.get("valid")):
             session.pending_hazard = None
+            reason = str(deterministic_review.get("reason") or "")
             self._mark_custom_hazard_dimension(
                 session,
-                self._custom_hazard_rejection_dimension(str(hazard_review["reason"])),
+                "twin_transition_policy_fit",
                 status="REJECTED",
                 score=0,
-                reason=str(hazard_review["reason"]),
+                reason=reason,
             )
             self._refresh_custom_hazard_duplicate_candidates(session, hazard)
             return self._custom_hazard_response(
@@ -699,7 +692,7 @@ class ChatHazardCreationMixin:
                 bot_message=render_message(
                     "hazard_rewrite_required.md",
                     hazard=hazard,
-                    reason=hazard_review["reason"],
+                    reason=reason,
                     rewrite_suggestion="",
                     suggestions="",
                     has_suggestions=False,
@@ -734,6 +727,49 @@ class ChatHazardCreationMixin:
                         session,
                         hazard,
                     ),
+                    suggestions="",
+                    has_suggestions=False,
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                error=True,
+            )
+
+        if deterministic_review is not None and bool(deterministic_review.get("valid")):
+            self._refresh_custom_hazard_duplicate_candidates(session, hazard)
+            return self._hazard_reason_evidence_step(session_id, session, hazard)
+
+        hazard_review = await self._review_custom_hazard_input(session, hazard)
+        if hazard_review is None:
+            return self._custom_hazard_response(
+                session_id=session_id,
+                session=session,
+                step="hazards",
+                bot_message=(
+                    "I could not review this hazard for clarity and policy fit because "
+                    "the local LLM is unavailable. Please try again."
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                error=True,
+            )
+        if not hazard_review["valid"]:
+            session.pending_hazard = None
+            self._mark_custom_hazard_dimension(
+                session,
+                self._custom_hazard_rejection_dimension(str(hazard_review["reason"])),
+                status="REJECTED",
+                score=0,
+                reason=str(hazard_review["reason"]),
+            )
+            self._refresh_custom_hazard_duplicate_candidates(session, hazard)
+            return self._custom_hazard_response(
+                session_id=session_id,
+                session=session,
+                step="hazards",
+                bot_message=render_message(
+                    "hazard_rewrite_required.md",
+                    hazard=hazard,
+                    reason=hazard_review["reason"],
+                    rewrite_suggestion="",
                     suggestions="",
                     has_suggestions=False,
                 ),

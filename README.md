@@ -141,6 +141,21 @@ after backing up the database:
 Production deployments should keep this flag off and rely on `schema.sql` for
 fresh installs plus versioned files under `app/db/migrations/` for changes.
 
+## Seed Prompt Library
+
+Database-backed prompts are loaded from packaged prompt files under
+`app/prompts/**/*.txt` and chat response templates under
+`app/templates/chat/**/*.md`. On a sync server, startup seeds these rows
+automatically. To refresh all prompt rows manually after changing packaged LLM
+prompts, run:
+
+```bash
+uv run python -c "from app.db.migrations_runtime import run_runtime_migrations; from app.services.prompt_store import seed_prompts_from_files; run_runtime_migrations(seed_reference_data=False); print(f'Seeded/updated {seed_prompts_from_files(overwrite=True)} prompt rows')"
+```
+
+Use `overwrite=False` instead when you only want to add missing prompt rows and
+preserve prompt edits already stored in the database.
+
 ## Production Operations
 
 Health endpoints:
@@ -245,7 +260,8 @@ Recommended production flow:
 5. Check `/health/ready`.
 6. Run `.\scripts\seed_database.ps1 -SkipSchema` only when reference CSV/XLSX
    source files changed.
-7. Confirm the retention cleanup schedule is enabled.
+7. Refresh database-backed prompts only when packaged prompt files changed.
+8. Confirm the retention cleanup schedule is enabled.
 
 Central sync backend deployment is documented in:
 
@@ -478,6 +494,41 @@ uv run python tests/run_open_conversation_selection_cases.py `
   --limit 20
 ```
 
+## Hazard Creation Regression
+
+Generate the hazard-creation test-case workbook and run the validation flow:
+
+```bash
+uv run python tests/run_hazard_creation_regression.py
+```
+
+This creates:
+
+```text
+hazard_creation_test_cases.xlsx
+hazard_creation_test_results_<model>.xlsx
+```
+
+The generated cases cover valid hazards for Energy, Housing, and Transport;
+invalid or non-hazard inputs; blank/back actions; and every wrong-sector
+combination between the three sectors. The runner calls the real app hazard
+creation path, including the local LLM hazard classifier.
+
+Run the same cases across all supported chat model settings:
+
+```powershell
+uv run python tests/run_hazard_creation_cases.py `
+  --models `
+  qwen3.5:2b `
+  qwen3.5:4b `
+  ministral-3:8b `
+  qwen3.5:9b `
+  ministral-3:14b `
+  mistral-nemo
+```
+
+Add `--limit <count>` to run only the first generated cases per model.
+
 ## CI Checks
 
 Install test/dev tools when needed:
@@ -648,5 +699,8 @@ README.md
   `app/db/migrations/` plus `scripts/apply_migrations.py` for production updates.
 - Reference-data loading is explicit. Use `scripts/seed_database.ps1` during setup
   or after changing source CSV/XLSX files, not as a normal app startup step.
+- Prompt-library loading is explicit outside sync-server startup. Use
+  `app.services.prompt_store.seed_prompts_from_files(overwrite=True)` after
+  changing packaged prompt files, or `overwrite=False` to preserve DB edits.
 - Retention cleanup is handled by `scripts/cleanup_retained_data.py`; schedule it
   with Task Scheduler, systemd timers, or cron in production.

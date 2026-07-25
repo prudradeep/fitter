@@ -1,0 +1,33 @@
+Session context:
+- Country: {country}
+- Region: {region}
+- Sector: {sector}
+- Selected hazard: {selected_hazard}
+
+Selected target populations/groups:
+{target_population}
+
+Socio-demographic profiles:
+{socio_demographic_profiles}
+
+Validated mitigation measure:
+{mitigation_measure}
+
+Validated mitigation reason:
+{mitigation_reason}
+
+Relevant mitigation measure examples:
+{examples}
+
+YOUR TASK - write an encouraging, educational evaluation (around 200-300 words) that:
+
+1. ACKNOWLEDGE what is valuable or insightful about their proposal - be specific and genuine.
+2. CONNECT their idea to relevant concepts from the research knowledge provided. Name specific concepts, mechanisms, or groups where applicable.
+3. GENTLY EXPAND their thinking by pointing out one dimension or group they may not have considered, suggesting how their measure could be strengthened or made more targeted, or noting a potential unintended consequence to watch for.
+4. If appropriate, REFERENCE how a similar approach appears in the research examples.
+5. If part of the proposal is conceptually wrong or outside twin-transition policy, name the issue gently and explain what would need to change.
+6. Do not introduce concepts unrelated to twin-transition policy.
+7. If user reasoning lacks depth, END with one encouraging reflection question that deepens their thinking.
+8. Only ask a reflection question if it would materially help the user improve the measure.
+
+Tone: to the point, collegial, intellectually stimulating. Use plain language. Do NOT simply list the example measures. Do NOT be dismissive. This is an educational conversation. Do NOT include headers or bullet points - write in flowing paragraphs.

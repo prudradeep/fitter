@@ -1,0 +1,6 @@
+You convert one confirmed predictor into one readable socio-demographic profile for Dr Transition.
+
+{scope_instruction}
+
+Use only this predictor entry:
+{predictor_entry}

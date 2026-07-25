@@ -68,6 +68,49 @@ def custom_hazard_sector_mismatch_reason(
     )
 
 
+def deterministic_custom_hazard_input_review(
+    *,
+    selected_sector: str | None,
+    hazard: str,
+) -> dict[str, object] | None:
+    normalized = normalize_for_match(hazard)
+    if not normalized:
+        return None
+
+    if _is_request_or_meta_input(normalized):
+        return _reject_input(
+            "This is a request or comment rather than a hazard. Please rewrite it as a concrete negative impact or risk from the selected transition context."
+        )
+
+    if _is_benefit_or_mitigation_statement(normalized):
+        return _reject_input(
+            "This describes a benefit or mitigation action rather than a hazard. Please rewrite it as a concrete negative impact or risk from the selected transition context."
+        )
+
+    if not _has_negative_hazard_signal(normalized):
+        return _reject_input(
+            "This does not describe a clear hazard, risk, or negative impact. Please rewrite it as a concrete harm affecting a population group."
+        )
+
+    if not _has_transition_policy_signal(normalized):
+        return _reject_input(
+            "This does not clearly link the hazard to a green, digital, or twin-transition policy mechanism."
+        )
+
+    selected_family = sector_family(selected_sector)
+    selected_score = sector_signal_scores(hazard).get(selected_family, 0)
+    if selected_family in {"energy", "housing", "transport"} and selected_score > 0:
+        return {
+            "status": "Valid",
+            "valid": True,
+            "reason": "The input is a concrete transition-related hazard for the selected sector.",
+            "suggestions": [],
+            "source": "deterministic_guardrail",
+        }
+
+    return None
+
+
 def custom_hazard_sector_rewrite_suggestion(
     *,
     selected_sector: str | None,
@@ -200,12 +243,155 @@ def plain_custom_hazard_rejection_reason(
     return None
 
 
+def _reject_input(reason: str) -> dict[str, object]:
+    return {
+        "status": "Invalid",
+        "valid": False,
+        "reason": reason,
+        "suggestions": [],
+        "source": "deterministic_guardrail",
+    }
+
+
+def _is_request_or_meta_input(normalized: str) -> bool:
+    request_starts = (
+        "tell me",
+        "what is",
+        "what are",
+        "how do",
+        "how does",
+        "can you",
+        "please add",
+        "add more data",
+        "show me",
+        "explain",
+    )
+    return normalized.startswith(request_starts)
+
+
+def _is_benefit_or_mitigation_statement(normalized: str) -> bool:
+    benefit_terms = (
+        "benefit",
+        "benefits",
+        "reduce",
+        "reduces",
+        "reduced",
+        "improve",
+        "improves",
+        "improved",
+        "help",
+        "helps",
+        "support",
+        "supports",
+        "subsidy",
+        "subsidies",
+        "grant",
+        "grants",
+        "better",
+    )
+    return any(term in normalized.split() for term in benefit_terms) and not _has_negative_hazard_signal(normalized)
+
+
+def _has_negative_hazard_signal(normalized: str) -> bool:
+    negative_terms = (
+        "risk",
+        "hazard",
+        "harm",
+        "burden",
+        "higher",
+        "rising",
+        "rise",
+        "increases",
+        "increase",
+        "unaffordable",
+        "arrears",
+        "outage",
+        "outages",
+        "congestion",
+        "displacement",
+        "eviction",
+        "exclusion",
+        "excluded",
+        "lose",
+        "loss",
+        "lost",
+        "shortage",
+        "barrier",
+        "barriers",
+        "gap",
+        "gaps",
+        "scarce",
+        "scarcity",
+        "unequal",
+        "pressure",
+        "disruption",
+        "downtime",
+        "cost",
+        "costs",
+        "fees",
+        "tariffs",
+        "penalty",
+        "penalties",
+        "poverty",
+        "vulnerable",
+    )
+    return any(term in normalized.split() for term in negative_terms)
+
+
+def _has_transition_policy_signal(normalized: str) -> bool:
+    transition_phrases = (
+        "green transition",
+        "digital transition",
+        "twin transition",
+        "transition policy",
+        "climate policy",
+        "net zero",
+        "low emission",
+        "clean vehicle",
+        "clean heating",
+        "energy performance",
+        "smart grid",
+        "smart meter",
+        "electric vehicle",
+    )
+    if any(phrase in normalized for phrase in transition_phrases):
+        return True
+    transition_terms = {
+        "renewable",
+        "renewables",
+        "solar",
+        "wind",
+        "grid",
+        "electricity",
+        "tariff",
+        "tariffs",
+        "electrification",
+        "electric",
+        "retrofit",
+        "retrofits",
+        "renovation",
+        "renovations",
+        "insulation",
+        "digitalisation",
+        "digitalization",
+        "digital",
+        "ev",
+        "charging",
+        "decarbonisation",
+        "decarbonization",
+    }
+    return bool(set(normalized.split()) & transition_terms)
+
+
 def sector_signal_scores(text: str) -> dict[str, int]:
     normalized = f" {normalize_for_match(text)} "
     phrase_groups: dict[str, tuple[str, ...]] = {
         "transport": (
             "transport",
             "mobility",
+            "travel",
+            "commuter",
+            "commuters",
             "public transport",
             "public transit",
             "transit",
@@ -225,6 +411,8 @@ def sector_signal_scores(text: str) -> dict[str, int]:
             "road",
             "roads",
             "traffic",
+            "low emission zone",
+            "low emission zones",
             "car",
             "cars",
             "cycling",

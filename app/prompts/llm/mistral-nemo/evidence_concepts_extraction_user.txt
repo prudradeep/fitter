@@ -1,0 +1,10 @@
+Claim type: {claim_type}
+Selected sector: {sector}
+Selected country: {country}
+Selected region: {region}
+
+Claim being validated:
+{claim_text}
+
+L2 user evidence:
+{evidence_text}

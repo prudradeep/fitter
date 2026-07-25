@@ -41,6 +41,7 @@ from app.services.chat_session import ChatSession
 from app.services.custom_hazard_text_rules import (
     custom_hazard_sector_mismatch_reason,
     custom_hazard_sector_rewrite_suggestion,
+    deterministic_custom_hazard_input_review,
     plain_custom_hazard_rejection_reason,
     sector_signal_scores,
 )
@@ -881,6 +882,13 @@ class ChatValidationServiceMixin:
     async def _review_custom_hazard_input(
         self, session: ChatSession, hazard: str
     ) -> dict[str, object] | None:
+        deterministic_review = deterministic_custom_hazard_input_review(
+            selected_sector=session.sector,
+            hazard=hazard,
+        )
+        if deterministic_review is not None:
+            return deterministic_review
+
         context = render_prompt_template(
             "llm/custom_hazard_input_classifier.txt",
             sector=session.sector or "Not selected",

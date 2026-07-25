@@ -213,7 +213,7 @@ The installer now performs the first dependency setup pass:
 - Asks for the database name and MySQL credentials
 - Creates the application database/user
 - Updates `%ProgramData%\DrTransition\.env`
-- Applies schema/migrations only; reference, user, and policy data are pulled from the central sync server on app startup
+- Applies schema/migrations only; reference, user, policy, and prompt-library data are pulled from the central sync server on app startup
 - Does not ingest bundled `kb/*.pdf` files locally; Main KB is pulled from the central server
 - Pulls the required Ollama chat and embedding models
 
@@ -239,9 +239,9 @@ The desktop launcher still checks the external dependencies before starting the
 bundled services. If setup did not complete, it opens the diagnostics window
 instead of starting the backend.
 
-The client installer does not create a default app user or seed reference data.
-When sync is configured, users and reference data are pulled from the central
-server on app startup.
+The client installer does not create a default app user, seed reference data, or
+seed the prompt library. When sync is configured, users, reference data, and
+database-backed prompts are pulled from the central server on app startup.
 
 Manual checks:
 

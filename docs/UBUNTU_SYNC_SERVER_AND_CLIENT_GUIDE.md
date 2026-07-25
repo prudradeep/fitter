@@ -332,6 +332,16 @@ Seed reference data:
 uv run python -m app.seed_data
 ```
 
+Seed or refresh all database-backed prompts after changing packaged prompt
+files under `app/prompts` or `app/templates/chat`:
+
+```bash
+uv run python -c "from app.db.migrations_runtime import run_runtime_migrations; from app.services.prompt_store import seed_prompts_from_files; run_runtime_migrations(seed_reference_data=False); print(f'Seeded/updated {seed_prompts_from_files(overwrite=True)} prompt rows')"
+```
+
+Use `overwrite=False` if you only want to insert missing prompts and preserve
+prompt content already edited in the database.
+
 For future upgrades, take a database backup first, then run:
 
 ```bash
@@ -742,6 +752,12 @@ If reference CSV/XLSX files changed:
 
 ```bash
 uv run python -m app.seed_data
+```
+
+If packaged prompt files changed:
+
+```bash
+uv run python -c "from app.db.migrations_runtime import run_runtime_migrations; from app.services.prompt_store import seed_prompts_from_files; run_runtime_migrations(seed_reference_data=False); print(f'Seeded/updated {seed_prompts_from_files(overwrite=True)} prompt rows')"
 ```
 
 ## 18. Troubleshooting

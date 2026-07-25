@@ -1,0 +1,49 @@
+Classify whether the user message is asking a question or requesting
+explanation/information, instead of selecting an option.
+
+Rules:
+- Classify only whether the message is a question/information request.
+- Do not answer the question.
+- Do not select options.
+- Return one valid JSON object only, with no Markdown, code fences, comments, or extra keys.
+- Output shape: {"is_question": true, "confidence": "high", "reason": "Brief reason."}
+- is_question must be a boolean.
+- confidence must be "high", "medium", or "low".
+- If uncertain, use is_question=false and confidence="low".
+- The input is a JSON object containing "message" and optional "context".
+  Use context.phase, selected_hazard, and available option lists only to decide
+  whether the message is selecting/responding or asking for information.
+- Selection wins over question. If the message exactly or closely names an
+  available country, region, sector, hazard, socio-demographic profile, button
+  label, ordinal option, or selected_hazard, classify it as not a question.
+- Short noun phrases, title-like labels, and hazard/risk names are not questions
+  just because they contain policy terms such as cost, pollution, exposure,
+  restriction, value, journey, power cuts, fuel, housing, transport, or energy.
+- Treat option-selection language as not a question when the user asks to use,
+  show, open, look at, choose, select, focus on, continue with, start, create,
+  analyse/analyze, mitigate, or proceed with an available option.
+- Treat "why/how/what is...", "explain...", "tell me more...", "what does this
+  mean...", and "can you describe..." as a question only when the user is
+  requesting an explanation/information rather than choosing an option.
+- In hazard_profile_selection, a hazard name or ordinal/list reference is a
+  hazard selection, not a question. Classify as a question only if the user asks
+  for explanation/information about the hazard.
+
+Examples:
+- "What is Germany?" -> {"is_question": true, "confidence": "high", "reason": "User asks a question."}
+- "Why Housing?" -> {"is_question": true, "confidence": "high", "reason": "User asks for an explanation."}
+- "Tell me more about Transport" -> {"is_question": true, "confidence": "high", "reason": "User requests information."}
+- "Can you explain this sector?" -> {"is_question": true, "confidence": "high", "reason": "User asks for an explanation."}
+- "Tell me more about Heat stress" -> {"is_question": true, "confidence": "high", "reason": "User requests information about a hazard."}
+- "Why is Heat stress listed?" -> {"is_question": true, "confidence": "high", "reason": "User asks for an explanation about a listed hazard."}
+- "Germany" -> {"is_question": false, "confidence": "high", "reason": "User is selecting an option."}
+- "Germany please" -> {"is_question": false, "confidence": "high", "reason": "User is selecting an option."}
+- "Select Housing" -> {"is_question": false, "confidence": "high", "reason": "User is selecting an option."}
+- "Germany, Baden-Württemberg, Housing" -> {"is_question": false, "confidence": "high", "reason": "User is selecting options."}
+- "Heat stress" -> {"is_question": false, "confidence": "high", "reason": "User is selecting a hazard option."}
+- "Higher fuel repair costs ICE" -> {"is_question": false, "confidence": "high", "reason": "User is selecting a hazard-like option."}
+- "I want to mitigate Heat stress" -> {"is_question": false, "confidence": "high", "reason": "User is choosing a hazard for mitigation."}
+- "second one" -> {"is_question": false, "confidence": "high", "reason": "User is selecting an ordinal option."}
+- "Create Mitigation Measure" -> {"is_question": false, "confidence": "high", "reason": "User is selecting a button action."}
+- "Yes" -> {"is_question": false, "confidence": "high", "reason": "User is responding to an option."}
+- "No" -> {"is_question": false, "confidence": "high", "reason": "User is responding to an option."}

@@ -253,6 +253,16 @@ files change:
 uv run python -m app.seed_data
 ```
 
+Seed or refresh the database-backed prompt library after changing packaged
+prompt files under `app/prompts` or `app/templates/chat`:
+
+```bash
+uv run python -c "from app.db.migrations_runtime import run_runtime_migrations; from app.services.prompt_store import seed_prompts_from_files; run_runtime_migrations(seed_reference_data=False); print(f'Seeded/updated {seed_prompts_from_files(overwrite=True)} prompt rows')"
+```
+
+Use `overwrite=False` to add only missing prompts and keep prompt content that
+admins edited in the database.
+
 Start the app once with sync enabled, then call:
 
 ```http
@@ -422,13 +432,14 @@ operate where supported, but vector search may be stale.
 2. Deploy the application files.
 3. Configure production `.env`.
 4. Run migrations and seed reference data.
-5. Start the FastAPI service behind HTTPS.
-6. Verify `/health/ready`.
-7. Verify `/api/sync/status` with the sync token.
-8. Configure clients with `SYNC_SERVER_URL`, `SYNC_API_TOKEN`, and stable `SYNC_DEVICE_ID`.
-9. Run an initial sync from one client.
-10. Check dirty KB scopes and rebuild affected indexes.
-11. Schedule backups and retention cleanup.
+5. Seed the prompt library when packaged prompts changed.
+6. Start the FastAPI service behind HTTPS.
+7. Verify `/health/ready`.
+8. Verify `/api/sync/status` with the sync token.
+9. Configure clients with `SYNC_SERVER_URL`, `SYNC_API_TOKEN`, and stable `SYNC_DEVICE_ID`.
+10. Run an initial sync from one client.
+11. Check dirty KB scopes and rebuild affected indexes.
+12. Schedule backups and retention cleanup.
 
 ## Limitations In Current First Pass
 

@@ -10,7 +10,7 @@ __pycache__/
 data/*.faiss
 data/grounding-logs/
 data/service-runtime/
-open_*.xlsx
+*_test_*.xlsx
 *.log
 build/
 dist/
