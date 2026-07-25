@@ -315,7 +315,8 @@ Download Report template
 Prompt sepration for models
 cloud sync in process
 
-
+Exposure to poor quality solar panel installations and bad commercial practices.
+the increasing market of solar panel installation is to encourage the use of renewable energy across europe.
 
 qwen3.5:2b
 qwen3.5:4b
@@ -350,3 +351,25 @@ uv run python -m app.seed_data --skip-schema
 
 $env:ENV_FILE=".env.client.dev"
 uv run python scripts/apply_migrations.py --apply-base-schema
+
+Hazard:
+Strict: Hazard Name => Ask for clarification 
+Easy: Not required
+
+Twin transition policy fit
+    If rejected, Re-write this for <for the selected> sector without changing it's meaning
+
+Msg: Your definition of hazard didn't fit into the twin transition, But i have repharased it for the chosen sector as follows: ....... [ask if this correct or not]
+
+
+Dimensions check, Twin transition, sector & Duplicate fit on hazard name else others after justification
+
+Sector Policy Objectives:
+    New hazard Check for policy objective for relevance. If not ask for clarification
+
+Mitigation Measure:
+    Discuss about the mitigation measure, Cons Pros, What covered what not covered, etc...
+    + System thinking dimension
+
+    D2.3    => Overview of Relevant Methodologies
+    ____    => Unsustainable Dynamics – Case Study Sectors

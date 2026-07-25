@@ -320,6 +320,51 @@ class CustomHazardValidationTests(unittest.TestCase):
         service._capture_custom_hazard.assert_awaited_once()
         service._handle_anytime_grounded_question.assert_not_awaited()
 
+    def test_hazard_selection_is_not_routed_to_grounded_questions(self):
+        service = ChatService.__new__(ChatService)
+        service._handle_other_nav_action = AsyncMock(return_value=None)
+        service._is_invalid_user_text = MagicMock(return_value=False)
+        service._open_selection_response_from_any_step = AsyncMock(return_value=None)
+        service._handle_anytime_grounded_question = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="hazard_profile_selection",
+                bot_message="Grounded answer",
+                options=[],
+                session={},
+                error=False,
+            )
+        )
+        service._is_saved_custom_hazard = MagicMock(return_value=False)
+        service._record_activity = MagicMock()
+        service._hazard_profiles_response = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="socio_demographic_review",
+                bot_message="### Socio-demographic profiles most affected by Heat stress",
+                options=[],
+                session={},
+                error=False,
+            )
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            phase="hazard_profile_selection",
+            hazards=["Heat stress", "Energy poverty"],
+            hazard_profiles={"Heat stress": [{"name": "Older adults"}]},
+        )
+
+        response = _run(
+            service._chat_response("session-1", session, "Heat stress")
+        )
+
+        self.assertEqual(response.step, "socio_demographic_review")
+        self.assertEqual(session.selected_hazard, "Heat stress")
+        service._hazard_profiles_response.assert_awaited_once()
+        service._handle_anytime_grounded_question.assert_not_awaited()
+
     def test_early_invalid_custom_hazard_still_updates_duplicate_status(self):
         service = ChatService.__new__(ChatService)
         service.db = SimpleNamespace(

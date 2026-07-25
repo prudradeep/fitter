@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +11,20 @@ def _run(coro):
 
 
 class QuestionIntentTests(unittest.TestCase):
+    def test_all_question_intent_prompts_include_selection_guardrails(self):
+        prompt_paths = sorted(
+            Path("app/prompts/llm").glob("**/question_intent_detector.txt")
+        )
+
+        self.assertTrue(prompt_paths)
+        for prompt_path in prompt_paths:
+            with self.subTest(prompt=str(prompt_path)):
+                prompt = prompt_path.read_text(encoding="utf-8")
+                self.assertIn("Selection wins over question", prompt)
+                self.assertIn("hazard_profile_selection", prompt)
+                self.assertIn('"Heat stress" -> {"is_question": false', prompt)
+                self.assertIn('"Tell me more about Heat stress" -> {"is_question": true', prompt)
+
     def test_detects_question(self):
         with patch(
             "app.services.question_intent.ask_llm_chat",
