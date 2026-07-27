@@ -46,8 +46,8 @@ VALIDATION_THRESHOLDS = {
         "dimension_floor": 5,
     },
     "easy": {
-        "ready_score": 60,
-        "dimension_floor": 4,
+        "ready_score": 45,
+        "dimension_floor": 3,
     },
 }
 

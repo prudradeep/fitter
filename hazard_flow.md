@@ -1,51 +1,55 @@
-**Custom Hazard Flow**
-The custom hazard flow starts after the user has already selected:
+**Custom Hazard Creation Flow**
+
+This document describes the current app flow for creating a custom hazard. The
+flow starts only after the user has selected:
 
 ```text
 Country -> Region -> Sector
 ```
 
-Once sector selection is complete, the app shows the post-sector options, including:
+After sector selection, the app shows post-sector actions. The custom hazard
+flow begins when the user chooses:
 
 ```text
 Add a new Hazard
 ```
 
-When the user chooses that, the session moves into custom hazard creation.
+The main methods involved are:
 
-**1. Add Hazard Entry**
+```python
+ChatService._capture_custom_hazard(...)
+ChatService._validate_custom_hazard(...)
+ChatService._handle_custom_hazard_clarification(...)
+ChatService._run_custom_hazard_dimension_check(...)
+```
+
+**1. Enter Hazard Input**
+
 The app enters:
 
 ```text
 session.phase = custom_hazard_input
 ```
 
-The user is asked to type a concise hazard for the selected sector.
+The user is asked to type the hazard title.
 
-Example:
-
-```text
-Rural residents face power outages from grid congestion during renewable energy integration
-```
-
-The app calls the real method:
+The app calls:
 
 ```python
 ChatService._capture_custom_hazard(session_id, session, message)
 ```
 
-This is the main hazard-name capture function.
-
 **2. Basic Input Handling**
-Inside `_capture_custom_hazard`, the app first handles simple cases.
 
-If the user typed:
+Inside `_capture_custom_hazard`, the app handles simple inputs first.
+
+If the user selects:
 
 ```text
 Go back to list of hazards
 ```
 
-Then it returns to the hazard list:
+Then the app returns to:
 
 ```text
 session.phase = hazards
@@ -53,15 +57,16 @@ session.pending_hazard = None
 session.custom_hazard = None
 ```
 
-If the input is blank, the app stays in hazard creation and shows the add-hazard prompt again.
+If the hazard text is blank, the app stays on hazard entry and returns the add
+hazard prompt with `error=True`.
 
-If the text is not blank, the app initializes custom hazard state:
+If the text is non-empty, the app initializes:
 
 ```python
 session.custom_hazard = default_custom_hazard_state()
 ```
 
-The state stores:
+The custom hazard state tracks:
 
 ```text
 raw_text
@@ -69,91 +74,138 @@ normalized_text
 selected_country
 selected_region
 selected_sector
+validation_round
+dimension_scores
+affected_groups
+duplicate_candidates
 status
-dimension scores
-affected groups
-duplicate candidates
-validation rounds
 ```
 
 **3. Plain Rejection Rules**
-Before calling the LLM, the app applies deterministic plain-text rejection rules.
 
-This catches obvious cases like:
+Before the LLM classifier, the app checks plain deterministic rejection rules:
+
+```python
+_plain_custom_hazard_rejection_reason(...)
+```
+
+This catches inputs that are not acceptable as transition hazards even before
+sector matching.
+
+Example:
 
 ```text
 Carbon monoxide poisoning from domestic heating
 ```
 
-That is rejected because it is a general household safety risk unless the user links it to a green/digital transition policy mechanism.
+This is rejected as a general household safety risk unless it is clearly linked
+to a green or digital transition policy mechanism.
 
-The app returns a rewrite-required message and marks the relevant grounding dimension as rejected.
+The app returns:
 
-**4. Deterministic Input Review**
-Next, the app runs deterministic guardrails:
-
-```python
-deterministic_custom_hazard_input_review(...)
+```text
+step = hazards
+error = True
 ```
 
-This catches clear cases without relying on the LLM.
+and shows the rewrite-required message.
 
-It rejects obvious non-hazards, for example:
+**4. Deterministic Hazard Review**
+
+The app then runs:
+
+```python
+deterministic_custom_hazard_input_review(
+    selected_sector=session.sector,
+    hazard=hazard,
+)
+```
+
+This is real app logic, not test mocking.
+
+It rejects obvious non-hazards, requests, vague statements, or benefits.
+
+Examples rejected here:
 
 ```text
 I like sunny weather
 Tell me about retrofit policy
 Please add more data to the chart
-```
-
-It also rejects benefits or mitigation statements, for example:
-
-```text
 Solar subsidies reduce energy bills for low-income households
 EV charging grants support taxi drivers
 ```
 
-Those are not hazards because they describe positive support or mitigation, not a negative impact.
+It accepts clear sector-specific transition hazards without needing the LLM.
 
-It accepts clear sector-specific transition hazards, for example:
-
-```text
-Low-income households face higher electricity bills from renewable grid upgrade tariffs
-```
-
-If accepted here, the app skips the LLM classifier and proceeds to reason/evidence collection.
-
-Important: this is not test mocking. This is real production app logic.
-
-**5. Sector Mismatch Check**
-The app checks whether the hazard mainly belongs to another sector:
-
-```python
-_custom_hazard_sector_mismatch_reason(...)
-```
-
-Example selected sector: **Housing**
-
-User hazard:
-
-```text
-Taxi drivers face income loss from EV charging downtime and clean vehicle mandates
-```
-
-The app rejects it because that is mainly a **Transport** hazard.
-
-The response tells the user to either rewrite it for the selected sector or choose the matching sector.
-
-For your example:
+Example accepted in Energy:
 
 ```text
 Rural residents face power outages from grid congestion during renewable energy integration
 ```
 
-It passes in **Energy**, but it should reject in **Housing** or **Transport** as a sector mismatch.
+When accepted here, the app proceeds directly to the reason/evidence step.
+
+**5. Sector Mismatch Check**
+
+Next, the app checks whether the hazard mainly belongs to another sector:
+
+```python
+_custom_hazard_sector_mismatch_reason(...)
+```
+
+This check uses:
+
+```text
+hazard text
+selected sector
+sector signal scores
+```
+
+Example selected sector:
+
+```text
+Housing
+```
+
+Hazard:
+
+```text
+Taxi drivers face income loss from EV charging downtime and clean vehicle mandates
+```
+
+Result:
+
+```text
+Rejected for selected_sector_fit
+```
+
+The app tells the user to rewrite the hazard for the selected sector or choose
+the matching sector.
+
+Important example:
+
+```text
+Rural residents face power outages from grid congestion during renewable energy integration
+```
+
+This passes in:
+
+```text
+Energy
+```
+
+It is rejected in:
+
+```text
+Housing
+Transport
+```
+
+because the mechanism is mainly Energy-sector grid integration.
 
 **6. LLM Hazard Classifier**
-If the deterministic guardrails cannot decide, the app calls the real LLM classifier:
+
+If deterministic rules do not decide the case, the app calls:
 
 ```python
 _review_custom_hazard_input(session, hazard)
@@ -165,13 +217,13 @@ This renders:
 llm/custom_hazard_input_classifier.txt
 ```
 
-or the model-specific version under:
+or a model-specific prompt under:
 
 ```text
 app/prompts/llm/<model-directory>/custom_hazard_input_classifier.txt
 ```
 
-The LLM must return either:
+The model must return:
 
 ```text
 ACCEPT
@@ -189,23 +241,29 @@ If the LLM is unavailable, the app returns:
 I could not review this hazard for clarity and policy fit because the local LLM is unavailable. Please try again.
 ```
 
-If the LLM rejects the hazard, the app shows a rewrite-required message.
+If the LLM rejects the hazard, the app returns a rewrite-required message.
 
-If the LLM accepts it, the app proceeds.
+If it accepts, the app continues.
 
-**7. Duplicate Check**
-The app checks whether the proposed custom hazard is similar to existing hazards in the same context.
+**7. Duplicate Detection**
 
-It compares against:
+Before asking for the reason, the app checks possible duplicate hazards.
+
+It compares the proposed hazard against:
 
 ```text
-system hazards
-additional hazards
-saved custom hazards
+same-sector system hazards
+same-scope custom hazards
 same-scope user hazards
 ```
 
-If a likely duplicate is found, the user is shown a duplicate confirmation step:
+If a duplicate is found, the app enters a duplicate confirmation step:
+
+```text
+session.phase = custom_hazard_duplicate_confirmation
+```
+
+The user sees options:
 
 ```text
 Continue with custom hazard
@@ -213,14 +271,22 @@ Use existing hazard
 Edit custom hazard
 ```
 
-If no duplicate blocks the flow, the app continues.
+If there is no blocking duplicate, the app continues.
 
 **8. Reason And Evidence Step**
-After the hazard name is accepted, the app stores:
+
+After the hazard title is accepted, the app stores:
 
 ```text
-session.pending_hazard = <hazard text>
+session.pending_hazard = <hazard title>
 session.phase = add_hazard_evidence
+```
+
+The response uses:
+
+```text
+step = custom_hazard_validation
+input_mode = reason_evidence
 ```
 
 The user sees:
@@ -229,68 +295,86 @@ The user sees:
 Reason and Evidence Needed
 ```
 
-The user must provide a reason. Evidence is optional.
+At this point the hazard is not saved yet. The user must provide a reason.
+Evidence is optional.
 
-The next real method is:
+**9. Validate Reason / Evidence**
+
+When the user submits the reason/evidence payload, the app calls:
 
 ```python
 ChatService._validate_custom_hazard(session_id, session, message)
 ```
 
-The expected input is a reason/evidence payload from the UI.
+The app parses:
 
-**9. Reason Required**
-The app parses the user’s reason and optional evidence.
+```text
+Reason
+Evidence URL or evidence file content
+```
 
-If no reason is provided, it rejects the submission:
+If the reason is missing, the app rejects immediately:
 
 ```text
 Reason is required. Evidence URL and evidence file are optional.
 ```
 
-So the hazard name alone is not enough to save the hazard. It only moves the user to the validation stage.
+This is not a clarification branch. Missing reason is a validation failure.
 
-**10. Reason Quality Validation**
-The app validates the reason using:
+**10. Reason Quality Check**
+
+The app validates reason quality through:
 
 ```python
 _validate_input_quality(...)
 ```
 
-The reason must explain why the proposed hazard is a negative impact or risk caused by twin-transition policies for the selected country, region, and sector.
+The reason must explain why the hazard is a negative impact or risk caused by
+twin-transition policies for the selected country, region, and sector.
 
-If the reason is low quality, unrelated, or meaningless, the app rejects it.
+If the reason is low quality, unrelated, meaningless, or clearly invalid, the
+app rejects it with `error=True`.
 
-**11. Plain And Sector Checks Again**
-The app runs the plain rejection and sector mismatch checks again, this time using:
+**11. Re-run Plain And Sector Rules With Reason**
+
+The app re-runs plain rejection and sector mismatch checks using:
 
 ```text
 hazard + reason + evidence
 ```
 
-This matters because a hazard title may be short, but the reason might reveal that it actually belongs to another sector or is not transition-related.
+This matters because a short hazard title might look valid, but the reason can
+reveal a different sector or a non-transition mechanism.
+
+If sector mismatch is detected here, the response marks:
+
+```text
+selected_sector_fit = REJECTED
+```
 
 **12. Stats / Evidence Validation**
-Then the app validates the hazard against the sector statistics and evidence:
+
+The app validates the hazard against statistical/evidence context:
 
 ```python
 _validate_hazard_against_stats(...)
 ```
 
-If the user supplied evidence, the app checks whether the evidence supports or contradicts the claim.
+If user evidence is supplied, the app checks whether it supports or contradicts
+the hazard claim.
 
-If no evidence is supplied, it can use sector-prompt / RAG context where available.
+If validation fails, the hazard is rejected and not saved.
 
-If validation fails, the hazard is not saved.
+**13. Context Review And Clarification**
 
-**13. Context Review**
 Next, the app calls:
 
 ```python
 _review_custom_hazard_context(...)
 ```
 
-This checks whether the hazard, reason, and evidence are coherent for the selected country, region, and sector.
+This checks whether the hazard, reason, evidence, country, region, and sector
+fit together coherently.
 
 The context review can return:
 
@@ -300,10 +384,57 @@ reject
 clarification
 ```
 
-If clarification is needed, the app asks a follow-up question instead of saving immediately.
+If it returns `clarification`, the app does not save the hazard yet. It enters:
 
-**14. Dimension Grounding Check**
-For custom hazard state, the app then runs:
+```text
+session.phase = add_hazard_clarification
+```
+
+and stores:
+
+```text
+session.pending_hazard_reason = <reason>
+session.pending_hazard_evidence = <evidence>
+session.pending_hazard_clarification_question = <question>
+```
+
+The user is asked a follow-up question.
+
+Example unclear reason:
+
+```text
+Hazard: Higher electricity bills
+Reason: It affects people.
+```
+
+The app may ask who is affected or how the selected transition policy causes the
+bill increase.
+
+**14. Handle Clarification Answer**
+
+When the user answers the clarification question, the app calls the custom
+hazard clarification handler:
+
+```python
+_handle_custom_hazard_clarification(...)
+```
+
+The app combines:
+
+```text
+hazard
+original reason
+evidence
+clarification answer
+```
+
+Then it continues validation. If the clarification resolves the issue, the flow
+moves forward. If not, it can reject or ask for more grounding depending on the
+next validation result.
+
+**15. Dimension Grounding Check**
+
+For accepted custom hazard state, the app runs:
 
 ```python
 _run_custom_hazard_dimension_check(...)
@@ -315,7 +446,7 @@ This calls:
 validate_custom_hazard_dimensions(...)
 ```
 
-The hazard is scored across grounding dimensions:
+The hazard is scored across these dimensions:
 
 ```text
 Hazard definition fit
@@ -325,10 +456,11 @@ Country / region fit
 Affected population groups
 Duplicate check
 Custom profile impact reason
+Clarification progress
 Validation readiness
 ```
 
-The result determines the next action:
+The dimension check sets a next action:
 
 ```text
 ask_clarification
@@ -338,27 +470,47 @@ validate
 reject
 ```
 
-**15. Affected Groups Review**
-If affected population groups are found, the app moves to group review.
+If dimension grounding still needs clarification, the app enters:
 
-The user may confirm affected groups or edit them.
+```text
+session.phase = custom_hazard_clarification
+```
 
-The app can ask for reasons for user-added groups, especially if the impact mechanism is unclear.
+and asks one or two grounding questions.
 
-**16. Finalizing The Custom Hazard**
-Once the hazard is sufficiently grounded, the app finalizes it:
+This is separate from the earlier `add_hazard_clarification` context-review
+question.
+
+**16. Affected Groups Review**
+
+If affected population groups are identified, the app moves to group review.
+
+The user can confirm affected groups or edit them.
+
+If the user adds an affected group without a reason, the app can ask why that
+group is affected.
+
+**17. Finalize Custom Hazard**
+
+Once the hazard is valid and grounded, the app finalizes it:
 
 ```python
 _finalize_valid_custom_hazard(...)
 ```
 
-It stores or updates the custom hazard record through:
+or:
+
+```python
+_finalize_custom_hazard_from_grounding(...)
+```
+
+The app stores or updates the custom hazard through:
 
 ```python
 _ensure_custom_hazard(...)
 ```
 
-It updates session state:
+The session is updated:
 
 ```text
 session.custom_hazards
@@ -368,10 +520,12 @@ session.accepted_custom_hazard_evidence
 session.accepted_custom_hazard_id
 ```
 
-If evidence was supplied and accepted, temporary evidence can be promoted to validated evidence.
+If evidence was supplied and accepted, temporary evidence can be promoted to
+validated evidence.
 
-**17. Population Profile Extraction**
-The app extracts or builds affected population profiles:
+**18. Population Profile Extraction**
+
+The app extracts affected population profiles:
 
 ```python
 _extract_custom_hazard_affected_population_profiles(...)
@@ -379,40 +533,74 @@ _extract_custom_hazard_affected_population_profiles(...)
 
 If no profiles are found, the app may ask target-population questions.
 
-Otherwise, it stores the profiles under:
+If profiles are found, it stores them in:
 
 ```text
 session.hazard_profiles[custom_hazard]
 session.socio_demographic_profiles
 ```
 
-**18. Custom Hazard Added / Review Step**
-Finally, the user is shown the custom hazard review/added step.
+**19. Review And Continue**
 
-From there, the hazard behaves like the selected hazard for the next stages:
+The user is shown the custom hazard population/review step.
+
+From there, the custom hazard behaves like a selected hazard and the user can
+continue to:
 
 ```text
 socio-demographic review
 mitigation measure creation
-reason confirmation
+mitigation reason/evidence
 mitigation validation
 evaluation
 ```
 
-**Key Rule**
-A custom hazard must pass these gates:
+**When Clarification Happens**
+
+Clarification can happen in two places:
 
 ```text
-1. It must be a hazard, not a benefit/request/fact.
-2. It must be tied to green/digital/twin-transition policy.
+1. add_hazard_clarification
+```
+
+This happens after reason/evidence submission when context review says the
+reason is unclear but potentially fixable.
+
+```text
+2. custom_hazard_clarification
+```
+
+This happens during dimension grounding when one or more grounding dimensions
+need more detail.
+
+Clarification does not happen when:
+
+```text
+reason is missing
+input is clearly not a hazard
+input clearly belongs to another sector
+evidence clearly contradicts the hazard
+```
+
+Those cases are rejected or sent back for rewrite.
+
+**Required Gates**
+
+A custom hazard must pass these gates before it is saved:
+
+```text
+1. It must be a hazard, not a request, benefit, mitigation, or unrelated fact.
+2. It must link to green, digital, or twin-transition policy.
 3. It must fit the selected sector.
 4. It must be plausible for the selected country/region.
-5. It must have a reason.
+5. It must include a reason.
 6. It must not contradict evidence/statistical context.
-7. It must have or collect affected population groups.
+7. It must identify or collect affected population groups.
+8. It must pass grounding dimensions or resolve clarification questions.
 ```
 
 **Example**
+
 Selected sector:
 
 ```text
@@ -450,4 +638,4 @@ Expected result:
 Rejected for sector fit
 ```
 
-Because the mechanism is mainly Energy-sector grid integration.
+because the mechanism is mainly Energy-sector grid integration.

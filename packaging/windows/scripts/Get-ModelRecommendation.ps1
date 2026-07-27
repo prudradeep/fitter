@@ -69,40 +69,40 @@ $ModelTiers = @(
         MinRamGb = 64
         MinGpuVramGb = 24
         RecommendedModel = "qwen3.5:27b"
-        ContextLength = 16384
-        Reason = "Enthusiast-class hardware detected. Qwen 3.5 27B is recommended for advanced reasoning, multilingual processing, tool use, and structured generation."
+        ContextLength = 32768
+        Reason = "Enthusiast-class hardware detected. Qwen 3.5 27B delivers the best local reasoning, multilingual capability, structured generation, RAG, and tool use."
     },
     [ordered]@{
         Tier = "professional"
         MinRamGb = 64
         MinGpuVramGb = 16
         RecommendedModel = "mistral-small3.2:24b"
-        ContextLength = 16384
-        Reason = "Professional workstation hardware detected. Mistral Small 3.2 24B is recommended for high-quality instruction following, function calling, RAG, and conversational responses."
+        ContextLength = 32768
+        Reason = "Professional workstation hardware detected. Mistral Small 3.2 24B provides excellent instruction following, function calling, coding, and conversational performance."
     },
     [ordered]@{
         Tier = "workstation"
         MinRamGb = 48
         MinGpuVramGb = 12
         RecommendedModel = "ministral-3:14b"
-        ContextLength = 16384
-        Reason = "Workstation-class hardware detected. Ministral 3 14B provides strong reasoning, structured generation, and efficient local deployment."
+        ContextLength = 24576
+        Reason = "Workstation-class hardware detected. Ministral 3 14B offers strong reasoning, fast inference, structured output, and efficient local deployment."
     },
     [ordered]@{
         Tier = "high"
         MinRamGb = 32
         MinGpuVramGb = 8
         RecommendedModel = "qwen3.5:9b"
-        ContextLength = 12288
-        Reason = "High-end local hardware detected. Qwen 3.5 9B provides strong reasoning, RAG, tool use, and structured-output performance."
+        ContextLength = 16384
+        Reason = "High-end hardware detected. Qwen 3.5 9B provides an excellent balance of reasoning quality, multilingual support, coding, RAG, and tool use."
     },
     [ordered]@{
         Tier = "upper-mid"
         MinRamGb = 24
         MinGpuVramGb = 6
         RecommendedModel = "mistral-nemo"
-        ContextLength = 8192
-        Reason = "Upper mid-range hardware detected. Ministral 3 8B provides efficient multilingual reasoning and strong local response quality."
+        ContextLength = 12288
+        Reason = "Upper mid-range hardware detected. Mistral NeMo delivers fast inference, long-context support, multilingual capability, and strong instruction following."
     },
     [ordered]@{
         Tier = "mid"
@@ -110,7 +110,7 @@ $ModelTiers = @(
         MinGpuVramGb = 4
         RecommendedModel = "qwen3.5:4b"
         ContextLength = 8192
-        Reason = "Mid-range dedicated GPU hardware detected. Qwen 3.5 4B provides reliable instruction following, structured output, and efficient local inference."
+        Reason = "Mid-range dedicated GPU detected. Qwen 3.5 4B provides reliable reasoning, structured output, coding assistance, and efficient local inference."
     },
     [ordered]@{
         Tier = "entry-gpu"
@@ -118,7 +118,15 @@ $ModelTiers = @(
         MinGpuVramGb = 2
         RecommendedModel = "qwen3.5:2b"
         ContextLength = 4096
-        Reason = "Entry-level GPU hardware detected. Qwen 3.5 2B is selected for efficient GPU-assisted local inference."
+        Reason = "Entry-level dedicated GPU detected. Qwen 3.5 2B offers the best balance of speed, memory efficiency, and instruction following for low-end systems."
+    }
+    [ordered]@{
+        Tier = "cpu"
+        MinRamGb = 8
+        MinGpuVramGb = 0
+        RecommendedModel = "qwen3.5:2b"
+        ContextLength = 2048
+        Reason = "No supported dedicated GPU detected. Qwen 3.5 2B is recommended for CPU-only inference."
     }
 )
 
