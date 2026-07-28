@@ -994,21 +994,19 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
     if not rows:
         return
 
-    policy_ids_by_code_country: dict[tuple[str, str], list[str]] = {}
+    policy_ids_by_code: dict[str, list[str]] = {}
     for row in connection.execute(
         text(
             """
-            SELECT id, policy_code, country_id
+            SELECT id, policy_code
             FROM mitigation_measure_policies
             WHERE source = 'xlsx'
-              AND country_id IS NOT NULL
             """
         )
     ).mappings():
-        policy_ids_by_code_country.setdefault(
-            (str(row["policy_code"]), str(row["country_id"])),
-            [],
-        ).append(str(row["id"]))
+        policy_code = str(row["policy_code"] or "").strip()
+        if policy_code:
+            policy_ids_by_code.setdefault(policy_code, []).append(str(row["id"]))
 
     hazard_by_sector_name = {
         (
@@ -1053,47 +1051,42 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
 
         policy_code = str(row.get("policy_code") or "").strip()
         inserted_for_cell = False
-        for country_id in {
-            country_id
-            for stored_policy_code, country_id in policy_ids_by_code_country
-            if stored_policy_code == policy_code
-        }:
-            for policy_id in policy_ids_by_code_country.get((policy_code, country_id), []):
-                connection.execute(
-                    text(
-                        """
-                        INSERT INTO mitigation_measure_policy_system_hazards (
-                            mitigation_measure_policy_id,
-                            system_hazard_id,
-                            mitigation_effect,
-                            source,
-                            excel_row_number,
-                            excel_column_number
-                        )
-                        VALUES (
-                            :policy_id,
-                            :system_hazard_id,
-                            :mitigation_effect,
-                            'xlsx',
-                            :excel_row_number,
-                            :excel_column_number
-                        )
-                        ON DUPLICATE KEY UPDATE
-                            mitigation_effect = VALUES(mitigation_effect),
-                            excel_row_number = VALUES(excel_row_number),
-                            excel_column_number = VALUES(excel_column_number)
-                        """
-                    ),
-                    {
-                        "policy_id": policy_id,
-                        "system_hazard_id": system_hazard_id,
-                        "mitigation_effect": mitigation_effect,
-                        "excel_row_number": row.get("excel_row_number"),
-                        "excel_column_number": row.get("excel_column_number"),
-                    },
-                )
-                inserted += 1
-                inserted_for_cell = True
+        for policy_id in policy_ids_by_code.get(policy_code, []):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO mitigation_measure_policy_system_hazards (
+                        mitigation_measure_policy_id,
+                        system_hazard_id,
+                        mitigation_effect,
+                        source,
+                        excel_row_number,
+                        excel_column_number
+                    )
+                    VALUES (
+                        :policy_id,
+                        :system_hazard_id,
+                        :mitigation_effect,
+                        'xlsx',
+                        :excel_row_number,
+                        :excel_column_number
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        mitigation_effect = VALUES(mitigation_effect),
+                        excel_row_number = VALUES(excel_row_number),
+                        excel_column_number = VALUES(excel_column_number)
+                    """
+                ),
+                {
+                    "policy_id": policy_id,
+                    "system_hazard_id": system_hazard_id,
+                    "mitigation_effect": mitigation_effect,
+                    "excel_row_number": row.get("excel_row_number"),
+                    "excel_column_number": row.get("excel_column_number"),
+                },
+            )
+            inserted += 1
+            inserted_for_cell = True
         if not inserted_for_cell:
             skipped += 1
 

@@ -88,9 +88,7 @@ def deterministic_custom_hazard_input_review(
         )
 
     if not _has_negative_hazard_signal(normalized):
-        return _reject_input(
-            "This does not describe a clear hazard, risk, or negative impact. Please rewrite it as a concrete harm affecting a population group."
-        )
+        return _reject_input(_missing_negative_hazard_reason(normalized, hazard))
 
     if not _has_transition_policy_signal(normalized):
         return _reject_input(
@@ -292,6 +290,41 @@ def _is_benefit_or_mitigation_statement(normalized: str) -> bool:
     return any(term in normalized.split() for term in benefit_terms) and not _has_negative_hazard_signal(normalized)
 
 
+def _missing_negative_hazard_reason(normalized: str, hazard: str) -> str:
+    selected_text = str(hazard or "").strip()
+    prefix = f"`{selected_text}` " if selected_text else "This "
+    preference_starts = (
+        "i like",
+        "i love",
+        "i prefer",
+        "i think",
+        "we like",
+        "we love",
+        "we prefer",
+        "we think",
+    )
+    if normalized.startswith(preference_starts):
+        return (
+            f"{prefix}reads as a personal preference or opinion, not a policy hazard. "
+            "Please rewrite it to name the affected population group, the concrete harm, "
+            "and the green, digital, or twin-transition mechanism that creates or increases the risk."
+        )
+
+    words = normalized.split()
+    if len(words) <= 4:
+        return (
+            f"{prefix}is too broad to validate as a hazard because it does not state "
+            "who is harmed or what negative impact occurs. Please rewrite it as "
+            "`[affected group] face [harm] because [transition policy mechanism]`."
+        )
+
+    return (
+        f"{prefix}does not state a concrete negative impact. Please rewrite it to "
+        "identify the affected population group, the harm or risk they face, and "
+        "how a green, digital, or twin-transition policy causes or worsens it."
+    )
+
+
 def _has_negative_hazard_signal(normalized: str) -> bool:
     negative_terms = (
         "risk",
@@ -322,6 +355,8 @@ def _has_negative_hazard_signal(normalized: str) -> bool:
         "gaps",
         "scarce",
         "scarcity",
+        "shock",
+        "shocks",
         "unequal",
         "pressure",
         "disruption",
@@ -349,6 +384,7 @@ def _has_transition_policy_signal(normalized: str) -> bool:
         "low emission",
         "clean vehicle",
         "clean heating",
+        "energy",
         "energy performance",
         "smart grid",
         "smart meter",

@@ -394,13 +394,14 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
-        question_response = await self._handle_anytime_grounded_question(
-            current_session_id,
-            session,
-            clean_message,
-        )
-        if question_response is not None:
-            return question_response
+        if not self._matches_current_step_option(session, clean_message):
+            question_response = await self._handle_anytime_grounded_question(
+                current_session_id,
+                session,
+                clean_message,
+            )
+            if question_response is not None:
+                return question_response
 
         if session.phase == "hazard_profile_selection":
             return await self._handle_hazard_profile_selection(
@@ -693,7 +694,7 @@ class ChatService(
             if is_additional_hazard or is_custom_hazard
             else await self._profiles_with_population_context(session, hazard, profiles)
         )
-        if is_custom_hazard and profiles and not display_profiles:
+        if profiles and not display_profiles:
             display_profiles = profiles
         display_user_profiles = await self._profiles_with_population_context(
             session,
@@ -1593,6 +1594,42 @@ class ChatService(
 
         labels.extend(self._other_nav_options(session, self._current_step(session)))
         return bool(labels and best_fuzzy_label(message, labels) is not None)
+
+    def _matches_current_step_option(self, session: ChatSession, message: str) -> bool:
+        labels = self._current_step_option_labels(session)
+        if not labels:
+            return False
+        cleaned = str(message or "").strip()
+        if not cleaned:
+            return False
+        normalized = normalize(cleaned)
+        if any(normalize(label) == normalized for label in labels):
+            return True
+        return best_fuzzy_label(cleaned, labels) is not None
+
+    def _current_step_option_labels(self, session: ChatSession) -> list[str]:
+        if session.phase == "hazards":
+            return [option.label for option in POST_SECTOR_OPTIONS]
+        if session.phase == "stats_deep_dive":
+            return [option.label for option in STATS_DEEP_DIVE_OPTIONS]
+        if session.phase == "hazard_profile_selection":
+            return [option.label for option in self._hazard_options(session)]
+        if session.phase == "socio_demographic_review":
+            return [option.label for option in SOCIO_DEMOGRAPHIC_OPTIONS]
+        if session.phase == "reason_confirmation":
+            return [option.label for option in REASON_CONFIRMATION_OPTIONS]
+        if session.phase == "other_actions":
+            return self._other_nav_options(session, "complete")
+        if session.phase == "mitigation_clarity":
+            return [option.label for option in self._mitigation_clarity_options()]
+        if session.phase == "mitigation_target_population_review":
+            return [
+                option.label
+                for option in self._mitigation_target_population_review_options()
+            ]
+        if session.phase == "mitigation_review":
+            return [option.label for option in MITIGATION_REVIEW_OPTIONS]
+        return []
 
     def _fields_are_locally_meaningful(self, fields: dict[str, str]) -> bool:
         if not fields:

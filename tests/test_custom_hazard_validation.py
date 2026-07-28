@@ -365,6 +365,64 @@ class CustomHazardValidationTests(unittest.TestCase):
         service._hazard_profiles_response.assert_awaited_once()
         service._handle_anytime_grounded_question.assert_not_awaited()
 
+    def test_fuzzy_current_option_match_blocks_grounded_question(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            phase="hazard_profile_selection",
+            hazards=["Heat stress", "Energy poverty"],
+            hazard_profiles={"Heat stress": [{"name": "Older adults"}]},
+        )
+
+        self.assertTrue(
+            service._matches_current_step_option(session, "Heat stres")
+        )
+
+    def test_selected_hazard_profiles_show_when_population_context_is_missing(self):
+        service = ChatService.__new__(ChatService)
+        service._stored_hazard_profiles = MagicMock(
+            return_value=[
+                {
+                    "name": "Countries with higher Electricity consumption",
+                    "explanation": "Higher consumption increases concern.",
+                }
+            ]
+        )
+        service._stored_user_hazard_profiles = MagicMock(return_value=[])
+        service._is_additional_hazard = MagicMock(return_value=False)
+        service._is_saved_custom_hazard = MagicMock(return_value=False)
+        service._profiles_with_population_context = AsyncMock(return_value=[])
+        service._get_hazard_profiles_from_llm = AsyncMock(return_value=[])
+        service._ensure_system_hazard = MagicMock(return_value=None)
+
+        session = ChatSession(
+            selected_hazard="Heating and cooling costs increase",
+            hazard_profiles={
+                "Heating and cooling costs increase": [
+                    {
+                        "name": "Countries with higher Electricity consumption",
+                        "explanation": "Higher consumption increases concern.",
+                    }
+                ]
+            },
+        )
+
+        response = _run(
+            service._hazard_profiles_response(
+                "session-1",
+                session,
+                "Heating and cooling costs increase",
+            )
+        )
+
+        self.assertIn("Countries with higher Electricity consumption", response.bot_message)
+        self.assertNotIn(
+            "No clearly supported socio-demographic profiles were returned",
+            response.bot_message,
+        )
+
     def test_early_invalid_custom_hazard_still_updates_duplicate_status(self):
         service = ChatService.__new__(ChatService)
         service.db = SimpleNamespace(
@@ -676,7 +734,12 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         self.assertTrue(response.error)
         self.assertNotEqual(response.input_mode, "reason_evidence")
-        self.assertIn("not a hazard", response.bot_message)
+        self.assertIn("personal preference", response.bot_message)
+        self.assertIn("not a policy hazard", response.bot_message)
+        self.assertNotIn(
+            "This does not describe a clear hazard, risk, or negative impact",
+            response.bot_message,
+        )
         self.assertEqual(session.phase, "custom_hazard_input")
         self.assertEqual(
             response.custom_hazard["dimension_scores"]["twin_transition_policy_fit"]["status"],
@@ -910,7 +973,13 @@ class CustomHazardValidationTests(unittest.TestCase):
                 "Top hazard 3": [{"name": "Households"}],
                 "Top hazard 4": [{"name": "Firms"}],
                 "Expert-added hazard": [{"name": "Tenants"}],
-                "New custom hazard": [{"name": "Coal workers"}],
+                "New custom hazard": [
+                    {
+                        "name": "Coal workers",
+                        "regional_population_pct": 12,
+                        "national_population_pct": 9,
+                    }
+                ],
             },
             hazard_rankings={
                 "Top hazard 1": {"regional_population_pct": 10, "national_population_pct": 8},
@@ -930,7 +999,15 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(summary.custom_hazards, ["New custom hazard"])
         self.assertEqual(
             [row["hazard"] for row in summary.additional_hazard_population],
-            ["Expert-added hazard"],
+            ["Expert-added hazard", "New custom hazard"],
+        )
+        self.assertEqual(
+            summary.additional_hazard_population[1]["regional_population_pct"],
+            12.0,
+        )
+        self.assertEqual(
+            summary.additional_hazard_population[1]["national_population_pct"],
+            9.0,
         )
 
     def test_population_review_options_use_open_conversation_for_add_remove(self):
@@ -1394,6 +1471,107 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         self.assertEqual(profiles[0]["target_population_option_ids"], ["1"])
         self.assertIn("Level of income: Low income", profiles[0]["target_population_labels"])
+
+    def test_cached_additional_and_custom_profiles_are_population_enriched(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            additional_hazards=["Expert-added hazard"],
+            custom_hazards=["Co-created hazard"],
+            hazard_profiles={
+                "Expert-added hazard": [{"name": "Tenants"}],
+                "Co-created hazard": [{"name": "Coal workers"}],
+            },
+        )
+        service._stored_hazard_profiles = MagicMock(
+            side_effect=lambda current_session, hazard: current_session.hazard_profiles[hazard]
+        )
+
+        async def enrich(_session, hazard, profiles):
+            if hazard == "Expert-added hazard":
+                return [
+                    {
+                        **profiles[0],
+                        "regional_population_pct": 3,
+                        "national_population_pct": 2,
+                    }
+                ]
+            return [
+                {
+                    **profiles[0],
+                    "regional_population_pct": 12,
+                    "national_population_pct": 9,
+                }
+            ]
+
+        service._additional_profiles_with_population_context = AsyncMock(side_effect=enrich)
+
+        _run(service._enrich_additional_and_custom_hazard_profiles_with_population_context(session))
+
+        self.assertEqual(
+            session.hazard_profiles["Expert-added hazard"][0]["regional_population_pct"],
+            3,
+        )
+        self.assertEqual(
+            session.hazard_profiles["Co-created hazard"][0]["national_population_pct"],
+            9,
+        )
+
+    def test_new_policy_suggestions_fall_back_beyond_selected_country(self):
+        service = ChatService.__new__(ChatService)
+        service._selected_system_hazard_id = MagicMock(return_value="hazard-1")
+        service._selected_system_hazard_target_option_ids = MagicMock(return_value={"option-1"})
+        service._new_policy_suggestion_policy_rows = MagicMock(
+            side_effect=[
+                [],
+                [{"id": "policy-1", "policy_title": "Regional energy support"}],
+            ]
+        )
+        service._new_policy_suggestion_candidates_from_rows = MagicMock(
+            return_value=[
+                {
+                    "policy_id": "policy-1",
+                    "policy_title": "Regional energy support",
+                    "score": 60,
+                }
+            ]
+        )
+        session = ChatSession(country_id="country-1", sector_id="sector-1")
+
+        candidates = service._ranked_new_policy_suggestions(session)
+
+        self.assertEqual(candidates[0]["policy_title"], "Regional energy support")
+        self.assertEqual(
+            [
+                call.kwargs["require_selected_country"]
+                for call in service._new_policy_suggestion_policy_rows.call_args_list
+            ],
+            [True, False],
+        )
+
+    def test_evaluation_answer_accepts_uuid_question_id(self):
+        service = ChatService.__new__(ChatService)
+        service._store_question_response = MagicMock()
+        service._record_activity = MagicMock()
+        service._evaluation_complete_step = MagicMock(return_value="done")
+        session = ChatSession(
+            evaluation_index=0,
+            evaluation_questions=[
+                {
+                    "id": "44a1d52f-85aa-11f1-9282-cc28aa4b96ed",
+                    "category": "Impact",
+                    "question": "Does the mitigation improve fairness?",
+                }
+            ],
+            evaluation_answers=[],
+        )
+
+        response = _run(service._handle_evaluation_answer("session-1", session, "Score: 8"))
+
+        self.assertEqual(response, "done")
+        self.assertEqual(
+            service._store_question_response.call_args.kwargs["question_id"],
+            "44a1d52f-85aa-11f1-9282-cc28aa4b96ed",
+        )
 
 
 if __name__ == "__main__":

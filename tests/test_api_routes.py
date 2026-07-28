@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy import inspect
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -21,6 +22,7 @@ from app.services.sync_service import SyncService
 from app.services import sync_permissions
 import app.routes.api as api_routes
 import app.routes.auth as auth_routes
+import app.routes.sync as sync_routes
 
 
 class FakeKnowledgeBaseService:
@@ -119,6 +121,24 @@ class ApiRouteIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 303)
         self.assertIn("dr_transition_auth", response.headers.get("set-cookie", ""))
+
+    def test_sync_token_check_ensures_schema_before_lookup(self) -> None:
+        original_enabled = sync_routes.settings.sync_enabled
+        try:
+            sync_routes.settings.sync_enabled = True
+
+            self.assertNotIn("sync_clients", inspect(self.engine).get_table_names())
+            with self.assertRaises(Exception) as raised:
+                sync_routes.require_sync_token(
+                    authorization="Bearer invalid-token",
+                    x_sync_token=None,
+                    db=self.db,
+                )
+
+            self.assertEqual(getattr(raised.exception, "status_code", None), 401)
+            self.assertIn("sync_clients", inspect(self.engine).get_table_names())
+        finally:
+            sync_routes.settings.sync_enabled = original_enabled
 
     def test_signup_page_sets_matching_csrf_cookie_and_form_field(self) -> None:
         original_csrf_enabled = auth_routes.settings.csrf_protection_enabled

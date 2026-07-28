@@ -2200,7 +2200,7 @@ class ChatMitigationCreationMixin:
         self._store_question_response(
             session_id,
             session,
-            question_id=int(question["id"]),
+            question_id=str(question["id"]),
             category=str(question["category"]),
             response_text=str(score),
             score=score,
@@ -3265,6 +3265,29 @@ class ChatMitigationCreationMixin:
             selected_system_hazard_id,
         )
 
+        for require_selected_country in (True, False):
+            policy_rows = self._new_policy_suggestion_policy_rows(
+                session,
+                selected_system_hazard_id,
+                require_selected_country=require_selected_country,
+            )
+            if not policy_rows:
+                continue
+            candidates = self._new_policy_suggestion_candidates_from_rows(
+                policy_rows,
+                hazard_target_option_ids,
+            )
+            if candidates:
+                return candidates[:limit]
+        return []
+
+    def _new_policy_suggestion_policy_rows(
+        self,
+        session: ChatSession,
+        selected_system_hazard_id: str | None,
+        *,
+        require_selected_country: bool,
+    ) -> list[dict[str, object]]:
         query = (
             select(
                 MitigationMeasurePolicy.id,
@@ -3272,6 +3295,7 @@ class ChatMitigationCreationMixin:
                 MitigationMeasurePolicy.policy_title,
                 MitigationMeasurePolicy.policy_type,
                 MitigationMeasurePolicy.short_description,
+                MitigationMeasurePolicy.country_id,
                 MitigationMeasurePolicySystemHazard.system_hazard_id,
                 MitigationMeasurePolicySystemHazard.mitigation_effect,
                 SystemHazard.name.label("hazard_name"),
@@ -3291,13 +3315,21 @@ class ChatMitigationCreationMixin:
                 MitigationMeasurePolicy.source == "xlsx",
             )
         )
+        if require_selected_country:
+            query = query.where(MitigationMeasurePolicy.country_id == session.country_id)
         if selected_system_hazard_id is not None:
             query = query.where(
                 MitigationMeasurePolicySystemHazard.system_hazard_id
                 == selected_system_hazard_id
             )
 
-        policy_rows = self.db.execute(query).mappings().all()
+        return list(self.db.execute(query).mappings().all())
+
+    def _new_policy_suggestion_candidates_from_rows(
+        self,
+        policy_rows: list[dict[str, object]],
+        hazard_target_option_ids: set[str],
+    ) -> list[dict[str, object]]:
         if not policy_rows:
             return []
 
@@ -3380,7 +3412,7 @@ class ChatMitigationCreationMixin:
             ),
             reverse=True,
         )
-        return candidates[:limit]
+        return candidates
 
     def _selected_system_hazard_target_option_ids(
         self,

@@ -112,8 +112,27 @@ class SyncService:
 
     def ensure_schema(self) -> None:
         self._ensure_metadata_columns()
+        self.ensure_auth_schema()
         connection = self.db.connection()
         dialect = connection.dialect.name
+        inspector = inspect(connection)
+        if "app_users" in inspector.get_table_names():
+            existing_user_columns = {column["name"] for column in inspector.get_columns("app_users")}
+            if "sync_encrypted_payload" not in existing_user_columns:
+                connection.execute(text("ALTER TABLE app_users ADD COLUMN sync_encrypted_payload TEXT NULL"))
+        for table in self.sync_tables():
+            existing = {column["name"] for column in inspector.get_columns(table.name)}
+            for column_name, ddl in self._sync_column_ddls(dialect).items():
+                if column_name not in existing:
+                    connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))
+            indexes = {index["name"] for index in inspector.get_indexes(table.name)}
+            index_name = f"ix_{table.name}_sync_id"
+            if index_name not in indexes:
+                connection.execute(text(f"CREATE UNIQUE INDEX {index_name} ON {table.name} (sync_id)"))
+        self.db.commit()
+
+    def ensure_auth_schema(self) -> None:
+        connection = self.db.connection()
         connection.execute(
             text(
                 """
@@ -150,19 +169,6 @@ class SyncService:
         sync_client_columns = {column["name"] for column in inspector.get_columns("sync_clients")}
         if "can_manage_prompts" not in sync_client_columns:
             connection.execute(text("ALTER TABLE sync_clients ADD COLUMN can_manage_prompts BOOLEAN NOT NULL DEFAULT FALSE"))
-        if "app_users" in inspector.get_table_names():
-            existing_user_columns = {column["name"] for column in inspector.get_columns("app_users")}
-            if "sync_encrypted_payload" not in existing_user_columns:
-                connection.execute(text("ALTER TABLE app_users ADD COLUMN sync_encrypted_payload TEXT NULL"))
-        for table in self.sync_tables():
-            existing = {column["name"] for column in inspector.get_columns(table.name)}
-            for column_name, ddl in self._sync_column_ddls(dialect).items():
-                if column_name not in existing:
-                    connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))
-            indexes = {index["name"] for index in inspector.get_indexes(table.name)}
-            index_name = f"ix_{table.name}_sync_id"
-            if index_name not in indexes:
-                connection.execute(text(f"CREATE UNIQUE INDEX {index_name} ON {table.name} (sync_id)"))
         self.db.commit()
 
     def export_bundle(
@@ -503,7 +509,13 @@ class SyncService:
                 continue
             if column.name in payload_row:
                 raw_value = payload_row.get(column.name)
-                values[column.name] = coerce_datetime(raw_value) if isinstance(column.type, DateTime) else raw_value
+                if column.foreign_keys and raw_value not in (None, ""):
+                    resolved_fk = self._resolve_fk_value(column, "", raw_value)
+                    if resolved_fk is None and not column.nullable:
+                        return "skipped"
+                    values[column.name] = resolved_fk
+                else:
+                    values[column.name] = coerce_datetime(raw_value) if isinstance(column.type, DateTime) else raw_value
         values["sync_id"] = sync_id
         values["origin_device_id"] = values.get("origin_device_id") or payload_row.get("origin_device_id") or self.device_id
         values["sync_revision"] = int(values.get("sync_revision") or payload_row.get("sync_revision") or 1)
@@ -816,7 +828,7 @@ class SyncService:
         token = str(token or "").strip()
         if not token:
             return None
-        self.ensure_schema()
+        self.ensure_auth_schema()
         token_hash = self._sync_token_hash(token)
         row = self.db.execute(
             text(

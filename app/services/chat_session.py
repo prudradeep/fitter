@@ -305,10 +305,16 @@ class ChatSession:
 
     def _additional_hazard_population_summary(self) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
-        for hazard in self.additional_hazards or []:
+        seen: set[str] = set()
+        for hazard in [
+            *(self.additional_hazards or []),
+            *(self.custom_hazards or []),
+        ]:
             hazard_name = str(hazard or "").strip()
-            if not hazard_name:
+            hazard_key = hazard_name.casefold()
+            if not hazard_name or hazard_key in seen:
                 continue
+            seen.add(hazard_key)
             population = self._hazard_population_summary_row(hazard_name)
             rows.append(population)
         return rows

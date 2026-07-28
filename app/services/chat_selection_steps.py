@@ -260,6 +260,9 @@ class ChatSelectionStepsMixin:
         if self._load_hazard_listing_cache(session):
             session.custom_hazards = self._saved_custom_hazards_for_context(session)
             self._hydrate_custom_hazard_profiles(session)
+            await self._enrich_additional_and_custom_hazard_profiles_with_population_context(
+                session
+            )
             self._filter_session_hazards_without_profiles(session)
             self._ensure_user_session(session_id, session)
             self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
@@ -1844,3 +1847,52 @@ class ChatSelectionStepsMixin:
                 **(session.hazard_profiles or {}),
                 **enriched_profiles,
             }
+
+    async def _enrich_additional_and_custom_hazard_profiles_with_population_context(
+        self,
+        session: ChatSession,
+    ) -> None:
+        if not session.hazard_profiles:
+            return
+        enriched_profiles: dict[str, list[dict[str, object]]] = {}
+        seen: set[str] = set()
+        hazard_names = [
+            *(session.additional_hazards or []),
+            *(session.custom_hazards or []),
+        ]
+        for hazard in hazard_names:
+            hazard_name = str(hazard or "").strip()
+            hazard_key = hazard_name.casefold()
+            if not hazard_name or hazard_key in seen:
+                continue
+            seen.add(hazard_key)
+            profiles = self._stored_hazard_profiles(session, hazard_name)
+            if not profiles or self._profiles_have_population_percentages(profiles):
+                continue
+            enriched_profiles[hazard_name] = (
+                await self._additional_profiles_with_population_context(
+                    session,
+                    hazard_name,
+                    profiles,
+                )
+            )
+        if enriched_profiles:
+            session.hazard_profiles = {
+                **(session.hazard_profiles or {}),
+                **enriched_profiles,
+            }
+
+    @staticmethod
+    def _profiles_have_population_percentages(
+        profiles: list[dict[str, object]],
+    ) -> bool:
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            if (
+                profile.get("regional_population_pct") is not None
+                or profile.get("population_pct") is not None
+                or profile.get("national_population_pct") is not None
+            ):
+                return True
+        return False

@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.auth import hash_password
 from app.db.session import Base
-from app.models import AppUser, Country, KnowledgeChunk, KnowledgeDocument, Prompt, UserChatMessage, UserSession
+from app.models import AppUser, Country, KnowledgeChunk, KnowledgeDocument, Prompt, UserActivity, UserChatMessage, UserSession
 from app.routes import sync as sync_routes
 from app.services.sync_service import SyncService
 
@@ -514,6 +514,39 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(result.inserted, 1)
         self.assertIsNotNone(imported_session)
         self.assertEqual(imported_session.user_id, user.id)
+
+    def test_apply_bundle_skips_child_row_when_raw_fk_parent_is_missing(self) -> None:
+        service = SyncService(self.db, device_id="server-device")
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "client-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "tables": [
+                {
+                    "name": "user_activities",
+                    "rows": [
+                        {
+                            "id": "02d6e364-e884-47d5-9660-c83c433a283e",
+                            "sync_id": "02d6e364-e884-47d5-9660-c83c433a283e",
+                            "origin_device_id": "client-device",
+                            "sync_revision": 1,
+                            "sync_updated_at": "2026-07-20T00:00:00Z",
+                            "sync_deleted_at": None,
+                            "user_session_id": "08aaf73e-56eb-48f2-9f5e-00604daa9986",
+                            "activity_type": "country_selected",
+                            "step": "country",
+                            "details": "Germany",
+                            "created_at": "2026-07-20T00:00:00Z",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        result = service.apply_bundle(bundle)
+
+        self.assertEqual(result.skipped, 1)
+        self.assertEqual(self.db.query(UserActivity).count(), 0)
 
     def test_knowledge_sync_marks_scope_indexes_dirty(self) -> None:
         original_mode = sync_routes.settings.sync_mode

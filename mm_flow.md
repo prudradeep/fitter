@@ -706,16 +706,15 @@ llm/mitigation_groundedness_validation.txt
 llm/mitigation_groundedness_validation_user.txt
 ```
 
-The grounding validator checks dimensions including:
+The grounding validator checks these dimensions:
 
 ```text
 hazard fit
-target population fit
-mechanism fit
-sector fit
-country / region fit
-evidence support
-contradictions
+mechanism
+justification soundness
+evidence quality
+contraindications
+feasibility
 ```
 
 The app samples and scores the verdict, then stores validation details such as:
