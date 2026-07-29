@@ -30,6 +30,16 @@ HAZARD_ENTRY_OPTIONS = [
     Option(id=1, label="Go back to list of hazards"),
 ]
 
+HAZARD_EVIDENCE_INPUT_OPTIONS = [
+    Option(id=1, label="Go back to list of hazards"),
+    Option(id=2, label="Skip"),
+]
+
+HAZARD_EVIDENCE_DECISION_OPTIONS = [
+    Option(id=1, label="Yes"),
+    Option(id=2, label="No"),
+]
+
 HAZARD_DUPLICATE_OPTIONS = [
     Option(id=1, label="Continue with custom hazard"),
     Option(id=2, label="Use existing hazard"),

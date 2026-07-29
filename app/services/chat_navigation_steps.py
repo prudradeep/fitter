@@ -11,6 +11,8 @@ from app.services.chat_options import (
     DG_REASON_EVIDENCE_OPTIONS,
     FUZZY_CONFIRMATION_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
+    HAZARD_EVIDENCE_DECISION_OPTIONS,
+    HAZARD_EVIDENCE_INPUT_OPTIONS,
     MITIGATION_DUPLICATE_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
     OTHER_NAV_OPTIONS,
@@ -585,6 +587,44 @@ class ChatNavigationStepsMixin:
                 error=error,
             )
 
+        if session.phase == "add_hazard_reason":
+            return ChatResponse(
+                session_id=session_id,
+                step="custom_hazard_clarification"
+                if isinstance(session.custom_hazard, dict)
+                else "hazard_clarification",
+                bot_message=message,
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                input_mode="textarea",
+                error=error,
+            )
+
+        if session.phase == "add_hazard_evidence_decision":
+            return ChatResponse(
+                session_id=session_id,
+                step="custom_hazard_evidence_decision"
+                if isinstance(session.custom_hazard, dict)
+                else "hazard_evidence_decision",
+                bot_message=message,
+                options=HAZARD_EVIDENCE_DECISION_OPTIONS,
+                session=session.summary(),
+                error=error,
+            )
+
+        if session.phase == "add_hazard_evidence_input":
+            return ChatResponse(
+                session_id=session_id,
+                step="custom_hazard_evidence"
+                if isinstance(session.custom_hazard, dict)
+                else "hazard_evidence",
+                bot_message=message,
+                options=HAZARD_EVIDENCE_INPUT_OPTIONS,
+                session=session.summary(),
+                input_mode="evidence_only",
+                error=error,
+            )
+
         if session.phase == "add_hazard_evidence":
             return ChatResponse(
                 session_id=session_id,
@@ -749,6 +789,9 @@ class ChatNavigationStepsMixin:
             return "sector"
         if session.phase in {
             "add_hazard",
+            "add_hazard_reason",
+            "add_hazard_evidence_decision",
+            "add_hazard_evidence_input",
             "add_hazard_evidence",
             "custom_hazard_input",
             "custom_hazard_review",

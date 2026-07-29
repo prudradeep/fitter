@@ -1350,6 +1350,9 @@ class ChatSelectionStepsMixin:
             return "You are already reviewing hazards; choose a hazard action or type a question."
         if phase in {
             "add_hazard",
+            "add_hazard_reason",
+            "add_hazard_evidence_decision",
+            "add_hazard_evidence_input",
             "add_hazard_evidence",
             "custom_hazard_input",
             "custom_hazard_review",

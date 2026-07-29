@@ -34,6 +34,7 @@ from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_navigation_steps import ChatNavigationStepsMixin
 from app.services.chat_options import (
     DG_REASON_EVIDENCE_OPTIONS,
+    HAZARD_EVIDENCE_DECISION_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
     POST_SECTOR_OPTIONS,
     REASON_CONFIRMATION_OPTIONS,
@@ -387,6 +388,23 @@ class ChatService(
         if session.phase == "custom_hazard_dimension_check":
             return await self._run_custom_hazard_dimension_check(
                 current_session_id, session
+            )
+
+        if session.phase == "add_hazard_reason":
+            return self._capture_hazard_reason(current_session_id, session, clean_message)
+
+        if session.phase == "add_hazard_evidence_decision":
+            return await self._handle_hazard_evidence_decision(
+                current_session_id,
+                session,
+                clean_message,
+            )
+
+        if session.phase == "add_hazard_evidence_input":
+            return await self._capture_hazard_evidence(
+                current_session_id,
+                session,
+                clean_message,
             )
 
         if session.phase in {"add_hazard_evidence", "custom_hazard_validation"}:
@@ -1670,6 +1688,8 @@ class ChatService(
     def _current_step_option_labels(self, session: ChatSession) -> list[str]:
         if session.phase == "hazards":
             return [option.label for option in POST_SECTOR_OPTIONS]
+        if session.phase == "add_hazard_evidence_decision":
+            return [option.label for option in HAZARD_EVIDENCE_DECISION_OPTIONS]
         if session.phase == "stats_deep_dive":
             return [option.label for option in STATS_DEEP_DIVE_OPTIONS]
         if session.phase == "hazard_profile_selection":

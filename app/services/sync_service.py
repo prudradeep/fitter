@@ -385,19 +385,50 @@ class SyncService:
                 include_user_data=include_user_data,
                 user_data_enabled_at=user_data_enabled_at,
             ):
+                local_updated_at = self._local_row_updated_at(table, row) or now
                 if row.get("sync_id"):
+                    sync_updated_at = coerce_datetime(row.get("sync_updated_at"))
+                    if sync_updated_at is None:
+                        pk_col = only_pk(table)
+                        values = {
+                            "sync_revision": row.get("sync_revision") or 1,
+                            "sync_updated_at": local_updated_at,
+                        }
+                        if "updated_at" in table.c and row.get("updated_at") is not None:
+                            values["updated_at"] = row.get("updated_at")
+                        self.db.execute(
+                            update(table)
+                            .where(pk_col == row[pk_col.name])
+                            .values(**values)
+                        )
+                    elif local_updated_at > sync_updated_at:
+                        pk_col = only_pk(table)
+                        values = {
+                            "sync_revision": int(row.get("sync_revision") or 1) + 1,
+                            "sync_updated_at": local_updated_at,
+                        }
+                        if "updated_at" in table.c and row.get("updated_at") is not None:
+                            values["updated_at"] = row.get("updated_at")
+                        self.db.execute(
+                            update(table)
+                            .where(pk_col == row[pk_col.name])
+                            .values(**values)
+                        )
                     continue
                 pk_col = only_pk(table)
                 sync_id = str(row.get(pk_col.name) or "").strip() or self._deterministic_sync_id(table, row) or str(uuid.uuid4())
+                values = {
+                    "sync_id": sync_id,
+                    "origin_device_id": row.get("origin_device_id") or self.device_id,
+                    "sync_revision": row.get("sync_revision") or 1,
+                    "sync_updated_at": row.get("sync_updated_at") or local_updated_at,
+                }
+                if "updated_at" in table.c and row.get("updated_at") is not None:
+                    values["updated_at"] = row.get("updated_at")
                 self.db.execute(
                     update(table)
                     .where(pk_col == row[pk_col.name])
-                    .values(
-                        sync_id=sync_id,
-                        origin_device_id=row.get("origin_device_id") or self.device_id,
-                        sync_revision=row.get("sync_revision") or 1,
-                        sync_updated_at=row.get("sync_updated_at") or now,
-                    )
+                    .values(**values)
                 )
         self.db.commit()
 
@@ -523,6 +554,8 @@ class SyncService:
         values["sync_deleted_at"] = coerce_datetime(values.get("sync_deleted_at"))
         natural_pk = existing_pk or self._pk_for_natural_key(table, payload_row)
         if natural_pk is not None:
+            if not self._payload_is_newer_than_existing(table, natural_pk, payload_row):
+                return "skipped"
             self.db.execute(update(table).where(pk_col == natural_pk).values(**values))
             return "updated"
         insert_values = dict(values)
@@ -747,6 +780,45 @@ class SyncService:
                 return None
         row = self.db.execute(select(only_pk(table)).where(*conditions)).first()
         return row[0] if row else None
+
+    def _payload_is_newer_than_existing(
+        self,
+        table: Table,
+        existing_pk: Any,
+        payload_row: dict[str, Any],
+    ) -> bool:
+        pk_col = only_pk(table)
+        row = self.db.execute(
+            select(table.c.sync_revision, table.c.sync_updated_at).where(pk_col == existing_pk)
+        ).first()
+        if row is None:
+            return True
+        existing_revision = _coerce_int(row[0])
+        payload_revision = _coerce_int(payload_row.get("sync_revision"))
+        if existing_revision is not None and payload_revision is not None:
+            if payload_revision != existing_revision:
+                return payload_revision > existing_revision
+        elif existing_revision is not None and payload_revision is None:
+            return False
+
+        existing_updated_at = coerce_datetime(row[1])
+        payload_updated_at = coerce_datetime(payload_row.get("sync_updated_at"))
+        if existing_updated_at is not None and payload_updated_at is not None:
+            return payload_updated_at > existing_updated_at
+        if existing_updated_at is not None and payload_updated_at is None:
+            return False
+        if existing_updated_at is None and payload_updated_at is not None:
+            return True
+        return existing_revision is None
+
+    @staticmethod
+    def _local_row_updated_at(table: Table, row: dict[str, Any]) -> datetime | None:
+        for column_name in ("updated_at", "created_at"):
+            if column_name in table.c:
+                value = coerce_datetime(row.get(column_name))
+                if value is not None:
+                    return value
+        return None
 
     def _knowledge_scope_for_payload(self, table: Table, payload_row: dict[str, Any]) -> str | None:
         if table.name == "knowledge_documents":
@@ -1113,3 +1185,12 @@ def coerce_datetime(value: Any) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

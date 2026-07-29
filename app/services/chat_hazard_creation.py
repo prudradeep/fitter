@@ -42,6 +42,8 @@ from app.services.chat_options import (
     HAZARD_ENTRY_OPTIONS,
     EVALUATION_CATEGORIES,
     HAZARD_DUPLICATE_OPTIONS,
+    HAZARD_EVIDENCE_DECISION_OPTIONS,
+    HAZARD_EVIDENCE_INPUT_OPTIONS,
     best_fuzzy_label,
     compact_for_match,
     exact_option_label,
@@ -53,6 +55,7 @@ from app.services.chat_options import (
 from app.services.chat_parsers import (
     is_llm_unavailable_response,
     parse_llm_hazard_list,
+    parse_reason_evidence,
 )
 from app.services.chat_hazard_duplicates import (
     dedupe_hazard_names,
@@ -132,7 +135,9 @@ class ChatHazardCreationMixin:
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
-        hazard = str(state.get("raw_text") or session.pending_hazard or "").strip()
+        hazard = str(
+            state.get("resolved_hazard_text") or state.get("raw_text") or session.pending_hazard or ""
+        ).strip()
         if not hazard:
             session.phase = "custom_hazard_input"
             return self._custom_hazard_response(
@@ -188,6 +193,60 @@ class ChatHazardCreationMixin:
             parts.append(f"Evidence: {evidence}")
         return "\n".join(parts)
 
+    def _custom_hazard_context_reason(
+        self, state: dict[str, object], hazard: str
+    ) -> str:
+        candidates = [
+            str(state.get("reason") or "").strip(),
+            str(state.get("title_validation_reason") or "").strip(),
+        ]
+        for clarification in state.get("clarifications") or []:
+            if not isinstance(clarification, dict):
+                continue
+            answer = str(clarification.get("answer") or "").strip()
+            if answer:
+                candidates.append(answer)
+        if self._hazard_text_contains_justification(hazard):
+            candidates.append(hazard)
+        return next((candidate for candidate in candidates if len(candidate) >= 24), "")
+
+    @staticmethod
+    def _hazard_text_contains_justification(hazard: str) -> bool:
+        normalized = normalize_for_match(hazard)
+        if len(normalized) < 40:
+            return False
+        cause_terms = {
+            "because",
+            "due to",
+            "from",
+            "caused by",
+            "arising from",
+            "linked to",
+            "when",
+            "as",
+            "through",
+        }
+        harm_terms = {
+            "cost",
+            "costs",
+            "loss",
+            "losses",
+            "increase",
+            "increases",
+            "exclusion",
+            "risk",
+            "harm",
+            "burden",
+            "shortage",
+            "disruption",
+            "unaffordable",
+            "penalty",
+            "delay",
+        }
+        return any(term in normalized for term in cause_terms) and any(
+            term in normalized for term in harm_terms
+        )
+
     def _store_custom_hazard_validation_result(
         self, session: ChatSession, hazard: str, result: dict[str, object]
     ) -> None:
@@ -232,10 +291,34 @@ class ChatHazardCreationMixin:
                 str(candidate.get("existing_hazard") or "the suggested existing hazard"),
                 str(candidate.get("reason") or "The proposed hazard appears similar to an existing hazard."),
             )
+        if action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE} and not str(
+            state.get("reason") or session.accepted_custom_hazard_reason or ""
+        ).strip():
+            inferred_reason = self._custom_hazard_context_reason(state, hazard)
+            if not inferred_reason:
+                return self._hazard_reason_step(session_id, session, hazard)
+            state["reason"] = inferred_reason
+            session.pending_hazard_reason = inferred_reason
+            session.pending_hazard_evidence = str(state.get("evidence") or "").strip()
+        if (
+            action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE}
+            and not bool(state.get("evidence_decision_asked"))
+            and not str(state.get("evidence") or session.pending_hazard_evidence or "").strip()
+        ):
+            session.pending_hazard = hazard
+            session.pending_hazard_reason = str(
+                state.get("reason") or session.accepted_custom_hazard_reason or ""
+            ).strip()
+            return self._hazard_evidence_decision_step(session_id, session)
         if action == CustomHazardAction.REVIEW_GROUPS:
             session.accepted_custom_hazard = hazard
-            session.accepted_custom_hazard_reason = self._custom_hazard_dimension_reason(state)
-            session.accepted_custom_hazard_evidence = "Not provided"
+            session.accepted_custom_hazard_reason = (
+                str(state.get("reason") or "").strip()
+                or self._custom_hazard_dimension_reason(state)
+            )
+            session.accepted_custom_hazard_evidence = (
+                str(state.get("evidence") or "").strip() or "Not provided"
+            )
             return self._custom_hazard_population_review_step(session_id, session)
         if action == CustomHazardAction.VALIDATE:
             return await self._finalize_custom_hazard_from_grounding(session_id, session)
@@ -1492,48 +1575,228 @@ class ChatHazardCreationMixin:
                 str(duplicate_check.get("reason") or ""),
             )
 
-        return self._hazard_reason_evidence_step(session_id, session, hazard)
+        return await self._start_custom_hazard_grounding_check(session_id, session, hazard)
+
+    async def _start_custom_hazard_grounding_check(
+        self,
+        session_id: str,
+        session: ChatSession,
+        hazard: str,
+    ) -> ChatResponse:
+        session.pending_hazard = hazard
+        session.phase = ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK.value
+        state = self._custom_hazard_state(session)
+        state["resolved_hazard_text"] = hazard
+        state["raw_text"] = hazard
+        return await self._run_custom_hazard_dimension_check(session_id, session)
 
     def _hazard_reason_evidence_step(
         self, session_id: str, session: ChatSession, hazard: str
     ) -> ChatResponse:
+        return self._hazard_reason_step(session_id, session, hazard)
+
+    def _hazard_reason_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        hazard: str,
+        *,
+        error: bool = False,
+        message: str | None = None,
+    ) -> ChatResponse:
         session.pending_hazard = hazard
-        session.phase = "add_hazard_evidence"
+        session.phase = "add_hazard_reason"
+        session.pending_hazard_reason = None
+        session.pending_hazard_evidence = None
         session.suggested_duplicate_hazard = None
         session.suggested_duplicate_hazard_record_id = None
         session.pending_hazard_clarification_question = None
         session.pending_hazard_clarification_answer = None
         session.pending_hazard_title_clarification_question = None
-        message = render_message(
-            "hazard_reason_evidence.md",
-            hazard=hazard,
-            matching_hazards="",
-            has_matching_hazards=False,
+        bot_message = message or markdown_to_html(
+            "## Clarification Needed\n\n"
+            f"Proposed hazard:\n\n- **{hazard}**\n\n"
+            "Please clarify why this should be treated as a hazard in this context. "
+            "Include the reason or justification in your answer."
         )
         if isinstance(session.custom_hazard, dict):
             state = self._custom_hazard_state(session)
             state["resolved_hazard_text"] = hazard
             state["raw_text"] = str(state.get("raw_text") or hazard).strip()
             state["status"] = CustomHazardStatus.DRAFT.value
-            state["message"] = "Reason and optional evidence are required before grounding validation."
+            state["message"] = "Reason or justification is required before grounding validation."
             return self._custom_hazard_response(
                 session_id=session_id,
                 session=session,
-                step="custom_hazard_validation",
-                bot_message=message,
+                step="custom_hazard_clarification",
+                bot_message=bot_message,
                 options=HAZARD_ENTRY_OPTIONS,
-                input_mode="reason_evidence",
-                error=False,
+                input_mode="textarea",
+                error=error,
             )
         return ChatResponse(
             session_id=session_id,
-            step="hazards",
-            bot_message=message,
+            step="hazard_clarification",
+            bot_message=bot_message,
             options=HAZARD_ENTRY_OPTIONS,
             session=session.summary(),
-            input_mode="reason_evidence",
-            error=False,
+            input_mode="textarea",
+            error=error,
         )
+
+    def _capture_hazard_reason(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, HAZARD_ENTRY_OPTIONS)
+        if normalize(exact_label or message) == normalize("Go back to list of hazards"):
+            session.pending_hazard = None
+            session.pending_hazard_reason = None
+            session.pending_hazard_evidence = None
+            session.phase = "hazards"
+            return self._hazards_step(session_id, session)
+
+        hazard = session.pending_hazard or ""
+        if not hazard:
+            session.phase = "custom_hazard_input"
+            session.custom_hazard = default_custom_hazard_state()
+            return ChatResponse(
+                session_id=session_id,
+                step="hazards",
+                bot_message=render_message("add_hazard.md", sector=session.sector),
+                options=HAZARD_ENTRY_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+
+        parsed_reason, _ = parse_reason_evidence(message)
+        reason = (parsed_reason or message or "").strip()
+        if not reason:
+            return self._hazard_reason_step(
+                session_id,
+                session,
+                hazard,
+                error=True,
+                message=markdown_to_html(
+                    "Please answer the clarification question and include the reason "
+                    "or justification before continuing."
+                ),
+            )
+
+        session.pending_hazard_reason = reason
+        session.pending_hazard_evidence = ""
+        return self._hazard_evidence_decision_step(session_id, session)
+
+    def _hazard_evidence_decision_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error: bool = False,
+        message: str | None = None,
+    ) -> ChatResponse:
+        session.phase = "add_hazard_evidence_decision"
+        if isinstance(session.custom_hazard, dict):
+            state = self._custom_hazard_state(session)
+            state["evidence_decision_asked"] = True
+        bot_message = message or markdown_to_html(
+            "Do you have evidence to validate this hazard?\n\n"
+            "Choose **Yes** to add a URL or file, or **No** to continue without evidence."
+        )
+        return ChatResponse(
+            session_id=session_id,
+            step="custom_hazard_evidence_decision"
+            if isinstance(session.custom_hazard, dict)
+            else "hazard_evidence_decision",
+            bot_message=bot_message,
+            options=HAZARD_EVIDENCE_DECISION_OPTIONS,
+            session=session.summary(),
+            error=error,
+        )
+
+    async def _handle_hazard_evidence_decision(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, HAZARD_EVIDENCE_DECISION_OPTIONS)
+        if exact_label is None:
+            fuzzy_label = match_option_label(message, HAZARD_EVIDENCE_DECISION_OPTIONS)
+            if fuzzy_label is not None:
+                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
+        action = normalize(exact_label or message)
+        if action == normalize("Yes"):
+            return self._hazard_evidence_input_step(session_id, session)
+        if action == normalize("No"):
+            return await self._validate_staged_custom_hazard(session_id, session, "")
+        return self._hazard_evidence_decision_step(
+            session_id,
+            session,
+            error=True,
+            message=self.invalid_message,
+        )
+
+    def _hazard_evidence_input_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error: bool = False,
+        message: str | None = None,
+    ) -> ChatResponse:
+        session.phase = "add_hazard_evidence_input"
+        bot_message = message or markdown_to_html(
+            "Please add evidence for this hazard. You can paste a URL or attach a supported file."
+        )
+        return ChatResponse(
+            session_id=session_id,
+            step="custom_hazard_evidence"
+            if isinstance(session.custom_hazard, dict)
+            else "hazard_evidence",
+            bot_message=bot_message,
+            options=HAZARD_EVIDENCE_INPUT_OPTIONS,
+            session=session.summary(),
+            input_mode="evidence_only",
+            error=error,
+        )
+
+    async def _capture_hazard_evidence(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, HAZARD_EVIDENCE_INPUT_OPTIONS)
+        if normalize(exact_label or message) == normalize("Go back to list of hazards"):
+            return self._hazard_evidence_decision_step(session_id, session)
+        if normalize(exact_label or message) == normalize("Skip"):
+            return await self._validate_staged_custom_hazard(session_id, session, "")
+
+        _, parsed_evidence = parse_reason_evidence(message)
+        evidence = (parsed_evidence or message or "").strip()
+        if not evidence:
+            return self._hazard_evidence_input_step(
+                session_id,
+                session,
+                error=True,
+                message="Please add an evidence URL or file, or choose Skip.",
+            )
+        return await self._validate_staged_custom_hazard(session_id, session, evidence)
+
+    async def _validate_staged_custom_hazard(
+        self, session_id: str, session: ChatSession, evidence: str
+    ) -> ChatResponse:
+        reason = str(session.pending_hazard_reason or "").strip()
+        if not reason:
+            return self._hazard_reason_step(
+                session_id,
+                session,
+                session.pending_hazard or "New hazard",
+                error=True,
+                message=markdown_to_html(
+                    "Please answer the clarification question and include the reason "
+                    "or justification before continuing."
+                ),
+            )
+        session.pending_hazard_evidence = evidence
+        lines = [f"Reason: {reason}"]
+        if evidence:
+            lines.append(f"Evidence: {evidence}")
+        return await self._validate_custom_hazard(session_id, session, "\n".join(lines))
 
     def _hazard_duplicate_suggestion_step(
         self,
@@ -1609,7 +1872,7 @@ class ChatHazardCreationMixin:
             if session.phase == "custom_hazard_duplicate_confirmation":
                 state = self._custom_hazard_state(session)
                 state["duplicate_override_confirmed"] = True
-            return self._hazard_reason_evidence_step(session_id, session, hazard)
+            return await self._start_custom_hazard_grounding_check(session_id, session, hazard)
 
         if action in {normalize("Explore suggested hazard"), normalize("Use existing hazard")}:
             suggested_hazard = session.suggested_duplicate_hazard or ""

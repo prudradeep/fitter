@@ -430,6 +430,158 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(countries[0].map_path, "countries/de/de-all.geo.json")
         self.assertEqual(sync_id, "33a14422-dbb3-42f4-a3d6-67532e1ba570")
 
+    def test_apply_bundle_skips_older_existing_row(self) -> None:
+        session = UserSession(
+            session_key="session-a",
+            title="New local title",
+            session_data="{}",
+            updated_at=datetime(2026, 7, 21, 12, 0, 0),
+        )
+        self.db.add(session)
+        self.db.flush()
+        self.db.execute(
+            UserSession.__table__.update()
+            .where(UserSession.__table__.c.id == session.id)
+            .values(
+                sync_id="11111111-1111-4111-8111-111111111111",
+                origin_device_id="local-device",
+                sync_revision=3,
+                sync_updated_at=datetime(2026, 7, 21, 12, 0, 0),
+                updated_at=datetime(2026, 7, 21, 12, 0, 0),
+            )
+        )
+        self.db.commit()
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "remote-device",
+            "exported_at": "2026-07-20T00:00:00Z",
+            "tables": [
+                {
+                    "name": "user_sessions",
+                    "rows": [
+                        {
+                            "id": session.id,
+                            "sync_id": "11111111-1111-4111-8111-111111111111",
+                            "origin_device_id": "remote-device",
+                            "sync_revision": 2,
+                            "sync_updated_at": "2026-07-20T12:00:00Z",
+                            "sync_deleted_at": None,
+                            "session_key": "session-a",
+                            "title": "Older remote title",
+                            "title_is_manual": False,
+                            "session_data": "{}",
+                            "user_id": None,
+                        }
+                    ],
+                }
+            ],
+        }
+
+        result = SyncService(self.db, device_id="local-device").apply_bundle(
+            bundle,
+            sync_client={"can_sync_user_data": True},
+        )
+        title, sync_revision = self.db.execute(
+            select(UserSession.__table__.c.title, UserSession.__table__.c.sync_revision)
+            .where(UserSession.__table__.c.id == session.id)
+        ).one()
+
+        self.assertEqual(result.skipped, 1)
+        self.assertEqual(title, "New local title")
+        self.assertEqual(sync_revision, 3)
+
+    def test_apply_bundle_updates_when_inbound_row_is_newer(self) -> None:
+        session = UserSession(
+            session_key="session-a",
+            title="Old local title",
+            session_data="{}",
+            updated_at=datetime(2026, 7, 20, 12, 0, 0),
+        )
+        self.db.add(session)
+        self.db.flush()
+        self.db.execute(
+            UserSession.__table__.update()
+            .where(UserSession.__table__.c.id == session.id)
+            .values(
+                sync_id="11111111-1111-4111-8111-111111111111",
+                origin_device_id="local-device",
+                sync_revision=2,
+                sync_updated_at=datetime(2026, 7, 20, 12, 0, 0),
+                updated_at=datetime(2026, 7, 20, 12, 0, 0),
+            )
+        )
+        self.db.commit()
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "device_id": "remote-device",
+            "exported_at": "2026-07-21T00:00:00Z",
+            "tables": [
+                {
+                    "name": "user_sessions",
+                    "rows": [
+                        {
+                            "id": session.id,
+                            "sync_id": "11111111-1111-4111-8111-111111111111",
+                            "origin_device_id": "remote-device",
+                            "sync_revision": 3,
+                            "sync_updated_at": "2026-07-21T12:00:00Z",
+                            "sync_deleted_at": None,
+                            "session_key": "session-a",
+                            "title": "New remote title",
+                            "title_is_manual": True,
+                            "session_data": "{}",
+                            "user_id": None,
+                        }
+                    ],
+                }
+            ],
+        }
+
+        result = SyncService(self.db, device_id="local-device").apply_bundle(
+            bundle,
+            sync_client={"can_sync_user_data": True},
+        )
+        title, sync_revision = self.db.execute(
+            select(UserSession.__table__.c.title, UserSession.__table__.c.sync_revision)
+            .where(UserSession.__table__.c.id == session.id)
+        ).one()
+
+        self.assertEqual(result.updated, 1)
+        self.assertEqual(title, "New remote title")
+        self.assertEqual(sync_revision, 3)
+
+    def test_export_bumps_sync_metadata_when_local_row_updated(self) -> None:
+        session = UserSession(
+            session_key="session-a",
+            title="Updated local title",
+            session_data="{}",
+            updated_at=datetime(2026, 7, 22, 12, 0, 0),
+        )
+        self.db.add(session)
+        self.db.flush()
+        self.db.execute(
+            UserSession.__table__.update()
+            .where(UserSession.__table__.c.id == session.id)
+            .values(
+                sync_id="11111111-1111-4111-8111-111111111111",
+                origin_device_id="local-device",
+                sync_revision=2,
+                sync_updated_at=datetime(2026, 7, 21, 12, 0, 0),
+                updated_at=datetime(2026, 7, 22, 12, 0, 0),
+            )
+        )
+        self.db.commit()
+
+        bundle = SyncService(self.db, device_id="local-device").export_bundle()
+        exported = next(
+            row
+            for row in self._rows(bundle, "user_sessions")
+            if row["sync_id"] == "11111111-1111-4111-8111-111111111111"
+        )
+
+        self.assertEqual(exported["sync_revision"], 3)
+        self.assertEqual(exported["sync_updated_at"], "2026-07-22T12:00:00")
+
     def test_apply_bundle_remaps_foreign_keys_to_local_ids(self) -> None:
         user = self._add_user("admin@example.com")
         session = UserSession(

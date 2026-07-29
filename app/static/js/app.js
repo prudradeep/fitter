@@ -1814,6 +1814,7 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
   if (mode === "mitigation_measure") {
     primaryInputLabel.textContent = "Mitigation measure";
     reasonInput.placeholder = "What mitigation measure should be used?";
+    reasonInput.closest("label").hidden = false;
     secondaryReasonInput.closest("label").hidden = true;
     evidenceUrlField.hidden = true;
     evidenceFileField.hidden = true;
@@ -1823,8 +1824,14 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
   primaryInputLabel.textContent = "Reason/Justification";
   secondaryInputLabel.textContent = "Reason/Justification";
   secondaryReasonInput.closest("label").hidden = true;
-  evidenceUrlField.hidden = false;
-  evidenceFileField.hidden = false;
+  reasonInput.closest("label").hidden = mode === "evidence_only";
+  evidenceUrlField.hidden = mode === "reason_only";
+  evidenceFileField.hidden = mode === "reason_only";
+
+  if (mode === "evidence_only") {
+    evidenceInput.placeholder = "https://example.org/hazard-evidence";
+    return;
+  }
 
   if (step === "socio_demographic_review") {
     primaryInputLabel.textContent = "Reason/Justification (optional)";
@@ -2828,7 +2835,7 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
   appState.currentOptions = options || [];
   syncTargetPopulationQuestion(step, appState.currentOptions);
   updateStageVisual(step, session || appState.currentSession, appState.currentOptions);
-  const reasonEvidenceMode = effectiveMode === "reason_evidence" || effectiveMode === "mitigation_measure";
+  const reasonEvidenceMode = ["reason_evidence", "reason_only", "evidence_only", "mitigation_measure"].includes(effectiveMode);
   const evaluationMode = effectiveMode === "evaluation_question";
   const textareaMode = effectiveMode === "textarea";
   micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode || textareaMode;
@@ -2843,8 +2850,20 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
   reasonEvidenceFields.hidden = !reasonEvidenceMode;
   evaluationFields.hidden = !evaluationMode;
 
+  if (effectiveMode === "reason_only") {
+    evidenceInput.value = "";
+    evidenceFileInput.value = "";
+  }
+  if (effectiveMode === "evidence_only") {
+    reasonInput.value = "";
+  }
+
   if (reasonEvidenceMode) {
-    reasonInput.focus();
+    if (effectiveMode === "evidence_only") {
+      evidenceInput.focus();
+    } else {
+      reasonInput.focus();
+    }
   } else if (evaluationMode) {
     scoreInput.value = "5";
     scoreValue.textContent = "5";
@@ -4965,6 +4984,8 @@ function normalizeAutoConversationMessage(message) {
   const fieldModes = new Set([
     "mitigation_measure",
     "reason_evidence",
+    "reason_only",
+    "evidence_only",
     "textarea",
     "evaluation_question",
   ]);
@@ -4975,7 +4996,7 @@ function normalizeAutoConversationMessage(message) {
   const isOption = optionLabels.some((label) => normalizeForMatch(label) === normalizeForMatch(message));
   if (!isOption) {
     if (
-      appState.inputMode === "reason_evidence" &&
+      (appState.inputMode === "reason_evidence" || appState.inputMode === "reason_only") &&
       !/^reason\s*:/i.test(message) &&
       !/^evidence\s*:/i.test(message)
     ) {
@@ -4995,8 +5016,11 @@ function normalizeAutoConversationMessage(message) {
   if (appState.inputMode === "mitigation_measure") {
     return "Mitigation measure: Provide targeted financial support and advisory services for affected groups.";
   }
-  if (appState.inputMode === "reason_evidence") {
+  if (appState.inputMode === "reason_evidence" || appState.inputMode === "reason_only") {
     return "Reason: This reduces the hazard by lowering costs, improving access, and supporting affected groups through the transition.";
+  }
+  if (appState.inputMode === "evidence_only") {
+    return "Evidence: Published policy evaluation or statistical evidence supporting the hazard.";
   }
   if (appState.inputMode === "textarea") {
     return "The cost coverage applies to the affected target groups by paying or reimbursing upfront adaptation costs directly for them, with guidance and implementation support so they can use the measure in practice.";
@@ -5077,8 +5101,10 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     console.error("Chat request failed", error);
   } finally {
     setLoading(false);
-    if (appState.inputMode === "reason_evidence" || appState.inputMode === "mitigation_measure") {
+    if (["reason_evidence", "reason_only", "mitigation_measure"].includes(appState.inputMode)) {
       reasonInput.focus();
+    } else if (appState.inputMode === "evidence_only") {
+      evidenceInput.focus();
     } else if (appState.inputMode === "evaluation_question") {
       scoreInput.focus();
     } else if (appState.inputMode === "textarea") {
@@ -5115,7 +5141,7 @@ function evidenceSummary(url, file) {
 chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
 
-  if (appState.inputMode === "reason_evidence" || appState.inputMode === "mitigation_measure") {
+  if (["reason_evidence", "reason_only", "evidence_only", "mitigation_measure"].includes(appState.inputMode)) {
     const primaryValue = reasonInput.value.trim();
     const evidenceUrl = evidenceInput.value.trim();
     const evidenceFile = evidenceFileInput.files[0];
@@ -5133,6 +5159,20 @@ chatForm.addEventListener("submit", (event) => {
       return;
     }
 
+    if (appState.inputMode === "evidence_only") {
+      if (!evidenceUrl && !(evidenceFile instanceof File && evidenceFile.size > 0)) {
+        flashRequiredField(evidenceInput);
+        return;
+      }
+      const value = evidenceSummary(evidenceUrl, evidenceFile).join("\n");
+      evidenceInput.value = "";
+      evidenceFileInput.value = "";
+      collapseExpandedMessages();
+      addMessage("user", value);
+      sendMessage("", false, { evidenceUrl, evidenceFile });
+      return;
+    }
+
     const reasonOptional = appState.currentStep === "socio_demographic_review";
     if (!primaryValue && !reasonOptional) {
       flashRequiredField(reasonInput);
@@ -5145,7 +5185,10 @@ chatForm.addEventListener("submit", (event) => {
     evidenceFileInput.value = "";
     collapseExpandedMessages();
     addMessage("user", value);
-    sendMessage(primaryValue ? `Reason: ${primaryValue}` : "", false, { evidenceUrl, evidenceFile });
+    sendMessage(primaryValue ? `Reason: ${primaryValue}` : "", false, {
+      evidenceUrl: appState.inputMode === "reason_only" ? "" : evidenceUrl,
+      evidenceFile: appState.inputMode === "reason_only" ? null : evidenceFile,
+    });
     return;
   }
 
