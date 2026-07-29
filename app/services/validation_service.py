@@ -22,6 +22,7 @@ from app.services.chat_json import (
 from app.services.chat_options import (
     DG_REASON_EVIDENCE_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
+    MITIGATION_EVIDENCE_INPUT_OPTIONS,
     SOCIO_DEMOGRAPHIC_OPTIONS,
     compact_for_match,
     exact_option_label,
@@ -1884,7 +1885,7 @@ class ChatValidationServiceMixin:
         reason = evaluated_inputs["justification"]
         evidence_text = evaluated_inputs["evidence"]
         session.mitigation_frozen_inputs = evaluated_inputs
-        session.phase = "mitigation_reason"
+        session.phase = "mitigation_evidence_input"
         evidence_branch = self._has_user_supplied_evidence(evidence_text)
         session.pending_mitigation_measure = mitigation_measure
         session.pending_mitigation_reason = reason
@@ -1900,11 +1901,11 @@ class ChatValidationServiceMixin:
         if validation is None:
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_reason",
+                step="mitigation_evidence",
                 bot_message=render_message("mitigation_validation_unavailable.md"),
-                options=[],
+                options=MITIGATION_EVIDENCE_INPUT_OPTIONS,
                 session=session.summary(),
-                input_mode="reason_evidence",
+                input_mode="evidence_only",
                 error=True,
             )
 
@@ -1915,30 +1916,29 @@ class ChatValidationServiceMixin:
             session.pending_mitigation_evidence = None
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_reason",
+                step="mitigation_evidence",
                 bot_message=render_message(
                     "mitigation_validation_rejected.md",
                     reason=self._mitigation_outcome_reason(validation, "REJECT"),
                 ),
-                options=[],
+                options=MITIGATION_EVIDENCE_INPUT_OPTIONS,
                 session=session.summary(),
-                input_mode="reason_evidence",
+                input_mode="evidence_only",
                 error=True,
                 validation_details=self._grounding_validation_details(session, validation),
             )
         if outcome == "ABSTAIN":
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_reason",
+                step="mitigation_evidence",
                 bot_message=render_message(
                     "mitigation_validation_abstained.md",
                     reason=self._mitigation_outcome_reason(validation, "ABSTAIN"),
                 ),
-                options=[],
+                options=MITIGATION_EVIDENCE_INPUT_OPTIONS,
                 session=session.summary(),
-                input_mode="reason_evidence",
+                input_mode="evidence_only",
                 input_values={
-                    "reason": reason,
                     "evidence_url": self._evidence_url(evidence_text),
                 },
                 error=False,
@@ -1954,11 +1954,11 @@ class ChatValidationServiceMixin:
         if synthesis is None:
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_reason",
+                step="mitigation_evidence",
                 bot_message=render_message("mitigation_validation_unavailable.md"),
-                options=[],
+                options=MITIGATION_EVIDENCE_INPUT_OPTIONS,
                 session=session.summary(),
-                input_mode="reason_evidence",
+                input_mode="evidence_only",
                 error=True,
             )
 

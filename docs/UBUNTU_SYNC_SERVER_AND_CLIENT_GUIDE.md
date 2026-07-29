@@ -332,6 +332,16 @@ Seed reference data:
 uv run python -m app.seed_data
 ```
 
+If the server uses a named env file such as `.env.server.dev`, include it:
+
+```bash
+ENV_FILE=.env.server.dev uv run python -m app.seed_data --skip-schema
+```
+
+This also extracts the authoritative hazards from the sector prompt files under
+`app/prompts/*_truth.txt` into `system_hazards`, then maps `hazards.xlsx` into
+`mitigation_measure_policy_system_hazards`.
+
 Seed or refresh all database-backed prompts after changing packaged prompt
 files under `app/prompts` or `app/templates/chat`:
 
@@ -753,6 +763,10 @@ If reference CSV/XLSX files changed:
 ```bash
 uv run python -m app.seed_data
 ```
+
+Run the same seed command after changing sector prompt files, because seeding
+derives `system_hazards` from `app/prompts/*_truth.txt` before loading
+`hazards.xlsx` policy-hazard mappings.
 
 If packaged prompt files changed:
 

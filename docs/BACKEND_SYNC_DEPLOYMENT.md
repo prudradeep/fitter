@@ -253,6 +253,17 @@ files change:
 uv run python -m app.seed_data
 ```
 
+If the central server uses a named env file such as `.env.server.dev`, export it
+for the seed command:
+
+```bash
+ENV_FILE=.env.server.dev uv run python -m app.seed_data --skip-schema
+```
+
+This seed step also extracts sector hazards from the packaged sector prompts
+under `app/prompts/*_truth.txt` into `system_hazards`. Those hazards are seeded
+before `hazards.xlsx` populates `mitigation_measure_policy_system_hazards`.
+
 Seed or refresh the database-backed prompt library after changing packaged
 prompt files under `app/prompts` or `app/templates/chat`:
 

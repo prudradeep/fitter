@@ -392,6 +392,8 @@ function stageKeyForStep(step = "", mode = appState.inputMode) {
       "target_population_question",
       "mitigation_measure",
       "mitigation_reason",
+      "mitigation_evidence_decision",
+      "mitigation_evidence",
       "mitigation_duplicate_suggestion",
       "mitigation_duplicate_report",
       "mitigation_clarity",
@@ -410,6 +412,8 @@ function shouldShowHazardContextOnly(step = appState.currentStep, mode = appStat
     || [
       "mitigation_measure",
       "mitigation_reason",
+      "mitigation_evidence_decision",
+      "mitigation_evidence",
       "mitigation_duplicate_suggestion",
       "mitigation_duplicate_report",
       "mitigation_clarity",
@@ -1084,6 +1088,8 @@ function shouldShowPracticalConsiderationsVisual(step = appState.currentStep, se
       "mitigation_duplicate_report",
       "mitigation_reason",
       "mitigation_clarity",
+      "mitigation_evidence_decision",
+      "mitigation_evidence",
       "mitigation_target_population",
     ].includes(step)
   );
@@ -1775,6 +1781,9 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     if (step === "mitigation_reason") {
       return "Enter a mitigation measure and reason below...";
     }
+    if (step === "mitigation_evidence") {
+      return "Add evidence or choose Skip...";
+    }
     if (step === "mitigation_clarity") {
       return "Answer all clarification questions...";
     }
@@ -1829,7 +1838,9 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
   evidenceFileField.hidden = mode === "reason_only";
 
   if (mode === "evidence_only") {
-    evidenceInput.placeholder = "https://example.org/hazard-evidence";
+    evidenceInput.placeholder = step === "mitigation_evidence"
+      ? "https://example.org/mitigation-evidence"
+      : "https://example.org/hazard-evidence";
     return;
   }
 

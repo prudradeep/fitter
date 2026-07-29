@@ -14,6 +14,8 @@ from app.services.chat_options import (
     HAZARD_EVIDENCE_DECISION_OPTIONS,
     HAZARD_EVIDENCE_INPUT_OPTIONS,
     MITIGATION_DUPLICATE_OPTIONS,
+    MITIGATION_EVIDENCE_DECISION_OPTIONS,
+    MITIGATION_EVIDENCE_INPUT_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
     OTHER_NAV_OPTIONS,
     POST_SECTOR_OPTIONS,
@@ -709,6 +711,27 @@ class ChatNavigationStepsMixin:
                 options=self._mitigation_clarity_options(),
                 session=session.summary(),
                 input_mode="textarea",
+                error=error,
+            )
+
+        if session.phase == "mitigation_evidence_decision":
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_evidence_decision",
+                bot_message=message,
+                options=MITIGATION_EVIDENCE_DECISION_OPTIONS,
+                session=session.summary(),
+                error=error,
+            )
+
+        if session.phase == "mitigation_evidence_input":
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_evidence",
+                bot_message=message,
+                options=MITIGATION_EVIDENCE_INPUT_OPTIONS,
+                session=session.summary(),
+                input_mode="evidence_only",
                 error=error,
             )
 

@@ -31,6 +31,8 @@ from app.services.chat_formatters import (
 )
 from app.services.chat_json import parse_json_array, parse_json_object
 from app.services.chat_options import (
+    MITIGATION_EVIDENCE_DECISION_OPTIONS,
+    MITIGATION_EVIDENCE_INPUT_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
     compact_for_match,
     exact_option_label,
@@ -41,6 +43,7 @@ from app.services.chat_options import (
 from app.services.chat_parsers import (
     is_llm_unavailable_response,
     parse_evaluation_answer,
+    parse_reason_evidence,
 )
 from app.services.chat_session import ChatSession
 from app.services.document_text import compact_text, extract_pdf_page_texts
@@ -150,19 +153,11 @@ class ChatMitigationCreationMixin:
         mitigation_measure = session.pending_mitigation_measure or ""
         reason = session.pending_mitigation_reason or ""
         evidence_text = session.pending_mitigation_evidence or ""
-        if not mitigation_measure or not reason:
-            session.phase = "mitigation_reason"
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_reason",
-                bot_message=render_message(
-                    "mitigation_validation_failed.md",
-                    reason="Please enter the mitigation reason again so I can restart the clarity check.",
-                ),
-                options=[],
-                session=session.summary(),
-                input_mode="reason_evidence",
-                error=True,
+        if not mitigation_measure:
+            return self._mitigation_initial_clarification_step(
+                session_id,
+                session,
+                "Your proposed mitigation measure",
             )
 
         if session.pending_mitigation_clarity_dimension in {
@@ -238,12 +233,12 @@ class ChatMitigationCreationMixin:
             return clarity_response
 
         frozen_inputs = session.mitigation_frozen_inputs or {}
-        return await self._validate_frozen_mitigation_inputs(
+        return self._mitigation_evidence_decision_step(
             session_id,
             session,
             frozen_inputs.get("measure_description") or mitigation_measure,
             frozen_inputs.get("justification") or reason,
-            frozen_inputs.get("evidence") or evidence_text,
+            "",
         )
 
     @classmethod
@@ -337,14 +332,10 @@ class ChatMitigationCreationMixin:
             clarification_answer,
         )
         if clarity is None or clarity.get("error"):
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_reason",
-                bot_message=render_message("mitigation_validation_unavailable.md"),
-                options=[],
-                session=session.summary(),
-                input_mode="reason_evidence",
-                error=True,
+            return self._mitigation_initial_clarification_step(
+                session_id,
+                session,
+                mitigation_measure or "Your proposed mitigation measure",
             )
 
         if clarity.get("clear"):
@@ -374,26 +365,26 @@ class ChatMitigationCreationMixin:
 
         if session.mitigation_clarity_turns >= self.mitigation_clarity_turn_cap:
             self._discard_temporary_evidence(session, evidence_text)
-            session.phase = "mitigation_reason"
+            session.phase = "mitigation_measure"
             self._clear_mitigation_clarity_state(session)
             clarity_reason = str(clarity.get("reason") or "").strip()
             revision_reason = (
                 "I still cannot freeze an unambiguous version of the mitigation "
-                "measure, justification, and evidence after the clarification limit. "
-                "Please resubmit them with more concrete wording."
+                "measure and justification after the clarification limit. "
+                "Please resubmit the mitigation measure with more concrete wording."
             )
             if clarity_reason:
                 revision_reason = f"{revision_reason} Last clarity issue: {clarity_reason}"
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_reason",
+                step="mitigation_measure",
                 bot_message=render_message(
                     "mitigation_validation_failed.md",
                     reason=revision_reason,
                 ),
                 options=[],
                 session=session.summary(),
-                input_mode="reason_evidence",
+                input_mode="mitigation_measure",
                 error=True,
             )
 
@@ -433,8 +424,8 @@ class ChatMitigationCreationMixin:
                 "### Clarification needed\n\n"
                 f"**Currently clarifying: {dimension_label}**\n\n"
                 f"Please answer these questions in one response:\n\n{question_list}\n\n"
-                "I will use your answers only to clarify the inputs, not as evidence "
-                "that the measure is supported."
+                "I will use your answers only to clarify the measure and "
+                "justification. Evidence will be collected next."
             ),
             options=self._mitigation_clarity_options(),
             session=session.summary(),
@@ -446,6 +437,157 @@ class ChatMitigationCreationMixin:
                 unresolved_dimension,
                 follow_up_questions,
             ),
+        )
+
+    def _mitigation_evidence_decision_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str = "",
+        *,
+        error: bool = False,
+        message: str | None = None,
+    ) -> ChatResponse:
+        session.phase = "mitigation_evidence_decision"
+        session.pending_mitigation_measure = mitigation_measure
+        session.pending_mitigation_reason = reason
+        session.pending_mitigation_evidence = evidence_text
+        bot_message = message or markdown_to_html(
+            "Do you have evidence to validate this mitigation measure?\n\n"
+            "Choose **Yes** to add a URL or file, or **No** to continue without evidence."
+        )
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_evidence_decision",
+            bot_message=bot_message,
+            options=MITIGATION_EVIDENCE_DECISION_OPTIONS,
+            session=session.summary(),
+            error=error,
+        )
+
+    async def _handle_mitigation_evidence_decision(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, MITIGATION_EVIDENCE_DECISION_OPTIONS)
+        if exact_label is None:
+            fuzzy_label = match_option_label(message, MITIGATION_EVIDENCE_DECISION_OPTIONS)
+            if fuzzy_label is not None:
+                exact_label = fuzzy_label
+        action = normalize(exact_label or message)
+        mitigation_measure = session.pending_mitigation_measure or session.mitigation_measure or ""
+        reason = session.pending_mitigation_reason or session.mitigation_reason or ""
+        if not mitigation_measure or not reason:
+            return self._mitigation_initial_clarification_step(
+                session_id,
+                session,
+                mitigation_measure or "Your proposed mitigation measure",
+            )
+        if action == normalize("Yes"):
+            return self._mitigation_evidence_input_step(session_id, session)
+        if action == normalize("No"):
+            return await self._validate_frozen_mitigation_inputs(
+                session_id,
+                session,
+                mitigation_measure,
+                reason,
+                "",
+            )
+        return self._mitigation_evidence_decision_step(
+            session_id,
+            session,
+            mitigation_measure,
+            reason,
+            session.pending_mitigation_evidence or "",
+            error=True,
+            message=self.invalid_message,
+        )
+
+    def _mitigation_evidence_input_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error: bool = False,
+        message: str | None = None,
+    ) -> ChatResponse:
+        session.phase = "mitigation_evidence_input"
+        bot_message = message or markdown_to_html(
+            "Please add evidence for this mitigation measure. You can paste a URL "
+            "or attach a supported file: PDF, DOCX, MD, or TXT."
+        )
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_evidence",
+            bot_message=bot_message,
+            options=MITIGATION_EVIDENCE_INPUT_OPTIONS,
+            session=session.summary(),
+            input_mode="evidence_only",
+            error=error,
+        )
+
+    async def _capture_mitigation_evidence(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, MITIGATION_EVIDENCE_INPUT_OPTIONS)
+        if exact_label is None:
+            fuzzy_label = match_option_label(message, MITIGATION_EVIDENCE_INPUT_OPTIONS)
+            if fuzzy_label is not None:
+                exact_label = fuzzy_label
+        action = normalize(exact_label or message)
+        if action == normalize("Back to evidence question"):
+            return self._mitigation_evidence_decision_step(
+                session_id,
+                session,
+                session.pending_mitigation_measure or session.mitigation_measure or "",
+                session.pending_mitigation_reason or session.mitigation_reason or "",
+                session.pending_mitigation_evidence or "",
+            )
+
+        mitigation_measure = session.pending_mitigation_measure or session.mitigation_measure or ""
+        reason = session.pending_mitigation_reason or session.mitigation_reason or ""
+        if not mitigation_measure or not reason:
+            return self._mitigation_initial_clarification_step(
+                session_id,
+                session,
+                mitigation_measure or "Your proposed mitigation measure",
+            )
+        if action == normalize("Skip"):
+            evidence_text = ""
+        else:
+            _, parsed_evidence = parse_reason_evidence(message)
+            evidence_text = (parsed_evidence or message or "").strip()
+            if not evidence_text:
+                return self._mitigation_evidence_input_step(
+                    session_id,
+                    session,
+                    error=True,
+                    message="Please add an evidence URL or file, or choose Skip.",
+                )
+            if not self._has_readable_evidence_content(evidence_text):
+                return self._mitigation_evidence_input_step(
+                    session_id,
+                    session,
+                    error=True,
+                    message=(
+                        "Evidence is optional. If you provide evidence, it must be "
+                        "readable supporting content. Please provide a DOI/URL with "
+                        "extractable text or a supported file: PDF, DOCX, MD, or TXT."
+                    ),
+                )
+        return await self._validate_frozen_mitigation_inputs(
+            session_id,
+            session,
+            mitigation_measure,
+            reason,
+            evidence_text,
         )
 
     def _mitigation_target_population_clarification_step(
@@ -608,18 +750,10 @@ class ChatMitigationCreationMixin:
         reason = session.pending_mitigation_reason or session.mitigation_reason or ""
         evidence_text = session.pending_mitigation_evidence or ""
         if not mitigation_measure or not reason:
-            session.phase = "mitigation_reason"
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_reason",
-                bot_message=render_message(
-                    "mitigation_validation_failed.md",
-                    reason="Please enter the mitigation measure and reason again.",
-                ),
-                options=[],
-                session=session.summary(),
-                input_mode="reason_evidence",
-                error=True,
+            return self._mitigation_initial_clarification_step(
+                session_id,
+                session,
+                mitigation_measure or "Your proposed mitigation measure",
             )
 
         if action == normalize("Add more target population"):

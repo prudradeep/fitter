@@ -14,6 +14,20 @@ flow begins when the user chooses:
 Add a new Hazard
 ```
 
+System hazards shown in the normal hazard-selection flow are seeded from the
+authoritative sector prompt files under:
+
+```text
+app/prompts/Energy_truth.txt
+app/prompts/Housing_truth.txt
+app/prompts/Transport_truth.txt
+```
+
+During reference-data seeding, the app extracts each `HAZARD n.` entry from
+Section 5 of those files into `system_hazards`. The `hazards.xlsx` seed then
+maps mitigation policies to those seeded system hazards through
+`mitigation_measure_policy_system_hazards`.
+
 The main methods involved are:
 
 ```python
@@ -148,11 +162,12 @@ Example accepted in Energy:
 Rural residents face power outages from grid congestion during renewable energy integration
 ```
 
-When accepted here, the app proceeds directly to the reason/evidence step.
+When accepted here, the app proceeds to the hazard clarification step, where
+the reason/justification is collected before evidence is requested.
 
 It can also return `needs_clarification` for transition-linked titles that are
 too broad to save or reject. These cases enter the title clarification branch
-before reason/evidence collection.
+before reason/justification collection.
 
 **5. Sector Mismatch Check**
 
@@ -296,7 +311,8 @@ ChatService._handle_custom_hazard_title_clarification(...)
 ```
 
 The app validates the original title and clarification together. A meaningful
-answer can resolve the title and move to reason/evidence:
+answer can resolve the title and move to the hazard reason/justification
+clarification:
 
 ```text
 Older adults and low-income households without internet access or digital skills
@@ -314,7 +330,8 @@ and asks again with `error=True`.
 
 **8. Duplicate Detection**
 
-Before asking for the reason, the app checks possible duplicate hazards.
+Before asking for the reason/justification, the app checks possible duplicate
+hazards.
 
 It compares the proposed hazard against:
 
@@ -340,55 +357,130 @@ Edit custom hazard
 
 If there is no blocking duplicate, the app continues.
 
-**9. Reason And Evidence Step**
+**9. Reason / Justification Clarification**
 
 After the hazard title is accepted, the app stores:
 
 ```text
 session.pending_hazard = <hazard title>
-session.phase = add_hazard_evidence
+session.phase = add_hazard_reason
 ```
 
 The response uses:
 
 ```text
-step = custom_hazard_validation
-input_mode = reason_evidence
+step = hazard_clarification
+input_mode = textarea
 ```
 
-The user sees:
+For custom-hazard state, the response uses:
 
 ```text
-Reason and Evidence Needed
+step = custom_hazard_clarification
+input_mode = textarea
 ```
 
-At this point the hazard is not saved yet. The user must provide a reason.
-Evidence is optional.
+The user is asked to clarify why this should be treated as a hazard in the
+selected country, region, and sector. This is where the reason/justification is
+collected. Evidence is not requested yet.
 
-**10. Validate Reason / Evidence**
+At this point the hazard is not saved yet. The user must provide a
+reason/justification answer.
 
-When the user submits the reason/evidence payload, the app calls:
+**10. Capture Reason / Justification**
+
+When the user answers the clarification prompt, the app calls:
 
 ```python
-ChatService._validate_custom_hazard(session_id, session, message)
+ChatService._capture_hazard_reason(session_id, session, message)
 ```
 
 The app parses:
 
 ```text
 Reason
-Evidence URL or evidence file content
 ```
 
 If the reason is missing, the app rejects immediately:
 
 ```text
-Reason is required. Evidence URL and evidence file are optional.
+Please answer the clarification question and include the reason or justification before continuing.
 ```
 
-This is not a clarification branch. Missing reason is a validation failure.
+Missing reason keeps the user in the hazard clarification branch.
 
-**11. Reason Quality Check**
+If the reason is present, the app stores:
+
+```text
+session.pending_hazard_reason = <reason>
+session.pending_hazard_evidence = ""
+```
+
+and moves to the evidence decision step.
+
+**11. Evidence Decision And Input**
+
+The app asks:
+
+```text
+Do you have evidence to validate this hazard?
+```
+
+The response uses:
+
+```text
+session.phase = add_hazard_evidence_decision
+step = hazard_evidence_decision
+options = Yes / No
+```
+
+For custom-hazard state, the step is:
+
+```text
+step = custom_hazard_evidence_decision
+```
+
+If the user chooses `No`, the app proceeds to validation with no evidence.
+
+If the user chooses `Yes`, the app enters:
+
+```text
+session.phase = add_hazard_evidence_input
+step = hazard_evidence
+input_mode = evidence_only
+options = Go back to list of hazards / Skip
+```
+
+For custom-hazard state, the step is:
+
+```text
+step = custom_hazard_evidence
+```
+
+The user can paste an evidence URL or attach a supported file.
+
+**12. Validate Reason / Evidence**
+
+Once evidence is supplied or skipped, the app calls:
+
+```python
+ChatService._validate_staged_custom_hazard(session_id, session, evidence)
+```
+
+This combines the staged values into the same validation payload used by:
+
+```python
+ChatService._validate_custom_hazard(session_id, session, message)
+```
+
+The app validates:
+
+```text
+Reason
+Evidence URL or evidence file content, if supplied
+```
+
+**13. Reason Quality Check**
 
 The app validates reason quality through:
 
@@ -402,7 +494,7 @@ twin-transition policies for the selected country, region, and sector.
 If the reason is low quality, unrelated, meaningless, or clearly invalid, the
 app rejects it with `error=True`.
 
-**12. Re-run Plain And Sector Rules With Reason**
+**14. Re-run Plain And Sector Rules With Reason**
 
 The app re-runs plain rejection and sector mismatch checks using:
 
@@ -419,7 +511,7 @@ If sector mismatch is detected here, the response marks:
 selected_sector_fit = REJECTED
 ```
 
-**13. Stats / Evidence Validation**
+**15. Stats / Evidence Validation**
 
 The app validates the hazard against statistical/evidence context:
 
@@ -432,7 +524,7 @@ the hazard claim.
 
 If validation fails, the hazard is rejected and not saved.
 
-**14. Context Review And Clarification**
+**16. Context Review And Clarification**
 
 Next, the app calls:
 
@@ -491,7 +583,7 @@ input_mode = textarea
 session.phase = add_hazard_clarification
 ```
 
-**15. Handle Clarification Answer**
+**17. Handle Clarification Answer**
 
 When the user answers the clarification question, the app calls the custom
 hazard clarification handler:
@@ -513,7 +605,7 @@ Then it continues validation. If the clarification resolves the issue, the flow
 moves forward. If not, it can reject or ask for more grounding depending on the
 next validation result.
 
-**16. Dimension Grounding Check**
+**18. Dimension Grounding Check**
 
 For accepted custom hazard state, the app runs:
 
@@ -578,7 +670,7 @@ input_mode = textarea
 Only the first one or two pending grounding questions are shown. They are taken
 from dimensions with `needs_clarification=True`, in dimension order.
 
-**17. Affected Groups Review**
+**19. Affected Groups Review**
 
 If affected population groups are identified, the app moves to group review.
 
@@ -587,7 +679,7 @@ The user can confirm affected groups or edit them.
 If the user adds an affected group without a reason, the app can ask why that
 group is affected.
 
-**18. Finalize Custom Hazard**
+**20. Finalize Custom Hazard**
 
 Once the hazard is valid and grounded, the app finalizes it:
 
@@ -620,7 +712,7 @@ session.accepted_custom_hazard_id
 If evidence was supplied and accepted, temporary evidence can be promoted to
 validated evidence.
 
-**19. Population Profile Extraction**
+**21. Population Profile Extraction**
 
 The app extracts affected population profiles:
 
@@ -637,7 +729,7 @@ session.hazard_profiles[custom_hazard]
 session.socio_demographic_profiles
 ```
 
-**20. Review And Continue**
+**22. Review And Continue**
 
 The user is shown the custom hazard population/review step.
 
@@ -647,7 +739,8 @@ continue to:
 ```text
 socio-demographic review
 mitigation measure creation
-mitigation reason/evidence
+mitigation clarification / justification
+mitigation evidence
 mitigation validation
 evaluation
 ```
@@ -657,18 +750,19 @@ evaluation
 Clarification can happen in two places:
 
 ```text
-1. add_hazard_clarification
+1. add_hazard_reason
 ```
 
-This happens after reason/evidence submission when context review says the
-reason is unclear but potentially fixable.
+This happens after the hazard title is accepted. It collects the
+reason/justification through a clarification-style prompt before asking for
+evidence.
 
 ```text
 2. custom_hazard_title_clarification
 ```
 
-This happens before reason/evidence when the hazard title is transition-linked
-but too underspecified to accept as a hazard name.
+This happens before reason/justification when the hazard title is
+transition-linked but too underspecified to accept as a hazard name.
 
 ```text
 3. custom_hazard_clarification
@@ -676,6 +770,13 @@ but too underspecified to accept as a hazard name.
 
 This happens during dimension grounding when one or more grounding dimensions
 need more detail.
+
+```text
+4. add_hazard_clarification
+```
+
+This happens after staged reason/evidence validation when context review says
+the reason is unclear but potentially fixable.
 
 Clarification does not happen when:
 
@@ -773,7 +874,7 @@ Expected result:
 
 ```text
 Accepted as hazard name
-Moves to Reason and Evidence Needed
+Moves to hazard clarification for reason/justification, then evidence decision
 ```
 
 Selected sector:

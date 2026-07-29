@@ -107,9 +107,15 @@ mysql -u drtransition -p drtransition < schema.sql
 
 The application no longer applies `schema.sql` or reloads CSV/XLSX reference data
 on every startup. Run migrations first, then run the seed command only when
-setting up the database or after changing the source files such as `mm.csv`, `additionalHazards.csv`,
-`additionalHazardProfiles.csv`, `MM Target group.xlsx`, `sectoral_challenges.xlsx`,
-or `hazards.xlsx`.
+setting up the database or after changing the source files such as `mm.csv`,
+`additionalHazards.csv`, `additionalHazardProfiles.csv`,
+`MM Target group.xlsx`, `sectoral_challenges.xlsx`, `hazards.xlsx`, or the
+sector prompt files under `app/prompts/*_truth.txt`.
+
+Reference seeding also extracts the authoritative hazard names from each sector
+prompt into `system_hazards`. This runs before `hazards.xlsx` is mapped into
+`mitigation_measure_policy_system_hazards`, so policy-hazard mappings have the
+sector hazards they need.
 
 PowerShell:
 
@@ -121,6 +127,14 @@ Cross-platform:
 
 ```bash
 uv run python -m app.seed_data
+```
+
+If you are targeting a non-default env file such as `.env.server.dev`, set
+`ENV_FILE` for that command:
+
+```powershell
+$env:ENV_FILE=".env.server.dev"
+uv run python -m app.seed_data --skip-schema
 ```
 
 If the schema is already up to date and you only want to reload CSV/XLSX data:

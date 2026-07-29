@@ -91,7 +91,7 @@ class ChatMitigationStepsMixin:
             normalize("Adopt mitigation proposal suggested above"),
             normalize("Continue with current mitigation measure"),
         }:
-            return self._adopt_suggested_mitigation_response(session_id, session)
+            return await self._adopt_suggested_mitigation_response(session_id, session)
 
         if action == normalize("No"):
             session.phase = "other_actions"
@@ -125,7 +125,7 @@ class ChatMitigationStepsMixin:
             error=True,
         )
 
-    def _adopt_suggested_mitigation_response(
+    async def _adopt_suggested_mitigation_response(
         self,
         session_id: str,
         session: ChatSession,
@@ -146,24 +146,10 @@ class ChatMitigationStepsMixin:
         self._clear_mitigation_clarity_state(session)
         self._clear_mitigation_validation_state(session)
         session.pending_mitigation_measure = mitigation_measure
-        session.phase = "mitigation_reason"
-        return ChatResponse(
-            session_id=session_id,
-            step="mitigation_reason",
-            bot_message=render_message(
-                "mitigation_measure_reason.md",
-                country=session.country or "the selected country",
-                region=session.region or "the selected region",
-                sector=session.sector or "the selected sector",
-                hazard=session.selected_hazard or "the selected hazard",
-                dgs=format_all_dgs(session),
-                mitigation_measure=mitigation_measure,
-            ),
-            options=[],
-            session=session.summary(),
-            input_mode="reason_evidence",
-            input_values={"mitigation_measure": mitigation_measure},
-            error=False,
+        return await self._start_mitigation_clarification_step(
+            session_id,
+            session,
+            mitigation_measure,
         )
 
     def _suggested_mitigation_measure_for_context(self, session: ChatSession) -> str:
@@ -401,7 +387,7 @@ class ChatMitigationStepsMixin:
     async def _capture_mitigation_measure(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        mitigation_measure, _ = parse_mitigation_reason(message)
+        mitigation_measure, initial_reason = parse_mitigation_reason(message)
         mitigation_measure = mitigation_measure or message.strip()
         self._clear_mitigation_clarity_state(session)
         self._clear_mitigation_validation_state(session)
@@ -504,20 +490,11 @@ class ChatMitigationStepsMixin:
             )
 
         session.pending_mitigation_measure = mitigation_measure
-        session.phase = "mitigation_reason"
-        return ChatResponse(
-            session_id=session_id,
-            step="mitigation_reason",
-            bot_message=render_message(
-                "mitigation_measure_reason.md",
-                hazard=session.selected_hazard or "the selected hazard",
-                dgs=format_all_dgs(session),
-                mitigation_measure=mitigation_measure,
-            ),
-            options=[],
-            session=session.summary(),
-            input_mode="reason_evidence",
-            error=False,
+        return await self._start_mitigation_clarification_step(
+            session_id,
+            session,
+            mitigation_measure,
+            initial_reason or "",
         )
 
     @staticmethod
@@ -651,23 +628,90 @@ class ChatMitigationStepsMixin:
     def _continue_pending_mitigation_reason_step(
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
-        session.phase = "mitigation_reason"
         self._clear_mitigation_clarity_state(session)
         session.suggested_mitigation_measure_id = None
         session.suggested_mitigation_measure_name = None
+        return self._mitigation_initial_clarification_step(
+            session_id,
+            session,
+            session.pending_mitigation_measure
+            or session.mitigation_measure
+            or "Your proposed mitigation measure",
+        )
+
+    async def _start_mitigation_clarification_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        mitigation_measure: str,
+        initial_reason: str = "",
+    ) -> ChatResponse:
+        session.pending_mitigation_measure = mitigation_measure
+        session.pending_mitigation_reason = initial_reason.strip()
+        session.pending_mitigation_evidence = ""
+        session.mitigation_frozen_inputs = None
+        clarity_runner = getattr(self, "_run_mitigation_clarity_track", None)
+        if clarity_runner is not None:
+            response = await clarity_runner(
+                session_id,
+                session,
+                mitigation_measure,
+                session.pending_mitigation_reason or "",
+                "",
+            )
+            if response is not None:
+                return response
+        return self._mitigation_initial_clarification_step(
+            session_id,
+            session,
+            mitigation_measure,
+        )
+
+    def _mitigation_initial_clarification_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        mitigation_measure: str,
+    ) -> ChatResponse:
+        session.phase = "mitigation_clarity"
+        session.pending_mitigation_measure = mitigation_measure
+        session.pending_mitigation_reason = ""
+        session.pending_mitigation_evidence = ""
+        session.pending_mitigation_clarity_dimension = "justification_clarity"
+        session.mitigation_clarity_turns += 1
+        question = (
+            "How will this mitigation measure reduce the negative impact of the "
+            "selected hazard for the affected profiles, and why is it appropriate "
+            "for this context?"
+        )
+        context_lines = []
+        if session.country:
+            context_lines.append(f"- **Country:** {session.country}")
+        if session.region:
+            context_lines.append(f"- **Region:** {session.region}")
+        if session.sector:
+            context_lines.append(f"- **Sector:** {session.sector}")
+        context_block = (
+            "\n\nSelected context:\n\n" + "\n".join(context_lines)
+            if context_lines
+            else ""
+        )
+        append_message = getattr(self, "_append_mitigation_clarification_message", None)
+        if append_message is not None:
+            append_message(session, "assistant", question)
         return ChatResponse(
             session_id=session_id,
-            step="mitigation_reason",
-            bot_message=render_message(
-                "mitigation_measure_reason.md",
-                hazard=session.selected_hazard or "the selected hazard",
-                dgs=format_all_dgs(session),
-                mitigation_measure=session.pending_mitigation_measure
-                or "Your proposed mitigation measure",
+            step="mitigation_clarity",
+            bot_message=markdown_to_html(
+                "### Clarification needed\n\n"
+                f"Proposed mitigation measure:\n\n- **{mitigation_measure}**\n\n"
+                f"{context_block}\n\n"
+                "Please answer this clarification question before evidence is collected:\n\n"
+                f"1. {question}"
             ),
-            options=[],
+            options=self._mitigation_clarity_options(),
             session=session.summary(),
-            input_mode="reason_evidence",
+            input_mode="textarea",
             error=False,
         )
 

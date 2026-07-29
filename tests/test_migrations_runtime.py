@@ -47,6 +47,7 @@ class RuntimeMigrationTests(unittest.TestCase):
             patch("app.db.migrations_runtime.apply_versioned_migrations"),
             patch("app.db.migrations_runtime.ensure_reference_data_schema") as reference_schema,
             patch("app.db.migrations_runtime.ensure_additional_hazards") as additional_hazards,
+            patch("app.db.migrations_runtime.ensure_system_hazards_from_sector_prompts") as system_hazards,
             patch("app.db.migrations_runtime.ensure_mitigation_measure_examples") as mitigation,
             patch("app.db.migrations_runtime._ensure_hazards_xlsx_policy_system_hazards") as hazards,
             patch("app.db.migrations_runtime.engine.begin", return_value=begin),
@@ -56,6 +57,7 @@ class RuntimeMigrationTests(unittest.TestCase):
 
         reference_schema.assert_not_called()
         additional_hazards.assert_called_once_with()
+        system_hazards.assert_called_once_with()
         mitigation.assert_called_once_with()
         hazards.assert_called_once_with(fake_connection)
 

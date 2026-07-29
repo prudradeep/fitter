@@ -35,6 +35,8 @@ from app.services.chat_navigation_steps import ChatNavigationStepsMixin
 from app.services.chat_options import (
     DG_REASON_EVIDENCE_OPTIONS,
     HAZARD_EVIDENCE_DECISION_OPTIONS,
+    MITIGATION_EVIDENCE_DECISION_OPTIONS,
+    MITIGATION_EVIDENCE_INPUT_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
     POST_SECTOR_OPTIONS,
     REASON_CONFIRMATION_OPTIONS,
@@ -486,6 +488,16 @@ class ChatService(
 
         if session.phase == "mitigation_clarity":
             return await self._handle_mitigation_clarity_answer(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "mitigation_evidence_decision":
+            return await self._handle_mitigation_evidence_decision(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "mitigation_evidence_input":
+            return await self._capture_mitigation_evidence(
                 current_session_id, session, clean_message
             )
 
@@ -1667,6 +1679,10 @@ class ChatService(
             labels = [option.label for option in SOCIO_DEMOGRAPHIC_OPTIONS]
         elif session.phase == "reason_confirmation":
             labels = [option.label for option in REASON_CONFIRMATION_OPTIONS]
+        elif session.phase == "mitigation_evidence_decision":
+            labels = [option.label for option in MITIGATION_EVIDENCE_DECISION_OPTIONS]
+        elif session.phase == "mitigation_evidence_input":
+            labels = [option.label for option in MITIGATION_EVIDENCE_INPUT_OPTIONS]
         elif session.phase == "mitigation_review":
             labels = [option.label for option in MITIGATION_REVIEW_OPTIONS]
 
@@ -1702,6 +1718,10 @@ class ChatService(
             return self._other_nav_options(session, "complete")
         if session.phase == "mitigation_clarity":
             return [option.label for option in self._mitigation_clarity_options()]
+        if session.phase == "mitigation_evidence_decision":
+            return [option.label for option in MITIGATION_EVIDENCE_DECISION_OPTIONS]
+        if session.phase == "mitigation_evidence_input":
+            return [option.label for option in MITIGATION_EVIDENCE_INPUT_OPTIONS]
         if session.phase == "mitigation_target_population_review":
             return [
                 option.label

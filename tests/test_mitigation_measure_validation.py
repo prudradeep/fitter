@@ -63,6 +63,43 @@ class _MitigationReviewEngine(ChatMitigationCreationMixin):
         return {}
 
 
+class _MitigationClarificationEngine(ChatMitigationCreationMixin, ChatMitigationStepsMixin):
+    invalid_message = "Invalid"
+
+    def _is_invalid_user_text(self, value):
+        return False
+
+    async def _validate_clarification_answer_quality(self, session, message):
+        return {"valid": True, "reason": "Clear."}
+
+    async def _assess_mitigation_clarity(
+        self,
+        session,
+        mitigation_measure,
+        reason,
+        evidence,
+        clarification_answer=None,
+    ):
+        return {
+            "clear": True,
+            "dimensions": {
+                "specificity": "CLEAR",
+                "justification_clarity": "CLEAR",
+                "evidence_identifiability": "CLEAR",
+            },
+            "follow_up_questions": [],
+            "frozen_inputs": {
+                "measure_description": mitigation_measure,
+                "justification": reason,
+                "evidence": evidence,
+            },
+            "reason": "All inputs are clear.",
+        }
+
+    async def _validate_frozen_mitigation_inputs(self, *args, **kwargs):
+        raise AssertionError("Evidence should be requested before validation.")
+
+
 class MitigationMeasureValidationTests(unittest.TestCase):
     def test_weak_measure_requests_clarification_before_reason_step(self):
         engine = _MitigationMeasureEngine()
@@ -108,7 +145,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertIsNone(session.pending_mitigation_measure)
         self.assertIn("restates the hazard", response.bot_message)
 
-    def test_concrete_measure_uses_measure_only_prompt_and_moves_to_reason(self):
+    def test_concrete_measure_uses_measure_only_prompt_and_moves_to_clarification(self):
         engine = _MitigationMeasureEngine()
         session = ChatSession(
             country="Germany",
@@ -143,7 +180,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             )
 
         self.assertFalse(response.error)
-        self.assertEqual(response.step, "mitigation_reason")
+        self.assertEqual(response.step, "mitigation_clarity")
         self.assertEqual(
             session.pending_mitigation_measure,
             "Introduce targeted grants for low-income households to install heat pumps.",
@@ -194,8 +231,38 @@ class MitigationMeasureValidationTests(unittest.TestCase):
 
         self.assertTrue(ask_mock.await_args)
         self.assertFalse(response.error)
-        self.assertEqual(response.step, "mitigation_reason")
+        self.assertEqual(response.step, "mitigation_clarity")
         self.assertEqual(session.pending_mitigation_measure, "Introduce grants")
+
+    def test_clarification_completion_moves_to_evidence_question_before_validation(self):
+        engine = _MitigationClarificationEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+            pending_mitigation_measure="Introduce targeted grants",
+            pending_mitigation_reason="",
+            pending_mitigation_evidence="",
+            pending_mitigation_clarity_dimension="justification_clarity",
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_clarity_answer(
+                "test-session",
+                session,
+                "It lowers upfront costs for low-income households affected by energy poverty.",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_evidence_decision")
+        self.assertEqual(session.phase, "mitigation_evidence_decision")
+        self.assertIn("Do you have evidence", response.bot_message)
+        self.assertEqual(
+            session.pending_mitigation_reason,
+            "Clarification: It lowers upfront costs for low-income households affected by energy poverty.",
+        )
 
     def test_practical_considerations_ignore_schema_placeholder_heading(self):
         payload = {

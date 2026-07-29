@@ -81,7 +81,7 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(response.step, "mitigation_reason")
+        self.assertEqual(response.step, "mitigation_clarity")
         self.assertEqual(session.pending_mitigation_measure, "Targeted heat pump support for vulnerable households")
         self.assertIn("Country:", response.bot_message)
         self.assertIn("Germany", response.bot_message)
@@ -99,7 +99,7 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
             engine._handle_reason_confirmation("test-session", session, "adopt it")
         )
 
-        self.assertEqual(response.step, "mitigation_reason")
+        self.assertEqual(response.step, "mitigation_clarity")
         self.assertEqual(session.pending_mitigation_measure, "Current policy-based mitigation")
 
     def test_change_sector_is_not_captured_as_mitigation_measure(self):

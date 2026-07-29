@@ -79,6 +79,8 @@ class ChatPhase(AppStrEnum):
     MITIGATION_DUPLICATE_REPORT = "mitigation_duplicate_report"
     MITIGATION_REASON = "mitigation_reason"
     MITIGATION_CLARITY = "mitigation_clarity"
+    MITIGATION_EVIDENCE_DECISION = "mitigation_evidence_decision"
+    MITIGATION_EVIDENCE_INPUT = "mitigation_evidence_input"
     MITIGATION_TARGET_POPULATION = "mitigation_target_population"
     MITIGATION_TARGET_POPULATION_REVIEW = "mitigation_target_population_review"
     MITIGATION_REVIEW = "mitigation_review"

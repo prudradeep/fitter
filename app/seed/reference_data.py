@@ -11,6 +11,8 @@ from app.seed.xlsx_readers import (
     _read_xlsx_first_sheet_rows,
     _xlsx_cell,
 )
+from app.services.prompt_loader import PROMPT_FILES, load_sector_prompt
+from app.services.sector_prompt_rag import section_five_primary_data, strip_rule_lines
 
 logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -32,6 +34,28 @@ def seed_reference_data(*, apply_schema: bool = True) -> None:
 
 def _normalize_mitigation_example_key(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "", (value or "").casefold())
+
+
+def _hazard_names_from_sector_prompt(sector_prompt: str) -> list[str]:
+    prompt = strip_rule_lines(section_five_primary_data(sector_prompt) or sector_prompt)
+    hazards: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"(?im)^HAZARD\s+\d+\s*[\.:–-]\s+(.+?)\s*$", prompt):
+        hazard = _clean_sector_prompt_hazard_name(match.group(1))
+        key = _normalize_mitigation_example_key(hazard)
+        if hazard and key not in seen:
+            seen.add(key)
+            hazards.append(hazard)
+    return hazards
+
+
+def _clean_sector_prompt_hazard_name(value: str) -> str:
+    hazard = re.sub(r"\s+", " ", str(value or "")).strip()
+    hazard = re.sub(r"(?i)^HAZARD\s+\d+\s*[\.:–-]\s*", "", hazard).strip()
+    hazard = strip_rule_lines(hazard).strip()
+    if re.fullmatch(r"[─═\-_=]{6,}", hazard):
+        return ""
+    return hazard
 
 
 def _read_mm_csv_rows() -> list[dict[str, str]]:
@@ -283,6 +307,80 @@ def ensure_additional_hazards() -> None:
         _seed_additional_hazards(connection)
         _seed_additional_hazard_profiles(connection)
         _seed_additional_hazard_profile_target_populations(connection)
+
+
+def ensure_system_hazards_from_sector_prompts() -> None:
+    with engine.begin() as connection:
+        _seed_system_hazards_from_sector_prompts(connection)
+
+
+def _seed_system_hazards_from_sector_prompts(connection) -> None:
+    sector_by_key = {
+        _normalize_mitigation_example_key(str(row["name"] or "")): str(row["id"])
+        for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
+    }
+    if not sector_by_key:
+        logger.info("No sectors found; skipped sector-prompt system hazard seeding")
+        return
+
+    existing_by_sector_hazard = {
+        (
+            str(row["sector_id"]),
+            _normalize_mitigation_example_key(str(row["name"] or "")),
+        )
+        for row in connection.execute(
+            text("SELECT sector_id, name FROM system_hazards")
+        ).mappings()
+    }
+
+    inserted = 0
+    skipped = 0
+    for sector_key in PROMPT_FILES:
+        sector_id = sector_by_key.get(_normalize_mitigation_example_key(sector_key))
+        if sector_id is None:
+            skipped += 1
+            continue
+        try:
+            prompt = load_sector_prompt(sector_key)
+        except OSError:
+            logger.exception("Failed to read sector prompt for %s", sector_key)
+            skipped += 1
+            continue
+        for hazard in _hazard_names_from_sector_prompt(prompt):
+            hazard_key = _normalize_mitigation_example_key(hazard)
+            existing_key = (sector_id, hazard_key)
+            if existing_key in existing_by_sector_hazard:
+                skipped += 1
+                continue
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO system_hazards (
+                        id,
+                        sector_id,
+                        name
+                    )
+                    VALUES (
+                        :id,
+                        :sector_id,
+                        :name
+                    )
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "sector_id": sector_id,
+                    "name": hazard,
+                },
+            )
+            existing_by_sector_hazard.add(existing_key)
+            inserted += 1
+
+    logger.info(
+        "Loaded %s system hazards from sector prompts; skipped %s existing or unmatched hazards",
+        inserted,
+        skipped,
+    )
 
 
 def _seed_additional_hazards(connection) -> None:
@@ -1267,6 +1365,7 @@ def _mm_target_group_option_map(connection) -> dict[tuple[str, str], str]:
 
 def ensure_mitigation_measure_examples() -> None:
     with engine.begin() as connection:
+        _seed_system_hazards_from_sector_prompts(connection)
         _seed_mm_csv_mitigation_measure_examples(connection)
         _seed_mm_target_group_xlsx(connection)
         _seed_hazards_xlsx_policy_system_hazards(connection)

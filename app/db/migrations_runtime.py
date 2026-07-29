@@ -14,6 +14,7 @@ from app.db.versioned_migrations import apply_versioned_migrations
 from app.seed.reference_data import (
     ensure_additional_hazards,
     ensure_mitigation_measure_examples,
+    ensure_system_hazards_from_sector_prompts,
     _ensure_hazards_xlsx_policy_system_hazards,
 )
 
@@ -655,6 +656,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
         if seed_reference_data:
             ensure_reference_data_schema()
             ensure_additional_hazards()
+            ensure_system_hazards_from_sector_prompts()
             ensure_mitigation_measure_examples()
 
         with engine.begin() as connection:
@@ -1560,6 +1562,7 @@ def run_runtime_migrations(
     repair_partial_installer_schema()
     if seed_reference_data:
         ensure_additional_hazards()
+        ensure_system_hazards_from_sector_prompts()
         ensure_mitigation_measure_examples()
         with engine.begin() as connection:
             _ensure_hazards_xlsx_policy_system_hazards(connection)

@@ -55,6 +55,16 @@ MITIGATION_DUPLICATE_OPTIONS = [
     Option(id=2, label="No"),
 ]
 
+MITIGATION_EVIDENCE_INPUT_OPTIONS = [
+    Option(id=1, label="Back to evidence question"),
+    Option(id=2, label="Skip"),
+]
+
+MITIGATION_EVIDENCE_DECISION_OPTIONS = [
+    Option(id=1, label="Yes"),
+    Option(id=2, label="No"),
+]
+
 FUZZY_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No"),

@@ -12,14 +12,26 @@ Country -> Region -> Sector -> Hazard -> Socio-demographic profiles
 For a custom hazard, the same mitigation flow starts after the custom hazard has
 been accepted and behaves like the selected hazard.
 
+Seeded mitigation-policy suggestions depend on two reference-data steps:
+
+```text
+1. Sector prompt hazards are extracted into system_hazards.
+2. hazards.xlsx maps mitigation policies to those system hazards in
+   mitigation_measure_policy_system_hazards.
+```
+
+This means reference-data seeding must run after changes to either
+`app/prompts/*_truth.txt` or `hazards.xlsx`.
+
 The main methods involved are:
 
 ```python
 ChatService._create_mitigation_measure_step(...)
 ChatService._handle_reason_confirmation(...)
 ChatService._capture_mitigation_measure(...)
-ChatService._validate_mitigation_reason(...)
 ChatService._handle_mitigation_clarity_answer(...)
+ChatService._handle_mitigation_evidence_decision(...)
+ChatService._capture_mitigation_evidence(...)
 ChatService._handle_mitigation_target_population_review(...)
 ChatService._finalize_validated_mitigation(...)
 ChatService._handle_mitigation_review(...)
@@ -155,10 +167,10 @@ Then the app stores:
 
 ```text
 session.pending_mitigation_measure = <suggested measure>
-session.phase = mitigation_reason
+session.phase = mitigation_clarity
 ```
 
-and asks for reason/evidence.
+and asks clarification questions, including the reason/justification.
 
 If the user chooses:
 
@@ -410,8 +422,8 @@ Yes, continue with my proposed mitigation
 No, write another mitigation measure
 ```
 
-If the user continues with the proposed measure, the app proceeds to the reason
-step.
+If the user continues with the proposed measure, the app proceeds to mitigation
+clarification.
 
 If the user chooses to write another measure, the app returns to:
 
@@ -427,116 +439,40 @@ If the user chooses:
 No, continue with my proposal
 ```
 
-from the duplicate suggestion screen, the app also proceeds to the reason step.
+from the duplicate suggestion screen, the app also proceeds to mitigation
+clarification.
 
-**8. Reason And Evidence Step**
+**8. Mitigation Clarification / Reason Step**
 
 If there is no duplicate, or the user continues despite the duplicate warning,
 the app stores:
 
 ```text
 session.pending_mitigation_measure = <measure>
-session.phase = mitigation_reason
+session.phase = mitigation_clarity
 ```
 
 The response uses:
 
 ```text
-step = mitigation_reason
-input_mode = reason_evidence
+step = mitigation_clarity
+input_mode = textarea
 ```
 
-The user must provide a reason. Evidence is optional.
+The user must answer clarification questions. These questions include the
+reason/justification for why the mitigation measure reduces the selected
+hazard's negative impact for the affected profiles.
 
-The prompt is rendered from:
+Evidence is not requested in this step. The app explicitly tells the user that
+their answers clarify the measure and justification, and that evidence will be
+collected next.
 
-```text
-templates/chat/mitigation_measure_reason.md
-```
+If the user typed a combined `Mitigation measure:` and `Reason:` payload, the
+reason is preserved and evaluated through this same clarification track.
 
-**9. Validate Reason / Evidence**
+**9. Mitigation Clarity Track**
 
-When the user submits the reason/evidence payload, the app calls:
-
-```python
-ChatService._validate_mitigation_reason(session_id, session, message)
-```
-
-The app parses:
-
-```python
-parse_reason_evidence(message)
-```
-
-If no labelled reason is found, it attempts to use plain unlabelled text:
-
-```python
-_plain_reason_from_unlabelled_message(message)
-```
-
-If there is no pending or saved mitigation measure, the app returns to:
-
-```text
-session.phase = mitigation_measure
-step = mitigation_measure
-input_mode = mitigation_measure
-```
-
-If the reason is missing, the app stays on:
-
-```text
-step = mitigation_reason
-input_mode = reason_evidence
-error = True
-```
-
-and shows:
-
-```text
-`Reason:` is required. Evidence URL and evidence file are optional.
-```
-
-**10. Local Reason And Evidence Checks**
-
-The app checks reason quality with:
-
-```python
-ChatService._local_mitigation_reason_error(reason)
-```
-
-which delegates to:
-
-```python
-local_mitigation_reason_error(...)
-```
-
-This rejects:
-
-```text
-gibberish
-very short reasons
-I don't know
-no idea
-not applicable
-vague reasons without a mitigation mechanism
-```
-
-The reason must explain how the measure reduces the selected hazard for the
-affected groups.
-
-If evidence is supplied, the app checks whether it is readable:
-
-```python
-_has_user_supplied_evidence(...)
-_has_readable_evidence_content(...)
-```
-
-Evidence is optional, but supplied evidence must be usable. Unsupported or
-unreadable evidence keeps the user on `mitigation_reason`.
-
-**11. Mitigation Clarity Track**
-
-After local reason/evidence checks, the app runs:
+The app runs:
 
 ```python
 ChatService._run_mitigation_clarity_track(
@@ -561,18 +497,17 @@ llm/mitigation_clarity_assessment.txt
 llm/mitigation_clarity_assessment_user.txt
 ```
 
-The clarity assessment checks whether the app can freeze unambiguous inputs for:
+The clarity assessment checks whether the app can freeze unambiguous inputs
+for:
 
 ```text
-measure description
-justification / reason
-evidence
-hazard link
-target population
 specificity
-implementation mechanism
-evidence identifiability
+justification_clarity
+evidence_identifiability
 ```
+
+During this stage, no user evidence has been requested yet, so missing evidence
+does not block clarity.
 
 If the assessment is clear, the app stores:
 
@@ -580,9 +515,9 @@ If the assessment is clear, the app stores:
 session.mitigation_frozen_inputs
 ```
 
-and moves forward.
+and moves to the evidence decision step.
 
-If the assessment is unclear but fixable, the app enters:
+If the assessment is unclear but fixable, the app stays in:
 
 ```text
 session.phase = mitigation_clarity
@@ -600,20 +535,22 @@ session.pending_mitigation_clarity_dimension
 session.mitigation_clarity_turns
 ```
 
-and asks follow-up clarification questions.
+and asks follow-up clarification questions about one unresolved dimension at a
+time. If the answer still does not resolve the issue, the app asks again until
+all required points/dimensions are clear or the clarity turn cap is reached.
 
-If the clarity turn limit is reached, the app discards temporary evidence and
-returns the user to:
+If the clarity turn limit is reached, the app returns the user to:
 
 ```text
-session.phase = mitigation_reason
-step = mitigation_reason
-input_mode = reason_evidence
+session.phase = mitigation_measure
+step = mitigation_measure
+input_mode = mitigation_measure
 ```
 
-with a validation-failed message asking the user to resubmit clearer inputs.
+with a validation-failed message asking the user to resubmit a clearer
+mitigation measure.
 
-**12. Handle Mitigation Clarification**
+**10. Handle Mitigation Clarification**
 
 Clarification answers are handled by:
 
@@ -654,8 +591,65 @@ otherwise -> reason
 ```
 
 After merging, the app re-runs the clarity track. If clarity is resolved, it
-continues to validation. If not, it can ask another clarification question until
-the turn cap is reached.
+moves to the evidence decision step. If not, it can ask another clarification
+question until the turn cap is reached.
+
+**11. Evidence Decision And Input**
+
+Once mitigation measure and justification are clear, the app asks:
+
+```text
+Do you have evidence to validate this mitigation measure?
+```
+
+The response uses:
+
+```text
+session.phase = mitigation_evidence_decision
+step = mitigation_evidence_decision
+options = Yes / No
+```
+
+If the user chooses `No`, the app validates the frozen mitigation inputs
+without user evidence and uses the curated mitigation knowledge base for
+support.
+
+If the user chooses `Yes`, the app enters:
+
+```text
+session.phase = mitigation_evidence_input
+step = mitigation_evidence
+input_mode = evidence_only
+options = Back to evidence question / Skip
+```
+
+The user can paste a URL or attach a supported file:
+
+```text
+PDF
+DOCX
+MD
+TXT
+```
+
+**12. Evidence Checks**
+
+Evidence is optional, but supplied evidence must be usable. The app checks:
+
+```python
+_has_user_supplied_evidence(...)
+_has_readable_evidence_content(...)
+```
+
+Unsupported or unreadable evidence keeps the user on:
+
+```text
+session.phase = mitigation_evidence_input
+step = mitigation_evidence
+input_mode = evidence_only
+```
+
+The user can revise the evidence or choose `Skip`.
 
 **13. Grounded Mitigation Validation**
 
@@ -1130,8 +1124,10 @@ Clarification can happen in two places:
 1. mitigation_clarity
 ```
 
-This happens when the mitigation measure, reason, evidence, target population,
-or mechanism is not clear enough to freeze for validation.
+This happens after the mitigation measure is accepted. It collects and validates
+the reason/justification, and it can ask repeated clarification questions until
+the measure, justification, and required dimensions are clear enough to freeze
+for validation.
 
 ```text
 2. mitigation_target_population_review -> Add more target population
@@ -1146,14 +1142,14 @@ Clarification does not happen when:
 mitigation measure is missing
 measure text is gibberish
 measure is clearly not a mitigation measure
-reason is missing
-reason is too short or says "I don't know"
 supplied evidence is unreadable
 evidence contradicts the core knowledge base
 grounded validation rejects the measure
 ```
 
-Those cases are validation failures, not clarification branches.
+Those cases are validation failures or evidence-step errors, not mitigation
+clarification branches. Missing or unclear justification is handled inside
+`mitigation_clarity`.
 
 **Required Gates**
 
@@ -1166,13 +1162,14 @@ A mitigation measure must pass these gates before it is saved:
 4. It must fit the selected sector and context.
 5. It must support green, digital, or twin-transition objectives.
 6. It must not duplicate an existing mitigation measure unless the user chooses to continue.
-7. It must include a reason.
-8. Any supplied evidence must be readable and not contradictory.
-9. The app must be able to freeze clear measure/reason/evidence inputs.
-10. Grounded validation must support the mitigation measure or accept it under the configured validation mode.
-11. Target population must be identified or confirmed.
-12. The measure must be stored successfully before evaluation starts.
-13. The user reaches the concept comparison discussion before starting evaluation questions.
+7. It must include a clarified reason/justification.
+8. The app must be able to freeze clear measure and justification inputs.
+9. The evidence decision step must be completed.
+10. Any supplied evidence must be readable and not contradictory.
+11. Grounded validation must support the mitigation measure or accept it under the configured validation mode.
+12. Target population must be identified or confirmed.
+13. The measure must be stored successfully before evaluation starts.
+14. The user reaches the concept comparison discussion before starting evaluation questions.
 ```
 
 **Example**
@@ -1193,8 +1190,9 @@ Expected flow:
 
 ```text
 mitigation_measure
--> mitigation_reason
--> mitigation_clarity, only if the reason or target group is unclear
+-> mitigation_clarity
+-> mitigation_evidence_decision
+-> mitigation_evidence, only if the user chooses to add evidence
 -> mitigation_target_population_review
 -> mitigation_review / concept comparison discussion
 -> evaluation_question
@@ -1216,5 +1214,6 @@ If the user submits:
 Reason: It reduces affordability pressure for low-income households while grid upgrade costs are passed through to bills.
 ```
 
-the app can proceed to clarity, grounded validation, target-population review,
-and final save if the remaining checks pass.
+the app can freeze the clarification, ask whether the user has evidence, run
+grounded validation, review target population, and save if the remaining checks
+pass.
