@@ -1381,9 +1381,27 @@ class ChatValidationServiceMixin:
         purpose: str,
         fields: dict[str, str],
     ) -> dict[str, str | bool] | None:
+        return await self._check_user_input_quality(
+            session=session,
+            purpose=purpose,
+            fields=fields,
+        )
+
+    async def _check_user_input_quality(
+        self,
+        session: ChatSession,
+        purpose: str,
+        fields: dict[str, str] | None = None,
+        user_input_text: str | None = None,
+        user_input_label: str = "User input",
+    ) -> dict[str, str | bool] | None:
+        quality_fields = dict(fields or {})
+        if user_input_text is not None:
+            quality_fields[user_input_label] = user_input_text
+
         cleaned_fields = {
             label: value.strip()
-            for label, value in fields.items()
+            for label, value in quality_fields.items()
             if isinstance(value, str) and value.strip()
         }
         field_text = "\n".join(f"{label}: {value}" for label, value in cleaned_fields.items())

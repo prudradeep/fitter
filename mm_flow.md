@@ -23,6 +23,7 @@ ChatService._handle_mitigation_clarity_answer(...)
 ChatService._handle_mitigation_target_population_review(...)
 ChatService._finalize_validated_mitigation(...)
 ChatService._handle_mitigation_review(...)
+ChatService._build_mitigation_review_messages(...)
 ChatService._handle_evaluation_answer(...)
 ```
 
@@ -877,7 +878,7 @@ mitigation_measure_validated
 
 and moves to mitigation review.
 
-**17. Mitigation Review Step**
+**17. Concept Comparision**
 
 After saving, the app calls:
 
@@ -893,19 +894,63 @@ step = mitigation_review
 input_mode = mitigation_review
 ```
 
+This step opens a conversational discussion before evaluation questions. It is
+not the evaluation questionnaire yet.
+
 The response uses:
 
 ```text
 templates/chat/mitigation_review.md
 ```
 
-and includes grounding validation details:
+and is headed:
+
+```text
+Concept Comparision
+```
+
+The app builds the discussion through:
+
+```python
+ChatService._mitigation_review_response(...)
+ChatService._build_mitigation_review_messages(...)
+```
+
+The initial review prompt asks the model to compare the conceptual design of the
+validated mitigation measure against the configured conceptual source range:
+
+```text
+kb/FITTER_D2.3_FINAL.pdf
+pages 26 to 91
+```
+
+The app reads those pages from the local PDF, ranks the page excerpts against
+the selected country, region, sector, hazard, target population, mitigation
+measure, and reason, then passes the most relevant excerpts into the review
+assistant as:
+
+```text
+Conceptual source excerpts for the pre-evaluation discussion
+```
+
+The discussion should explain:
+
+```text
+what the mitigation measure covers well
+what is not covered or is under-specified
+pros / strengths
+cons / risks / trade-offs
+practical ways to strengthen or target the measure
+```
+
+It also includes grounding validation details:
 
 ```python
 _grounding_validation_details(session)
 ```
 
-The user can ask follow-up questions about the validated mitigation measure.
+The user can ask follow-up questions about the validated mitigation measure and
+the concept comparison before moving into scoring.
 
 Follow-up questions are handled by:
 
@@ -925,6 +970,12 @@ Valid follow-up questions are answered by:
 ```python
 _mitigation_review_response(session, message)
 ```
+
+Follow-up answers stay grounded in the sector context, the curated mitigation
+knowledge, and the configured conceptual source excerpts. If the excerpts are
+thin or only indirectly relevant, the assistant should say so rather than
+inventing coverage. User-facing answers should not name the source document or
+page range.
 
 The conversation is stored in:
 
@@ -1121,6 +1172,7 @@ A mitigation measure must pass these gates before it is saved:
 10. Grounded validation must support the mitigation measure or accept it under the configured validation mode.
 11. Target population must be identified or confirmed.
 12. The measure must be stored successfully before evaluation starts.
+13. The user reaches the concept comparison discussion before starting evaluation questions.
 ```
 
 **Example**
@@ -1144,7 +1196,7 @@ mitigation_measure
 -> mitigation_reason
 -> mitigation_clarity, only if the reason or target group is unclear
 -> mitigation_target_population_review
--> mitigation_review
+-> mitigation_review / concept comparison discussion
 -> evaluation_question
 -> evaluation_complete
 ```

@@ -1,7 +1,9 @@
 import json
 import logging
 import re
+from functools import lru_cache
 from html import escape
+from pathlib import Path
 
 from sqlalchemy import and_, func, or_, select
 
@@ -41,6 +43,7 @@ from app.services.chat_parsers import (
     parse_evaluation_answer,
 )
 from app.services.chat_session import ChatSession
+from app.services.document_text import compact_text, extract_pdf_page_texts
 from app.services.hazard_effect_size import hazard_predictor_effect_rows
 from app.services.hazard_ranking_service import slugify_hazard
 from app.services.message_renderer import markdown_to_html, render_message
@@ -53,6 +56,34 @@ from app.services.mitigation_policy_formatting import (
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 
 logger = logging.getLogger(__name__)
+
+D23_CONCEPTUAL_REVIEW_PATH = Path(__file__).resolve().parents[2] / "kb" / "FITTER_D2.3_FINAL.pdf"
+D23_CONCEPTUAL_REVIEW_START_PAGE = 26
+D23_CONCEPTUAL_REVIEW_END_PAGE = 91
+D23_CONCEPTUAL_REVIEW_MAX_EXCERPTS = 10
+D23_CONCEPTUAL_REVIEW_MAX_CHARS = 9000
+
+
+@lru_cache(maxsize=1)
+def _d23_conceptual_review_page_texts() -> tuple[tuple[int, str], ...]:
+    if not D23_CONCEPTUAL_REVIEW_PATH.exists():
+        return ()
+    try:
+        page_texts = extract_pdf_page_texts(D23_CONCEPTUAL_REVIEW_PATH.read_bytes())
+    except Exception:
+        logger.exception("Failed to read FITTER D2.3 conceptual review PDF")
+        return ()
+
+    selected: list[tuple[int, str]] = []
+    for page_number in range(
+        D23_CONCEPTUAL_REVIEW_START_PAGE,
+        min(D23_CONCEPTUAL_REVIEW_END_PAGE, len(page_texts)) + 1,
+    ):
+        text = compact_text(page_texts[page_number - 1])
+        if text:
+            selected.append((page_number, text))
+    return tuple(selected)
+
 
 class ChatMitigationCreationMixin:
     async def _handle_mitigation_clarity_answer(
@@ -1954,12 +1985,15 @@ class ChatMitigationCreationMixin:
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         session.phase = "mitigation_review"
-        answer = session.mitigation_grounded_synthesis or await self._mitigation_review_response(
+        answer = await self._mitigation_review_response(
             session,
             (
-                "Provide a concise conclusion about the validated mitigation measure. "
-                "Include related statistical context, affected groups, expected strengths, "
-                "and limitations. Do not ask evaluation questions yet."
+                "Open a conversational discussion before evaluation questions. "
+                "Compare the conceptual design of the validated mitigation measure "
+                "against the provided conceptual source excerpts. Explain what the "
+                "measure covers, what is not covered, pros, cons, likely trade-offs, "
+                "and practical ways to strengthen it. Do not ask evaluation questions "
+                "yet, and do not name the source document or page range in the answer."
             ),
         )
         self._update_mitigation_review_details(
@@ -2259,7 +2293,8 @@ class ChatMitigationCreationMixin:
             (
                 f"{session.selected_hazard or ''} {format_all_dgs(session)} "
                 f"{self._mitigation_target_population_text(session)} "
-                f"{session.mitigation_measure or ''} {session.mitigation_reason or ''} {user_message}"
+                f"{session.mitigation_measure or ''} "
+                f"{session.mitigation_reason or ''} {user_message}"
             ),
             limit=8,
         )
@@ -2268,6 +2303,27 @@ class ChatMitigationCreationMixin:
             session.mitigation_measure or "",
             session.mitigation_reason or "",
         )
+        d23_context = self._d23_conceptual_review_context(session, user_message)
+        if d23_context:
+            knowledge_context = "\n\n".join(
+                part
+                for part in (
+                    "Conceptual source excerpts for the pre-evaluation discussion:\n"
+                    + d23_context,
+                    knowledge_context,
+                )
+                if part
+            )
+        if session.mitigation_grounded_synthesis:
+            knowledge_context = "\n\n".join(
+                part
+                for part in (
+                    "Grounded validation synthesis for the saved mitigation measure:\n"
+                    + session.mitigation_grounded_synthesis,
+                    knowledge_context,
+                )
+                if part
+            )
         examples = self._mitigation_measure_examples(session.sector_id)
         context = render_prompt_template(
             "llm/mitigation_review_assistant.txt",
@@ -2304,6 +2360,97 @@ class ChatMitigationCreationMixin:
             },
         ]
         return context, messages
+
+    def _d23_conceptual_review_context(
+        self,
+        session: ChatSession,
+        user_message: str = "",
+    ) -> str:
+        pages = _d23_conceptual_review_page_texts()
+        if not pages:
+            return ""
+
+        query = normalize_for_match(
+            " ".join(
+                [
+                    str(session.country or ""),
+                    str(session.region or ""),
+                    str(session.sector or ""),
+                    str(session.selected_hazard or ""),
+                    self._mitigation_target_population_text(session),
+                    format_all_dgs(session),
+                    str(session.mitigation_measure or ""),
+                    str(session.mitigation_reason or ""),
+                    str(user_message or ""),
+                    "conceptual framework pros cons coverage limitations "
+                    "trade offs implementation feasibility",
+                ]
+            )
+        )
+        query_terms = {
+            token
+            for token in query.split()
+            if len(token) >= 4
+            and token
+            not in {
+                "this",
+                "that",
+                "with",
+                "from",
+                "into",
+                "about",
+                "which",
+                "their",
+                "there",
+                "measure",
+                "mitigation",
+            }
+        }
+        scored: list[tuple[int, int, str]] = []
+        for page_number, page_text in pages:
+            if not (
+                D23_CONCEPTUAL_REVIEW_START_PAGE
+                <= page_number
+                <= D23_CONCEPTUAL_REVIEW_END_PAGE
+            ):
+                continue
+            page_key = normalize_for_match(page_text)
+            page_terms = set(page_key.split())
+            overlap = len(query_terms & page_terms)
+            phrase_bonus = sum(
+                3
+                for phrase in (
+                    normalize_for_match(str(session.sector or "")),
+                    normalize_for_match(str(session.selected_hazard or "")),
+                    normalize_for_match(str(session.country or "")),
+                )
+                if phrase and phrase in page_key
+            )
+            score = overlap + phrase_bonus
+            if score > 0:
+                scored.append((score, page_number, page_text))
+
+        if not scored:
+            scored = [
+                (0, page_number, page_text)
+                for page_number, page_text in pages[:D23_CONCEPTUAL_REVIEW_MAX_EXCERPTS]
+            ]
+
+        selected = sorted(scored, key=lambda item: (-item[0], item[1]))[
+            :D23_CONCEPTUAL_REVIEW_MAX_EXCERPTS
+        ]
+        excerpts: list[str] = []
+        total_chars = 0
+        for _score, page_number, page_text in selected:
+            excerpt = page_text[:900].strip()
+            if not excerpt:
+                continue
+            rendered = f"- [Source p. {page_number}] {excerpt}"
+            if total_chars + len(rendered) > D23_CONCEPTUAL_REVIEW_MAX_CHARS:
+                break
+            excerpts.append(rendered)
+            total_chars += len(rendered)
+        return "\n".join(excerpts)
 
     def _evaluation_question_step(
         self,

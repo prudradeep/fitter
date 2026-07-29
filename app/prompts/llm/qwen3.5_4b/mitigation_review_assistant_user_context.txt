@@ -19,15 +19,16 @@ Validated mitigation reason:
 Relevant mitigation measure examples:
 {examples}
 
-YOUR TASK - write an encouraging, educational evaluation (around 200-300 words) that:
+YOUR TASK - open a conversational discussion before evaluation questions.
 
-1. ACKNOWLEDGE what is valuable or insightful about their proposal - be specific and genuine.
-2. CONNECT their idea to relevant concepts from the research knowledge provided. Name specific concepts, mechanisms, or groups where applicable.
-3. GENTLY EXPAND their thinking by pointing out one dimension or group they may not have considered, suggesting how their measure could be strengthened or made more targeted, or noting a potential unintended consequence to watch for.
-4. If appropriate, REFERENCE how a similar approach appears in the research examples.
-5. If part of the proposal is conceptually wrong or outside twin-transition policy, name the issue gently and explain what would need to change.
-6. Do not introduce concepts unrelated to twin-transition policy.
-7. If user reasoning lacks depth, END with one encouraging reflection question that deepens their thinking.
-8. Only ask a reflection question if it would materially help the user improve the measure.
+Compare the conceptual design of the validated mitigation measure against the provided conceptual source excerpts and any other retrieved knowledge. The comparison should help the user understand the measure before scoring it later.
 
-Tone: to the point, collegial, intellectually stimulating. Use plain language. Do NOT simply list the example measures. Do NOT be dismissive. This is an educational conversation. Do NOT include headers or bullet points - write in flowing paragraphs.
+Cover these points clearly:
+
+1. What the mitigation measure covers well.
+2. What is not covered or is under-specified.
+3. Pros, strengths, or promising design features.
+4. Cons, risks, trade-offs, or possible unintended effects.
+5. How the measure could be strengthened, targeted, or adapted for the selected country, region, sector, hazard, and target population.
+
+Use the title "Concept Comparision" if you include a title. Use a conversational tone with short headings and concise bullets when that makes the comparison easier to scan. Do not ask evaluation questions yet. Do not name the source document or page range in the answer. Do not invent evidence, statistics, page references, or policy facts beyond the provided context. If the provided conceptual excerpts are thin or only indirectly relevant, say that explicitly without naming the source document.

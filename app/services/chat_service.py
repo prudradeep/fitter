@@ -355,6 +355,14 @@ class ChatService(
         if open_selection_response is not None:
             return open_selection_response
 
+        quality_response = await self._common_user_input_quality_response(
+            current_session_id,
+            session,
+            clean_message,
+        )
+        if quality_response is not None:
+            return quality_response
+
         if session.phase == "hazards":
             return await self._handle_hazards_action(current_session_id, session, clean_message)
 
@@ -500,6 +508,53 @@ class ChatService(
             )
 
         return await self._deep_dive(current_session_id, session, clean_message)
+
+    async def _common_user_input_quality_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        clean_message: str,
+    ) -> ChatResponse | None:
+        if not self._should_check_common_user_input_quality(session, clean_message):
+            return None
+        review = await self._check_user_input_quality(
+            session=session,
+            purpose=self._common_user_input_quality_purpose(session),
+            user_input_text=clean_message,
+        )
+        if review is None or review.get("valid"):
+            return None
+        return self._repeat_current_options(
+            session_id,
+            session,
+            render_message(
+                "input_validation_failed.md",
+                reason=str(review.get("reason") or "Please enter clear, meaningful text."),
+            ),
+            True,
+        )
+
+    def _should_check_common_user_input_quality(
+        self,
+        session: ChatSession,
+        clean_message: str,
+    ) -> bool:
+        if not clean_message:
+            return False
+        if clean_message.startswith("/"):
+            return False
+        if not all([session.country, session.region, session.sector]):
+            return False
+        if self._matches_current_step_option(session, clean_message):
+            return False
+        if self._could_be_fuzzy_selection(session, clean_message):
+            return False
+        return True
+
+    @staticmethod
+    def _common_user_input_quality_purpose(session: ChatSession) -> str:
+        phase = str(session.phase or "").strip().replace("_", " ") or "chat"
+        return f"a user-entered {phase} message in the Dr Transition policy workflow"
 
     def _primary_other_nav_options(self, session: ChatSession, step: str) -> list[Option]:
         return [
