@@ -22,7 +22,7 @@ from app.routes.request_limits import (
     read_limited_json,
     upload_too_large_response as limited_upload_too_large_response,
 )
-from app.schemas import ChatRequest, ChatResponse
+from app.schemas import ChatRequest, ChatResponse, Option
 from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
 from app.services.audit_log import record_audit_event
@@ -42,6 +42,28 @@ settings = get_settings()
 
 def _is_admin_user(user: AppUser) -> bool:
     return str(user.role or "").strip().casefold() == "admin"
+
+
+def _restore_options(options: object) -> list[Option]:
+    if not isinstance(options, list):
+        return []
+    restored: list[Option] = []
+    for index, option in enumerate(options):
+        if isinstance(option, dict):
+            label = str(option.get("label") or "").strip()
+            option_id = option.get("id")
+        else:
+            label = str(option or "").strip()
+            option_id = None
+        if label:
+            restored.append(Option(id=option_id if option_id is not None else index, label=label))
+    return restored
+
+
+def _restore_other_options(options: object) -> list[str]:
+    if not isinstance(options, list):
+        return []
+    return [str(option).strip() for option in options if str(option or "").strip()]
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -215,6 +237,11 @@ async def restore_session(
         is_admin=_is_admin_user(current_user),
     )
     current_prompt = service._repeat_current_options(session_key, chat_session, "", False)
+    if chat_session.current_step:
+        current_prompt.step = chat_session.current_step
+        current_prompt.input_mode = chat_session.current_input_mode or current_prompt.input_mode
+        current_prompt.options = _restore_options(chat_session.current_options)
+        current_prompt.other_options = _restore_other_options(chat_session.current_other_options)
     service._attach_other_options(current_prompt, chat_session)
     messages = db.scalars(
         select(UserChatMessage)

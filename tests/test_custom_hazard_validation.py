@@ -275,6 +275,37 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(duplicate_card["status"], "WARNING")
         self.assertIn("Regional employment shock", duplicate_card["reason"])
 
+    def test_continue_with_custom_hazard_duplicate_asks_reason_evidence(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_duplicate_confirmation",
+            pending_hazard="Regional employment shock",
+            suggested_duplicate_hazard="Existing regional employment shock",
+            custom_hazard={
+                "raw_text": "Regional employment shock",
+                "affected_groups": [
+                    {"group": "Coal workers", "reason": "Job losses."}
+                ],
+            },
+        )
+
+        response = _run(
+            service._handle_hazard_duplicate_suggestion(
+                "session-1",
+                session,
+                "Continue with custom hazard",
+            )
+        )
+
+        self.assertEqual(response.step, "custom_hazard_validation")
+        self.assertEqual(response.input_mode, "reason_evidence")
+        self.assertEqual(session.phase, "add_hazard_evidence")
+        self.assertTrue(session.custom_hazard["duplicate_override_confirmed"])
+        self.assertEqual(session.pending_hazard, "Regional employment shock")
+
     def test_hazard_creation_input_is_not_routed_to_grounded_questions(self):
         service = ChatService.__new__(ChatService)
         service._handle_other_nav_action = AsyncMock(return_value=None)

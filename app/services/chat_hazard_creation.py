@@ -1609,13 +1609,6 @@ class ChatHazardCreationMixin:
             if session.phase == "custom_hazard_duplicate_confirmation":
                 state = self._custom_hazard_state(session)
                 state["duplicate_override_confirmed"] = True
-                if state.get("affected_groups"):
-                    state["next_action"] = CustomHazardAction.REVIEW_GROUPS.value
-                    state["status"] = CustomHazardStatus.NEEDS_GROUP_REVIEW.value
-                else:
-                    state["next_action"] = CustomHazardAction.ASK_CLARIFICATION.value
-                    state["status"] = CustomHazardStatus.NEEDS_CLARIFICATION.value
-                return await self._route_custom_hazard_next_action(session_id, session)
             return self._hazard_reason_evidence_step(session_id, session, hazard)
 
         if action in {normalize("Explore suggested hazard"), normalize("Use existing hazard")}:

@@ -323,6 +323,42 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(audit.user_id, self.user.id)
         self.assertEqual(audit.target_type, "session")
 
+    def test_restore_session_uses_persisted_current_step_options(self) -> None:
+        session = UserSession(
+            session_key="mitigation-session",
+            title="Mitigation session",
+            user_id=self.user.id,
+            session_data=json.dumps(
+                {
+                    "country": "Spain",
+                    "region": "Catalonia",
+                    "sector": "Energy",
+                    "phase": "wizard",
+                    "current_step": "mitigation_duplicate_suggestion",
+                    "current_input_mode": "text",
+                    "current_options": [
+                        {"id": "use_existing", "label": "Use existing mitigation"},
+                        {"id": "write_again", "label": "Write mitigation again"},
+                    ],
+                    "current_other_options": ["Choose a different sector"],
+                }
+            ),
+        )
+        self.db.add(session)
+        self.db.commit()
+
+        response = self.client.get("/api/sessions/mitigation-session")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["error"])
+        self.assertEqual(payload["step"], "mitigation_duplicate_suggestion")
+        self.assertEqual(
+            [option["label"] for option in payload["options"]],
+            ["Use existing mitigation", "Write mitigation again"],
+        )
+        self.assertNotIn("Spain", [option["label"] for option in payload["options"]])
+
     def test_session_import_rejects_oversized_request_before_read(self) -> None:
         with self._temporary_route_limits(max_session_import_bytes=32):
             response = self.client.post(

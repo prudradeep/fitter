@@ -76,6 +76,10 @@ class ChatSession:
     pending_selection_action: str | None = None
     pending_fuzzy_option: str | None = None
     stats_dialog_conversation: list[dict[str, str]] | None = None
+    current_step: str | None = None
+    current_input_mode: str | None = None
+    current_options: list[dict[str, str | int]] | None = None
+    current_other_options: list[str] | None = None
     validation_mode: str = "strict"
     crowd_sourcing_enabled: bool = False
 

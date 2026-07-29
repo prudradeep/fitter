@@ -66,6 +66,10 @@ class ChatPersistenceMixin:
     def _finalize_chat_response(
         self, session_id: str, session: ChatSession, response: ChatResponse
     ) -> None:
+        session.current_step = response.step
+        session.current_input_mode = response.input_mode
+        session.current_options = [option.model_dump() for option in response.options]
+        session.current_other_options = list(response.other_options or [])
         self._ensure_user_session(session_id, session)
         self._record_chat_message(
             session_id,
