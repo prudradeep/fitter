@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -57,6 +58,12 @@ from app.services.message_renderer import markdown_to_html, render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_optional_text(value: object) -> str | None:
+    text = re.sub(r"\s+", " ", normalize_markdown_text(str(value or ""))).strip("`*_ ")
+    return text or None
+
 
 class ChatValidationServiceMixin:
     @staticmethod
@@ -880,28 +887,45 @@ class ChatValidationServiceMixin:
         return sector_signal_scores(text)
 
     async def _review_custom_hazard_input(
-        self, session: ChatSession, hazard: str
+        self,
+        session: ChatSession,
+        hazard: str,
+        clarification_context: dict[str, object] | None = None,
     ) -> dict[str, object] | None:
-        deterministic_review = deterministic_custom_hazard_input_review(
-            selected_sector=session.sector,
-            hazard=hazard,
-        )
-        if deterministic_review is not None:
-            return deterministic_review
+        if clarification_context is None:
+            deterministic_review = deterministic_custom_hazard_input_review(
+                selected_sector=session.sector,
+                hazard=hazard,
+            )
+            if deterministic_review is not None:
+                return deterministic_review
 
         context = render_prompt_template(
             "llm/custom_hazard_input_classifier.txt",
             sector=session.sector or "Not selected",
             country=session.country or "Not selected",
             region=session.region or "Not selected",
+            hazard=hazard,
+            existing_hazards=self._custom_hazard_classifier_existing_hazards(session),
         )
+        clarification_block = ""
+        if clarification_context:
+            clarification_block = (
+                "\nClarification context:\n"
+                f"{json.dumps(clarification_context, ensure_ascii=False, indent=2)}\n"
+                "Use the title and clarification together. If they are sufficient, "
+                "return status valid with normalized_hazard rewritten as a concrete hazard title.\n"
+            )
         messages = [
             {
                 "role": "user",
                 "content": (
+                    f"Country: {session.country or 'Not selected'}\n"
+                    f"Region: {session.region or 'Not selected'}\n"
                     f"Selected sector: {session.sector or 'Not selected'}\n"
-                    f"User input: {hazard}\n\n"
-                    "Return exactly ACCEPT, or REJECT followed by one concise reason."
+                    f"Hazard: {hazard}\n\n"
+                    f"{clarification_block}"
+                    "Return only the required JSON object."
                 ),
             }
         ]
@@ -909,12 +933,43 @@ class ChatValidationServiceMixin:
             context=context,
             messages=messages,
             temperature=0.0,
-            max_tokens=450,
+            max_tokens=1200,
         )
         if is_llm_unavailable_response(response):
             return None
 
         return self._parse_custom_hazard_classifier_response(response)
+
+    def _custom_hazard_classifier_existing_hazards(self, session: ChatSession) -> str:
+        """Return duplicate-scope hazards for the hazard-name classifier prompt."""
+        names: list[str] = []
+        for method_name in (
+            "_same_sector_hazard_names_for_duplicate_check",
+            "_same_scope_custom_hazard_names_for_duplicate_check",
+        ):
+            method = getattr(self, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                names.extend(str(item).strip() for item in method(session) if str(item).strip())
+            except Exception:
+                logger.exception("Failed to collect custom hazard classifier duplicate scope")
+        if not names:
+            return "- No existing hazards supplied."
+        dedupe = getattr(self, "_dedupe_hazard_names", None)
+        if callable(dedupe):
+            names = dedupe(names)
+        else:
+            seen: set[str] = set()
+            unique_names: list[str] = []
+            for name in names:
+                key = normalize_for_match(name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique_names.append(name)
+            names = unique_names
+        return "\n".join(f"- {name}" for name in names[:80])
 
     async def _review_custom_hazard_context(
         self,
@@ -1202,6 +1257,10 @@ class ChatValidationServiceMixin:
         cleaned = str(response or "").strip()
         if not cleaned:
             return None
+        parsed = parse_json_object(cleaned)
+        if isinstance(parsed, dict):
+            return ChatValidationServiceMixin._normalize_custom_hazard_classifier_json(parsed)
+
         first_line, _, rest = cleaned.partition("\n")
         label_match = re.match(r"^\s*(ACCEPT|REJECT|CLARIFICATION)\b\s*:?\s*(.*)$", first_line, re.IGNORECASE)
         label = label_match.group(1).casefold() if label_match else first_line.strip().strip(":").casefold()
@@ -1245,6 +1304,76 @@ class ChatValidationServiceMixin:
                 "suggestions": [],
             }
         return None
+
+    @staticmethod
+    def _normalize_custom_hazard_classifier_json(
+        parsed: dict[str, object],
+    ) -> dict[str, object] | None:
+        """Validate the hazard-name classifier JSON and map it to the legacy shape."""
+        status = normalize(str(parsed.get("status") or ""))
+        validation_code = normalize(str(parsed.get("validation_code") or ""))
+        reason = re.sub(
+            r"\s+",
+            " ",
+            normalize_markdown_text(str(parsed.get("reason") or "")),
+        ).strip("`*_ ")
+        if status not in {
+            normalize("valid"),
+            normalize("invalid"),
+            normalize("needs_clarification"),
+        }:
+            logger.warning("Invalid custom hazard classifier status: %s", parsed.get("status"))
+            return None
+        if not validation_code:
+            logger.warning("Custom hazard classifier response missing validation_code")
+            return None
+        if not reason:
+            logger.warning("Custom hazard classifier response missing reason")
+            return None
+        try:
+            confidence = float(parsed.get("confidence"))
+        except (TypeError, ValueError):
+            logger.warning("Custom hazard classifier response missing numeric confidence")
+            return None
+        confidence = max(0.0, min(1.0, confidence))
+        if confidence < 0.55:
+            return {
+                "status": "Ambiguous",
+                "valid": False,
+                "is_valid": False,
+                "validation_code": validation_code or "unclear_hazard",
+                "confidence": confidence,
+                "reason": (
+                    "The hazard may be relevant, but the validation confidence is too low. "
+                    "Please clarify the affected group, the negative consequence, and the transition measure causing it."
+                ),
+                "suggestions": [],
+                "suggested_rewrite": _clean_optional_text(parsed.get("suggested_rewrite")),
+                "clarification_question": _clean_optional_text(parsed.get("clarification_question"))
+                or "Which transition measure causes the harm, who is affected, and what consequence do they experience?",
+            }
+        is_valid = status == normalize("valid")
+        if bool(parsed.get("is_valid")) != is_valid:
+            logger.warning("Custom hazard classifier is_valid/status mismatch")
+            return None
+        return {
+            "status": "valid" if is_valid else "needs_clarification" if status == normalize("needs_clarification") else "invalid",
+            "valid": is_valid,
+            "is_valid": is_valid,
+            "validation_code": validation_code,
+            "confidence": confidence,
+            "reason": reason,
+            "suggestions": [],
+            "normalized_hazard": _clean_optional_text(parsed.get("normalized_hazard")),
+            "suggested_rewrite": _clean_optional_text(parsed.get("suggested_rewrite")),
+            "clarification_question": _clean_optional_text(parsed.get("clarification_question")),
+            "transition_link": parsed.get("transition_link") if isinstance(parsed.get("transition_link"), dict) else {},
+            "sector_validation": parsed.get("sector_validation") if isinstance(parsed.get("sector_validation"), dict) else {},
+            "context_validation": parsed.get("context_validation") if isinstance(parsed.get("context_validation"), dict) else {},
+            "affected_group": parsed.get("affected_group") if isinstance(parsed.get("affected_group"), dict) else {},
+            "negative_consequence": _clean_optional_text(parsed.get("negative_consequence")),
+            "duplicate": parsed.get("duplicate") if isinstance(parsed.get("duplicate"), dict) else {},
+        }
 
     async def _validate_input_quality(
         self,

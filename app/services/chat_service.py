@@ -366,6 +366,11 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
+        if session.phase == "custom_hazard_title_clarification":
+            return await self._handle_custom_hazard_title_clarification(
+                current_session_id, session, clean_message
+            )
+
         if session.phase in {"add_hazard_clarification", "custom_hazard_clarification"}:
             return await self._handle_custom_hazard_clarification(
                 current_session_id, session, clean_message

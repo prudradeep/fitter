@@ -61,6 +61,7 @@ class FakeKnowledgeBaseService:
 
 class ApiRouteIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.original_prompt_source = api_routes.settings.prompt_source
         self.engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
@@ -102,6 +103,7 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         clear_rate_limits()
 
     def tearDown(self) -> None:
+        api_routes.settings.prompt_source = self.original_prompt_source
         clear_rate_limits()
         self.coverage_patcher.stop()
         self.client.close()
@@ -479,6 +481,37 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(prompt.content, "Custom prompt")
         audit = self.db.query(AuditLog).filter(AuditLog.action == "prompts.create").one()
         self.assertEqual(audit.target_id, "llm/custom_prompt.txt")
+
+    def test_admin_can_view_and_update_prompt_source_setting(self) -> None:
+        api_routes.settings.prompt_source = "auto"
+
+        current_response = self.client.get("/api/settings/prompt-source")
+        update_response = self.client.patch(
+            "/api/settings/prompt-source",
+            json={"prompt_source": "file"},
+        )
+
+        self.assertEqual(current_response.status_code, 200)
+        self.assertEqual(current_response.json()["prompt_source"], "auto")
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.json()["prompt_source"], "file")
+        self.assertEqual(api_routes.settings.prompt_source, "file")
+        audit = self.db.query(AuditLog).filter(
+            AuditLog.action == "settings.prompt_source.update"
+        ).one()
+        self.assertEqual(audit.target_id, "prompt_source")
+
+    def test_prompt_source_update_rejects_unknown_value(self) -> None:
+        api_routes.settings.prompt_source = "auto"
+
+        response = self.client.patch(
+            "/api/settings/prompt-source",
+            json={"prompt_source": "remote"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["error"])
+        self.assertEqual(api_routes.settings.prompt_source, "auto")
 
     def test_admin_cannot_create_prompt_on_sync_client(self) -> None:
         original_enabled = api_routes.settings.sync_enabled

@@ -19,6 +19,7 @@ The main methods involved are:
 ```python
 ChatService._capture_custom_hazard(...)
 ChatService._validate_custom_hazard(...)
+ChatService._handle_custom_hazard_title_clarification(...)
 ChatService._handle_custom_hazard_clarification(...)
 ChatService._run_custom_hazard_dimension_check(...)
 ```
@@ -74,6 +75,10 @@ normalized_text
 selected_country
 selected_region
 selected_sector
+title_validation_status
+title_clarification_round
+title_clarification_questions
+title_clarification_answers
 validation_round
 dimension_scores
 affected_groups
@@ -144,6 +149,10 @@ Rural residents face power outages from grid congestion during renewable energy 
 ```
 
 When accepted here, the app proceeds directly to the reason/evidence step.
+
+It can also return `needs_clarification` for transition-linked titles that are
+too broad to save or reject. These cases enter the title clarification branch
+before reason/evidence collection.
 
 **5. Sector Mismatch Check**
 
@@ -226,13 +235,14 @@ app/prompts/llm/<model-directory>/custom_hazard_input_classifier.txt
 The model must return:
 
 ```text
-ACCEPT
+valid
 ```
 
 or:
 
 ```text
-REJECT <reason>
+invalid
+needs_clarification
 ```
 
 If the LLM is unavailable, the app returns:
@@ -243,9 +253,66 @@ I could not review this hazard for clarity and policy fit because the local LLM 
 
 If the LLM rejects the hazard, the app returns a rewrite-required message.
 
+If the LLM asks for clarification, the app uses the title clarification branch.
 If it accepts, the app continues.
 
-**7. Duplicate Detection**
+**7. Hazard Title Clarification**
+
+For a recognizable but underspecified hazard title, the app enters:
+
+```text
+session.phase = custom_hazard_title_clarification
+```
+
+The response uses:
+
+```text
+step = custom_hazard_title_clarification
+input_mode = text
+```
+
+The app stores:
+
+```text
+session.pending_hazard = <original hazard title>
+session.pending_hazard_title_clarification_question = <question>
+session.pending_hazard_title_clarification_answers = []
+session.custom_hazard.title_validation_status = needs_clarification
+session.custom_hazard.title_clarification_round = 1
+```
+
+Examples that should ask for title clarification:
+
+```text
+Digital energy services leave people behind.
+Housing renovation is important.
+Transport electrification is a major topic.
+```
+
+When the user answers, the app calls:
+
+```python
+ChatService._handle_custom_hazard_title_clarification(...)
+```
+
+The app validates the original title and clarification together. A meaningful
+answer can resolve the title and move to reason/evidence:
+
+```text
+Older adults and low-income households without internet access or digital skills
+are excluded from online-only electricity billing and support services.
+```
+
+Non-answers, very short answers, ambiguous answers, and question/request-style
+replies are not accepted as clarifications. The app keeps:
+
+```text
+session.phase = custom_hazard_title_clarification
+```
+
+and asks again with `error=True`.
+
+**8. Duplicate Detection**
 
 Before asking for the reason, the app checks possible duplicate hazards.
 
@@ -273,7 +340,7 @@ Edit custom hazard
 
 If there is no blocking duplicate, the app continues.
 
-**8. Reason And Evidence Step**
+**9. Reason And Evidence Step**
 
 After the hazard title is accepted, the app stores:
 
@@ -298,7 +365,7 @@ Reason and Evidence Needed
 At this point the hazard is not saved yet. The user must provide a reason.
 Evidence is optional.
 
-**9. Validate Reason / Evidence**
+**10. Validate Reason / Evidence**
 
 When the user submits the reason/evidence payload, the app calls:
 
@@ -321,7 +388,7 @@ Reason is required. Evidence URL and evidence file are optional.
 
 This is not a clarification branch. Missing reason is a validation failure.
 
-**10. Reason Quality Check**
+**11. Reason Quality Check**
 
 The app validates reason quality through:
 
@@ -335,7 +402,7 @@ twin-transition policies for the selected country, region, and sector.
 If the reason is low quality, unrelated, meaningless, or clearly invalid, the
 app rejects it with `error=True`.
 
-**11. Re-run Plain And Sector Rules With Reason**
+**12. Re-run Plain And Sector Rules With Reason**
 
 The app re-runs plain rejection and sector mismatch checks using:
 
@@ -352,7 +419,7 @@ If sector mismatch is detected here, the response marks:
 selected_sector_fit = REJECTED
 ```
 
-**12. Stats / Evidence Validation**
+**13. Stats / Evidence Validation**
 
 The app validates the hazard against statistical/evidence context:
 
@@ -365,7 +432,7 @@ the hazard claim.
 
 If validation fails, the hazard is rejected and not saved.
 
-**13. Context Review And Clarification**
+**14. Context Review And Clarification**
 
 Next, the app calls:
 
@@ -410,7 +477,21 @@ Reason: It affects people.
 The app may ask who is affected or how the selected transition policy causes the
 bill increase.
 
-**14. Handle Clarification Answer**
+Regression cases now cover this branch explicitly with expected action:
+
+```text
+ASK_CONTEXT_CLARIFICATION
+```
+
+The expected response remains unsaved and uses:
+
+```text
+step = hazards
+input_mode = textarea
+session.phase = add_hazard_clarification
+```
+
+**15. Handle Clarification Answer**
 
 When the user answers the clarification question, the app calls the custom
 hazard clarification handler:
@@ -432,7 +513,7 @@ Then it continues validation. If the clarification resolves the issue, the flow
 moves forward. If not, it can reject or ask for more grounding depending on the
 next validation result.
 
-**15. Dimension Grounding Check**
+**16. Dimension Grounding Check**
 
 For accepted custom hazard state, the app runs:
 
@@ -481,7 +562,23 @@ and asks one or two grounding questions.
 This is separate from the earlier `add_hazard_clarification` context-review
 question.
 
-**16. Affected Groups Review**
+Regression cases cover this branch with expected action:
+
+```text
+ASK_GROUNDING_CLARIFICATION
+```
+
+The response uses:
+
+```text
+step = custom_hazard_clarification
+input_mode = textarea
+```
+
+Only the first one or two pending grounding questions are shown. They are taken
+from dimensions with `needs_clarification=True`, in dimension order.
+
+**17. Affected Groups Review**
 
 If affected population groups are identified, the app moves to group review.
 
@@ -490,7 +587,7 @@ The user can confirm affected groups or edit them.
 If the user adds an affected group without a reason, the app can ask why that
 group is affected.
 
-**17. Finalize Custom Hazard**
+**18. Finalize Custom Hazard**
 
 Once the hazard is valid and grounded, the app finalizes it:
 
@@ -523,7 +620,7 @@ session.accepted_custom_hazard_id
 If evidence was supplied and accepted, temporary evidence can be promoted to
 validated evidence.
 
-**18. Population Profile Extraction**
+**19. Population Profile Extraction**
 
 The app extracts affected population profiles:
 
@@ -540,7 +637,7 @@ session.hazard_profiles[custom_hazard]
 session.socio_demographic_profiles
 ```
 
-**19. Review And Continue**
+**20. Review And Continue**
 
 The user is shown the custom hazard population/review step.
 
@@ -567,7 +664,14 @@ This happens after reason/evidence submission when context review says the
 reason is unclear but potentially fixable.
 
 ```text
-2. custom_hazard_clarification
+2. custom_hazard_title_clarification
+```
+
+This happens before reason/evidence when the hazard title is transition-linked
+but too underspecified to accept as a hazard name.
+
+```text
+3. custom_hazard_clarification
 ```
 
 This happens during dimension grounding when one or more grounding dimensions
@@ -597,6 +701,58 @@ A custom hazard must pass these gates before it is saved:
 6. It must not contradict evidence/statistical context.
 7. It must identify or collect affected population groups.
 8. It must pass grounding dimensions or resolve clarification questions.
+```
+
+**Hazard Creation Regression Cases**
+
+The generated workbook is built by:
+
+```text
+tests/generate_hazard_creation_test_cases.py
+```
+
+It includes cases for:
+
+```text
+valid hazards
+sector synonyms
+mixed-signal valid hazards
+invalid or non-hazard inputs
+generic consumer-price issues
+vague or incomplete titles
+hazard title clarification
+hazard clarification after reason
+grounding dimension clarification
+benefits or mitigation statements
+wrong-sector hazards
+empty input
+go back from hazard creation
+```
+
+The runner is:
+
+```text
+tests/run_hazard_creation_cases.py
+```
+
+It writes one result workbook per model:
+
+```text
+hazard_creation_test_results_<model>.xlsx
+```
+
+The generated expected actions include:
+
+```text
+ASK_TITLE_CLARIFICATION
+REASK_TITLE_CLARIFICATION
+ASK_CONTEXT_CLARIFICATION
+ASK_GROUNDING_CLARIFICATION
+ACCEPT_HAZARD_NAME
+REJECT_REWRITE
+REJECT_SECTOR_MISMATCH
+SHOW_ADD_HAZARD_PROMPT
+GO_BACK_TO_HAZARDS
 ```
 
 **Example**

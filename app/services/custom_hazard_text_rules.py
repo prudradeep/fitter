@@ -75,24 +75,73 @@ def deterministic_custom_hazard_input_review(
 ) -> dict[str, object] | None:
     normalized = normalize_for_match(hazard)
     if not normalized:
-        return None
+        return _reject_input(
+            "Please enter a hazard name before continuing.",
+            validation_code="empty_hazard",
+        )
+
+    if _is_question_input(normalized, hazard):
+        return _reject_input(
+            "This is written as a question rather than a hazard. Please rewrite it as a standalone negative consequence caused by a green, digital, or twin-transition measure.",
+            validation_code="question_not_hazard",
+        )
+
+    if len(normalized.split()) <= 2:
+        return _reject_input(
+            "This is only a keyword or broad topic, so it is too short to validate as a hazard. Please state who is affected, what negative consequence occurs, and which transition measure causes it.",
+            validation_code="too_short",
+        )
 
     if _is_request_or_meta_input(normalized):
         return _reject_input(
-            "This is a request or comment rather than a hazard. Please rewrite it as a concrete negative impact or risk from the selected transition context."
+            "This is a request or comment rather than a hazard. Please rewrite it as a concrete negative impact or risk from the selected transition context.",
+            validation_code="not_a_hazard",
         )
 
     if _is_benefit_or_mitigation_statement(normalized):
         return _reject_input(
-            "This describes a benefit or mitigation action rather than a hazard. Please rewrite it as a concrete negative impact or risk from the selected transition context."
+            _benefit_or_mitigation_reason(normalized),
+            validation_code="mitigation_not_hazard" if _is_mitigation_statement(normalized) else "benefit_not_hazard",
         )
 
+    if _is_generic_socioeconomic_issue(normalized):
+        return _reject_input(
+            _generic_socioeconomic_reason(normalized, selected_sector),
+            validation_code="generic_socioeconomic_issue",
+        )
+
+    if _is_general_consumer_price_issue(normalized):
+        return _reject_input(
+            _general_consumer_price_reason(normalized, selected_sector),
+            validation_code="generic_consumer_price_issue",
+        )
+
+    if not _has_negative_hazard_signal(normalized) and _has_transition_policy_signal(normalized):
+        return _clarify_input(
+            _missing_negative_hazard_reason(normalized),
+            validation_code="missing_negative_consequence",
+            clarification_question=(
+                "Who is affected, what concrete harm or risk do they face, and "
+                "which green, digital, or twin-transition measure causes or worsens it?"
+            ),
+        )
     if not _has_negative_hazard_signal(normalized):
-        return _reject_input(_missing_negative_hazard_reason(normalized, hazard))
+        return _reject_input(
+            _missing_negative_hazard_reason(normalized),
+            validation_code="missing_negative_consequence",
+        )
 
     if not _has_transition_policy_signal(normalized):
-        return _reject_input(
-            "This does not clearly link the hazard to a green, digital, or twin-transition policy mechanism."
+        return None
+
+    if _uses_only_generic_population(normalized):
+        return _clarify_input(
+            "This points to a possible transition-related harm, but the affected population group is too generic.",
+            validation_code="unclear_affected_group",
+            clarification_question=(
+                "Which specific population group is affected, and what concrete "
+                "consequence do they experience from this transition measure?"
+            ),
         )
 
     selected_family = sector_family(selected_sector)
@@ -103,6 +152,8 @@ def deterministic_custom_hazard_input_review(
             "valid": True,
             "reason": "The input is a concrete transition-related hazard for the selected sector.",
             "suggestions": [],
+            "validation_code": "valid_hazard",
+            "confidence": 0.9,
             "source": "deterministic_guardrail",
         }
 
@@ -241,14 +292,58 @@ def plain_custom_hazard_rejection_reason(
     return None
 
 
-def _reject_input(reason: str) -> dict[str, object]:
+def _reject_input(reason: str, *, validation_code: str = "not_a_hazard") -> dict[str, object]:
     return {
-        "status": "Invalid",
+        "status": "invalid",
         "valid": False,
+        "is_valid": False,
+        "validation_code": validation_code,
+        "confidence": 0.95,
         "reason": reason,
         "suggestions": [],
         "source": "deterministic_guardrail",
     }
+
+
+def _clarify_input(
+    reason: str,
+    *,
+    validation_code: str = "unclear_hazard",
+    clarification_question: str,
+) -> dict[str, object]:
+    return {
+        "status": "needs_clarification",
+        "valid": False,
+        "is_valid": False,
+        "validation_code": validation_code,
+        "confidence": 0.8,
+        "reason": reason,
+        "clarification_question": clarification_question,
+        "suggestions": [],
+        "source": "deterministic_guardrail",
+    }
+
+
+def _is_question_input(normalized: str, raw_text: str) -> bool:
+    question_starts = (
+        "what",
+        "why",
+        "how",
+        "when",
+        "where",
+        "who",
+        "can",
+        "could",
+        "would",
+        "should",
+        "does",
+        "do",
+        "is",
+        "are",
+    )
+    return str(raw_text or "").strip().endswith("?") or normalized.startswith(
+        tuple(f"{word} " for word in question_starts)
+    )
 
 
 def _is_request_or_meta_input(normalized: str) -> bool:
@@ -265,6 +360,27 @@ def _is_request_or_meta_input(normalized: str) -> bool:
         "explain",
     )
     return normalized.startswith(request_starts)
+
+
+def _is_mitigation_statement(normalized: str) -> bool:
+    mitigation_starts = (
+        "install",
+        "provide",
+        "subsidize",
+        "subsidise",
+        "fund",
+        "support",
+        "promote",
+        "improve",
+        "increase access",
+        "reduce",
+        "develop",
+        "build",
+        "create",
+        "offer",
+        "expand",
+    )
+    return normalized.startswith(mitigation_starts)
 
 
 def _is_benefit_or_mitigation_statement(normalized: str) -> bool:
@@ -287,12 +403,126 @@ def _is_benefit_or_mitigation_statement(normalized: str) -> bool:
         "grants",
         "better",
     )
-    return any(term in normalized.split() for term in benefit_terms) and not _has_negative_hazard_signal(normalized)
+    return (
+        _is_mitigation_statement(normalized)
+        or any(term in normalized.split() for term in benefit_terms)
+    ) and not _has_negative_hazard_signal(normalized)
 
 
-def _missing_negative_hazard_reason(normalized: str, hazard: str) -> str:
-    selected_text = str(hazard or "").strip()
-    prefix = f"`{selected_text}` " if selected_text else "This "
+def _benefit_or_mitigation_reason(normalized: str) -> str:
+    if _is_mitigation_statement(normalized):
+        return (
+            "This is written as a policy action or mitigation measure, not as a hazard. "
+            "Please describe the negative consequence that could occur when a transition measure is implemented."
+        )
+    return (
+        "This describes a benefit or desired outcome rather than a hazard. Please rewrite it as a concrete negative impact or risk from the selected transition context."
+    )
+
+
+def _is_generic_socioeconomic_issue(normalized: str) -> bool:
+    words = set(normalized.split())
+    general_issue_terms = {
+        "inflation",
+        "poverty",
+        "unemployment",
+        "recession",
+        "austerity",
+        "inequality",
+    }
+    if not (words & general_issue_terms):
+        return False
+    transition_terms = {
+        "grid",
+        "smart",
+        "meter",
+        "meters",
+        "renewable",
+        "renewables",
+        "coal",
+        "fossil",
+        "phase",
+        "phaseout",
+        "electrification",
+        "decarbonisation",
+        "decarbonization",
+        "retrofit",
+        "renovation",
+        "ev",
+        "charging",
+        "digital",
+        "dynamic",
+        "tariff",
+        "tariffs",
+        "network",
+        "emission",
+        "emissions",
+    }
+    return not bool(words & transition_terms)
+
+
+def _generic_socioeconomic_reason(normalized: str, selected_sector: str | None) -> str:
+    sector_text = f"{selected_sector}-sector " if selected_sector else ""
+    if "inflation" in normalized:
+        return (
+            f"The statement describes a general inflation problem, but it does not "
+            f"identify any {sector_text}green or digital transition measure causing "
+            "or worsening the price increase."
+        )
+    if "unemployment" in normalized:
+        return (
+            f"The statement describes unemployment in general, but it does not "
+            f"identify any {sector_text}green or digital transition measure causing "
+            "the job loss."
+        )
+    return (
+        f"The statement describes a general socioeconomic problem, but it does not "
+        f"identify any {sector_text}green or digital transition measure causing or "
+        "worsening it."
+    )
+
+
+def _is_general_consumer_price_issue(normalized: str) -> bool:
+    words = set(normalized.split())
+    consumer_price_terms = {
+        "grocery",
+        "groceries",
+        "food",
+        "supermarket",
+        "shopping",
+    }
+    price_terms = {
+        "price",
+        "prices",
+        "cost",
+        "costs",
+        "expensive",
+        "affordability",
+        "purchasing",
+    }
+    if words & consumer_price_terms and words & price_terms:
+        return not _has_transition_policy_signal(normalized)
+    if {"purchasing", "power"} <= words and words & {"reduce", "reduces", "reduced", "lower", "lowers"}:
+        return not _has_transition_policy_signal(normalized)
+    return False
+
+
+def _general_consumer_price_reason(normalized: str, selected_sector: str | None) -> str:
+    sector_text = f"{selected_sector}-sector " if selected_sector else ""
+    if any(term in normalized for term in ("grocery", "groceries", "food", "supermarket")):
+        return (
+            "The statement describes general grocery or food-price pressure, but it "
+            f"does not identify any {sector_text}green or digital transition measure "
+            "causing or worsening the harm."
+        )
+    return (
+        "The statement describes a general household purchasing-power problem, but it "
+        f"does not identify any {sector_text}green or digital transition measure "
+        "causing or worsening it."
+    )
+
+
+def _missing_negative_hazard_reason(normalized: str) -> str:
     preference_starts = (
         "i like",
         "i love",
@@ -305,7 +535,7 @@ def _missing_negative_hazard_reason(normalized: str, hazard: str) -> str:
     )
     if normalized.startswith(preference_starts):
         return (
-            f"{prefix}reads as a personal preference or opinion, not a policy hazard. "
+            "This reads as a personal preference or opinion, not a policy hazard. "
             "Please rewrite it to name the affected population group, the concrete harm, "
             "and the green, digital, or twin-transition mechanism that creates or increases the risk."
         )
@@ -313,25 +543,36 @@ def _missing_negative_hazard_reason(normalized: str, hazard: str) -> str:
     words = normalized.split()
     if len(words) <= 4:
         return (
-            f"{prefix}is too broad to validate as a hazard because it does not state "
+            "This is too broad to validate as a hazard because it does not state "
             "who is harmed or what negative impact occurs. Please rewrite it as "
             "`[affected group] face [harm] because [transition policy mechanism]`."
         )
 
     return (
-        f"{prefix}does not state a concrete negative impact. Please rewrite it to "
+        "This does not state a concrete negative impact. Please rewrite it to "
         "identify the affected population group, the harm or risk they face, and "
         "how a green, digital, or twin-transition policy causes or worsens it."
     )
 
 
 def _has_negative_hazard_signal(normalized: str) -> bool:
+    negative_phrases = (
+        "leave behind",
+        "leaves behind",
+        "left behind",
+    )
+    if any(phrase in normalized for phrase in negative_phrases):
+        return True
+    if "behind" in normalized.split() and set(normalized.split()) & {"leave", "leaves", "left"}:
+        return True
     negative_terms = (
         "risk",
         "hazard",
         "harm",
         "burden",
         "higher",
+        "expensive",
+        "costly",
         "rising",
         "rise",
         "increases",
@@ -345,6 +586,12 @@ def _has_negative_hazard_signal(normalized: str) -> bool:
         "eviction",
         "exclusion",
         "excluded",
+        "exclude",
+        "excludes",
+        "excluding",
+        "hurt",
+        "hurts",
+        "harmed",
         "lose",
         "loss",
         "lost",
@@ -363,6 +610,8 @@ def _has_negative_hazard_signal(normalized: str) -> bool:
         "downtime",
         "cost",
         "costs",
+        "price",
+        "prices",
         "fees",
         "tariffs",
         "penalty",
@@ -371,6 +620,44 @@ def _has_negative_hazard_signal(normalized: str) -> bool:
         "vulnerable",
     )
     return any(term in normalized.split() for term in negative_terms)
+
+
+def _uses_only_generic_population(normalized: str) -> bool:
+    words = set(normalized.split())
+    generic_population_terms = {
+        "people",
+        "users",
+        "citizens",
+        "public",
+        "communities",
+        "consumers",
+    }
+    if not (words & generic_population_terms):
+        return False
+    specific_modifiers = {
+        "low",
+        "income",
+        "elderly",
+        "older",
+        "disabled",
+        "rural",
+        "remote",
+        "renters",
+        "tenants",
+        "workers",
+        "commuters",
+        "drivers",
+        "residents",
+        "small",
+        "businesses",
+        "vulnerable",
+        "migrant",
+        "minority",
+        "households",
+        "apartment",
+        "dwellers",
+    }
+    return not bool(words & specific_modifiers)
 
 
 def _has_transition_policy_signal(normalized: str) -> bool:
@@ -389,6 +676,13 @@ def _has_transition_policy_signal(normalized: str) -> bool:
         "smart grid",
         "smart meter",
         "electric vehicle",
+        "energy standard",
+        "energy standards",
+        "building energy standard",
+        "building energy standards",
+        "residential energy performance",
+        "renovation requirement",
+        "renovation requirements",
     )
     if any(phrase in normalized for phrase in transition_phrases):
         return True
@@ -421,6 +715,7 @@ def _has_transition_policy_signal(normalized: str) -> bool:
 
 def sector_signal_scores(text: str) -> dict[str, int]:
     normalized = f" {normalize_for_match(text)} "
+    normalized_for_energy = normalized.replace(" purchasing power ", " ")
     phrase_groups: dict[str, tuple[str, ...]] = {
         "transport": (
             "transport",
@@ -517,7 +812,8 @@ def sector_signal_scores(text: str) -> dict[str, int]:
         sector: sum(
             1
             for phrase in phrases
-            if f" {normalize_for_match(phrase)} " in normalized
+            if f" {normalize_for_match(phrase)} "
+            in (normalized_for_energy if sector == "energy" else normalized)
         )
         for sector, phrases in phrase_groups.items()
     }

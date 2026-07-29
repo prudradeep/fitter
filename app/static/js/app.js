@@ -114,6 +114,8 @@ const sectorPromptResults = document.querySelector("#sectorPromptResults");
 const promptLibrarySection = document.querySelector("#promptLibrarySection");
 const newPromptButton = document.querySelector("#newPromptButton");
 const refreshPromptsButton = document.querySelector("#refreshPromptsButton");
+const promptSourceSelect = document.querySelector("#promptSourceSelect");
+const promptSourceMessage = document.querySelector("#promptSourceMessage");
 const promptSearchInput = document.querySelector("#promptSearchInput");
 const promptCatalogueCount = document.querySelector("#promptCatalogueCount");
 const promptList = document.querySelector("#promptList");
@@ -242,6 +244,7 @@ let listedHazardOptions = [];
 let promptRows = [];
 let selectedPromptId = "";
 let creatingPrompt = false;
+let promptSourceLoading = false;
 
 const defaultPlaceholder = "Type a country, region, or sector...";
 const panelWidthKey = storageKeys.panelWidth || "dr_transition_visual_panel_width";
@@ -4437,6 +4440,7 @@ async function openPromptLibraryDialog() {
   } else {
     promptLibraryDialog.removeAttribute("hidden");
   }
+  await loadPromptSourceSetting();
   await loadPrompts();
   promptSearchInput?.focus();
 }
@@ -4455,6 +4459,67 @@ function showPromptEditorMessage(message, isError = true) {
   promptEditorMessage.textContent = message;
   promptEditorMessage.hidden = false;
   promptEditorMessage.classList.toggle("success", !isError);
+}
+
+function showPromptSourceMessage(message, isError = true) {
+  if (!promptSourceMessage) return;
+  promptSourceMessage.textContent = message;
+  promptSourceMessage.hidden = false;
+  promptSourceMessage.classList.toggle("success", !isError);
+}
+
+async function loadPromptSourceSetting() {
+  if (!promptSourceSelect) return;
+  promptSourceSelect.disabled = true;
+  try {
+    const response = await fetch("/api/settings/prompt-source");
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    if (data.error) throw new Error(data.detail || "Could not load prompt source.");
+    promptSourceSelect.value = data.prompt_source || "auto";
+    if (promptSourceMessage) promptSourceMessage.hidden = true;
+  } catch (error) {
+    console.error("Prompt source load failed", error);
+    showPromptSourceMessage("Could not load prompt source.");
+  } finally {
+    promptSourceSelect.disabled = false;
+  }
+}
+
+async function updatePromptSourceSetting() {
+  if (!promptSourceSelect || promptSourceLoading) return;
+  const promptSource = promptSourceSelect.value;
+  promptSourceLoading = true;
+  promptSourceSelect.disabled = true;
+  showPromptSourceMessage("Updating prompt source...", false);
+  try {
+    const response = await csrfFetch("/api/settings/prompt-source", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt_source: promptSource }),
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    if (data.error) throw new Error(data.detail || "Could not update prompt source.");
+    promptSourceSelect.value = data.prompt_source || promptSource;
+    showPromptSourceMessage(data.detail || "Prompt source updated.", false);
+    await loadPrompts();
+  } catch (error) {
+    console.error("Prompt source update failed", error);
+    showPromptSourceMessage(error.message || "Could not update prompt source.");
+    await loadPromptSourceSetting();
+  } finally {
+    promptSourceLoading = false;
+    promptSourceSelect.disabled = false;
+  }
 }
 
 async function loadPrompts() {
@@ -5387,6 +5452,7 @@ sectorPromptSearchForm?.addEventListener("submit", async (event) => {
 
 refreshPromptsButton?.addEventListener("click", loadPrompts);
 newPromptButton?.addEventListener("click", startNewPrompt);
+promptSourceSelect?.addEventListener("change", updatePromptSourceSetting);
 promptSearchInput?.addEventListener("input", renderPromptList);
 promptEditorForm?.addEventListener("submit", async (event) => {
   event.preventDefault();

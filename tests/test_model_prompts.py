@@ -2,8 +2,9 @@ import unittest
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from app.services import prompt_store
 from app.services import prompt_loader
 
 MODEL_PROMPT_DIRS = {
@@ -64,6 +65,26 @@ class ModelPromptTests(unittest.TestCase):
 
         self.assertTrue(prompt.startswith("MODEL OPTIMIZATION - ministral-3:14b"))
         self.assertIn("You are Dr Transition, a digital coach", prompt)
+
+    def test_prompt_store_file_source_skips_database_reads(self) -> None:
+        session_local = MagicMock()
+
+        with (
+            patch("app.config.get_settings", return_value=SimpleNamespace(prompt_source="file")),
+            patch("app.services.prompt_store.SessionLocal", session_local),
+        ):
+            prompt = prompt_store.load_prompt_from_db("llm/test.txt")
+
+        self.assertIsNone(prompt)
+        session_local.assert_not_called()
+
+    def test_prompt_store_db_source_reads_database_without_auto_enable(self) -> None:
+        original_enabled = prompt_store.PROMPT_DB_ENABLED
+        prompt_store.PROMPT_DB_ENABLED = False
+        self.addCleanup(setattr, prompt_store, "PROMPT_DB_ENABLED", original_enabled)
+
+        with patch("app.config.get_settings", return_value=SimpleNamespace(prompt_source="db")):
+            self.assertTrue(prompt_store.should_read_prompts_from_db())
 
     def test_all_model_prompt_directories_are_supported_and_tuned(self) -> None:
         self.assertEqual(prompt_loader.MODEL_PROMPT_DIRS, MODEL_PROMPT_DIRS)

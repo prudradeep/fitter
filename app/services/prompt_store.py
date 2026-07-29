@@ -51,6 +51,8 @@ def prompt_metadata(prompt_key: str) -> tuple[str, str | None, str]:
 
 def seed_prompts_from_files(*, overwrite: bool = False) -> int:
     global PROMPT_DB_ENABLED
+    if prompt_source() == "file":
+        return 0
     if not PROMPT_ROOT.exists():
         return 0
     with SessionLocal() as db:
@@ -62,10 +64,15 @@ def seed_prompts_from_files(*, overwrite: bool = False) -> int:
 
 def enable_prompt_db_reads() -> None:
     global PROMPT_DB_ENABLED
+    if prompt_source() == "file":
+        PROMPT_DB_ENABLED = False
+        return
     PROMPT_DB_ENABLED = True
 
 
 def enable_prompt_db_reads_if_rows() -> bool:
+    if prompt_source() == "file":
+        return False
     try:
         with SessionLocal() as db:
             has_prompts = bool(db.scalar(select(Prompt.id).limit(1)))
@@ -101,7 +108,7 @@ def seed_prompts_from_files_for_session(db: Session, *, overwrite: bool = False)
 
 
 def load_prompt_from_db(prompt_key: str) -> str | None:
-    if not PROMPT_DB_ENABLED:
+    if not should_read_prompts_from_db():
         return None
     try:
         with SessionLocal() as db:
@@ -111,6 +118,21 @@ def load_prompt_from_db(prompt_key: str) -> str | None:
             return prompt.content.strip()
     except SQLAlchemyError:
         return None
+
+
+def prompt_source() -> str:
+    from app.config import get_settings
+
+    return str(get_settings().prompt_source or "auto").strip().casefold()
+
+
+def should_read_prompts_from_db() -> bool:
+    source = prompt_source()
+    if source == "file":
+        return False
+    if source == "db":
+        return True
+    return PROMPT_DB_ENABLED
 
 
 def list_prompts(db: Session) -> list[Prompt]:

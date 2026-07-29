@@ -8,6 +8,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -65,11 +66,7 @@ class _HazardCreationEngine:
             sector_id={"Energy": 1, "Housing": 2, "Transport": 3}.get(sector, 1),
             phase="custom_hazard_input",
             custom_hazard=default_custom_hazard_state(),
-            hazards=[
-                "Energy poverty",
-                "Higher retrofit costs",
-                "Transport exclusion",
-            ],
+            hazards=[],
             custom_hazards=[],
             additional_hazards=[],
             hazard_profiles={},
@@ -79,6 +76,46 @@ class _HazardCreationEngine:
             session,
             str(item.get("User Hazard") or ""),
         )
+        for column in ("Clarification Answer 1", "Clarification Answer 2"):
+            answer = str(item.get(column) or "").strip()
+            if not answer:
+                continue
+            if session.phase != "custom_hazard_title_clarification":
+                break
+            response = await service._handle_custom_hazard_title_clarification(
+                "hazard-creation-test-session",
+                session,
+                answer,
+            )
+        expected_action = str(item.get("Expected Action") or "").strip()
+        if expected_action == "ASK_CONTEXT_CLARIFICATION":
+            service._review_custom_hazard_context = AsyncMock(
+                return_value={
+                    "status": "clarification",
+                    "valid": False,
+                    "question": "Clarification needed: who is affected in Bavaria, and which policy pathway creates the hazard?",
+                }
+            )
+            response = await service._validate_custom_hazard(
+                "hazard-creation-test-session",
+                session,
+                f"Reason: {str(item.get('Clarification Answer 1') or '').strip()}",
+            )
+        elif expected_action == "ASK_GROUNDING_CLARIFICATION":
+            service._review_custom_hazard_context = AsyncMock(
+                return_value={"status": "valid", "valid": True, "reason": "Context is clear."}
+            )
+            reason = str(item.get("Clarification Answer 1") or item.get("User Hazard") or "").strip()
+            grounding_result = self._grounding_clarification_result(item)
+            with patch(
+                "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+                AsyncMock(return_value=grounding_result),
+            ):
+                response = await service._validate_custom_hazard(
+                    "hazard-creation-test-session",
+                    session,
+                    f"Reason: {reason}",
+                )
         return response, session
 
     @staticmethod
@@ -96,6 +133,17 @@ class _HazardCreationEngine:
         service._ensure_custom_hazard = lambda *args, **kwargs: SimpleNamespace(id="custom-hazard-id")
         service._promote_temporary_evidence = lambda *args, **kwargs: None
         service._discard_temporary_evidence = lambda *args, **kwargs: None
+        service._validate_input_quality = AsyncMock(return_value={"valid": True, "reason": "Clear enough."})
+        service._validate_hazard_against_stats = AsyncMock(
+            return_value={"valid": True, "reason": "Compatible with the sector context."}
+        )
+        service._review_custom_hazard_context = AsyncMock(
+            return_value={
+                "status": "clarification",
+                "valid": False,
+                "question": "Clarification needed: who is affected in Bavaria, and which policy pathway creates the hazard?",
+            }
+        )
         service._hazards_step = lambda session_id, session: ChatResponse(
             session_id=session_id,
             step="hazards",
@@ -117,6 +165,49 @@ class _HazardCreationEngine:
             error=False,
         )
         return service
+
+    @staticmethod
+    def _grounding_clarification_result(item: dict[str, str]) -> dict[str, object]:
+        selected_sector = str(item.get("Selected Sector") or "the selected sector")
+        return {
+            "overall_score": 44,
+            "status": "needs_clarification",
+            "next_action": "ask_clarification",
+            "affected_groups": [],
+            "duplicate_candidates": [],
+            "dimension_scores": {
+                "hazard_definition_fit": {
+                    "score": 5,
+                    "reason": "A negative impact is described.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "twin_transition_policy_fit": {
+                    "score": 3,
+                    "reason": "The green, digital, or twin-transition mechanism needs clearer grounding.",
+                    "needs_clarification": True,
+                    "clarification_question": "Which green, digital, or twin-transition policy creates this hazard?",
+                },
+                "selected_sector_fit": {
+                    "score": 4,
+                    "reason": "The selected-sector mechanism needs more detail.",
+                    "needs_clarification": True,
+                    "clarification_question": f"How is this connected to the selected sector: {selected_sector}?",
+                },
+                "country_region_fit": {
+                    "score": 6,
+                    "reason": "The selected place is named.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "affected_groups_fit": {
+                    "score": 3,
+                    "reason": "Affected population groups need clearer grounding.",
+                    "needs_clarification": True,
+                    "clarification_question": "Which population groups are affected by this hazard, and why?",
+                },
+            },
+        }
 
 
 def _rejected_dimension(response: ChatResponse) -> str:
@@ -143,6 +234,14 @@ def infer_actual_action(response: ChatResponse, session: ChatSession) -> str:
         and session.pending_hazard
     ):
         return "ACCEPT_HAZARD_NAME"
+    if response.step == "custom_hazard_title_clarification" and response.error:
+        return "REASK_TITLE_CLARIFICATION"
+    if response.step == "custom_hazard_title_clarification":
+        return "ASK_TITLE_CLARIFICATION"
+    if response.step == "custom_hazard_clarification":
+        return "ASK_GROUNDING_CLARIFICATION"
+    if response.step == "hazards" and response.input_mode == "textarea":
+        return "ASK_CONTEXT_CLARIFICATION"
     if response.error and rejected_dimension == "selected_sector_fit":
         return "REJECT_SECTOR_MISMATCH"
     if response.error:

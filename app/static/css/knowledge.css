@@ -550,6 +550,41 @@
   gap: 10px;
 }
 
+.prompt-source-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 7px 10px 7px 12px;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.prompt-source-control select {
+  min-width: 106px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 8px 28px 8px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.prompt-source-control select:disabled {
+  color: #94a3b8;
+  cursor: wait;
+}
+
+.prompt-source-message {
+  margin: 12px 24px 0;
+}
+
 .prompt-primary-button,
 .prompt-secondary-button {
   display: inline-flex;

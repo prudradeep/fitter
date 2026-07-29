@@ -159,7 +159,10 @@ def _sync_server_disables_llm_services() -> bool:
 
 
 def _should_seed_prompts_from_files() -> bool:
-    return str(settings.sync_mode or "").strip().casefold() == "server"
+    return (
+        settings.prompt_source != "file"
+        and str(settings.sync_mode or "").strip().casefold() == "server"
+    )
 
 
 @app.on_event("startup")

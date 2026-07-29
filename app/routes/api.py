@@ -711,6 +711,49 @@ async def sector_prompts_search(
     return {"error": False, "results": results}
 
 
+@router.get("/settings/prompt-source")
+async def prompt_source_setting(
+    current_user: AppUser = Depends(require_admin_user),
+) -> dict[str, object]:
+    _ = current_user
+    return {
+        "error": False,
+        "prompt_source": settings.prompt_source,
+        "options": ["auto", "db", "file"],
+    }
+
+
+@router.patch("/settings/prompt-source")
+async def prompt_source_update(
+    request: Request,
+    current_user: AppUser = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    payload = await _json_payload_or_error(request, "Prompt source setting payload")
+    if isinstance(payload, JSONResponse):
+        return payload
+    prompt_source = str(payload.get("prompt_source") or "").strip().casefold()
+    if prompt_source not in {"auto", "db", "file"}:
+        return {"error": True, "detail": "Prompt source must be auto, db, or file."}
+    previous = settings.prompt_source
+    settings.prompt_source = prompt_source
+    clear_prompt_caches()
+    record_audit_event(
+        db,
+        user=current_user,
+        action="settings.prompt_source.update",
+        request=request,
+        target_type="settings",
+        target_id="prompt_source",
+        details={"previous": previous, "prompt_source": prompt_source},
+    )
+    return {
+        "error": False,
+        "prompt_source": settings.prompt_source,
+        "detail": f"Prompt source set to {prompt_source}.",
+    }
+
+
 @router.get("/prompts")
 async def prompts_list(
     current_user: AppUser = Depends(require_admin_user),
@@ -1056,7 +1099,10 @@ def _clean_prompt_key(value: object) -> str:
 
 
 def _should_seed_prompts_from_files() -> bool:
-    return str(settings.sync_mode or "").strip().casefold() == "server"
+    return (
+        settings.prompt_source != "file"
+        and str(settings.sync_mode or "").strip().casefold() == "server"
+    )
 
 
 def _is_sync_client_mode() -> bool:

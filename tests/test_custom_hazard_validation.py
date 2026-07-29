@@ -265,8 +265,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
 
         self.assertFalse(response.error)
-        self.assertEqual(response.step, "custom_hazard_validation")
-        self.assertEqual(response.input_mode, "reason_evidence")
+        self.assertEqual(response.step, "custom_hazard_duplicate_confirmation")
         self.assertTrue(session.custom_hazard["duplicate_candidates"])
         duplicate_card = next(
             card
@@ -754,6 +753,71 @@ class CustomHazardValidationTests(unittest.TestCase):
             "REJECTED",
         )
 
+    def test_custom_hazard_classifier_parses_valid_json_response(self):
+        response = ChatService._parse_custom_hazard_classifier_response(
+            """
+            {
+              "status": "valid",
+              "is_valid": true,
+              "validation_code": "valid_hazard",
+              "confidence": 0.97,
+              "normalized_hazard": "Renters face higher housing costs when landlords pass renovation expenses through rent increases.",
+              "reason": "Residential energy-performance renovation requirements can increase housing costs for renters, which fits the Housing sector.",
+              "transition_link": {"is_present": true, "type": "green", "intervention": "Residential energy-performance renovation requirements"},
+              "sector_validation": {"selected_sector": "Housing", "detected_sector": "Housing", "fits_selected_sector": true, "reason": "The mechanism is residential renovation."},
+              "context_validation": {"country": "Germany", "country_fit": true, "region": null, "region_fit": true, "reason": "Plausible without a region-specific claim."},
+              "affected_group": {"is_clear": true, "groups": ["Renters"]},
+              "negative_consequence": "Higher housing costs",
+              "suggested_rewrite": null,
+              "clarification_question": null,
+              "duplicate": {"is_duplicate": false, "matched_hazard_id": null, "matched_hazard_name": null}
+            }
+            """
+        )
+
+        self.assertIsNotNone(response)
+        self.assertTrue(response["valid"])
+        self.assertEqual(response["validation_code"], "valid_hazard")
+        self.assertIn("renovation requirements", response["reason"])
+
+    def test_custom_hazard_classifier_rejects_invalid_json(self):
+        response = ChatService._parse_custom_hazard_classifier_response("{not json")
+
+        self.assertIsNone(response)
+
+    def test_custom_hazard_classifier_rejects_missing_required_json_fields(self):
+        response = ChatService._parse_custom_hazard_classifier_response(
+            '{"status":"valid","is_valid":true,"confidence":0.9}'
+        )
+
+        self.assertIsNone(response)
+
+    def test_custom_hazard_classifier_low_confidence_needs_clarification(self):
+        response = ChatService._parse_custom_hazard_classifier_response(
+            """
+            {
+              "status": "valid",
+              "is_valid": true,
+              "validation_code": "valid_hazard",
+              "confidence": 0.40,
+              "normalized_hazard": "Digital energy problems",
+              "reason": "The transition link is implied but unclear.",
+              "transition_link": {"is_present": true, "type": "digital", "intervention": "Digital energy services"},
+              "sector_validation": {"selected_sector": "Energy", "detected_sector": "Energy", "fits_selected_sector": true, "reason": "Digital energy service mechanism."},
+              "context_validation": {"country": "Germany", "country_fit": true, "region": null, "region_fit": true, "reason": "Broadly plausible."},
+              "affected_group": {"is_clear": false, "groups": []},
+              "negative_consequence": null,
+              "suggested_rewrite": null,
+              "clarification_question": null,
+              "duplicate": {"is_duplicate": false, "matched_hazard_id": null, "matched_hazard_name": null}
+            }
+            """
+        )
+
+        self.assertIsNotNone(response)
+        self.assertFalse(response["valid"])
+        self.assertEqual(response["status"], "Ambiguous")
+
     def test_sector_mismatch_updates_sector_fit_dimension(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -908,6 +972,428 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertFalse(valid_response.error)
         self.assertEqual(valid_response.input_mode, "reason_evidence")
         self.assertEqual(valid_response.custom_hazard["dimension_scores"], {})
+
+    def test_ambiguous_custom_hazard_title_asks_for_clarification_before_reason(self):
+        service = ChatService.__new__(ChatService)
+        service._review_custom_hazard_input = AsyncMock(
+            return_value={
+                "status": "needs_clarification",
+                "valid": False,
+                "is_valid": False,
+                "reason": "The affected group and concrete consequence are unclear.",
+                "validation_code": "unclear_hazard",
+                "confidence": 0.84,
+                "normalized_hazard": "Digital energy services leave people behind",
+                "clarification_question": (
+                    "Which digital energy service causes the harm, who is affected, "
+                    "and what consequence do they experience?"
+                ),
+            }
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Saxony",
+            sector="Energy",
+            phase="custom_hazard_input",
+        )
+
+        with patch(
+            "app.services.chat_hazard_creation.deterministic_custom_hazard_input_review",
+            return_value=None,
+        ):
+            response = _run(
+                service._capture_custom_hazard(
+                    "session-1",
+                    session,
+                    "Digital energy services leave people behind",
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "custom_hazard_title_clarification")
+        self.assertEqual(response.input_mode, "text")
+        self.assertEqual(session.phase, "custom_hazard_title_clarification")
+        self.assertEqual(session.custom_hazard["title_validation_status"], "needs_clarification")
+        self.assertEqual(session.custom_hazard["title_clarification_round"], 1)
+        self.assertIn("Which digital energy service", response.bot_message)
+
+    def test_deterministic_unclear_custom_hazard_title_asks_for_clarification(self):
+        service = ChatService.__new__(ChatService)
+        service._review_custom_hazard_input = AsyncMock()
+        session = ChatSession(
+            country="Germany",
+            region="Saxony",
+            sector="Energy",
+            phase="custom_hazard_input",
+        )
+
+        response = _run(
+            service._capture_custom_hazard(
+                "session-1",
+                session,
+                "Digital energy services leave people behind",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "custom_hazard_title_clarification")
+        self.assertEqual(response.input_mode, "text")
+        self.assertEqual(session.phase, "custom_hazard_title_clarification")
+        self.assertEqual(session.custom_hazard["title_validation_status"], "needs_clarification")
+        service._review_custom_hazard_input.assert_not_called()
+
+    def test_reason_context_review_clarification_stays_unsaved(self):
+        service = ChatService.__new__(ChatService)
+        service._validate_input_quality = AsyncMock(return_value={"valid": True, "reason": "Clear."})
+        service._validate_hazard_against_stats = AsyncMock(
+            return_value={"valid": True, "reason": "Compatible with sector context."}
+        )
+        service._review_custom_hazard_context = AsyncMock(
+            return_value={
+                "status": "clarification",
+                "valid": False,
+                "question": "Which Bavarian tariff or grid-upgrade pathway creates this burden?",
+            }
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            phase="custom_hazard_validation",
+            pending_hazard="Low-income households face higher electricity bills from renewable grid upgrade tariffs",
+            custom_hazard=validator.default_custom_hazard_state(),
+        )
+
+        response = _run(
+            service._validate_custom_hazard(
+                "session-1",
+                session,
+                (
+                    "Reason: Renewable grid upgrades can push tariff costs onto low-income households.\n"
+                    "Evidence: Not provided"
+                ),
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "hazards")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertEqual(session.phase, "add_hazard_clarification")
+        self.assertIsNone(session.accepted_custom_hazard)
+        self.assertEqual(
+            session.pending_hazard_reason,
+            "Renewable grid upgrades can push tariff costs onto low-income households.",
+        )
+        self.assertIn("Which Bavarian tariff", response.bot_message)
+
+    def test_dimension_grounding_clarification_lists_pending_questions(self):
+        service = ChatService.__new__(ChatService)
+        service._same_sector_hazard_names_for_duplicate_check = MagicMock(return_value=[])
+        service._same_scope_custom_hazard_names_for_duplicate_check = MagicMock(return_value=[])
+        service._dedupe_hazard_names = MagicMock(return_value=[])
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Transport",
+            phase="custom_hazard_dimension_check",
+            pending_hazard="Clean mobility access problems",
+            custom_hazard={
+                **validator.default_custom_hazard_state(),
+                "raw_text": "Clean mobility access problems",
+                "reason": (
+                    "Low-income commuters may face access barriers when clean mobility policies "
+                    "change car and public transport costs."
+                ),
+                "evidence": "",
+            },
+        )
+        dimension_result = {
+            "overall_score": 44,
+            "status": "needs_clarification",
+            "next_action": "ask_clarification",
+            "affected_groups": [],
+            "duplicate_candidates": [],
+            "dimension_scores": {
+                "hazard_definition_fit": {
+                    "score": 5,
+                    "reason": "A negative access problem is described.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "twin_transition_policy_fit": {
+                    "score": 3,
+                    "reason": "The policy pathway is too broad.",
+                    "needs_clarification": True,
+                    "clarification_question": "Which clean mobility policy creates the access problem?",
+                },
+                "selected_sector_fit": {
+                    "score": 4,
+                    "reason": "The transport mechanism needs detail.",
+                    "needs_clarification": True,
+                    "clarification_question": "How is this connected to the selected Transport sector?",
+                },
+                "country_region_fit": {
+                    "score": 6,
+                    "reason": "Bavaria is named.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "affected_groups_fit": {
+                    "score": 3,
+                    "reason": "Affected groups need clearer grounding.",
+                    "needs_clarification": True,
+                    "clarification_question": "Which population groups are affected by this hazard, and why?",
+                },
+            },
+        }
+
+        with patch(
+            "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+            AsyncMock(return_value=dimension_result),
+        ):
+            response = _run(service._run_custom_hazard_dimension_check("session-1", session))
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "custom_hazard_clarification")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertEqual(session.phase, "custom_hazard_clarification")
+        self.assertEqual(
+            session.custom_hazard["pending_clarification_questions"],
+            [
+                "Which clean mobility policy creates the access problem?",
+                "How is this connected to the selected Transport sector?",
+            ],
+        )
+        self.assertIn("I need a little more detail", response.bot_message)
+
+    def test_custom_hazard_title_clarification_can_resolve_to_reason_evidence_step(self):
+        service = ChatService.__new__(ChatService)
+        resolved = (
+            "Older adults face exclusion from electricity account services "
+            "when billing moves online"
+        )
+        service._review_custom_hazard_input = AsyncMock(
+            return_value={
+                "status": "valid",
+                "valid": True,
+                "is_valid": True,
+                "reason": "The clarification identifies a concrete affected group and consequence.",
+                "validation_code": "valid_hazard",
+                "confidence": 0.9,
+                "normalized_hazard": resolved,
+                "transition_link": {
+                    "measure_or_policy": "Digital electricity billing",
+                    "causal_mechanism": "Offline support is withdrawn.",
+                },
+                "sector_validation": {"detected_sector": "Energy"},
+                "affected_group": {"groups": ["Older adults"]},
+                "negative_consequence": "Service exclusion",
+            }
+        )
+        service._match_hazard = MagicMock(return_value=None)
+        service._same_sector_hazard_names_for_duplicate_check = MagicMock(return_value=[])
+        service._local_similar_hazards = MagicMock(return_value=[])
+        service._semantic_hazard_duplicate_check = AsyncMock(return_value={"duplicate": False})
+        session = ChatSession(
+            country="Germany",
+            region="Saxony",
+            sector="Energy",
+            phase="custom_hazard_title_clarification",
+            pending_hazard="Digital energy services leave people behind",
+        )
+        service._initialize_custom_hazard_title_state(
+            session,
+            "Digital energy services leave people behind",
+        )
+        question = "Which digital energy service causes the harm, who is affected, and what happens?"
+        session.phase = "custom_hazard_title_clarification"
+        session.pending_hazard = "Digital energy services leave people behind"
+        session.pending_hazard_title_clarification_question = question
+        session.custom_hazard["title_validation_status"] = "needs_clarification"
+        session.custom_hazard["title_clarification_round"] = 1
+        session.custom_hazard["title_clarification_questions"] = [question]
+
+        response = _run(
+            service._handle_custom_hazard_title_clarification(
+                "session-1",
+                session,
+                "Older adults cannot use online-only electricity billing.",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "custom_hazard_validation")
+        self.assertEqual(response.input_mode, "reason_evidence")
+        self.assertEqual(session.pending_hazard, resolved)
+        self.assertIsNone(session.pending_hazard_title_clarification_question)
+        self.assertEqual(session.custom_hazard["resolved_hazard_text"], resolved)
+        self.assertEqual(session.custom_hazard["title_validation_status"], "valid")
+        service._review_custom_hazard_input.assert_awaited_once()
+        self.assertIn(
+            "clarification_context",
+            service._review_custom_hazard_input.await_args.kwargs,
+        )
+
+    def test_custom_hazard_title_clarification_rejects_non_answer(self):
+        service = ChatService.__new__(ChatService)
+        service._review_custom_hazard_input = AsyncMock(
+            return_value={
+                "status": "valid",
+                "valid": True,
+                "is_valid": True,
+                "reason": "Should not be used.",
+                "validation_code": "valid_hazard",
+                "confidence": 0.9,
+                "normalized_hazard": "Invalidly accepted hazard",
+            }
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Saxony",
+            sector="Energy",
+            phase="custom_hazard_title_clarification",
+            pending_hazard="Digital energy services leave people behind",
+        )
+        service._initialize_custom_hazard_title_state(
+            session,
+            "Digital energy services leave people behind",
+        )
+        question = "Which specific population group is affected, and what concrete consequence do they experience?"
+        session.phase = "custom_hazard_title_clarification"
+        session.pending_hazard = "Digital energy services leave people behind"
+        session.pending_hazard_title_clarification_question = question
+        session.custom_hazard["title_validation_status"] = "needs_clarification"
+        session.custom_hazard["title_clarification_round"] = 1
+        session.custom_hazard["title_clarification_questions"] = [question]
+
+        response = _run(
+            service._handle_custom_hazard_title_clarification(
+                "session-1",
+                session,
+                "I don't know",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "custom_hazard_title_clarification")
+        self.assertEqual(response.input_mode, "text")
+        self.assertEqual(session.phase, "custom_hazard_title_clarification")
+        self.assertEqual(session.pending_hazard, "Digital energy services leave people behind")
+        self.assertEqual(session.pending_hazard_title_clarification_answers, [])
+        self.assertIn("does not clarify the hazard", response.bot_message)
+        service._review_custom_hazard_input.assert_not_called()
+
+    def test_custom_hazard_title_clarification_rejects_short_ambiguous_invalid_answers(self):
+        ambiguous_answers = ["ok", "yes", "users", "abcdf"]
+        for answer in ambiguous_answers:
+            with self.subTest(answer=answer):
+                service = ChatService.__new__(ChatService)
+                service._review_custom_hazard_input = AsyncMock(
+                    return_value={
+                        "status": "valid",
+                        "valid": True,
+                        "is_valid": True,
+                        "reason": "Should not be used.",
+                        "validation_code": "valid_hazard",
+                        "confidence": 0.9,
+                        "normalized_hazard": "Invalidly accepted hazard",
+                    }
+                )
+                session = ChatSession(
+                    country="Germany",
+                    region="Saxony",
+                    sector="Energy",
+                    phase="custom_hazard_title_clarification",
+                    pending_hazard="Digital energy services leave people behind",
+                )
+                service._initialize_custom_hazard_title_state(
+                    session,
+                    "Digital energy services leave people behind",
+                )
+                question = "Which specific population group is affected, and what concrete consequence do they experience?"
+                session.phase = "custom_hazard_title_clarification"
+                session.pending_hazard = "Digital energy services leave people behind"
+                session.pending_hazard_title_clarification_question = question
+                session.custom_hazard["title_validation_status"] = "needs_clarification"
+                session.custom_hazard["title_clarification_round"] = 1
+                session.custom_hazard["title_clarification_questions"] = [question]
+
+                response = _run(
+                    service._handle_custom_hazard_title_clarification(
+                        "session-1",
+                        session,
+                        answer,
+                    )
+                )
+
+                self.assertTrue(response.error)
+                self.assertEqual(response.step, "custom_hazard_title_clarification")
+                self.assertEqual(session.pending_hazard_title_clarification_answers, [])
+                service._review_custom_hazard_input.assert_not_called()
+
+    def test_custom_hazard_title_second_clarification_rejects_question_reply(self):
+        service = ChatService.__new__(ChatService)
+        service._review_custom_hazard_input = AsyncMock(
+            return_value={
+                "status": "valid",
+                "valid": True,
+                "is_valid": True,
+                "reason": "Should not be used.",
+                "validation_code": "valid_hazard",
+                "confidence": 0.9,
+                "normalized_hazard": "Invalidly accepted hazard",
+            }
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Saxony",
+            sector="Energy",
+            phase="custom_hazard_title_clarification",
+            pending_hazard="Digital energy services leave people behind",
+            pending_hazard_title_clarification_answers=[
+                "Older adults are affected, but I am not sure how."
+            ],
+        )
+        service._initialize_custom_hazard_title_state(
+            session,
+            "Digital energy services leave people behind",
+        )
+        first_question = "Which specific population group is affected?"
+        second_question = "What concrete consequence do they experience?"
+        session.phase = "custom_hazard_title_clarification"
+        session.pending_hazard = "Digital energy services leave people behind"
+        session.pending_hazard_title_clarification_answers = [
+            "Older adults are affected, but I am not sure how."
+        ]
+        session.pending_hazard_title_clarification_question = second_question
+        session.custom_hazard["title_validation_status"] = "needs_clarification"
+        session.custom_hazard["title_clarification_round"] = 2
+        session.custom_hazard["title_clarification_questions"] = [
+            first_question,
+            second_question,
+        ]
+        session.custom_hazard["title_clarification_answers"] = [
+            "Older adults are affected, but I am not sure how."
+        ]
+
+        response = _run(
+            service._handle_custom_hazard_title_clarification(
+                "session-1",
+                session,
+                "what to do",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "custom_hazard_title_clarification")
+        self.assertEqual(response.input_mode, "text")
+        self.assertEqual(session.phase, "custom_hazard_title_clarification")
+        self.assertEqual(
+            session.pending_hazard_title_clarification_answers,
+            ["Older adults are affected, but I am not sure how."],
+        )
+        self.assertIn("question or request", response.bot_message)
+        service._review_custom_hazard_input.assert_not_called()
 
     def test_fuzzy_confirmation_does_not_show_mitigation_adoption_option(self):
         service = ChatService.__new__(ChatService)

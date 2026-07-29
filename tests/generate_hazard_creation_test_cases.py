@@ -23,6 +23,8 @@ COLUMNS = [
     "Selected Region",
     "Selected Sector",
     "User Hazard",
+    "Clarification Answer 1",
+    "Clarification Answer 2",
     "Expected Action",
     "Expected Step",
     "Expected Input Mode",
@@ -118,6 +120,107 @@ MIXED_SIGNAL_VALID_HAZARDS = {
     ],
 }
 
+TITLE_CLARIFICATION_FLOWS = [
+    {
+        "sector": "Energy",
+        "hazard": "Digital energy services leave people behind.",
+        "answer_1": "",
+        "answer_2": "",
+        "expected_action": "ASK_TITLE_CLARIFICATION",
+        "expected_step": "custom_hazard_title_clarification",
+        "expected_input_mode": "text",
+        "expected_error": False,
+        "expected_message_contains": "Clarification Needed",
+        "notes": "A transition-linked but underspecified hazard title should ask a title clarification question.",
+    },
+    {
+        "sector": "Energy",
+        "hazard": "Digital energy services leave people behind.",
+        "answer_1": "I don't know",
+        "answer_2": "",
+        "expected_action": "REASK_TITLE_CLARIFICATION",
+        "expected_step": "custom_hazard_title_clarification",
+        "expected_input_mode": "text",
+        "expected_error": True,
+        "expected_message_contains": "does not clarify the hazard|Clarification Needed",
+        "notes": "A non-answer must not be accepted as title clarification.",
+    },
+    {
+        "sector": "Energy",
+        "hazard": "Digital energy services leave people behind.",
+        "answer_1": "Older adults are affected, but I am not sure how.",
+        "answer_2": "what to do",
+        "expected_action": "REASK_TITLE_CLARIFICATION",
+        "expected_step": "custom_hazard_title_clarification",
+        "expected_input_mode": "text",
+        "expected_error": True,
+        "expected_message_contains": "question or request|Clarification Needed",
+        "notes": "Question/request-style replies must be rejected in later title clarification rounds too.",
+    },
+    {
+        "sector": "Energy",
+        "hazard": "Digital energy services leave people behind.",
+        "answer_1": "Older adults and low-income households without internet access or digital skills are excluded from online-only electricity billing and support services.",
+        "answer_2": "",
+        "expected_action": "ACCEPT_HAZARD_NAME",
+        "expected_step": "custom_hazard_validation",
+        "expected_input_mode": "reason_evidence",
+        "expected_error": False,
+        "expected_message_contains": "Reason and Evidence Needed",
+        "notes": "A meaningful clarification should be validated together with the original hazard title and proceed to reason/evidence.",
+    },
+]
+
+CONTEXT_CLARIFICATION_FLOWS = [
+    {
+        "sector": "Energy",
+        "hazard": "Low-income households face higher electricity bills from renewable grid upgrade tariffs",
+        "reason": "This affects households in Germany, but I have not explained the Bavarian policy or tariff pathway yet.",
+        "expected_action": "ASK_CONTEXT_CLARIFICATION",
+        "expected_step": "hazards",
+        "expected_input_mode": "textarea",
+        "expected_error": False,
+        "expected_message_contains": "Clarification|Bavaria",
+        "notes": "After reason/evidence, locally incomplete support should ask a context clarification before saving the hazard.",
+    },
+    {
+        "sector": "Housing",
+        "hazard": "Tenants face rent increases after mandatory green building retrofits",
+        "reason": "Retrofit obligations can raise rents, but the explanation does not identify whether tenants or owners bear the cost.",
+        "expected_action": "ASK_CONTEXT_CLARIFICATION",
+        "expected_step": "hazards",
+        "expected_input_mode": "textarea",
+        "expected_error": False,
+        "expected_message_contains": "Clarification|who is affected",
+        "notes": "A plausible hazard with an unresolved affected-group mechanism should stay in clarification rather than being rejected or accepted.",
+    },
+]
+
+GROUNDING_DIMENSION_CLARIFICATION_FLOWS = [
+    {
+        "sector": "Transport",
+        "hazard": "Clean mobility access problems",
+        "answer_1": "Low-income commuters in Bavaria face higher travel costs when low-emission zone rules restrict older cars before affordable electric alternatives are available.",
+        "expected_action": "ASK_GROUNDING_CLARIFICATION",
+        "expected_step": "custom_hazard_clarification",
+        "expected_input_mode": "textarea",
+        "expected_error": False,
+        "expected_message_contains": "more detail|selected sector",
+        "notes": "A clarified title can still need dimension grounding when the affected group or policy pathway is not grounded enough.",
+    },
+    {
+        "sector": "Energy",
+        "hazard": "Smart meter rollout creates cost pressure",
+        "answer_1": "Low-income households in Bavaria face installation and tariff costs when smart meter rollout shifts billing and grid charges onto consumers.",
+        "expected_action": "ASK_GROUNDING_CLARIFICATION",
+        "expected_step": "custom_hazard_clarification",
+        "expected_input_mode": "textarea",
+        "expected_error": False,
+        "expected_message_contains": "more detail|green, digital",
+        "notes": "Grounding clarification should be distinct from title clarification and occur after the hazard title has been accepted.",
+    },
+]
+
 
 def row(
     *,
@@ -126,6 +229,8 @@ def row(
     hazard: str,
     expected_action: str,
     expected_step: str,
+    clarification_answer_1: str = "",
+    clarification_answer_2: str = "",
     expected_input_mode: str = "",
     expected_error: bool = False,
     expected_pending_hazard: str = "",
@@ -139,6 +244,8 @@ def row(
         "Selected Region": REGION,
         "Selected Sector": sector,
         "User Hazard": hazard,
+        "Clarification Answer 1": clarification_answer_1,
+        "Clarification Answer 2": clarification_answer_2,
         "Expected Action": expected_action,
         "Expected Step": expected_step,
         "Expected Input Mode": expected_input_mode,
@@ -223,20 +330,83 @@ def make_test_cases() -> list[dict[str, str]]:
             )
 
     for sector in SECTORS:
+        rows.append(
+            row(
+                category="Generic consumer price issue",
+                sector=sector,
+                hazard="Rising grocery prices reduce household purchasing power in Germany's Baden-Württemberg region.",
+                expected_action="REJECT_REWRITE",
+                expected_step="hazards",
+                expected_error=True,
+                expected_rejected_dimension="twin_transition_policy_fit",
+                expected_message_contains="grocery or food-price pressure",
+                notes="General grocery-price or purchasing-power harms should not pass as sector transition hazards.",
+            )
+        )
+
+    for sector in SECTORS:
         for hazard in VAGUE_OR_INCOMPLETE_HAZARDS:
             rows.append(
                 row(
                     category="Vague or incomplete hazard",
                     sector=sector,
                     hazard=hazard,
-                    expected_action="REJECT_REWRITE",
-                    expected_step="hazards",
-                    expected_error=True,
-                    expected_rejected_dimension="twin_transition_policy_fit",
-                    expected_message_contains="hazard",
-                    notes="Vague policy-topic statements should not continue until rewritten as a concrete negative impact.",
+                    expected_action="ASK_TITLE_CLARIFICATION",
+                    expected_step="custom_hazard_title_clarification",
+                    expected_input_mode="text",
+                    expected_message_contains="Clarification Needed",
+                    notes="Transition-linked but underspecified policy-topic statements should ask for hazard-title clarification before reason/evidence.",
                 )
             )
+
+    for flow in TITLE_CLARIFICATION_FLOWS:
+        rows.append(
+            row(
+                category="Hazard title clarification flow",
+                sector=str(flow["sector"]),
+                hazard=str(flow["hazard"]),
+                clarification_answer_1=str(flow["answer_1"]),
+                clarification_answer_2=str(flow["answer_2"]),
+                expected_action=str(flow["expected_action"]),
+                expected_step=str(flow["expected_step"]),
+                expected_input_mode=str(flow["expected_input_mode"]),
+                expected_error=bool(flow["expected_error"]),
+                expected_message_contains=str(flow["expected_message_contains"]),
+                notes=str(flow["notes"]),
+            )
+        )
+
+    for flow in CONTEXT_CLARIFICATION_FLOWS:
+        rows.append(
+            row(
+                category="Hazard clarification after reason",
+                sector=str(flow["sector"]),
+                hazard=str(flow["hazard"]),
+                clarification_answer_1=str(flow["reason"]),
+                expected_action=str(flow["expected_action"]),
+                expected_step=str(flow["expected_step"]),
+                expected_input_mode=str(flow["expected_input_mode"]),
+                expected_error=bool(flow["expected_error"]),
+                expected_message_contains=str(flow["expected_message_contains"]),
+                notes=str(flow["notes"]),
+            )
+        )
+
+    for flow in GROUNDING_DIMENSION_CLARIFICATION_FLOWS:
+        rows.append(
+            row(
+                category="Grounding dimension clarification flow",
+                sector=str(flow["sector"]),
+                hazard=str(flow["hazard"]),
+                clarification_answer_1=str(flow["answer_1"]),
+                expected_action=str(flow["expected_action"]),
+                expected_step=str(flow["expected_step"]),
+                expected_input_mode=str(flow["expected_input_mode"]),
+                expected_error=bool(flow["expected_error"]),
+                expected_message_contains=str(flow["expected_message_contains"]),
+                notes=str(flow["notes"]),
+            )
+        )
 
     for sector in SECTORS:
         for hazard in BENEFIT_OR_MITIGATION_STATEMENTS:

@@ -907,6 +907,14 @@
             <p>Database-backed prompts distributed from the sync server to clients.</p>
           </div>
           <div class="prompt-dialog-actions">
+            <label class="prompt-source-control">
+              <span>Use prompts from</span>
+              <select id="promptSourceSelect" aria-label="Prompt source">
+                <option value="auto">Auto</option>
+                <option value="db">Database</option>
+                <option value="file">Files</option>
+              </select>
+            </label>
             <button id="newPromptButton" class="prompt-primary-button" type="button">
               <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
               New Prompt
@@ -920,6 +928,7 @@
             </button>
           </div>
         </header>
+        <p id="promptSourceMessage" class="dialog-message prompt-source-message" hidden></p>
         <div id="promptLibrarySection" class="prompt-library-layout">
           <aside class="prompt-list-shell" aria-label="Prompt list">
             <div class="prompt-search-shell">
@@ -1106,6 +1115,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260709-settings"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260720-sync-my-data-switch-fix"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260728-prompt-source-switch"></script>
   </body>
 </html>

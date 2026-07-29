@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     llm_log_path: str = "data/service-runtime/logs/llm_requests.jsonl"
     llm_log_max_payload_chars: int = 120_000
     llm_log_max_text_chars: int = 8_000
+    prompt_source: str = "auto"
 
     faiss_index_path: str = "data/knowledge.faiss"
     max_upload_bytes: int = 10 * 1024 * 1024
@@ -147,6 +148,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_safe_runtime_defaults(self) -> "Settings":
+        self.prompt_source = self.prompt_source.strip().casefold()
+        if self.prompt_source not in {"auto", "db", "file"}:
+            raise ValueError("PROMPT_SOURCE must be one of: auto, db, file")
         self.faiss_index_path = _frozen_program_data_path(self.faiss_index_path)
         self.llm_log_path = _frozen_program_data_path(self.llm_log_path)
         if not self.is_development:

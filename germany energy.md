@@ -28,3 +28,24 @@ Page 26 to 91
 | General inflation increases electricity prices.                                                                    | ❌ Wrong       | Inflation is a macroeconomic phenomenon, not a hazard caused by energy transition policies.                                                                             |
 | People prefer fossil fuels over renewable energy.                                                                  | ❌ Wrong       | This is an opinion or behavioural preference, not a policy-driven hazard.                                                                                               |
 | Solar panels generate less electricity during winter.                                                              | ❌ Wrong       | Technical characteristic of solar energy, not a social hazard resulting from the twin transition.                                                                       |
+
+
+Here are good test hazards that should exercise the flow:
+Should Pass
+Low-income tenants face rent increases when landlords pass on mandatory home energy retrofit costs.
+Elderly residents face loss of access to electricity billing services when providers move account management online.
+Coal workers face job losses as coal-fired power plants are phased out under clean energy policy.
+Rural households face higher transport costs when combustion vehicles are restricted before reliable public transport is available.
+Small retailers face compliance costs from mandatory digital energy reporting systems.
+Should Ask Clarification
+Digital energy services leave people behind.
+Renovation rules hurt renters.
+Green transport policies increase costs.
+Online systems exclude vulnerable users.
+Energy transition creates new burdens.
+Should Reject
+General inflation increases electricity prices.
+People are unhappy with the government.
+The weather is getting worse.
+Technology is changing society.
+Electricity is expensive.

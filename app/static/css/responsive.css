@@ -120,7 +120,12 @@
 
   .prompt-dialog-actions {
     grid-column: 1 / -1;
+    flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  .prompt-source-control {
+    flex: 1 1 220px;
   }
 
   .prompt-editor-footer {

@@ -88,6 +88,7 @@ class ChatPhase(AppStrEnum):
     ADD_HAZARD_EVIDENCE = "add_hazard_evidence"
     ADD_HAZARD_CLARIFICATION = "add_hazard_clarification"
     CUSTOM_HAZARD_INPUT = "custom_hazard_input"
+    CUSTOM_HAZARD_TITLE_CLARIFICATION = "custom_hazard_title_clarification"
     CUSTOM_HAZARD_VALIDATION = "custom_hazard_validation"
     CUSTOM_HAZARD_DIMENSION_CHECK = "custom_hazard_dimension_check"
     CUSTOM_HAZARD_CLARIFICATION = "custom_hazard_clarification"
