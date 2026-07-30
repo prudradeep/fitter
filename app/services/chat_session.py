@@ -49,6 +49,11 @@ class ChatSession:
     mitigation_record_id: str | None = None
     mitigation_validation: dict[str, object] | None = None
     mitigation_grounded_synthesis: str | None = None
+    mitigation_review_analysis: str | None = None
+    implementation_challenges: list[dict[str, object]] | None = None
+    implementation_challenge_index: int = 0
+    implementation_mitigation_strategy: list[dict[str, object]] | None = None
+    implementation_readiness_assessment: str | None = None
     evaluation_questions: list[dict[str, object]] | None = None
     evaluation_index: int = 0
     evaluation_answers: list[dict[str, object]] | None = None

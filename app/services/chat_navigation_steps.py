@@ -13,6 +13,7 @@ from app.services.chat_options import (
     HAZARD_ENTRY_OPTIONS,
     HAZARD_EVIDENCE_DECISION_OPTIONS,
     HAZARD_EVIDENCE_INPUT_OPTIONS,
+    IMPLEMENTATION_READINESS_OPTIONS,
     MITIGATION_DUPLICATE_OPTIONS,
     MITIGATION_EVIDENCE_DECISION_OPTIONS,
     MITIGATION_EVIDENCE_INPUT_OPTIONS,
@@ -758,6 +759,27 @@ class ChatNavigationStepsMixin:
                 step="mitigation_review",
                 bot_message=message,
                 options=MITIGATION_REVIEW_OPTIONS,
+                session=session.summary(),
+                error=error,
+            )
+
+        if session.phase == "implementation_challenge_discussion":
+            return ChatResponse(
+                session_id=session_id,
+                step="implementation_challenge_discussion",
+                bot_message=message,
+                options=[],
+                session=session.summary(),
+                input_mode="textarea",
+                error=error,
+            )
+
+        if session.phase == "implementation_readiness_assessment":
+            return ChatResponse(
+                session_id=session_id,
+                step="implementation_readiness_assessment",
+                bot_message=message,
+                options=IMPLEMENTATION_READINESS_OPTIONS,
                 session=session.summary(),
                 error=error,
             )

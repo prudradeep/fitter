@@ -80,6 +80,11 @@ MITIGATION_REVIEW_OPTIONS = [
     Option(id=1, label="Move to next step"),
 ]
 
+IMPLEMENTATION_READINESS_OPTIONS = [
+    Option(id=1, label="Continue to evaluation"),
+    Option(id=2, label="Review unresolved and partially resolved challenges again"),
+]
+
 OTHER_NAV_OPTIONS = [
     "Write mitigation measure again",
     "Analyse another hazard in the same sector",

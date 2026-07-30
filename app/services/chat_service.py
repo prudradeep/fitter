@@ -35,6 +35,7 @@ from app.services.chat_navigation_steps import ChatNavigationStepsMixin
 from app.services.chat_options import (
     DG_REASON_EVIDENCE_OPTIONS,
     HAZARD_EVIDENCE_DECISION_OPTIONS,
+    IMPLEMENTATION_READINESS_OPTIONS,
     MITIGATION_EVIDENCE_DECISION_OPTIONS,
     MITIGATION_EVIDENCE_INPUT_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
@@ -427,7 +428,14 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
-        if not self._matches_current_step_option(session, clean_message):
+        if (
+            session.phase
+            not in {
+                "implementation_challenge_discussion",
+                "implementation_readiness_assessment",
+            }
+            and not self._matches_current_step_option(session, clean_message)
+        ):
             question_response = await self._handle_anytime_grounded_question(
                 current_session_id,
                 session,
@@ -514,6 +522,18 @@ class ChatService(
         if session.phase == "mitigation_review":
             return await self._handle_mitigation_review(
                 current_session_id, session, clean_message
+            )
+
+        if session.phase == "implementation_challenge_discussion":
+            return await self._handle_implementation_challenge_response(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "implementation_readiness_assessment":
+            return await self._handle_implementation_readiness_action(
+                current_session_id,
+                session,
+                clean_message,
             )
 
         if session.phase == "evaluation_question":
@@ -1685,6 +1705,8 @@ class ChatService(
             labels = [option.label for option in MITIGATION_EVIDENCE_INPUT_OPTIONS]
         elif session.phase == "mitigation_review":
             labels = [option.label for option in MITIGATION_REVIEW_OPTIONS]
+        elif session.phase == "implementation_readiness_assessment":
+            labels = [option.label for option in IMPLEMENTATION_READINESS_OPTIONS]
 
         labels.extend(self._other_nav_options(session, self._current_step(session)))
         return bool(labels and best_fuzzy_label(message, labels) is not None)
@@ -1729,6 +1751,8 @@ class ChatService(
             ]
         if session.phase == "mitigation_review":
             return [option.label for option in MITIGATION_REVIEW_OPTIONS]
+        if session.phase == "implementation_readiness_assessment":
+            return [option.label for option in IMPLEMENTATION_READINESS_OPTIONS]
         return []
 
     def _fields_are_locally_meaningful(self, fields: dict[str, str]) -> bool:

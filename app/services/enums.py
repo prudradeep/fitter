@@ -84,6 +84,8 @@ class ChatPhase(AppStrEnum):
     MITIGATION_TARGET_POPULATION = "mitigation_target_population"
     MITIGATION_TARGET_POPULATION_REVIEW = "mitigation_target_population_review"
     MITIGATION_REVIEW = "mitigation_review"
+    IMPLEMENTATION_CHALLENGE_DISCUSSION = "implementation_challenge_discussion"
+    IMPLEMENTATION_READINESS_ASSESSMENT = "implementation_readiness_assessment"
     EVALUATION_QUESTION = "evaluation_question"
     EVALUATION_COMPLETE = "evaluation_complete"
     ADD_HAZARD = "add_hazard"

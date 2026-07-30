@@ -32,6 +32,9 @@ class _MitigationMeasureEngine(ChatMitigationStepsMixin, ChatValidationServiceMi
 
 
 class _MitigationReviewEngine(ChatMitigationCreationMixin):
+    def _is_invalid_user_text(self, value):
+        return False
+
     def _scope_instruction(self, session):
         return "Stay in the selected context."
 
@@ -61,6 +64,24 @@ class _MitigationReviewEngine(ChatMitigationCreationMixin):
 
     def _grounding_validation_details(self, session):
         return {}
+
+    def _promote_temporary_evidence(self, session):
+        return None
+
+    def _evaluation_questions(self):
+        return [
+            {
+                "id": "q1",
+                "category": "Feasibility and Implementation",
+                "question": "How feasible is the implementation plan?",
+            }
+        ]
+
+    def _current_evaluation_question(self, session):
+        questions = session.evaluation_questions or []
+        if session.evaluation_index < 0 or session.evaluation_index >= len(questions):
+            return None
+        return questions[session.evaluation_index]
 
 
 class _MitigationClarificationEngine(ChatMitigationCreationMixin, ChatMitigationStepsMixin):
@@ -324,6 +345,330 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertIn("Compare the conceptual design", prompt)
         self.assertIn("Do not ask evaluation questions yet", prompt)
         self.assertIn("do not name the source document", prompt)
+
+    def test_mitigation_review_next_step_starts_highest_priority_challenge(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills from renewable grid upgrade tariffs",
+            mitigation_measure="Targeted electricity bill support for low-income households.",
+            mitigation_reason="It offsets tariff increases while grid upgrades are implemented.",
+            mitigation_review_analysis=(
+                "Pros: targeted. Cons: high administrative burden. Risks: funding gaps."
+            ),
+        )
+
+        challenge_json = json.dumps(
+            [
+                {
+                    "title": "Funding sustainability",
+                    "category": "Cost",
+                    "why_important": "The support may be unaffordable over time.",
+                    "importance": 5,
+                    "implementation_impact": 5,
+                },
+                {
+                    "title": "Administrative burden",
+                    "category": "Operational",
+                    "why_important": "Eligibility checks may delay delivery.",
+                    "importance": 3,
+                    "implementation_impact": 4,
+                },
+            ]
+        )
+
+        with patch(
+            "app.services.chat_mitigation_creation.ask_llm_chat",
+            AsyncMock(return_value=challenge_json),
+        ):
+            response = asyncio.run(
+                engine._handle_mitigation_review(
+                    "test-session",
+                    session,
+                    "Move to next step",
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "implementation_challenge_discussion")
+        self.assertEqual(session.phase, "implementation_challenge_discussion")
+        self.assertIn("Funding sustainability", response.bot_message)
+        self.assertNotIn("Administrative burden</strong>", response.bot_message)
+
+    def test_review_cons_are_consolidated_when_generated_list_is_sparse(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            mitigation_review_analysis=(
+                "### Pros\n"
+                "- Targeted support.\n\n"
+                "### Cons\n"
+                "- Administrative burden may delay applications.\n\n"
+                "### Risks\n"
+                "- Funding may expire before households receive support."
+            )
+        )
+
+        with patch(
+            "app.services.chat_mitigation_creation.ask_llm_chat",
+            AsyncMock(return_value="[]"),
+        ):
+            challenges = asyncio.run(engine._ranked_implementation_challenges(session))
+
+        titles = [challenge["title"] for challenge in challenges]
+        self.assertIn("Administrative burden may delay applications", titles)
+        self.assertIn("Funding may expire before households receive support", titles)
+
+    def test_implementation_challenge_discussion_resolves_then_assesses(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            mitigation_measure="Targeted electricity bill support for low-income households.",
+            mitigation_reason="It offsets tariff increases while grid upgrades are implemented.",
+            implementation_challenges=[
+                {
+                    "title": "Funding sustainability",
+                    "category": "Cost",
+                    "why_important": "The support may be unaffordable over time.",
+                    "importance": 5,
+                    "implementation_impact": 5,
+                    "status": "unresolved",
+                }
+            ],
+            implementation_challenge_index=0,
+            implementation_mitigation_strategy=[],
+        )
+
+        responses = [
+            json.dumps(
+                {
+                    "status": "resolved",
+                    "evaluation": "The funding plan is concrete enough.",
+                    "follow_up_question": "",
+                    "mitigation_strategy": (
+                        "Use a two-year municipal budget line with quarterly monitoring."
+                    ),
+                }
+            ),
+            (
+                "## Implementation Readiness Assessment\n\n"
+                "### Resolved challenges\n"
+                "- Funding sustainability\n\n"
+                "### Partially resolved challenges\n"
+                "- None\n\n"
+                "### Remaining unresolved risks\n"
+                "- None\n\n"
+                "### Residual implementation concerns\n"
+                "- Monitor spending.\n\n"
+                "### Recommended improvements\n"
+                "- Keep quarterly review.\n\n"
+                "### Overall implementation confidence/readiness score\n"
+                "- 90/100"
+            ),
+        ]
+
+        with patch(
+            "app.services.chat_mitigation_creation.ask_llm_chat",
+            AsyncMock(side_effect=responses),
+        ):
+            response = asyncio.run(
+                engine._handle_implementation_challenge_response(
+                    "test-session",
+                    session,
+                    "Use a two-year municipal budget line with quarterly monitoring.",
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "implementation_readiness_assessment")
+        self.assertEqual(session.phase, "implementation_readiness_assessment")
+        self.assertEqual(session.implementation_challenges[0]["status"], "resolved")
+        self.assertIn("Implementation Readiness Assessment", response.bot_message)
+
+    def test_partial_challenge_can_move_forward_when_enough_information_exists(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            mitigation_measure="Targeted electricity bill support for low-income households.",
+            mitigation_reason="It offsets tariff increases while grid upgrades are implemented.",
+            implementation_challenges=[
+                {
+                    "title": "Funding sustainability",
+                    "category": "Cost",
+                    "why_important": "The support may be unaffordable over time.",
+                    "importance": 5,
+                    "implementation_impact": 5,
+                    "status": "unresolved",
+                },
+                {
+                    "title": "Administrative burden",
+                    "category": "Operational",
+                    "why_important": "Eligibility checks may delay delivery.",
+                    "importance": 4,
+                    "implementation_impact": 4,
+                    "status": "unresolved",
+                },
+            ],
+            implementation_challenge_index=0,
+            implementation_mitigation_strategy=[],
+        )
+
+        evaluation_json = json.dumps(
+            {
+                "status": "partial",
+                "ready_to_continue": True,
+                "evaluation": "The funding source is named, but long-term renewal remains risky.",
+                "follow_up_question": "",
+                "mitigation_strategy": "Use existing grant funds for year one.",
+            }
+        )
+
+        with patch(
+            "app.services.chat_mitigation_creation.ask_llm_chat",
+            AsyncMock(return_value=evaluation_json),
+        ):
+            response = asyncio.run(
+                engine._handle_implementation_challenge_response(
+                    "test-session",
+                    session,
+                    "Use existing grant funds for year one.",
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "implementation_challenge_discussion")
+        self.assertEqual(session.implementation_challenge_index, 1)
+        self.assertEqual(session.implementation_challenges[0]["status"], "partial")
+        self.assertIn("Administrative burden", response.bot_message)
+
+    def test_string_false_ready_to_continue_keeps_follow_up_on_same_challenge(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            mitigation_measure="Targeted electricity bill support for low-income households.",
+            mitigation_reason="It offsets tariff increases while grid upgrades are implemented.",
+            implementation_challenges=[
+                {
+                    "title": "Funding sustainability",
+                    "category": "Cost",
+                    "why_important": "The support may be unaffordable over time.",
+                    "importance": 5,
+                    "implementation_impact": 5,
+                    "status": "unresolved",
+                },
+                {
+                    "title": "Administrative burden",
+                    "category": "Operational",
+                    "why_important": "Eligibility checks may delay delivery.",
+                    "importance": 4,
+                    "implementation_impact": 4,
+                    "status": "unresolved",
+                },
+            ],
+            implementation_challenge_index=0,
+            implementation_mitigation_strategy=[],
+        )
+
+        evaluation_json = json.dumps(
+            {
+                "status": "partial",
+                "ready_to_continue": "false",
+                "evaluation": "The answer names funding but not ownership or renewal.",
+                "follow_up_question": "Who owns the budget renewal decision?",
+                "mitigation_strategy": "Use existing grant funds.",
+            }
+        )
+
+        with patch(
+            "app.services.chat_mitigation_creation.ask_llm_chat",
+            AsyncMock(return_value=evaluation_json),
+        ):
+            response = asyncio.run(
+                engine._handle_implementation_challenge_response(
+                    "test-session",
+                    session,
+                    "Use existing grant funds.",
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "implementation_challenge_discussion")
+        self.assertEqual(session.implementation_challenge_index, 0)
+        self.assertIn("Who owns the budget renewal decision?", response.bot_message)
+        self.assertNotIn("Administrative burden", response.bot_message)
+
+    def test_readiness_assessment_can_continue_to_evaluation(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            phase="implementation_readiness_assessment",
+            mitigation_measure="Targeted electricity bill support for low-income households.",
+            mitigation_reason="It offsets tariff increases while grid upgrades are implemented.",
+        )
+
+        response = asyncio.run(
+            engine._handle_implementation_readiness_action(
+                "test-session",
+                session,
+                "Continue to evaluation",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "evaluation_question")
+        self.assertEqual(session.phase, "evaluation_question")
+        self.assertIn("How feasible is the implementation plan?", response.bot_message)
+
+    def test_readiness_assessment_can_review_partial_and_unresolved_again(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            phase="implementation_readiness_assessment",
+            implementation_challenges=[
+                {
+                    "title": "Funding sustainability",
+                    "category": "Cost",
+                    "why_important": "The support may be unaffordable over time.",
+                    "status": "resolved",
+                },
+                {
+                    "title": "Administrative burden",
+                    "category": "Operational",
+                    "why_important": "Eligibility checks may delay delivery.",
+                    "status": "partial",
+                    "mitigation_strategy": "Use existing staff capacity.",
+                },
+                {
+                    "title": "Legal eligibility",
+                    "category": "Legal",
+                    "why_important": "Eligibility rules may exclude intended groups.",
+                    "status": "unresolved",
+                },
+            ],
+            implementation_challenge_index=3,
+            implementation_mitigation_strategy=[
+                {
+                    "challenge": "Administrative burden",
+                    "status": "partial",
+                    "strategy": "Use existing staff capacity.",
+                }
+            ],
+        )
+
+        response = asyncio.run(
+            engine._handle_implementation_readiness_action(
+                "test-session",
+                session,
+                "Review unresolved and partially resolved challenges again",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "implementation_challenge_discussion")
+        self.assertEqual(session.phase, "implementation_challenge_discussion")
+        self.assertEqual(session.implementation_challenge_index, 1)
+        self.assertEqual(
+            session.implementation_mitigation_strategy[0]["challenge"],
+            "Administrative burden",
+        )
+        self.assertIn("Administrative burden", response.bot_message)
+        self.assertNotIn("Funding sustainability</strong>", response.bot_message)
 
     def test_mitigation_review_prompt_includes_d23_page_range_context(self):
         engine = _MitigationReviewEngine()

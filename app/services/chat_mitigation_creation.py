@@ -31,6 +31,7 @@ from app.services.chat_formatters import (
 )
 from app.services.chat_json import parse_json_array, parse_json_object
 from app.services.chat_options import (
+    IMPLEMENTATION_READINESS_OPTIONS,
     MITIGATION_EVIDENCE_DECISION_OPTIONS,
     MITIGATION_EVIDENCE_INPUT_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
@@ -2130,6 +2131,11 @@ class ChatMitigationCreationMixin:
                 "yet, and do not name the source document or page range in the answer."
             ),
         )
+        session.mitigation_review_analysis = answer
+        session.implementation_challenges = None
+        session.implementation_challenge_index = 0
+        session.implementation_mitigation_strategy = []
+        session.implementation_readiness_assessment = None
         self._update_mitigation_review_details(
             session,
             answer,
@@ -2192,7 +2198,10 @@ class ChatMitigationCreationMixin:
                 exact_label = fuzzy_label
 
         if normalize(exact_label or "") == normalize("Move to next step"):
-            return self._start_evaluation_questions(session_id, session)
+            return await self._start_implementation_challenge_discussion(
+                session_id,
+                session,
+            )
 
         local_reason = None
         if self._is_invalid_user_text(message):
@@ -2255,6 +2264,674 @@ class ChatMitigationCreationMixin:
             options=MITIGATION_REVIEW_OPTIONS,
             session=session.summary(),
             error=False,
+        )
+
+    async def _start_implementation_challenge_discussion(
+        self,
+        session_id: str,
+        session: ChatSession,
+    ) -> ChatResponse:
+        challenges = await self._ranked_implementation_challenges(session)
+        session.implementation_challenges = challenges
+        session.implementation_challenge_index = self._next_unresolved_challenge_index(
+            challenges,
+            0,
+        )
+        session.implementation_mitigation_strategy = []
+        session.implementation_readiness_assessment = None
+        if session.implementation_challenge_index >= len(challenges):
+            return await self._implementation_readiness_assessment_step(session_id, session)
+        return self._implementation_challenge_step(session_id, session)
+
+    async def _handle_implementation_challenge_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+    ) -> ChatResponse:
+        challenges = list(session.implementation_challenges or [])
+        index = session.implementation_challenge_index
+        if index < 0 or index >= len(challenges):
+            return await self._implementation_readiness_assessment_step(
+                session_id,
+                session,
+            )
+
+        if self._is_invalid_user_text(message) or len(compact_for_match(message)) < 4:
+            return self._implementation_challenge_step(
+                session_id,
+                session,
+                error_reason=(
+                    "Please describe how this specific implementation challenge "
+                    "will be addressed."
+                ),
+            )
+
+        challenge = dict(challenges[index])
+        evaluation = await self._evaluate_implementation_challenge_response(
+            session,
+            challenge,
+            message,
+        )
+        status = str(evaluation.get("status") or "partial").casefold()
+        if status not in {"resolved", "partial", "unresolved"}:
+            status = "partial"
+        strategy = str(evaluation.get("mitigation_strategy") or message).strip()
+        challenge["status"] = status
+        challenge["mitigation_strategy"] = strategy
+        challenge["latest_user_response"] = message.strip()
+        challenge["evaluation"] = str(evaluation.get("evaluation") or "").strip()
+        challenge["follow_up_question"] = str(
+            evaluation.get("follow_up_question") or ""
+        ).strip()
+        ready_to_continue = self._coerce_ready_to_continue(
+            evaluation.get("ready_to_continue")
+        )
+        challenge["ready_to_continue"] = ready_to_continue
+        challenges[index] = challenge
+        session.implementation_challenges = challenges
+        if session.implementation_mitigation_strategy is None:
+            session.implementation_mitigation_strategy = []
+        session.implementation_mitigation_strategy.append(
+            {
+                "challenge": str(challenge.get("title") or "").strip(),
+                "status": status,
+                "strategy": strategy,
+                "evaluation": challenge["evaluation"],
+            }
+        )
+
+        if status == "resolved" or ready_to_continue:
+            session.implementation_challenge_index = self._next_unresolved_challenge_index(
+                challenges,
+                index + 1,
+            )
+            if session.implementation_challenge_index >= len(challenges):
+                return await self._implementation_readiness_assessment_step(
+                    session_id,
+                    session,
+                )
+            next_challenge = challenges[session.implementation_challenge_index]
+            heading = (
+                "Challenge resolved"
+                if status == "resolved"
+                else "Challenge reviewed"
+            )
+            return self._implementation_challenge_step(
+                session_id,
+                session,
+                message=(
+                    f"### {heading}\n\n{challenge['evaluation']}\n\n"
+                    + self._implementation_challenge_prompt_markdown(
+                        session,
+                        next_challenge,
+                    )
+                ),
+            )
+
+        follow_up = challenge["follow_up_question"] or (
+            "What concrete owner, resource, timeline, safeguard, or evidence will close this gap?"
+        )
+        return self._implementation_challenge_step(
+            session_id,
+            session,
+            message=(
+                "### More detail needed\n\n"
+                f"{challenge['evaluation'] or self._incomplete_challenge_response_text()}\n\n"
+                f"{follow_up}"
+            ),
+        )
+
+    async def _ranked_implementation_challenges(
+        self,
+        session: ChatSession,
+    ) -> list[dict[str, object]]:
+        existing = [
+            challenge
+            for challenge in (session.implementation_challenges or [])
+            if str(challenge.get("title") or "").strip()
+        ]
+        if existing:
+            return existing
+
+        generated = await self._generate_implementation_challenges_from_context(session)
+        challenges = [
+            *generated,
+            *self._implementation_challenges_from_review_text(session),
+        ]
+        if not challenges:
+            challenges = self._fallback_implementation_challenges(session)
+        normalized: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for challenge in challenges:
+            title = normalize_markdown_text(str(challenge.get("title") or "")).strip()
+            why = normalize_markdown_text(str(challenge.get("why_important") or "")).strip()
+            if not title:
+                continue
+            key = normalize_for_match(title)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                importance = int(challenge.get("importance") or 3)
+            except (TypeError, ValueError):
+                importance = 3
+            try:
+                impact = int(
+                    challenge.get("implementation_impact")
+                    or challenge.get("impact")
+                    or 3
+                )
+            except (TypeError, ValueError):
+                impact = 3
+            normalized.append(
+                {
+                    "title": title,
+                    "category": str(
+                        challenge.get("category") or "Implementation"
+                    ).strip(),
+                    "why_important": why
+                    or self._implementation_challenge_importance_fallback(),
+                    "importance": max(1, min(5, importance)),
+                    "implementation_impact": max(1, min(5, impact)),
+                    "status": "unresolved",
+                    "mitigation_strategy": "",
+                    "evaluation": "",
+                    "follow_up_question": "",
+                }
+            )
+        return sorted(
+            normalized,
+            key=lambda item: (
+                -int(item.get("importance") or 0),
+                -int(item.get("implementation_impact") or 0),
+                str(item.get("title") or ""),
+            ),
+        )
+
+    async def _generate_implementation_challenges_from_context(
+        self,
+        session: ChatSession,
+    ) -> list[dict[str, object]]:
+        context = (
+            "You consolidate implementation challenges for a mitigation workflow. "
+            "Use only the supplied mitigation review analysis, concept comparison "
+            "content, validation synthesis, validation details, and evaluation answers. "
+            "Return JSON only: an array of objects with title, category, why_important, "
+            "importance, and implementation_impact. Include meaningful disadvantages, "
+            "risks, limitations, feasibility concerns, cost barriers, operational "
+            "constraints, governance issues, technical challenges, social acceptance "
+            "concerns, legal or regulatory obstacles, scalability limitations, "
+            "maintenance burdens, and unintended consequences. Rank impact from 1 to 5."
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "country": session.country,
+                        "region": session.region,
+                        "sector": session.sector,
+                        "selected_hazard": session.selected_hazard,
+                        "target_population": session.mitigation_target_population or [],
+                        "mitigation_measure": session.mitigation_measure,
+                        "mitigation_reason": session.mitigation_reason,
+                        "mitigation_review_analysis": session.mitigation_review_analysis,
+                        "concept_comparison_discussion": session.stats_conversation or [],
+                        "mitigation_validation": session.mitigation_validation or {},
+                        "grounded_synthesis": session.mitigation_grounded_synthesis,
+                        "evaluation_answers": session.evaluation_answers or [],
+                    },
+                    ensure_ascii=True,
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=1200,
+        )
+        if is_llm_unavailable_response(response):
+            return []
+        parsed = parse_json_array(response)
+        if not isinstance(parsed, list):
+            return []
+        return [item for item in parsed if isinstance(item, dict)]
+
+    def _fallback_implementation_challenges(
+        self,
+        session: ChatSession,
+    ) -> list[dict[str, object]]:
+        challenges: list[dict[str, object]] = []
+        validation = session.mitigation_validation or {}
+        dimensions = validation.get("dimensions") if isinstance(validation, dict) else {}
+        if isinstance(dimensions, dict):
+            for name, value in dimensions.items():
+                if not isinstance(value, dict):
+                    continue
+                status = str(value.get("status") or "").casefold()
+                if status == "supported":
+                    continue
+                explanation = str(
+                    value.get("explanation") or value.get("reason") or ""
+                ).strip()
+                challenges.append(
+                    {
+                        "title": f"{str(name).replace('_', ' ').title()} concern",
+                        "category": "Validation",
+                        "why_important": explanation
+                        or "The mitigation review did not fully support this validation dimension.",
+                        "importance": 5,
+                        "implementation_impact": 5,
+                    }
+                )
+        for item in session.practical_considerations or []:
+            challenges.append(
+                {
+                    "title": normalize_markdown_text(str(item)).strip(),
+                    "category": "Practical implementation",
+                    "why_important": (
+                        "This was identified as a practical consideration during "
+                        "mitigation generation."
+                    ),
+                    "importance": 4,
+                    "implementation_impact": 4,
+                }
+            )
+        if not challenges:
+            challenges.append(
+                {
+                    "title": "Implementation ownership and delivery plan",
+                    "category": "Operational feasibility",
+                    "why_important": (
+                        "Even a well-designed mitigation measure can fail without clear "
+                        "ownership, funding, delivery steps, and monitoring."
+                    ),
+                    "importance": 4,
+                    "implementation_impact": 4,
+                }
+            )
+        return challenges
+
+    def _implementation_challenges_from_review_text(
+        self,
+        session: ChatSession,
+    ) -> list[dict[str, object]]:
+        text = "\n".join(
+            part
+            for part in (
+                session.mitigation_review_analysis or "",
+                "\n".join(
+                    str(item.get("content") or "")
+                    for item in (session.stats_conversation or [])
+                    if isinstance(item, dict)
+                ),
+            )
+            if part.strip()
+        )
+        if not text.strip():
+            return []
+
+        challenges: list[dict[str, object]] = []
+        current_heading = ""
+        challenge_headings = {
+            "cons",
+            "risk",
+            "risks",
+            "limitations",
+            "trade offs",
+            "trade off",
+            "barriers",
+            "constraints",
+            "feasibility",
+            "implementation concerns",
+            "unintended consequences",
+        }
+        for raw_line in text.splitlines():
+            line = normalize_markdown_text(raw_line).strip()
+            if not line:
+                continue
+            heading_match = re.match(r"^#{1,4}\s+(.+?)\s*$", line)
+            if heading_match:
+                current_heading = normalize_for_match(heading_match.group(1))
+                continue
+            if not any(heading in current_heading for heading in challenge_headings):
+                continue
+            bullet_match = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+?)\s*$", line)
+            if not bullet_match:
+                continue
+            concern = bullet_match.group(1).strip()
+            if len(compact_for_match(concern)) < 8:
+                continue
+            challenges.append(
+                {
+                    "title": concern[:120].rstrip(" ."),
+                    "category": "Concept comparison concern",
+                    "why_important": concern,
+                    "importance": 4,
+                    "implementation_impact": 4,
+                }
+            )
+        return challenges
+
+    @staticmethod
+    def _implementation_challenge_importance_fallback() -> str:
+        return "This could affect whether the mitigation measure can be implemented reliably."
+
+    async def _evaluate_implementation_challenge_response(
+        self,
+        session: ChatSession,
+        challenge: dict[str, object],
+        user_response: str,
+    ) -> dict[str, object]:
+        context = (
+            "Evaluate a user's mitigation response for one implementation challenge. "
+            "Return JSON only with status, ready_to_continue, evaluation, "
+            "follow_up_question, and mitigation_strategy. status must be resolved, "
+            "partial, or unresolved. Resolved requires concrete actions, ownership "
+            "or accountable actor, and enough detail to reduce the concern. Set "
+            "ready_to_continue true only when the user's answer gives enough "
+            "information to classify the concern, even if residual risk remains. "
+            "Ask about only this challenge."
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "challenge": challenge,
+                        "user_response": user_response,
+                        "previous_mitigation_strategy": (
+                            session.implementation_mitigation_strategy or []
+                        ),
+                        "mitigation_measure": session.mitigation_measure,
+                        "mitigation_reason": session.mitigation_reason,
+                        "target_population": session.mitigation_target_population or [],
+                    },
+                    ensure_ascii=True,
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=700,
+        )
+        if is_llm_unavailable_response(response):
+            return self._fallback_implementation_response_evaluation(
+                user_response,
+            )
+        parsed = parse_json_object(response) or {}
+        if isinstance(parsed, dict):
+            return parsed
+        return self._fallback_implementation_response_evaluation(user_response)
+
+    @staticmethod
+    def _incomplete_challenge_response_text() -> str:
+        return "The response does not yet fully mitigate this concern."
+
+    @staticmethod
+    def _coerce_ready_to_continue(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return normalize_for_match(value) in {"true", "yes", "ready", "continue"}
+        return False
+
+    @staticmethod
+    def _fallback_implementation_response_evaluation(user_response: str) -> dict[str, object]:
+        normalized = normalize_for_match(user_response)
+        detail_markers = {
+            "budget",
+            "funding",
+            "owner",
+            "responsible",
+            "timeline",
+            "monitor",
+            "legal",
+            "governance",
+            "pilot",
+            "maintenance",
+            "stakeholder",
+        }
+        marker_count = sum(1 for marker in detail_markers if marker in normalized)
+        if len(normalized) >= 80 and marker_count >= 2:
+            return {
+                "status": "resolved",
+                "ready_to_continue": True,
+                "evaluation": "The response gives concrete mitigation detail for this challenge.",
+                "follow_up_question": "",
+                "mitigation_strategy": user_response.strip(),
+            }
+        return {
+            "status": "partial",
+            "ready_to_continue": False,
+            "evaluation": (
+                "The response is directionally useful but needs more implementation detail."
+            ),
+            "follow_up_question": (
+                "Who is accountable, what resources or safeguards are required, "
+                "and how will progress be checked?"
+            ),
+            "mitigation_strategy": user_response.strip(),
+        }
+
+    @staticmethod
+    def _next_unresolved_challenge_index(
+        challenges: list[dict[str, object]],
+        start: int,
+    ) -> int:
+        for index in range(max(0, start), len(challenges)):
+            if str(challenges[index].get("status") or "unresolved") != "resolved":
+                return index
+        return len(challenges)
+
+    def _implementation_challenge_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        message: str | None = None,
+        error_reason: str | None = None,
+    ) -> ChatResponse:
+        session.phase = "implementation_challenge_discussion"
+        challenges = session.implementation_challenges or []
+        index = session.implementation_challenge_index
+        challenge = challenges[index] if 0 <= index < len(challenges) else {}
+        prompt = message or self._implementation_challenge_prompt_markdown(
+            session,
+            challenge,
+        )
+        if error_reason:
+            prompt = f"### Clarification needed\n\n{error_reason}\n\n" + prompt
+        return ChatResponse(
+            session_id=session_id,
+            step="implementation_challenge_discussion",
+            bot_message=markdown_to_html(prompt),
+            options=[],
+            session=session.summary(),
+            input_mode="textarea",
+            error=bool(error_reason),
+        )
+
+    def _implementation_challenge_prompt_markdown(
+        self,
+        session: ChatSession,
+        challenge: dict[str, object],
+    ) -> str:
+        challenges = session.implementation_challenges or []
+        current = session.implementation_challenge_index + 1
+        total = len(challenges)
+        title = str(challenge.get("title") or "Implementation challenge").strip()
+        why = str(challenge.get("why_important") or "").strip()
+        category = str(challenge.get("category") or "Implementation").strip()
+        return (
+            "## Implementation Challenge Discussion\n\n"
+            f"Challenge {current} of {total}: **{title}**\n\n"
+            f"Category: **{category}**\n\n"
+            f"Why this matters: {why}\n\n"
+            "How do you intend to address this specific challenge?"
+        )
+
+    async def _implementation_readiness_assessment_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+    ) -> ChatResponse:
+        session.phase = "implementation_readiness_assessment"
+        assessment = await self._implementation_readiness_assessment(session)
+        session.implementation_readiness_assessment = assessment
+        self._promote_temporary_evidence(session)
+        return ChatResponse(
+            session_id=session_id,
+            step="implementation_readiness_assessment",
+            bot_message=markdown_to_html(assessment),
+            options=IMPLEMENTATION_READINESS_OPTIONS,
+            session=session.summary(),
+            error=False,
+        )
+
+    async def _handle_implementation_readiness_action(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, IMPLEMENTATION_READINESS_OPTIONS)
+        if exact_label is None:
+            fuzzy_label = match_option_label(message, IMPLEMENTATION_READINESS_OPTIONS)
+            if fuzzy_label is not None:
+                exact_label = fuzzy_label
+
+        action = normalize(exact_label or message)
+        if action == normalize("Continue to evaluation"):
+            return self._start_evaluation_questions(session_id, session)
+
+        if action == normalize("Review unresolved and partially resolved challenges again"):
+            return self._review_remaining_implementation_challenges(session_id, session)
+
+        return ChatResponse(
+            session_id=session_id,
+            step="implementation_readiness_assessment",
+            bot_message=markdown_to_html(
+                "Please choose **Continue to evaluation** or "
+                "**Review unresolved and partially resolved challenges again**."
+            ),
+            options=IMPLEMENTATION_READINESS_OPTIONS,
+            session=session.summary(),
+            error=True,
+        )
+
+    def _review_remaining_implementation_challenges(
+        self,
+        session_id: str,
+        session: ChatSession,
+    ) -> ChatResponse:
+        challenges = list(session.implementation_challenges or [])
+        next_index = self._next_unresolved_challenge_index(challenges, 0)
+        if next_index >= len(challenges):
+            return ChatResponse(
+                session_id=session_id,
+                step="implementation_readiness_assessment",
+                bot_message=markdown_to_html(
+                    "All implementation challenges are currently marked as resolved. "
+                    "Choose **Continue to evaluation** when you are ready."
+                ),
+                options=IMPLEMENTATION_READINESS_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+        session.implementation_challenge_index = next_index
+        session.implementation_readiness_assessment = None
+        return self._implementation_challenge_step(
+            session_id,
+            session,
+            message=(
+                "## Implementation Challenge Review\n\n"
+                "We will revisit only the challenges still marked as partially "
+                "resolved or unresolved.\n\n"
+                + self._implementation_challenge_prompt_markdown(
+                    session,
+                    challenges[next_index],
+                )
+            ),
+        )
+
+    async def _implementation_readiness_assessment(self, session: ChatSession) -> str:
+        context = (
+            "Write an Implementation Readiness Assessment for the mitigation measure. "
+            "Use the reviewed challenges and user mitigation strategies. Include exactly "
+            "these sections: Resolved challenges, Partially resolved challenges, "
+            "Remaining unresolved risks, Residual implementation concerns, Recommended "
+            "improvements, Overall implementation confidence/readiness score."
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "mitigation_measure": session.mitigation_measure,
+                        "mitigation_reason": session.mitigation_reason,
+                        "target_population": session.mitigation_target_population or [],
+                        "challenges": session.implementation_challenges or [],
+                    },
+                    ensure_ascii=True,
+                ),
+            }
+        ]
+        response = await ask_llm_chat(
+            context=context,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=1100,
+        )
+        if not is_llm_unavailable_response(response) and response.strip():
+            return response.strip()
+        return self._fallback_implementation_readiness_assessment(session)
+
+    @staticmethod
+    def _fallback_implementation_readiness_assessment(session: ChatSession) -> str:
+        challenges = session.implementation_challenges or []
+        resolved = [item for item in challenges if item.get("status") == "resolved"]
+        partial = [item for item in challenges if item.get("status") == "partial"]
+        unresolved = [
+            item
+            for item in challenges
+            if item.get("status") not in {"resolved", "partial"}
+        ]
+
+        def lines(items: list[dict[str, object]], empty: str) -> str:
+            if not items:
+                return f"- {empty}"
+            rendered = []
+            for item in items:
+                title = item.get("title")
+                detail = (
+                    item.get("mitigation_strategy")
+                    or item.get("why_important")
+                    or "No mitigation recorded."
+                )
+                rendered.append(f"- **{title}**: {detail}")
+            return "\n".join(rendered)
+
+        total = max(1, len(challenges))
+        score = round((len(resolved) + 0.5 * len(partial)) / total * 100)
+        return (
+            "## Implementation Readiness Assessment\n\n"
+            "### Resolved challenges\n"
+            f"{lines(resolved, 'No concerns were fully resolved.')}\n\n"
+            "### Partially resolved challenges\n"
+            f"{lines(partial, 'No concerns were partially resolved.')}\n\n"
+            "### Remaining unresolved risks\n"
+            f"{lines(unresolved, 'No unresolved concerns remain.')}\n\n"
+            "### Residual implementation concerns\n"
+            "- Continue monitoring partially resolved and high-impact challenges during implementation.\n\n"
+            "### Recommended improvements\n"
+            "- Assign accountable owners, timelines, funding assumptions, monitoring indicators, and review checkpoints for every mitigation action.\n\n"
+            "### Overall implementation confidence/readiness score\n"
+            f"- **{score}/100**"
         )
 
     def _start_evaluation_questions(
