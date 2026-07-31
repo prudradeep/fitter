@@ -2832,6 +2832,13 @@ class ChatMitigationCreationMixin:
         challenges = list(session.implementation_challenges or [])
         next_index = self._next_unresolved_challenge_index(challenges, 0)
         if next_index >= len(challenges):
+            challenges = self._merge_readiness_assessment_remaining_challenges(
+                session,
+                challenges,
+            )
+            session.implementation_challenges = challenges
+            next_index = self._next_unresolved_challenge_index(challenges, 0)
+        if next_index >= len(challenges):
             return ChatResponse(
                 session_id=session_id,
                 step="implementation_readiness_assessment",
@@ -2858,6 +2865,120 @@ class ChatMitigationCreationMixin:
                 )
             ),
         )
+
+    def _merge_readiness_assessment_remaining_challenges(
+        self,
+        session: ChatSession,
+        challenges: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        assessment = str(session.implementation_readiness_assessment or "")
+        extracted = self._remaining_challenges_from_readiness_assessment(assessment)
+        if not extracted:
+            return challenges
+
+        merged = [dict(challenge) for challenge in challenges]
+        for extracted_challenge in extracted:
+            match_index = self._matching_implementation_challenge_index(
+                merged,
+                str(extracted_challenge.get("title") or ""),
+            )
+            if match_index is None:
+                merged.append(extracted_challenge)
+                continue
+            merged[match_index]["status"] = extracted_challenge["status"]
+            merged[match_index]["why_important"] = (
+                merged[match_index].get("why_important")
+                or extracted_challenge.get("why_important")
+            )
+            merged[match_index]["evaluation"] = (
+                merged[match_index].get("evaluation")
+                or extracted_challenge.get("evaluation")
+            )
+        return merged
+
+    @classmethod
+    def _remaining_challenges_from_readiness_assessment(
+        cls,
+        assessment: str,
+    ) -> list[dict[str, object]]:
+        challenges: list[dict[str, object]] = []
+        current_status = ""
+        for raw_line in str(assessment or "").splitlines():
+            line = normalize_markdown_text(raw_line).strip()
+            heading_match = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
+            if heading_match:
+                heading = normalize_for_match(heading_match.group(1))
+                if "partially resolved" in heading:
+                    current_status = "partial"
+                elif "remaining unresolved" in heading or "unresolved risks" in heading:
+                    current_status = "unresolved"
+                else:
+                    current_status = ""
+                continue
+            if current_status not in {"partial", "unresolved"}:
+                continue
+            bullet_match = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+?)\s*$", line)
+            if not bullet_match:
+                continue
+            item = bullet_match.group(1).strip()
+            if cls._readiness_assessment_empty_item(item):
+                continue
+            title, detail = cls._split_readiness_challenge_item(item)
+            challenges.append(
+                {
+                    "title": title,
+                    "category": "Readiness assessment concern",
+                    "why_important": detail or title,
+                    "importance": 4 if current_status == "partial" else 5,
+                    "implementation_impact": 4 if current_status == "partial" else 5,
+                    "status": current_status,
+                    "mitigation_strategy": "",
+                    "evaluation": detail,
+                    "follow_up_question": "",
+                }
+            )
+        return challenges
+
+    @staticmethod
+    def _readiness_assessment_empty_item(value: str) -> bool:
+        normalized = normalize_for_match(value)
+        return normalized in {
+            "none",
+            "no",
+            "no unresolved concerns remain",
+            "no unresolved risks remain",
+            "no concerns were partially resolved",
+            "no concerns were fully resolved",
+            "not applicable",
+            "n a",
+        }
+
+    @staticmethod
+    def _split_readiness_challenge_item(value: str) -> tuple[str, str]:
+        cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", str(value or "")).strip()
+        if ":" in cleaned:
+            title, detail = cleaned.split(":", 1)
+            return title.strip(" -."), detail.strip()
+        return cleaned.strip(" -."), cleaned.strip(" -.")
+
+    @staticmethod
+    def _matching_implementation_challenge_index(
+        challenges: list[dict[str, object]],
+        title: str,
+    ) -> int | None:
+        title_key = normalize_for_match(title)
+        if not title_key:
+            return None
+        for index, challenge in enumerate(challenges):
+            challenge_title = normalize_for_match(str(challenge.get("title") or ""))
+            challenge_why = normalize_for_match(str(challenge.get("why_important") or ""))
+            if title_key == challenge_title:
+                return index
+            if title_key in challenge_title or challenge_title in title_key:
+                return index
+            if title_key and title_key in challenge_why:
+                return index
+        return None
 
     async def _implementation_readiness_assessment(self, session: ChatSession) -> str:
         context = (
@@ -4742,6 +4863,22 @@ class ChatMitigationCreationMixin:
         ):
             return f"{title}: {proposal}"
         return proposal
+
+    @staticmethod
+    def _extract_suggested_policy_reason(markdown: str) -> str:
+        text = str(markdown or "")
+        match = re.search(
+            r"(?im)^\s*[-*]\s*\*\*Why this helps:\*\*\s*(.+?)\s*$",
+            text,
+        )
+        if not match:
+            match = re.search(r"(?im)^\s*[-*]\s*Why this helps:\s*(.+?)\s*$", text)
+        if not match:
+            return ""
+        reason = normalize_markdown_text(match.group(1))
+        reason = re.sub(r"\*\*(.*?)\*\*", r"\1", reason)
+        reason = re.sub(r"\*(.*?)\*", r"\1", reason)
+        return re.sub(r"\s+", " ", reason).strip()
 
     @staticmethod
     def _policy_target_group_summary(target_groups: list[dict[str, object]]) -> str:

@@ -309,6 +309,18 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertEqual(panel_items, ["Targeted Mobility Access"])
         self.assertNotIn("Dynamic Theme Heading", markdown)
 
+    def test_extract_suggested_policy_reason_from_why_this_helps(self):
+        markdown = (
+            "### Regional support package\n"
+            "- **Proposal:** Provide targeted retrofit grants.\n"
+            "- **Why this helps:** It lowers upfront costs for affected households."
+        )
+
+        self.assertEqual(
+            ChatMitigationCreationMixin._extract_suggested_policy_reason(markdown),
+            "It lowers upfront costs for affected households.",
+        )
+
     def test_mitigation_review_starts_open_discussion_before_evaluation(self):
         engine = _MitigationReviewEngine()
         engine._mitigation_review_response = AsyncMock(
@@ -669,6 +681,47 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         )
         self.assertIn("Administrative burden", response.bot_message)
         self.assertNotIn("Funding sustainability</strong>", response.bot_message)
+
+    def test_review_again_uses_visible_readiness_assessment_remaining_concerns(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            phase="implementation_readiness_assessment",
+            implementation_challenges=[
+                {
+                    "title": "Funding sustainability",
+                    "category": "Cost",
+                    "why_important": "The support may be unaffordable over time.",
+                    "status": "resolved",
+                }
+            ],
+            implementation_challenge_index=1,
+            implementation_readiness_assessment=(
+                "## Implementation Readiness Assessment\n\n"
+                "### Resolved challenges\n"
+                "- Funding sustainability\n\n"
+                "### Partially resolved challenges\n"
+                "- **Administrative burden**: Staffing capacity remains unclear.\n\n"
+                "### Remaining unresolved risks\n"
+                "- **Legal eligibility**: Eligibility rules may exclude intended groups."
+            ),
+        )
+
+        response = asyncio.run(
+            engine._handle_implementation_readiness_action(
+                "test-session",
+                session,
+                "Review unresolved and partially resolved challenges again",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "implementation_challenge_discussion")
+        self.assertEqual(session.phase, "implementation_challenge_discussion")
+        self.assertEqual(session.implementation_challenge_index, 1)
+        self.assertEqual(session.implementation_challenges[1]["status"], "partial")
+        self.assertEqual(session.implementation_challenges[2]["status"], "unresolved")
+        self.assertIn("Administrative burden", response.bot_message)
+        self.assertNotIn("All implementation challenges", response.bot_message)
 
     def test_mitigation_review_prompt_includes_d23_page_range_context(self):
         engine = _MitigationReviewEngine()

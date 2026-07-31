@@ -43,6 +43,7 @@ class ChatSession:
     suggested_mitigation_measure_id: str | None = None
     suggested_mitigation_measure_name: str | None = None
     suggested_new_policy_proposal: str | None = None
+    suggested_new_policy_reason: str | None = None
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
     mitigation_target_population: list[str] | None = None

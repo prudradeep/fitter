@@ -146,10 +146,15 @@ class ChatMitigationStepsMixin:
         self._clear_mitigation_clarity_state(session)
         self._clear_mitigation_validation_state(session)
         session.pending_mitigation_measure = mitigation_measure
-        return await self._start_mitigation_clarification_step(
+        reason = self._suggested_mitigation_reason_for_adoption(
+            session,
+            mitigation_measure,
+        )
+        return self._mitigation_initial_clarification_step(
             session_id,
             session,
             mitigation_measure,
+            reason,
         )
 
     def _suggested_mitigation_measure_for_context(self, session: ChatSession) -> str:
@@ -157,6 +162,41 @@ class ChatMitigationStepsMixin:
             str(session.suggested_new_policy_proposal or "").strip()
             or self._current_policy_mitigation_measure(session)
         )
+
+    def _suggested_mitigation_reason_for_adoption(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+    ) -> str:
+        suggested_reason = str(session.suggested_new_policy_reason or "").strip()
+        if suggested_reason:
+            return suggested_reason
+
+        parts: list[str] = []
+        hazard = session.selected_hazard or session.accepted_custom_hazard
+        target_population = ", ".join(session.mitigation_target_population or [])
+        if hazard:
+            parts.append(f"It is intended to reduce the impact of {hazard}.")
+        if target_population:
+            parts.append(f"It targets the selected mitigation population: {target_population}.")
+        elif session.socio_demographic_profiles:
+            parts.append(
+                "It is targeted to the affected socio-demographic profiles: "
+                + ", ".join(session.socio_demographic_profiles)
+                + "."
+            )
+        if session.practical_considerations:
+            parts.append(
+                "Available implementation considerations include: "
+                + "; ".join(str(item) for item in session.practical_considerations[:3])
+                + "."
+            )
+        if not parts and mitigation_measure:
+            parts.append(
+                "This adopted proposal should be assessed against the selected "
+                "hazard, affected profiles, and local implementation context."
+            )
+        return " ".join(parts).strip()
 
     async def _open_selection_response_from_any_step(
         self,
@@ -637,6 +677,7 @@ class ChatMitigationStepsMixin:
             session.pending_mitigation_measure
             or session.mitigation_measure
             or "Your proposed mitigation measure",
+            session.pending_mitigation_reason or session.mitigation_reason or "",
         )
 
     async def _start_mitigation_clarification_step(
@@ -665,6 +706,7 @@ class ChatMitigationStepsMixin:
             session_id,
             session,
             mitigation_measure,
+            session.pending_mitigation_reason or "",
         )
 
     def _mitigation_initial_clarification_step(
@@ -672,10 +714,11 @@ class ChatMitigationStepsMixin:
         session_id: str,
         session: ChatSession,
         mitigation_measure: str,
+        initial_reason: str = "",
     ) -> ChatResponse:
         session.phase = "mitigation_clarity"
         session.pending_mitigation_measure = mitigation_measure
-        session.pending_mitigation_reason = ""
+        session.pending_mitigation_reason = initial_reason.strip()
         session.pending_mitigation_evidence = ""
         session.pending_mitigation_clarity_dimension = "justification_clarity"
         session.mitigation_clarity_turns += 1
@@ -696,6 +739,11 @@ class ChatMitigationStepsMixin:
             if context_lines
             else ""
         )
+        reason_block = (
+            f"\n\nReason:\n\n{session.pending_mitigation_reason}\n"
+            if session.pending_mitigation_reason
+            else ""
+        )
         append_message = getattr(self, "_append_mitigation_clarification_message", None)
         if append_message is not None:
             append_message(session, "assistant", question)
@@ -705,6 +753,7 @@ class ChatMitigationStepsMixin:
             bot_message=markdown_to_html(
                 "### Clarification needed\n\n"
                 f"Proposed mitigation measure:\n\n- **{mitigation_measure}**\n\n"
+                f"{reason_block}"
                 f"{context_block}\n\n"
                 "Please answer this clarification question before evidence is collected:\n\n"
                 f"1. {question}"

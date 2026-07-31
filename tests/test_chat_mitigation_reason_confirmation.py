@@ -71,6 +71,9 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
             sector="Energy",
             selected_hazard="Heat stress",
             suggested_new_policy_proposal="Targeted heat pump support for vulnerable households",
+            suggested_new_policy_reason=(
+                "It lowers heat exposure and upfront costs for vulnerable households."
+            ),
         )
 
         response = asyncio.run(
@@ -83,6 +86,10 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
 
         self.assertEqual(response.step, "mitigation_clarity")
         self.assertEqual(session.pending_mitigation_measure, "Targeted heat pump support for vulnerable households")
+        self.assertEqual(
+            session.pending_mitigation_reason,
+            "It lowers heat exposure and upfront costs for vulnerable households.",
+        )
         self.assertIn("Country:", response.bot_message)
         self.assertIn("Germany", response.bot_message)
         self.assertIn("Region:", response.bot_message)
@@ -90,10 +97,19 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
         self.assertIn("Sector:", response.bot_message)
         self.assertIn("Energy", response.bot_message)
         self.assertIn("Targeted heat pump support for vulnerable households", response.bot_message)
+        self.assertIn("Reason:", response.bot_message)
+        self.assertIn("lowers heat exposure", response.bot_message)
 
     def test_adopt_falls_back_to_current_policy_mitigation(self):
         engine = _ReasonConfirmationEngine()
-        session = ChatSession(country="Germany", region="Bavaria", sector="Energy")
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills",
+            socio_demographic_profiles=["Low-income households"],
+            practical_considerations=["Eligibility checks must be simple"],
+        )
 
         response = asyncio.run(
             engine._handle_reason_confirmation("test-session", session, "adopt it")
@@ -101,6 +117,9 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
 
         self.assertEqual(response.step, "mitigation_clarity")
         self.assertEqual(session.pending_mitigation_measure, "Current policy-based mitigation")
+        self.assertIn("Higher electricity bills", session.pending_mitigation_reason)
+        self.assertIn("Low-income households", session.pending_mitigation_reason)
+        self.assertIn("Eligibility checks", session.pending_mitigation_reason)
 
     def test_change_sector_is_not_captured_as_mitigation_measure(self):
         engine = _ReasonSelectionEngine()

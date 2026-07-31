@@ -908,6 +908,9 @@ class ChatService(
         session.suggested_new_policy_proposal = self._extract_suggested_policy_proposal(
             new_policy_suggestions
         )
+        session.suggested_new_policy_reason = self._extract_suggested_policy_reason(
+            new_policy_suggestions
+        )
         return "\n\n".join(
             section.strip()
             for section in (
