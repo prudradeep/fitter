@@ -4,10 +4,14 @@
 {% endif %}
 ## Review Affected Population Groups
 
-New hazard:
+Hazard to be co-created:
 
 - **{{ hazard }}**
 
+{% if visibility_notice %}
+> {{ visibility_notice }}
+
+{% endif %}
 Affected population groups identified:
 
 {{ profiles }}

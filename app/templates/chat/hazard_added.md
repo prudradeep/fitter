@@ -1,7 +1,11 @@
-Custom hazard added successfully.
+You have successfully co-created a hazard.
 
 - **{{ hazard }}**
 
+{% if visibility_notice %}
+> {{ visibility_notice }}
+
+{% endif %}
 **Reason:** {{ reason }}
 
 **Evidence:** {{ evidence }}

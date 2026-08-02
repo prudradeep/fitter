@@ -109,11 +109,12 @@ async def validate_custom_hazard_dimensions(
     validation_mode: str = "strict",
 ) -> dict[str, Any]:
     state = _merged_state(previous_state)
-    hazard_text = re.sub(r"\s+", " ", str(hazard_text or "")).strip()
+    raw_hazard_text = str(hazard_text or "").strip()
 
     # If the user edits the hazard after overriding a duplicate warning, the
     # override should not silently carry over to the new text.
-    state = _reset_duplicate_override_if_hazard_changed(state, hazard_text)
+    state = _reset_duplicate_override_if_hazard_changed(state, raw_hazard_text)
+    hazard_text = re.sub(r"\s+", " ", raw_hazard_text).strip()
 
     # Cheap deterministic signal first. It is not the final decision; it gives
     # stable guardrails and preserves offline behavior if the LLM is unavailable.
@@ -188,7 +189,6 @@ def build_custom_hazard_grounding_status(custom_hazard: dict[str, Any] | None) -
         _dimension_card("country_region_fit", dimension_scores),
         _duplicate_card(state),
         _affected_groups_card(state),
-        _profile_reason_card(state),
         _clarification_progress_card(state),
         _validation_readiness_card(state),
     ]
@@ -556,15 +556,19 @@ def _recommended_action(
         _dimension_score(dimensions, key) < dimension_floor
         for key in CRITICAL_DIMENSIONS
     )
-    groups_low = _dimension_score(dimensions, "affected_groups_fit") < dimension_floor
-    unresolved_required_gap = critical_low or groups_low
-
     if result.get("duplicate_candidates") and not state.get("duplicate_override_confirmed"):
         return CustomHazardAction.ASK_DUPLICATE_CONFIRMATION
 
+    # The core hazard, transition, sector, and location dimensions must resolve
+    # before the flow asks for reason/evidence or affected-group review.
+    if critical_low:
+        return CustomHazardAction.REJECT if flattened else CustomHazardAction.ASK_CLARIFICATION
+
+    groups_low = _dimension_score(dimensions, "affected_groups_fit") < dimension_floor
+
     # Never mark ready while required dimensions are below the floor. Flattening
     # means the conversation stopped improving, not that the hazard became valid.
-    if unresolved_required_gap:
+    if groups_low and not state.get("reason"):
         return CustomHazardAction.REJECT if flattened else CustomHazardAction.ASK_CLARIFICATION
 
     if result.get("affected_groups") and not state.get("confirmed_affected_groups"):
@@ -675,38 +679,6 @@ def _affected_groups_card(state: dict[str, Any]) -> dict[str, Any]:
         "confidence": ConfidenceLevel.HIGH.value if groups else ConfidenceLevel.LOW.value,
         "reason": reason,
         "clarification_question": None,
-    }
-
-
-def _profile_reason_card(state: dict[str, Any]) -> dict[str, Any]:
-    added = state.get("added_affected_groups") if isinstance(state.get("added_affected_groups"), list) else []
-    missing = [
-        group for group in added
-        if isinstance(group, dict) and not str(group.get("reason") or "").strip()
-    ]
-    if missing:
-        status = GroundingStatus.NEEDS_CLARIFICATION.value
-        reason = "A user-added affected group needs an impact reason."
-        question = f"How does this hazard affect '{missing[0].get('group')}'?"
-    elif added:
-        status = GroundingStatus.CONFIRMED.value
-        reason = "Every user-added affected group has an impact reason."
-        question = None
-    else:
-        status = GroundingStatus.INSUFFICIENT_INFO.value
-        reason = "No user-added affected group impact reason has been provided."
-        question = None
-    return {
-        "title": "Custom profile impact reason",
-        "status": status,
-        "score": None,
-        "confidence": (
-            ConfidenceLevel.HIGH.value
-            if status == GroundingStatus.CONFIRMED.value
-            else ConfidenceLevel.LOW.value
-        ),
-        "reason": reason,
-        "clarification_question": question,
     }
 
 
@@ -923,12 +895,21 @@ def _reset_duplicate_override_if_hazard_changed(
     hazard_text: str,
 ) -> dict[str, Any]:
     previous_text = str(state.get("raw_text") or "").strip()
+    current_text = _hazard_title_from_grounding_text(hazard_text)
     if (
         previous_text
-        and normalize_for_match(previous_text) != normalize_for_match(hazard_text)
+        and normalize_for_match(previous_text) != normalize_for_match(current_text)
         and state.get("duplicate_override_confirmed")
     ):
         state = dict(state)
         state["duplicate_override_confirmed"] = False
         state["duplicate_candidates"] = []
     return state
+
+
+def _hazard_title_from_grounding_text(hazard_text: str) -> str:
+    for line in str(hazard_text or "").splitlines():
+        cleaned = line.strip()
+        if cleaned:
+            return cleaned
+    return str(hazard_text or "").strip()

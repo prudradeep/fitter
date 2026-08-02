@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.5"
+#define MyAppVersion "0.1.6"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 
@@ -12,7 +12,11 @@ DefaultDirName={autopf}\Dr Transition
 DefaultGroupName=Dr Transition
 DisableProgramGroupPage=yes
 OutputDir=..\..\build\windows-installer
+#ifdef OfflineAdminInstaller
+OutputBaseFilename=DrTransitionOfflineAdminSetup-{#MyAppVersion}
+#else
 OutputBaseFilename=DrTransitionSetup-{#MyAppVersion}
+#endif
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -31,7 +35,11 @@ Name: "{commonappdata}\DrTransition\uploads"; Permissions: users-modify
 
 [Files]
 Source: "..\..\build\windows-installer\payload\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#ifdef OfflineAdminInstaller
+Source: "config\offline-admin.env"; DestDir: "{app}\config"; DestName: ".env"; Flags: ignoreversion
+#else
 Source: "..\..\.env.client.dev"; DestDir: "{app}\config"; DestName: ".env"; Flags: ignoreversion skipifsourcedoesntexist
+#endif
 Source: "scripts\Get-ModelRecommendation.ps1"; Flags: dontcopy
 
 [Icons]
@@ -51,6 +59,8 @@ var
   ModelRecommendationProgressPage: TOutputProgressWizardPage;
   DependencySetupFailed: Boolean;
   SetupStoppedByCompatibility: Boolean;
+  CredentialsForCopy: String;
+  CopyCredentialsButton: TNewButton;
 
 procedure SetDatabaseDefaultsEditable(Editable: Boolean);
 begin
@@ -69,6 +79,29 @@ begin
   Result := IsWin64;
   if not Result then
     MsgBox('Dr Transition requires 64-bit Windows.', mbCriticalError, MB_OK);
+end;
+
+procedure CopyCredentialsButtonClick(Sender: TObject);
+var
+  PowerShell: String;
+  CredentialsPath: String;
+  Params: String;
+  ResultCode: Integer;
+begin
+  CredentialsPath := ExpandConstant('{tmp}\drtransition-admin-credentials-copy.txt');
+  SaveStringToFile(CredentialsPath, CredentialsForCopy, False);
+  PowerShell := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Params :=
+    '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"Add-Type -AssemblyName System.Windows.Forms; ' +
+    '[System.Windows.Forms.Clipboard]::SetText((Get-Content -LiteralPath ''' + CredentialsPath + ''' -Raw))"';
+
+  if Exec(PowerShell, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+    MsgBox('Admin credentials copied to the clipboard.', mbInformation, MB_OK)
+  else
+    MsgBox('Could not copy admin credentials automatically. The credentials are shown in the setup completion message.', mbError, MB_OK);
+
+  DeleteFile(CredentialsPath);
 end;
 
 procedure InitializeWizard();
@@ -93,7 +126,7 @@ begin
     CompatibilityPage.ID,
     'Database Setup',
     'Create or reuse the local Dr Transition database.',
-    'Enter the MySQL administrator credentials and the application database to create. If MySQL is missing, the installer will attempt to install it first.'
+    'Enter the local MySQL credentials. If MySQL is missing, setup will install it automatically.'
   );
   DatabasePage.Add('Database name:', False);
   DatabasePage.Add('MySQL administrator user:', False);
@@ -109,9 +142,9 @@ begin
   EditDatabaseDefaultsCheck := TNewCheckBox.Create(DatabasePage);
   EditDatabaseDefaultsCheck.Parent := DatabasePage.Surface;
   EditDatabaseDefaultsCheck.Left := DatabasePage.Edits[0].Left;
-  EditDatabaseDefaultsCheck.Top := DatabasePage.Edits[0].Top - ScaleY(34);
+  EditDatabaseDefaultsCheck.Top := DatabasePage.Edits[0].Top - ScaleY(26);
   EditDatabaseDefaultsCheck.Width := DatabasePage.SurfaceWidth;
-  EditDatabaseDefaultsCheck.Height := ScaleY(22);
+  EditDatabaseDefaultsCheck.Height := ScaleY(18);
   EditDatabaseDefaultsCheck.Caption := 'Advanced: customize database name and users';
   EditDatabaseDefaultsCheck.Checked := False;
   EditDatabaseDefaultsCheck.Font.Style := [fsBold];
@@ -132,6 +165,18 @@ begin
     'Model Recommendation',
     'Checking this computer''s RAM and GPU to choose the best local model.'
   );
+
+#ifdef OfflineAdminInstaller
+  CopyCredentialsButton := TNewButton.Create(WizardForm);
+  CopyCredentialsButton.Parent := WizardForm.FinishedPage;
+  CopyCredentialsButton.Left := WizardForm.FinishedHeadingLabel.Left;
+  CopyCredentialsButton.Top := WizardForm.FinishedHeadingLabel.Top + ScaleY(104);
+  CopyCredentialsButton.Width := ScaleX(170);
+  CopyCredentialsButton.Height := ScaleY(30);
+  CopyCredentialsButton.Caption := 'Copy admin credentials';
+  CopyCredentialsButton.Visible := False;
+  CopyCredentialsButton.OnClick := @CopyCredentialsButtonClick;
+#endif
 end;
 
 function JsonEscape(Value: String): String;
@@ -448,8 +493,25 @@ begin
     '  "InstallMySql": true,' + #13#10 +
     '  "InstallOllama": true,' + #13#10 +
     '  "PullModels": true,' + #13#10 +
+#ifdef OfflineAdminInstaller
+    '  "DefaultAppUserEmail": "admin@drtransition.local",' + #13#10 +
+    '  "DefaultAppUserName": "Dr Transition Admin",' + #13#10 +
+    '  "DefaultAppUserDesignation": "Administrator",' + #13#10 +
+    '  "DefaultAppUserOrganisationType": "Local",' + #13#10 +
+    '  "DefaultAppUserOrganisationName": "Dr Transition",' + #13#10 +
+    '  "DefaultAppUserRole": "admin",' + #13#10 +
+    '  "DefaultAppUserCredentialsPath": "' + JsonEscape(ExpandConstant('{tmp}\drtransition-default-admin.txt')) + '",' + #13#10 +
+    '  "DisableSync": true,' + #13#10 +
+    '  "IncludeBasicData": true,' + #13#10 +
+    '  "SeedPromptsFromFiles": true,' + #13#10 +
+    '  "ReindexSectorPrompts": true,' + #13#10 +
+    '  "SeedMainKbFromFiles": true,' + #13#10 +
+    '  "SkipDefaultAppUser": false,' + #13#10 +
+    '  "SkipReferenceData": false,' + #13#10 +
+#else
     '  "SkipDefaultAppUser": true,' + #13#10 +
     '  "SkipReferenceData": true,' + #13#10 +
+#endif
     '  "SkipDatabaseSeed": false' + #13#10 +
     '}';
 end;
@@ -461,8 +523,11 @@ var
   ScriptPath: String;
   Params: String;
   ResultCode: Integer;
+  CredentialsPath: String;
+  CredentialsText: AnsiString;
 begin
   ConfigPath := ExpandConstant('{tmp}\drtransition-dependency-setup.json');
+  CredentialsPath := ExpandConstant('{tmp}\drtransition-default-admin.txt');
   ScriptPath := ExpandConstant('{app}\scripts\Install-DrTransitionDependencies.ps1');
   PowerShell := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
 
@@ -490,15 +555,47 @@ begin
   end
   else
   begin
+#ifdef OfflineAdminInstaller
+    if FileExists(CredentialsPath) and LoadStringFromFile(CredentialsPath, CredentialsText) then
+    begin
+      CredentialsForCopy := Trim(CredentialsText);
+      MsgBox(
+        'Dr Transition offline admin setup completed.' + #13#10#13#10 +
+        'Seeded admin user:' + #13#10 +
+        CredentialsForCopy + #13#10#13#10 +
+        'Bundled KB PDFs are being seeded into the local knowledge base in the background.' + #13#10#13#10 +
+        'You can also copy these credentials from the final setup screen.',
+        mbInformation,
+        MB_OK
+      );
+    end
+    else
+      MsgBox(
+        'Dr Transition offline admin setup completed.' + #13#10#13#10 +
+        'The local database was seeded, and bundled KB PDFs are being seeded in the background. Check the setup log for the admin user details.',
+        mbInformation,
+        MB_OK
+      );
+#else
     MsgBox(
       'Dr Transition setup completed.' + #13#10#13#10 +
       'No default app user was created. Create your account from the sign-up screen when you first open the app.',
       mbInformation,
       MB_OK
     );
+#endif
   end;
 
   DeleteFile(ConfigPath);
+  DeleteFile(CredentialsPath);
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+#ifdef OfflineAdminInstaller
+  if CurPageID = wpFinished then
+    CopyCredentialsButton.Visible := (Trim(CredentialsForCopy) <> '');
+#endif
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

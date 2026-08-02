@@ -59,8 +59,9 @@ def log_llm_exchange(
         if safe_response is not None
         else None
     )
+    timestamp = datetime.now(timezone.utc)
     record: dict[str, Any] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": timestamp.isoformat(),
         "request_id": request_id,
         "provider": provider,
         "endpoint": endpoint,
@@ -85,7 +86,7 @@ def log_llm_exchange(
         )
     if not settings.write_llm_log_to_file:
         return
-    path = Path(settings.llm_log_path)
+    path = _dated_log_path(Path(settings.llm_log_path), timestamp)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=False, default=str)
@@ -94,6 +95,13 @@ def log_llm_exchange(
                 handle.write(f"{line}\n")
     except OSError:
         logger.exception("Failed to write LLM exchange log to %s", path)
+
+
+def _dated_log_path(path: Path, timestamp: datetime) -> Path:
+    date_suffix = timestamp.date().isoformat()
+    suffix = path.suffix or ".jsonl"
+    stem = path.stem if path.suffix else path.name
+    return path.with_name(f"{stem}-{date_suffix}{suffix}")
 
 
 def _sanitize_payload(value: Any, max_text_chars: int) -> Any:

@@ -68,6 +68,10 @@ class ChatCustomHazardPopulationStepsMixin:
             hazard=hazard,
             profiles=self._format_population_profiles_for_review(profiles),
             error_reason=error_reason or "",
+            visibility_notice=self._crowd_sourcing_visibility_notice(
+                session,
+                "hazard",
+            ),
         )
         if isinstance(session.custom_hazard, dict):
             return self._custom_hazard_response(
@@ -214,13 +218,13 @@ class ChatCustomHazardPopulationStepsMixin:
                 return self._custom_hazard_population_review_step(session_id, session)
 
             is_add_group_action = action == normalize("Add affected group") or re.match(
-                r"^add (?:affected )?group\s*:",
+                r"^add(?: (?:affected )?group)?\b\s*:?",
                 message.strip(),
                 flags=re.IGNORECASE,
             )
             if is_add_group_action:
                 group = re.sub(
-                    r"^(add affected group|add group)\s*:?",
+                    r"^(add affected group|add group|add)\s*:?",
                     "",
                     message.strip(),
                     flags=re.IGNORECASE,
@@ -390,6 +394,13 @@ class ChatCustomHazardPopulationStepsMixin:
             label = re.sub(r"\s+", " ", normalize_markdown_text(item)).strip("`*_ #.-")
             if not label:
                 continue
+            group_error = self._custom_affected_group_label_error(label)
+            if group_error:
+                return self._custom_hazard_population_review_step(
+                    session_id,
+                    session,
+                    error_reason=group_error,
+                )
             if any(
                 self._profiles_are_similar(
                     label,
@@ -642,6 +653,10 @@ class ChatCustomHazardPopulationStepsMixin:
                 affected_population_groups=self._format_population_profiles_for_review(
                     self._stored_hazard_profiles(session, accepted_hazard)
                 ),
+                visibility_notice=self._crowd_sourcing_visibility_notice(
+                    session,
+                    "saved_hazard",
+                ),
             ),
             options=POST_SECTOR_OPTIONS,
             session=session.summary(),
@@ -672,6 +687,10 @@ class ChatCustomHazardPopulationStepsMixin:
                 evidence=session.accepted_custom_hazard_evidence or "Not provided",
                 affected_population_groups=self._format_population_profiles_for_review(
                     self._stored_hazard_profiles(session, accepted_hazard)
+                ),
+                visibility_notice=self._crowd_sourcing_visibility_notice(
+                    session,
+                    "saved_hazard",
                 ),
             ),
             options=POST_SECTOR_OPTIONS,

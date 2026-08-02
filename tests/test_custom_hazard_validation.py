@@ -472,6 +472,71 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertIn("Coal phase-out policy", session.pending_hazard_reason)
         self.assertTrue(session.custom_hazard["evidence_decision_asked"])
 
+    def test_generic_extracted_affected_group_asks_clarification(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_dimension_check",
+            pending_hazard="People face higher bills due to renewable grid upgrade tariffs.",
+            custom_hazard={
+                "raw_text": "People face higher bills due to renewable grid upgrade tariffs.",
+                "reason": "Renewable grid upgrade tariffs raise bills.",
+                "evidence_decision_asked": True,
+            },
+        )
+        grounding_result = {
+            "dimension_scores": {
+                "hazard_definition_fit": {
+                    "score": 8,
+                    "reason": "The harm is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "twin_transition_policy_fit": {
+                    "score": 8,
+                    "reason": "The policy link is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "selected_sector_fit": {
+                    "score": 8,
+                    "reason": "The sector fit is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "country_region_fit": {
+                    "score": 8,
+                    "reason": "The place fit is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "affected_groups_fit": {
+                    "score": 8,
+                    "reason": "A group is named.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+            },
+            "affected_groups": [{"group": "People", "reason": "Higher bills.", "source": "llm"}],
+            "duplicate_candidates": [],
+            "overall_score": 80,
+            "next_action": "review_groups",
+            "status": "ready",
+        }
+
+        with patch(
+            "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+            AsyncMock(return_value=grounding_result),
+        ):
+            response = _run(service._run_custom_hazard_dimension_check("session-1", session))
+
+        self.assertEqual(response.step, "custom_hazard_clarification")
+        self.assertEqual(session.phase, "custom_hazard_clarification")
+        self.assertIn("too broad", response.bot_message)
+        self.assertIn("Which specific group", response.bot_message)
+
     def test_hazard_evidence_decision_yes_asks_for_evidence(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -556,6 +621,154 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(
             service._validate_custom_hazard.await_args.args[2],
             "Reason: Coal phase-out policy can cause job losses.",
+        )
+
+    def test_hazard_evidence_decision_open_text_yes_asks_for_evidence(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_decision",
+            pending_hazard="Regional employment shock",
+            pending_hazard_reason="Coal phase-out policy can cause job losses.",
+            custom_hazard={"raw_text": "Regional employment shock"},
+        )
+
+        response = _run(
+            service._handle_hazard_evidence_decision(
+                "session-1",
+                session,
+                "I want to add evidence",
+            )
+        )
+
+        self.assertEqual(response.step, "custom_hazard_evidence")
+        self.assertEqual(response.input_mode, "evidence_only")
+        self.assertEqual(session.phase, "add_hazard_evidence_input")
+
+    def test_hazard_evidence_decision_open_text_no_validates(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_decision",
+            pending_hazard="Regional employment shock",
+            pending_hazard_reason="Coal phase-out policy can cause job losses.",
+            custom_hazard={"raw_text": "Regional employment shock"},
+        )
+        service._validate_custom_hazard = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="custom_hazard_validation",
+                bot_message="validated",
+                options=[],
+                session=session.summary(),
+            )
+        )
+
+        response = _run(
+            service._handle_hazard_evidence_decision(
+                "session-1",
+                session,
+                "continue without evidence",
+            )
+        )
+
+        self.assertEqual(response.bot_message, "validated")
+        self.assertEqual(
+            service._validate_custom_hazard.await_args.args[2],
+            "Reason: Coal phase-out policy can cause job losses.",
+        )
+
+    def test_hazard_evidence_decision_open_text_no_i_dont_have_validates(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_decision",
+            pending_hazard="Regional employment shock",
+            pending_hazard_reason="Coal phase-out policy can cause job losses.",
+            custom_hazard={"raw_text": "Regional employment shock"},
+        )
+        service._validate_custom_hazard = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="custom_hazard_validation",
+                bot_message="validated",
+                options=[],
+                session=session.summary(),
+            )
+        )
+
+        response = _run(
+            service._handle_hazard_evidence_decision(
+                "session-1",
+                session,
+                "no i don't have",
+            )
+        )
+
+        self.assertEqual(response.bot_message, "validated")
+        self.assertEqual(
+            service._validate_custom_hazard.await_args.args[2],
+            "Reason: Coal phase-out policy can cause job losses.",
+        )
+
+    def test_hazard_evidence_decision_no_i_dont_have_skips_common_quality_gate(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_decision",
+        )
+
+        self.assertFalse(
+            service._should_check_common_user_input_quality(
+                session,
+                "no i don't have",
+            )
+        )
+
+    def test_hazard_evidence_decision_accepts_url_in_open_text(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_decision",
+            pending_hazard="Regional employment shock",
+            pending_hazard_reason="Coal phase-out policy can cause job losses.",
+            custom_hazard={"raw_text": "Regional employment shock"},
+        )
+        service._validate_custom_hazard = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="custom_hazard_validation",
+                bot_message="validated",
+                options=[],
+                session=session.summary(),
+            )
+        )
+
+        response = _run(
+            service._handle_hazard_evidence_decision(
+                "session-1",
+                session,
+                "Use this evidence https://example.org/report.pdf please",
+            )
+        )
+
+        self.assertEqual(response.bot_message, "validated")
+        self.assertEqual(
+            service._validate_custom_hazard.await_args.args[2],
+            (
+                "Reason: Coal phase-out policy can cause job losses.\n"
+                "Evidence: Evidence URL: https://example.org/report.pdf"
+            ),
         )
 
     def test_hazard_creation_input_is_not_routed_to_grounded_questions(self):
@@ -850,6 +1063,87 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         self.assertGreaterEqual(result["overall_score"], 75)
         self.assertEqual(result["next_action"], "review_groups")
+
+    def test_core_dimension_gap_asks_clarification_before_group_review(self):
+        llm_payload = {
+            "dimension_scores": {
+                "hazard_definition_fit": {
+                    "score": 8,
+                    "reason": "A harm is described.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "twin_transition_policy_fit": {
+                    "score": 3,
+                    "reason": "The transition policy link is unclear.",
+                    "needs_clarification": True,
+                    "clarification_question": "Which green or digital transition policy causes this harm?",
+                },
+                "selected_sector_fit": {
+                    "score": 8,
+                    "reason": "Sector fit is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "country_region_fit": {
+                    "score": 8,
+                    "reason": "Place fit is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "affected_groups_fit": {
+                    "score": 8,
+                    "reason": "Affected groups are named.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+            },
+            "affected_groups": [{"group": "Coal workers", "reason": "Job losses."}],
+            "duplicate_candidates": [],
+        }
+
+        with patch.object(validator, "_llm_dimension_validation", AsyncMock(return_value=llm_payload)):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    "Coal workers face job losses.",
+                    "Energy",
+                    "Germany",
+                    "Saxony",
+                    [],
+                    None,
+                )
+            )
+
+        self.assertEqual(result["next_action"], "ask_clarification")
+        self.assertTrue(
+            result["dimension_scores"]["twin_transition_policy_fit"]["needs_clarification"]
+        )
+
+    def test_duplicate_override_survives_grounding_text_with_reason(self):
+        hazard = (
+            "Low-income households in Saxony face higher renewable energy grid costs "
+            "from green transition policy."
+        )
+        with patch.object(validator, "ask_llm_chat", _unavailable):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    (
+                        f"{hazard}\n"
+                        "Reason: Grid upgrade tariff pass-through raises bills for low-income households."
+                    ),
+                    "Energy",
+                    "Germany",
+                    "Saxony",
+                    [hazard],
+                    {
+                        "raw_text": hazard,
+                        "duplicate_override_confirmed": True,
+                    },
+                )
+            )
+
+        self.assertTrue(result["duplicate_candidates"])
+        self.assertNotEqual(result["next_action"], "ask_duplicate_confirmation")
 
     def test_score_ten_overrides_llm_needs_clarification_flag(self):
         llm_payload = {
@@ -1170,35 +1464,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             "twin_transition_policy_fit",
         )
 
-    def test_profile_impact_reason_card_is_insufficient_until_user_adds_reason(self):
-        cards = validator.build_custom_hazard_grounding_status({})
-        status_cards = {card["title"]: card for card in cards}
-
-        self.assertEqual(
-            status_cards["Custom profile impact reason"]["status"],
-            "INSUFFICIENT INFO",
-        )
-        self.assertIn(
-            "No user-added",
-            status_cards["Custom profile impact reason"]["reason"],
-        )
-
-    def test_profile_impact_reason_card_needs_clarification_when_added_group_lacks_reason(self):
-        cards = validator.build_custom_hazard_grounding_status(
-            {"added_affected_groups": [{"group": "Coal workers", "reason": ""}]}
-        )
-        status_cards = {card["title"]: card for card in cards}
-
-        self.assertEqual(
-            status_cards["Custom profile impact reason"]["status"],
-            "NEEDS CLARIFICATION",
-        )
-        self.assertEqual(
-            status_cards["Custom profile impact reason"]["clarification_question"],
-            "How does this hazard affect 'Coal workers'?",
-        )
-
-    def test_profile_impact_reason_card_confirms_when_user_added_reason_exists(self):
+    def test_profile_impact_reason_card_is_not_displayed(self):
         cards = validator.build_custom_hazard_grounding_status(
             {
                 "added_affected_groups": [
@@ -1206,12 +1472,8 @@ class CustomHazardValidationTests(unittest.TestCase):
                 ]
             }
         )
-        status_cards = {card["title"]: card for card in cards}
 
-        self.assertEqual(
-            status_cards["Custom profile impact reason"]["status"],
-            "CONFIRMED",
-        )
+        self.assertNotIn("Custom profile impact reason", [card["title"] for card in cards])
 
     def test_valid_hazard_after_invalid_hazard_clears_stale_dimension_status(self):
         service = ChatService.__new__(ChatService)
@@ -1914,6 +2176,76 @@ class CustomHazardValidationTests(unittest.TestCase):
             ["Coal miners", "households with utility arrears"],
         )
 
+    def test_custom_hazard_review_shows_strict_crowd_sourcing_notice(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            validation_mode="strict",
+            crowd_sourcing_enabled=True,
+            accepted_custom_hazard="Coal phase-out job shock",
+            custom_hazard={
+                "raw_text": "Coal phase-out job shock",
+                "affected_groups": [
+                    {
+                        "group": "Low-income workers",
+                        "reason": "Job loss risk.",
+                    },
+                ],
+            },
+        )
+
+        response = service._custom_hazard_population_review_step("session-1", session)
+
+        self.assertIn("Hazard to be co-created:", response.bot_message)
+        self.assertNotIn("New hazard:", response.bot_message)
+        self.assertIn(
+            "Once saved, this hazard will be visible to other platform users",
+            response.bot_message,
+        )
+        self.assertIn("Bavaria, Germany", response.bot_message)
+
+    def test_custom_hazard_added_shows_strict_crowd_sourcing_notice(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            validation_mode="strict",
+            crowd_sourcing_enabled=True,
+            accepted_custom_hazard="Coal phase-out job shock",
+            accepted_custom_hazard_reason="Coal phase-out can reduce local mining jobs.",
+            accepted_custom_hazard_evidence="Not provided",
+            custom_hazard={
+                "raw_text": "Coal phase-out job shock",
+                "affected_groups": [
+                    {
+                        "group": "Low-income workers",
+                        "reason": "Job loss risk.",
+                    },
+                ],
+            },
+        )
+        service._prepare_custom_hazard_added_profiles = MagicMock(
+            return_value="Coal phase-out job shock"
+        )
+        service._stored_hazard_profiles = MagicMock(
+            return_value=[
+                {
+                    "group": "Low-income workers",
+                    "reason": "Job loss risk.",
+                }
+            ]
+        )
+
+        response = service._custom_hazard_added_step_sync("session-1", session)
+
+        self.assertIn("You have successfully co-created a hazard.", response.bot_message)
+        self.assertIn(
+            "This hazard is now visible to other platform users interested",
+            response.bot_message,
+        )
+        self.assertIn("Bavaria, Germany", response.bot_message)
+
     def test_custom_affected_group_review_cleans_add_echo_from_label(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -1960,6 +2292,30 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertTrue(response.error)
         self.assertIn("No affected groups are selected", response.bot_message)
         self.assertEqual(response.step, "custom_hazard_group_review")
+
+    def test_open_text_add_generic_affected_group_asks_for_specific_group(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            phase="custom_hazard_group_review",
+            accepted_custom_hazard="Coal phase-out job shock",
+            custom_hazard={
+                "raw_text": "Coal phase-out job shock",
+                "affected_groups": [{"group": "Coal workers", "reason": "Job losses."}],
+                "added_affected_groups": [],
+            },
+        )
+
+        response = _run(
+            service._handle_custom_hazard_population_review(
+                "session-1",
+                session,
+                "Add people",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "custom_hazard_group_review")
+        self.assertIn("too broad", response.bot_message)
 
     def test_user_added_affected_group_reason_is_validated_before_storage(self):
         service = ChatService.__new__(ChatService)

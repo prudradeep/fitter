@@ -3,6 +3,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.schemas import ChatResponse
 from app.services.chat_mitigation_creation import ChatMitigationCreationMixin
 from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_session import ChatSession
@@ -84,11 +85,19 @@ class _MitigationReviewEngine(ChatMitigationCreationMixin):
         return questions[session.evaluation_index]
 
 
-class _MitigationClarificationEngine(ChatMitigationCreationMixin, ChatMitigationStepsMixin):
+class _MitigationClarificationEngine(
+    ChatMitigationCreationMixin,
+    ChatMitigationStepsMixin,
+    ChatValidationServiceMixin,
+):
     invalid_message = "Invalid"
 
     def _is_invalid_user_text(self, value):
         return False
+
+    @staticmethod
+    def _strip_wrapping_quotes(message):
+        return message.strip("\"'")
 
     async def _validate_clarification_answer_quality(self, session, message):
         return {"valid": True, "reason": "Clear."}
@@ -119,6 +128,64 @@ class _MitigationClarificationEngine(ChatMitigationCreationMixin, ChatMitigation
 
     async def _validate_frozen_mitigation_inputs(self, *args, **kwargs):
         raise AssertionError("Evidence should be requested before validation.")
+
+
+class _MitigationEvidenceEngine(ChatMitigationCreationMixin):
+    invalid_message = "Invalid"
+
+    @staticmethod
+    def _has_readable_evidence_content(evidence):
+        return bool(evidence)
+
+
+class _MitigationValidationAbstainEngine(
+    ChatMitigationCreationMixin,
+    ChatValidationServiceMixin,
+    ChatMitigationStepsMixin,
+):
+    mitigation_critical_grounding_dimensions = (
+        "hazard_fit",
+        "justification_soundness",
+    )
+    mitigation_support_label_user_evidence = "USER_EVIDENCE"
+    mitigation_support_label_curated_knowledge_base = "CURATED_KNOWLEDGE_BASE"
+
+    def _is_invalid_user_text(self, value):
+        return False
+
+    async def _validate_mitigation_against_stats(
+        self,
+        session,
+        mitigation_measure,
+        reason,
+        evidence="",
+    ):
+        return {
+            "valid": False,
+            "outcome": "ABSTAIN",
+            "reason": "Insufficiently supported dimensions: hazard fit, justification soundness.",
+            "dimensions": {
+                "hazard_fit": {
+                    "status": "INSUFFICIENT_INFO",
+                    "explanation": "No explanation was provided.",
+                },
+                "justification_soundness": {
+                    "status": "INSUFFICIENT_INFO",
+                    "explanation": "No explanation was provided.",
+                },
+            },
+        }
+
+    def _grounding_validation_details(self, session, validation=None):
+        return {}
+
+    @staticmethod
+    def _has_evidence_url_reference(evidence):
+        return False
+
+    @staticmethod
+    def _has_user_supplied_evidence(evidence):
+        return False
 
 
 class MitigationMeasureValidationTests(unittest.TestCase):
@@ -285,6 +352,223 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             "Clarification: It lowers upfront costs for low-income households affected by energy poverty.",
         )
 
+    def test_mitigation_reason_same_as_measure_is_rejected(self):
+        engine = _MitigationClarificationEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+            phase="mitigation_reason",
+            pending_mitigation_measure="Introduce targeted grants for low-income households",
+        )
+
+        response = asyncio.run(
+            engine._validate_mitigation_reason(
+                "test-session",
+                session,
+                "Introduce targeted grants for low-income households",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "mitigation_reason")
+        self.assertIn("reason repeats the mitigation measure", response.bot_message)
+
+    def test_mitigation_clarification_same_as_measure_is_rejected(self):
+        engine = _MitigationClarificationEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+            pending_mitigation_measure="Introduce targeted grants for low-income households",
+            pending_mitigation_reason="",
+            pending_mitigation_evidence="",
+            pending_mitigation_clarity_dimension="justification_clarity",
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_clarity_answer(
+                "test-session",
+                session,
+                "Introduce targeted grants for low-income households",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertIn("clarification repeats information already provided", response.bot_message)
+
+    def test_mitigation_clarification_same_as_reason_is_rejected(self):
+        engine = _MitigationClarificationEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+            pending_mitigation_measure="Introduce targeted grants",
+            pending_mitigation_reason=(
+                "It lowers upfront costs for low-income households affected by energy poverty."
+            ),
+            pending_mitigation_evidence="",
+            pending_mitigation_clarity_dimension="specificity",
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_clarity_answer(
+                "test-session",
+                session,
+                "It lowers upfront costs for low-income households affected by energy poverty.",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertIn("clarification repeats information already provided", response.bot_message)
+
+    def test_mitigation_abstain_returns_clarification_textarea_not_evidence_controls(self):
+        engine = _MitigationValidationAbstainEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+        )
+
+        response = asyncio.run(
+            engine._validate_frozen_mitigation_inputs(
+                "test-session",
+                session,
+                "Introduce targeted grants",
+                "It lowers upfront costs.",
+                "",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertEqual(session.phase, "mitigation_clarity")
+        self.assertEqual(session.pending_mitigation_clarity_dimension, "justification_clarity")
+        self.assertIn("Clarification needed", response.bot_message)
+        option_labels = [option.label for option in response.options]
+        self.assertNotIn("Skip", option_labels)
+        self.assertNotIn("Back to evidence question", option_labels)
+
+    def test_mitigation_evidence_decision_open_text_yes_asks_for_evidence(self):
+        engine = _MitigationEvidenceEngine()
+        session = ChatSession(
+            phase="mitigation_evidence_decision",
+            pending_mitigation_measure="Introduce targeted grants",
+            pending_mitigation_reason="It lowers upfront costs.",
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_evidence_decision(
+                "test-session",
+                session,
+                "I have evidence",
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_evidence")
+        self.assertEqual(response.input_mode, "evidence_only")
+        self.assertEqual(session.phase, "mitigation_evidence_input")
+
+    def test_mitigation_evidence_decision_open_text_no_validates(self):
+        engine = _MitigationEvidenceEngine()
+        engine._validate_frozen_mitigation_inputs = AsyncMock(
+            return_value=ChatResponse(
+                session_id="test-session",
+                step="mitigation_target_population_review",
+                bot_message="validated",
+                options=[],
+                session={},
+            )
+        )
+        session = ChatSession(
+            phase="mitigation_evidence_decision",
+            pending_mitigation_measure="Introduce targeted grants",
+            pending_mitigation_reason="It lowers upfront costs.",
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_evidence_decision(
+                "test-session",
+                session,
+                "skip evidence",
+            )
+        )
+
+        self.assertEqual(response.bot_message, "validated")
+        self.assertEqual(
+            engine._validate_frozen_mitigation_inputs.await_args.args[4],
+            "",
+        )
+
+    def test_mitigation_evidence_decision_open_text_no_i_dont_know_validates(self):
+        engine = _MitigationEvidenceEngine()
+        engine._validate_frozen_mitigation_inputs = AsyncMock(
+            return_value=ChatResponse(
+                session_id="test-session",
+                step="mitigation_target_population_review",
+                bot_message="validated",
+                options=[],
+                session={},
+            )
+        )
+        session = ChatSession(
+            phase="mitigation_evidence_decision",
+            pending_mitigation_measure="Introduce targeted grants",
+            pending_mitigation_reason="It lowers upfront costs.",
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_evidence_decision(
+                "test-session",
+                session,
+                "no, i don't know",
+            )
+        )
+
+        self.assertEqual(response.bot_message, "validated")
+        self.assertEqual(
+            engine._validate_frozen_mitigation_inputs.await_args.args[4],
+            "",
+        )
+
+    def test_mitigation_evidence_decision_accepts_url_in_open_text(self):
+        engine = _MitigationEvidenceEngine()
+        engine._validate_frozen_mitigation_inputs = AsyncMock(
+            return_value=ChatResponse(
+                session_id="test-session",
+                step="mitigation_target_population_review",
+                bot_message="validated",
+                options=[],
+                session={},
+            )
+        )
+        session = ChatSession(
+            phase="mitigation_evidence_decision",
+            pending_mitigation_measure="Introduce targeted grants",
+            pending_mitigation_reason="It lowers upfront costs.",
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_evidence_decision(
+                "test-session",
+                session,
+                "Evidence is at https://example.org/retrofit-study.pdf.",
+            )
+        )
+
+        self.assertEqual(response.bot_message, "validated")
+        self.assertEqual(
+            engine._validate_frozen_mitigation_inputs.await_args.args[4],
+            "Evidence URL: https://example.org/retrofit-study.pdf",
+        )
+
     def test_practical_considerations_ignore_schema_placeholder_heading(self):
         payload = {
             "title": "# Practical Considerations",
@@ -319,6 +603,83 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertEqual(
             ChatMitigationCreationMixin._extract_suggested_policy_reason(markdown),
             "It lowers upfront costs for affected households.",
+        )
+
+    def test_extract_suggested_policy_target_group_mechanisms(self):
+        markdown = (
+            "### Regional support package\n"
+            "- **Proposal:** Provide targeted retrofit grants.\n"
+            "- **Target-group mechanisms:**\n"
+            "  - **Low-income households:** Higher grant coverage reduces upfront costs.\n"
+            "  - **Tenants:** Landlord participation rules reduce split incentives.\n"
+            "- **Why this helps:** It lowers upfront costs for affected households."
+        )
+
+        self.assertEqual(
+            ChatMitigationCreationMixin._extract_suggested_policy_target_group_mechanisms(
+                markdown
+            ),
+            (
+                "Low-income households: Higher grant coverage reduces upfront costs; "
+                "Tenants: Landlord participation rules reduce split incentives"
+            ),
+        )
+
+    def test_target_population_inference_uses_suggested_mechanisms(self):
+        engine = _MitigationReviewEngine()
+        engine._match_mitigation_target_population_answer = AsyncMock(
+            return_value=["Level of income: Low income", "Tenancy status: Tenant"]
+        )
+        session = ChatSession(
+            suggested_new_policy_target_group_mechanisms=(
+                "Low-income households receive higher grant coverage; "
+                "tenants receive landlord participation safeguards."
+            )
+        )
+
+        inferred = asyncio.run(
+            engine._infer_mitigation_target_population_from_inputs(
+                session,
+                "Provide targeted retrofit grants.",
+                "It lowers upfront costs.",
+            )
+        )
+
+        self.assertEqual(
+            inferred,
+            ["Level of income: Low income", "Tenancy status: Tenant"],
+        )
+        matched_text = engine._match_mitigation_target_population_answer.await_args.args[0]
+        self.assertIn("Target-group mechanisms", matched_text)
+        self.assertIn("tenants receive landlord participation safeguards", matched_text)
+
+    def test_target_population_inference_keeps_all_explicit_mechanism_groups(self):
+        engine = _MitigationReviewEngine()
+        engine._match_mitigation_target_population_answer = AsyncMock(
+            return_value=["Utility arrears households (twice or more)"]
+        )
+        session = ChatSession(
+            suggested_new_policy_target_group_mechanisms=(
+                "Utility arrears households (twice or more): Provide direct financial "
+                "support to cover heating costs; Religious minorities: Ensure equal "
+                "access through community outreach and language assistance"
+            )
+        )
+
+        inferred = asyncio.run(
+            engine._infer_mitigation_target_population_from_inputs(
+                session,
+                "Expand the EU Social Climate Fund for vulnerable households.",
+                "It targets clean heating upgrades and energy advice.",
+            )
+        )
+
+        self.assertEqual(
+            inferred,
+            [
+                "Utility arrears households (twice or more)",
+                "Religious minorities",
+            ],
         )
 
     def test_mitigation_review_starts_open_discussion_before_evaluation(self):
@@ -357,6 +718,30 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertIn("Compare the conceptual design", prompt)
         self.assertIn("Do not ask evaluation questions yet", prompt)
         self.assertIn("do not name the source document", prompt)
+
+    def test_mitigation_review_shows_strict_crowd_sourcing_notice(self):
+        engine = _MitigationReviewEngine()
+        engine._mitigation_review_response = AsyncMock(return_value="### Review\nSupported.")
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            validation_mode="strict",
+            crowd_sourcing_enabled=True,
+            selected_hazard="Higher electricity bills",
+            mitigation_measure="Targeted bill support.",
+            mitigation_reason="It offsets affordability pressure.",
+            mitigation_target_population=["Low-income households"],
+            mitigation_validation={},
+        )
+
+        response = asyncio.run(engine._mitigation_review_step("test-session", session))
+
+        self.assertIn(
+            "Once saved, this mitigation measure will be visible to other platform users",
+            response.bot_message,
+        )
+        self.assertIn("Bavaria, Germany", response.bot_message)
 
     def test_mitigation_review_next_step_starts_highest_priority_challenge(self):
         engine = _MitigationReviewEngine()
@@ -721,6 +1106,46 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertEqual(session.implementation_challenges[1]["status"], "partial")
         self.assertEqual(session.implementation_challenges[2]["status"], "unresolved")
         self.assertIn("Administrative burden", response.bot_message)
+        self.assertNotIn("All implementation challenges", response.bot_message)
+
+    def test_review_again_parses_bold_readiness_remaining_unresolved_risks(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            phase="implementation_readiness_assessment",
+            implementation_challenges=[
+                {
+                    "title": "Funding sustainability",
+                    "category": "Cost",
+                    "why_important": "The support may be unaffordable over time.",
+                    "status": "resolved",
+                }
+            ],
+            implementation_challenge_index=1,
+            implementation_readiness_assessment=(
+                "## Implementation Readiness Assessment\n\n"
+                "**Resolved Challenges:**\n"
+                "- Funding sustainability\n\n"
+                "**Remaining Unresolved Risks:**\n"
+                "**Legal eligibility:** Eligibility rules may exclude intended groups.\n\n"
+                "**Recommended Improvements:**\n"
+                "- Assign an accountable legal owner."
+            ),
+        )
+
+        response = asyncio.run(
+            engine._handle_implementation_readiness_action(
+                "test-session",
+                session,
+                "Review unresolved and partially resolved challenges again",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "implementation_challenge_discussion")
+        self.assertEqual(session.phase, "implementation_challenge_discussion")
+        self.assertEqual(session.implementation_challenge_index, 1)
+        self.assertEqual(session.implementation_challenges[1]["status"], "unresolved")
+        self.assertIn("Legal eligibility", response.bot_message)
         self.assertNotIn("All implementation challenges", response.bot_message)
 
     def test_mitigation_review_prompt_includes_d23_page_range_context(self):

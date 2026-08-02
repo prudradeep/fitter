@@ -2,7 +2,8 @@ param(
     [ValidateSet("Patch", "Minor", "Major")]
     [string]$VersionPart = "Patch",
     [string]$Version = "",
-    [switch]$NoVersionBump
+    [switch]$NoVersionBump,
+    [switch]$OfflineAdmin
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,4 +22,8 @@ if (-not $NoVersionBump) {
 
 & (Join-Path $PSScriptRoot "build-python-services.ps1")
 & (Join-Path $PSScriptRoot "build-desktop-launcher.ps1")
-& (Join-Path $PSScriptRoot "build-installer.ps1")
+$installerArgs = @{}
+if ($OfflineAdmin) {
+    $installerArgs.OfflineAdmin = $true
+}
+& (Join-Path $PSScriptRoot "build-installer.ps1") @installerArgs

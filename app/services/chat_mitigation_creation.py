@@ -43,6 +43,8 @@ from app.services.chat_options import (
 )
 from app.services.chat_parsers import (
     is_llm_unavailable_response,
+    normalize_evidence_message,
+    open_evidence_decision_action,
     parse_evaluation_answer,
     parse_reason_evidence,
 )
@@ -57,6 +59,7 @@ from app.services.mitigation_policy_formatting import (
     normalize_current_policy_measure_title,
     simplify_mitigation_implementation_summary,
 )
+from app.services.mitigation_text_rules import local_mitigation_clarification_error
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 
 logger = logging.getLogger(__name__)
@@ -159,6 +162,28 @@ class ChatMitigationCreationMixin:
                 session_id,
                 session,
                 "Your proposed mitigation measure",
+            )
+        clarification_error = local_mitigation_clarification_error(
+            message,
+            [
+                mitigation_measure,
+                reason,
+                session.mitigation_measure or "",
+                session.mitigation_reason or "",
+            ],
+        )
+        if clarification_error:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_clarity",
+                bot_message=render_message(
+                    "input_validation_failed.md",
+                    reason=clarification_error,
+                ),
+                options=self._mitigation_clarity_options(),
+                session=session.summary(),
+                input_mode="textarea",
+                error=True,
             )
 
         if session.pending_mitigation_clarity_dimension in {
@@ -475,11 +500,12 @@ class ChatMitigationCreationMixin:
         message: str,
     ) -> ChatResponse:
         exact_label = exact_option_label(message, MITIGATION_EVIDENCE_DECISION_OPTIONS)
+        open_action = open_evidence_decision_action(message)
         if exact_label is None:
             fuzzy_label = match_option_label(message, MITIGATION_EVIDENCE_DECISION_OPTIONS)
             if fuzzy_label is not None:
                 exact_label = fuzzy_label
-        action = normalize(exact_label or message)
+        action = normalize(exact_label or open_action or message)
         mitigation_measure = session.pending_mitigation_measure or session.mitigation_measure or ""
         reason = session.pending_mitigation_reason or session.mitigation_reason or ""
         if not mitigation_measure or not reason:
@@ -487,6 +513,26 @@ class ChatMitigationCreationMixin:
                 session_id,
                 session,
                 mitigation_measure or "Your proposed mitigation measure",
+            )
+        if open_action == "evidence":
+            evidence_text = normalize_evidence_message(message)
+            if not self._has_readable_evidence_content(evidence_text):
+                return self._mitigation_evidence_input_step(
+                    session_id,
+                    session,
+                    error=True,
+                    message=(
+                        "Evidence is optional. If you provide evidence, it must be "
+                        "readable supporting content. Please provide a DOI/URL with "
+                        "extractable text or a supported file: PDF, DOCX, MD, or TXT."
+                    ),
+                )
+            return await self._validate_frozen_mitigation_inputs(
+                session_id,
+                session,
+                mitigation_measure,
+                reason,
+                evidence_text,
             )
         if action == normalize("Yes"):
             return self._mitigation_evidence_input_step(session_id, session)
@@ -563,8 +609,7 @@ class ChatMitigationCreationMixin:
         if action == normalize("Skip"):
             evidence_text = ""
         else:
-            _, parsed_evidence = parse_reason_evidence(message)
-            evidence_text = (parsed_evidence or message or "").strip()
+            evidence_text = normalize_evidence_message(message)
             if not evidence_text:
                 return self._mitigation_evidence_input_step(
                     session_id,
@@ -649,6 +694,7 @@ class ChatMitigationCreationMixin:
         session.pending_mitigation_evidence = evidence_text
         if session.mitigation_target_population is None:
             inferred = await self._infer_mitigation_target_population_from_inputs(
+                session,
                 mitigation_measure,
                 reason,
             )
@@ -672,14 +718,22 @@ class ChatMitigationCreationMixin:
 
     async def _infer_mitigation_target_population_from_inputs(
         self,
+        session: ChatSession,
         mitigation_measure: str,
         reason: str,
     ) -> list[str]:
+        mechanisms = str(
+            session.suggested_new_policy_target_group_mechanisms or ""
+        ).strip()
         text = (
             f"Mitigation measure:\n{mitigation_measure.strip()}\n\n"
             f"Justification/reason:\n{reason.strip()}"
         )
-        return await self._match_mitigation_target_population_answer(text)
+        if mechanisms:
+            text += f"\n\nTarget-group mechanisms:\n{mechanisms}"
+        inferred = await self._match_mitigation_target_population_answer(text)
+        mechanism_groups = self._extract_target_groups_from_mechanisms(mechanisms)
+        return self._merge_target_population_labels(inferred, mechanism_groups)
 
     def _mitigation_target_population_review_step(
         self,
@@ -2179,6 +2233,10 @@ class ChatMitigationCreationMixin:
                     show_target_population_venn=bool(
                         affected_target_populations and mitigation_target_populations
                     ),
+                    visibility_notice=self._crowd_sourcing_visibility_notice(
+                        session,
+                        "mitigation_measure",
+                    ),
                     review=answer,
                 )
             ),
@@ -2906,21 +2964,16 @@ class ChatMitigationCreationMixin:
         for raw_line in str(assessment or "").splitlines():
             line = normalize_markdown_text(raw_line).strip()
             heading_match = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
-            if heading_match:
-                heading = normalize_for_match(heading_match.group(1))
-                if "partially resolved" in heading:
-                    current_status = "partial"
-                elif "remaining unresolved" in heading or "unresolved risks" in heading:
-                    current_status = "unresolved"
-                else:
-                    current_status = ""
+            heading_text = heading_match.group(1) if heading_match else line
+            heading_status = cls._readiness_assessment_section_status(heading_text)
+            if heading_match or heading_status is not None:
+                current_status = heading_status or ""
                 continue
             if current_status not in {"partial", "unresolved"}:
                 continue
-            bullet_match = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+?)\s*$", line)
-            if not bullet_match:
+            item = cls._readiness_assessment_item_text(line)
+            if not item:
                 continue
-            item = bullet_match.group(1).strip()
             if cls._readiness_assessment_empty_item(item):
                 continue
             title, detail = cls._split_readiness_challenge_item(item)
@@ -2938,6 +2991,47 @@ class ChatMitigationCreationMixin:
                 }
             )
         return challenges
+
+    @staticmethod
+    def _readiness_assessment_section_status(value: str) -> str | None:
+        heading = re.sub(r"^\s*\d+[.)]\s*", "", str(value or "")).strip()
+        heading = re.sub(r"^\s*[-*+]\s*", "", heading).strip()
+        heading = re.sub(r"^\*\*(.*?)\*\*:?\s*$", r"\1", heading).strip()
+        heading = re.sub(r"\*\*(.*?)\*\*", r"\1", heading)
+        heading = heading.strip(" :.-")
+        normalized = normalize_for_match(heading)
+        if not normalized:
+            return None
+        if "partially resolved" in normalized:
+            return "partial"
+        if "remaining unresolved" in normalized or "unresolved risks" in normalized:
+            return "unresolved"
+        section_keywords = (
+            "resolved challenges",
+            "residual implementation concerns",
+            "recommended improvements",
+            "overall implementation",
+            "readiness score",
+            "implementation confidence",
+        )
+        if any(keyword in normalized for keyword in section_keywords):
+            return ""
+        return None
+
+    @staticmethod
+    def _readiness_assessment_item_text(line: str) -> str:
+        bullet_match = re.match(r"^(?:[-*+•]|\d+[.)])\s+(.+?)\s*$", line)
+        if bullet_match:
+            return bullet_match.group(1).strip()
+        bold_item_match = re.match(r"^\*\*([^*]{3,120})\*\*\s*:?\s*(.*)$", line)
+        if bold_item_match:
+            detail = str(bold_item_match.group(2) or "").strip()
+            return (
+                f"{bold_item_match.group(1).strip()}: {detail}"
+                if detail
+                else bold_item_match.group(1).strip()
+            )
+        return ""
 
     @staticmethod
     def _readiness_assessment_empty_item(value: str) -> bool:
@@ -3292,6 +3386,33 @@ class ChatMitigationCreationMixin:
             },
         ]
         return context, messages
+
+    @staticmethod
+    def _crowd_sourcing_visibility_notice(
+        session: ChatSession,
+        item_type: str,
+    ) -> str:
+        if session.validation_mode != "strict" or not session.crowd_sourcing_enabled:
+            return ""
+        region = str(session.region or "").strip()
+        country = str(session.country or "").strip()
+        location = ", ".join(part for part in (region, country) if part)
+        if not location:
+            location = "this selected location"
+        if item_type == "hazard":
+            return (
+                "Once saved, this hazard will be visible to other platform users "
+                f"interested in transition risks for {location}."
+            )
+        if item_type == "saved_hazard":
+            return (
+                "This hazard is now visible to other platform users interested "
+                f"in transition risks for {location}."
+            )
+        return (
+            "Once saved, this mitigation measure will be visible to other platform "
+            f"users interested in mitigation options for {location}."
+        )
 
     def _d23_conceptual_review_context(
         self,
@@ -4879,6 +5000,73 @@ class ChatMitigationCreationMixin:
         reason = re.sub(r"\*\*(.*?)\*\*", r"\1", reason)
         reason = re.sub(r"\*(.*?)\*", r"\1", reason)
         return re.sub(r"\s+", " ", reason).strip()
+
+    @staticmethod
+    def _extract_suggested_policy_target_group_mechanisms(markdown: str) -> str:
+        text = str(markdown or "")
+        lines = text.splitlines()
+        captured: list[str] = []
+        in_block = False
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                if in_block and captured:
+                    break
+                continue
+            start_match = re.match(
+                r"(?i)^[-*]?\s*\*\*Target-group mechanisms:\*\*\s*(.*)$",
+                line,
+            ) or re.match(
+                r"(?i)^[-*]?\s*Target-group mechanisms:\s*(.*)$",
+                line,
+            )
+            if start_match:
+                in_block = True
+                remainder = start_match.group(1).strip()
+                if remainder:
+                    captured.append(remainder)
+                continue
+            if not in_block:
+                continue
+            if re.match(r"^#{1,6}\s+", line):
+                break
+            if re.match(r"^[-*]\s*\*\*[^*]+:\*\*", raw_line):
+                break
+            if re.match(r"^[-*]\s*[A-Za-z][^:]{1,80}:\s+", raw_line) and captured:
+                break
+            captured.append(line)
+        cleaned_items: list[str] = []
+        for item in captured:
+            cleaned = normalize_markdown_text(item)
+            cleaned = re.sub(r"^\s*[-*]\s*", "", cleaned)
+            cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+            cleaned = re.sub(r"\*(.*?)\*", r"\1", cleaned)
+            cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+            if cleaned:
+                cleaned_items.append(cleaned)
+        return "; ".join(cleaned_items).strip()
+
+    @classmethod
+    def _extract_target_groups_from_mechanisms(cls, mechanisms: str) -> list[str]:
+        labels: list[str] = []
+        seen: set[str] = set()
+        for item in re.split(r";|\n", str(mechanisms or "")):
+            cleaned = normalize_markdown_text(item)
+            cleaned = re.sub(r"^\s*[-*]\s*", "", cleaned)
+            cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+            cleaned = re.sub(r"\*(.*?)\*", r"\1", cleaned)
+            if ":" not in cleaned:
+                continue
+            label = re.sub(r"\s+", " ", cleaned.split(":", 1)[0]).strip(" .,:;")
+            key = normalize(label)
+            if (
+                key
+                and key not in seen
+                and cls._is_valid_custom_target_population_group(label)
+            ):
+                seen.add(key)
+                labels.append(label)
+        return labels
 
     @staticmethod
     def _policy_target_group_summary(target_groups: list[dict[str, object]]) -> str:

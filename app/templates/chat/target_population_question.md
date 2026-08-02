@@ -4,7 +4,7 @@
 {% endif %}
 ## Affected Population Group
 
-New hazard:
+Hazard to be co-created:
 
 - **{{ hazard }}**
 

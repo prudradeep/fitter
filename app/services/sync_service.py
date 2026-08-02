@@ -433,6 +433,8 @@ class SyncService:
         self.db.commit()
 
     def knowledge_index_dirty_scopes(self) -> list[str]:
+        if not bool(self.settings.sync_enabled):
+            return []
         self.ensure_schema()
         rows = self.db.execute(
             text(
@@ -452,6 +454,8 @@ class SyncService:
         ]
 
     def user_data_sync_status(self) -> dict[str, Any]:
+        if not bool(self.settings.sync_enabled):
+            return {"enabled": False, "enabled_at": None}
         self.ensure_schema()
         enabled_at = self.user_data_sync_enabled_at()
         return {
@@ -460,6 +464,8 @@ class SyncService:
         }
 
     def user_data_sync_enabled_at(self) -> datetime | None:
+        if not bool(self.settings.sync_enabled):
+            return None
         self.ensure_schema()
         enabled = self._sync_state_value(USER_DATA_SYNC_ENABLED_SCOPE) != "0"
         if not enabled:
@@ -467,6 +473,8 @@ class SyncService:
         return coerce_datetime(self._sync_state_value(USER_DATA_SYNC_ENABLED_AT_SCOPE)) or utc_now()
 
     def set_user_data_sync_enabled(self, enabled: bool) -> dict[str, Any]:
+        if not bool(self.settings.sync_enabled):
+            return {"enabled": False, "enabled_at": None}
         self.ensure_schema()
         enabled_at = self.user_data_sync_enabled_at()
         now = utc_now()

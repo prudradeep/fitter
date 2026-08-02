@@ -200,8 +200,24 @@ async def sync_client_status(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     _ = current_user
-    service = SyncService(db)
     configured = _client_sync_configured()
+    if not bool(settings.sync_enabled):
+        return {
+            "enabled": False,
+            "configured": False,
+            "mode": settings.sync_mode,
+            "server_url": "",
+            "device_id": str(settings.sync_device_id or ""),
+            "auto_on_startup": False,
+            "interval_seconds": 0,
+            "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
+            "client_to_server_knowledge_scopes": ["validated_evidence"],
+            "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
+            "excluded_knowledge_scopes": ["temporary"],
+            "user_data_sync": {"enabled": False, "enabled_at": None},
+            "knowledge_index_dirty_scopes": [],
+        }
+    service = SyncService(db)
     return {
         "enabled": bool(settings.sync_enabled),
         "configured": configured,
@@ -226,6 +242,12 @@ async def sync_client_user_data(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     _ = current_user
+    if not bool(settings.sync_enabled):
+        return {
+            "error": True,
+            "detail": "Sync is disabled for this installation.",
+            "user_data_sync": {"enabled": False, "enabled_at": None},
+        }
     payload = await _sync_payload_or_error(request)
     if isinstance(payload, JSONResponse):
         return {"error": True, "detail": payload.body.decode("utf-8", errors="replace")}

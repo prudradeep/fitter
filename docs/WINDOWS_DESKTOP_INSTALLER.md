@@ -138,7 +138,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionSetup-0.1.5.exe
+build/windows-installer/DrTransitionSetup-0.1.6.exe
 ```
 
 If you only run `build-python-services.ps1`, you will get the service executables
@@ -216,6 +216,32 @@ The installer now performs the first dependency setup pass:
 - Applies schema/migrations only; reference, user, policy, and prompt-library data are pulled from the central sync server on app startup
 - Does not ingest bundled `kb/*.pdf` files locally; Main KB is pulled from the central server
 - Pulls the required Ollama chat and embedding models
+
+The default installer remains a sync-client build and does not create a local
+default user or seed reference data. To build the optional fully local installer
+for offline/admin deployments, pass the offline-admin build flag:
+
+```powershell
+.\packaging\windows\scripts\build-installer.ps1 -OfflineAdmin
+```
+
+or for a full release build:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1 -OfflineAdmin
+```
+
+This produces `DrTransitionOfflineAdminSetup-<version>.exe`, uses a runtime
+template with sync disabled, seeds the bundled base lookup rows and reference
+data locally, seeds the database prompt library from bundled prompt/template
+files, indexes the bundled sector-prompt knowledge chunks, creates or reuses
+`admin@drtransition.local` with the `admin` role, and starts a background
+backend seed for bundled `kb/*.pdf` files into the Main knowledge base. The
+installer does not wait for the Main KB PDF seed to finish; progress and errors
+are written to `%LOCALAPPDATA%\DrTransition\logs\seed-main-kb.out.log` and
+`%LOCALAPPDATA%\DrTransition\logs\seed-main-kb.err.log`. The installer shows the
+seeded admin user details after dependency setup completes, and the final setup
+screen includes a button to copy the admin credentials.
 
 If a custom Ollama model directory is already configured through `OLLAMA_MODELS`
 or a common Ollama `server.json` location, the installer preserves that path

@@ -50,6 +50,7 @@ from app.services.custom_hazard_text_rules import (
 from app.services.evidence_contradiction_service import EvidenceContradictionService
 from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
 from app.services.mitigation_text_rules import (
+    local_mitigation_clarification_error,
     local_mitigation_field_error,
     local_mitigation_measure_error,
     local_mitigation_reason_error,
@@ -1884,6 +1885,24 @@ class ChatValidationServiceMixin:
         mitigation_measure = evaluated_inputs["measure_description"]
         reason = evaluated_inputs["justification"]
         evidence_text = evaluated_inputs["evidence"]
+        local_reason_error = self._local_mitigation_reason_error(reason, mitigation_measure)
+        if local_reason_error:
+            session.pending_mitigation_measure = mitigation_measure
+            session.pending_mitigation_reason = reason
+            session.pending_mitigation_evidence = evidence_text
+            session.phase = "mitigation_reason"
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_reason",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason=local_reason_error,
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="reason_evidence",
+                error=True,
+            )
         session.mitigation_frozen_inputs = evaluated_inputs
         session.phase = "mitigation_evidence_input"
         evidence_branch = self._has_user_supplied_evidence(evidence_text)
@@ -1928,18 +1947,20 @@ class ChatValidationServiceMixin:
                 validation_details=self._grounding_validation_details(session, validation),
             )
         if outcome == "ABSTAIN":
+            session.phase = "mitigation_clarity"
+            session.pending_mitigation_clarity_dimension = "justification_clarity"
             return ChatResponse(
                 session_id=session_id,
-                step="mitigation_evidence",
+                step="mitigation_clarity",
                 bot_message=render_message(
                     "mitigation_validation_abstained.md",
                     reason=self._mitigation_outcome_reason(validation, "ABSTAIN"),
                 ),
-                options=MITIGATION_EVIDENCE_INPUT_OPTIONS,
+                options=self._mitigation_clarity_options(),
                 session=session.summary(),
-                input_mode="evidence_only",
+                input_mode="textarea",
                 input_values={
-                    "evidence_url": self._evidence_url(evidence_text),
+                    "message": "",
                 },
                 error=False,
                 validation_details=self._grounding_validation_details(session, validation),
@@ -2901,8 +2922,23 @@ class ChatValidationServiceMixin:
             self._is_invalid_user_text,
         )
 
-    def _local_mitigation_reason_error(self, reason: str) -> str | None:
-        return local_mitigation_reason_error(reason, self._is_invalid_user_text)
+    def _local_mitigation_reason_error(
+        self,
+        reason: str,
+        mitigation_measure: str | None = None,
+    ) -> str | None:
+        return local_mitigation_reason_error(
+            reason,
+            self._is_invalid_user_text,
+            mitigation_measure,
+        )
+
+    @staticmethod
+    def _local_mitigation_clarification_error(
+        clarification: str,
+        sources: list[str],
+    ) -> str | None:
+        return local_mitigation_clarification_error(clarification, sources)
 
     def _local_mitigation_duplicate_check(
         self, session: ChatSession, mitigation_measure: str

@@ -15,12 +15,19 @@ param(
     [string]$DefaultAppUserDesignation = "Administrator",
     [string]$DefaultAppUserOrganisationType = "Local",
     [string]$DefaultAppUserOrganisationName = "Dr Transition",
+    [string]$DefaultAppUserRole = "auto",
+    [string]$DefaultAppUserCredentialsPath = "",
     [string]$OllamaModel = "",
     [string]$OllamaEmbeddingModel = "nomic-embed-text",
     [string]$OllamaBaseUrl = "http://127.0.0.1:11434",
     [switch]$InstallMySql,
     [switch]$InstallOllama,
     [switch]$PullModels,
+    [switch]$DisableSync,
+    [switch]$IncludeBasicData,
+    [switch]$SeedPromptsFromFiles,
+    [switch]$ReindexSectorPrompts,
+    [switch]$SeedMainKbFromFiles,
     [switch]$SkipDefaultAppUser,
     [switch]$SkipReferenceData,
     [switch]$SkipDatabaseSeed
@@ -56,12 +63,19 @@ if (-not [string]::IsNullOrWhiteSpace($ConfigPath) -and (Test-Path -LiteralPath 
             "DefaultAppUserDesignation" { $DefaultAppUserDesignation = [string]$property.Value }
             "DefaultAppUserOrganisationType" { $DefaultAppUserOrganisationType = [string]$property.Value }
             "DefaultAppUserOrganisationName" { $DefaultAppUserOrganisationName = [string]$property.Value }
+            "DefaultAppUserRole" { $DefaultAppUserRole = [string]$property.Value }
+            "DefaultAppUserCredentialsPath" { $DefaultAppUserCredentialsPath = [string]$property.Value }
             "OllamaModel" { $OllamaModel = [string]$property.Value }
             "OllamaEmbeddingModel" { $OllamaEmbeddingModel = [string]$property.Value }
             "OllamaBaseUrl" { $OllamaBaseUrl = [string]$property.Value }
             "InstallMySql" { if ([bool]$property.Value) { $InstallMySql = $true } }
             "InstallOllama" { if ([bool]$property.Value) { $InstallOllama = $true } }
             "PullModels" { if ([bool]$property.Value) { $PullModels = $true } }
+            "DisableSync" { if ([bool]$property.Value) { $DisableSync = $true } }
+            "IncludeBasicData" { if ([bool]$property.Value) { $IncludeBasicData = $true } }
+            "SeedPromptsFromFiles" { if ([bool]$property.Value) { $SeedPromptsFromFiles = $true } }
+            "ReindexSectorPrompts" { if ([bool]$property.Value) { $ReindexSectorPrompts = $true } }
+            "SeedMainKbFromFiles" { if ([bool]$property.Value) { $SeedMainKbFromFiles = $true } }
             "SkipDefaultAppUser" { if ([bool]$property.Value) { $SkipDefaultAppUser = $true } }
             "SkipReferenceData" { if ([bool]$property.Value) { $SkipReferenceData = $true } }
             "SkipDatabaseSeed" { if ([bool]$property.Value) { $SkipDatabaseSeed = $true } }
@@ -1041,6 +1055,15 @@ function Invoke-DatabaseSeed {
     $seedArgs = @(
         "--seed-database"
     )
+    if ($IncludeBasicData) {
+        $seedArgs += "--include-basic-data"
+    }
+    if ($SeedPromptsFromFiles) {
+        $seedArgs += "--seed-prompts-from-files"
+    }
+    if ($ReindexSectorPrompts) {
+        $seedArgs += "--reindex-sector-prompts"
+    }
     if ($SkipDefaultAppUser) {
         $seedArgs += "--skip-default-user"
     } else {
@@ -1050,7 +1073,8 @@ function Invoke-DatabaseSeed {
             "--default-user-name", $DefaultAppUserName,
             "--default-user-designation", $DefaultAppUserDesignation,
             "--default-user-organisation-type", $DefaultAppUserOrganisationType,
-            "--default-user-organisation-name", $DefaultAppUserOrganisationName
+            "--default-user-organisation-name", $DefaultAppUserOrganisationName,
+            "--default-user-role", $DefaultAppUserRole
         )
     }
     if ($SkipReferenceData) {
@@ -1081,11 +1105,81 @@ function Invoke-DatabaseSeed {
         Write-SetupLog "Default app user creation skipped"
     } else {
         Write-SetupLog "Default app user is ready: $DefaultAppUserEmail"
+        Write-DefaultAppUserCredentialsSummary -SeedOutputPath $seedOut
     }
     if ($SkipReferenceData) {
         Write-SetupLog "Reference data seed skipped; schema is ready for startup sync"
     }
     Write-SetupLog "Database setup completed"
+}
+
+function Write-DefaultAppUserCredentialsSummary {
+    param([string]$SeedOutputPath)
+
+    if ([string]::IsNullOrWhiteSpace($DefaultAppUserCredentialsPath)) {
+        return
+    }
+
+    $status = "ready"
+    $passwordForDisplay = $DefaultAppUserPassword
+    if (Test-Path -LiteralPath $SeedOutputPath) {
+        $seedLines = Get-Content -LiteralPath $SeedOutputPath
+        if ($seedLines | Where-Object { $_ -match '^Default app user created:' }) {
+            $status = "created"
+        } elseif ($seedLines | Where-Object { $_ -match '^Default app user ready:' }) {
+            $status = "ready"
+        }
+        $generatedPasswordLine = $seedLines | Where-Object { $_ -match '^Generated default app user password: (.+)$' } | Select-Object -Last 1
+        if ($generatedPasswordLine -match '^Generated default app user password: (.+)$') {
+            $passwordForDisplay = $Matches[1]
+        }
+    }
+
+    $summaryLines = @(
+        "Email: $($DefaultAppUserEmail.Trim().ToLowerInvariant())",
+        "Role: $DefaultAppUserRole",
+        "Status: $status"
+    )
+    if ([string]::IsNullOrWhiteSpace($passwordForDisplay)) {
+        $summaryLines += "Password: existing account password was preserved"
+    } else {
+        $summaryLines += "Password: $passwordForDisplay"
+    }
+
+    $credentialsDir = Split-Path -Parent $DefaultAppUserCredentialsPath
+    if (-not [string]::IsNullOrWhiteSpace($credentialsDir)) {
+        New-Item -ItemType Directory -Force -Path $credentialsDir | Out-Null
+    }
+    Set-Content -LiteralPath $DefaultAppUserCredentialsPath -Value $summaryLines -Encoding ASCII
+    Write-SetupLog "Default app user summary written to $DefaultAppUserCredentialsPath"
+}
+
+function Start-MainKnowledgeBaseSeed {
+    if (-not $SeedMainKbFromFiles) {
+        return
+    }
+    if (-not (Test-Path -LiteralPath $backendExe)) {
+        Write-SetupLog "Main KB seed skipped; bundled backend executable was not found: $backendExe"
+        return
+    }
+
+    $kbSeedOut = Join-Path $logDir "seed-main-kb.out.log"
+    $kbSeedErr = Join-Path $logDir "seed-main-kb.err.log"
+    $kbSeedArgs = @(
+        "--seed-database",
+        "--skip-schema",
+        "--skip-reference-data",
+        "--skip-default-user",
+        "--seed-main-kb-from-files"
+    )
+
+    try {
+        $process = Start-Process -FilePath $backendExe -ArgumentList (Join-ProcessArguments $kbSeedArgs) -WorkingDirectory $InstallDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $kbSeedOut -RedirectStandardError $kbSeedErr
+        Write-SetupLog "Main KB PDF seed started in the background with process id $($process.Id)"
+        Write-SetupLog "Main KB seed logs: $kbSeedOut and $kbSeedErr"
+    } catch {
+        Write-SetupLog "Main KB PDF seed could not be started; installer will continue. $($_.Exception.Message)"
+    }
 }
 
 function Get-OllamaModels {
@@ -1138,7 +1232,7 @@ try {
 
     $databaseUrl = "mysql+pymysql://$(ConvertTo-DatabaseUrlComponent $AppDbUser):$(ConvertTo-DatabaseUrlComponent $AppDbPassword)@localhost:3306/$(ConvertTo-DatabaseUrlComponent $DbName)"
     $syncDeviceId = Get-OrCreate-SyncDeviceId
-    Update-RuntimeEnv -Updates @{
+    $runtimeEnvUpdates = @{
         DATABASE_URL = $databaseUrl
         FAISS_INDEX_PATH = (Join-Path $runtimeDataDir "knowledge.faiss")
         LLM_LOG_PATH = (Join-Path $runtimeLogDir "llm_requests.jsonl")
@@ -1147,15 +1241,24 @@ try {
         OLLAMA_EMBEDDING_MODEL = $OllamaEmbeddingModel
         SYNC_DEVICE_ID = $syncDeviceId
     }
+    if ($DisableSync) {
+        $runtimeEnvUpdates.SYNC_ENABLED = "false"
+        $runtimeEnvUpdates.SYNC_MODE = "client"
+        $runtimeEnvUpdates.SYNC_SERVER_URL = ""
+        $runtimeEnvUpdates.SYNC_API_TOKEN = ""
+        $runtimeEnvUpdates.SYNC_AUTO_ON_STARTUP = "false"
+        $runtimeEnvUpdates.SYNC_INTERVAL_SECONDS = "0"
+    }
+    Update-RuntimeEnv -Updates $runtimeEnvUpdates
 
     $mysqlExe = Ensure-MySql
     Ensure-Database -MySqlExe $mysqlExe
-    Invoke-DatabaseSeed
-
     Use-ConfiguredOllamaModelsPath
     $ollamaExe = Ensure-Ollama
     Ensure-OllamaModel -OllamaExe $ollamaExe -Model $OllamaModel
     Ensure-OllamaModel -OllamaExe $ollamaExe -Model $OllamaEmbeddingModel
+    Invoke-DatabaseSeed
+    Start-MainKnowledgeBaseSeed
 
     Write-SetupLog "Dr Transition dependency setup completed"
 } catch {

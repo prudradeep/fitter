@@ -51,6 +51,7 @@ from app.services.chat_options import (
 )
 from app.services.chat_parsers import (
     is_llm_unavailable_response,
+    open_evidence_decision_action,
     parse_mitigation_clarity_response,
 )
 from app.services.chat_persistence import ChatPersistenceMixin
@@ -599,6 +600,11 @@ class ChatService(
             return False
         if self._could_be_fuzzy_selection(session, clean_message):
             return False
+        if session.phase in {
+            "add_hazard_evidence_decision",
+            "mitigation_evidence_decision",
+        } and open_evidence_decision_action(clean_message):
+            return False
         return True
 
     @staticmethod
@@ -910,6 +916,11 @@ class ChatService(
         )
         session.suggested_new_policy_reason = self._extract_suggested_policy_reason(
             new_policy_suggestions
+        )
+        session.suggested_new_policy_target_group_mechanisms = (
+            self._extract_suggested_policy_target_group_mechanisms(
+                new_policy_suggestions
+            )
         )
         return "\n\n".join(
             section.strip()

@@ -169,7 +169,12 @@ class ChatMitigationStepsMixin:
         mitigation_measure: str,
     ) -> str:
         suggested_reason = str(session.suggested_new_policy_reason or "").strip()
+        mechanisms = str(
+            session.suggested_new_policy_target_group_mechanisms or ""
+        ).strip()
         if suggested_reason:
+            if mechanisms:
+                return f"{suggested_reason} Target-group mechanisms: {mechanisms}"
             return suggested_reason
 
         parts: list[str] = []
@@ -191,6 +196,8 @@ class ChatMitigationStepsMixin:
                 + "; ".join(str(item) for item in session.practical_considerations[:3])
                 + "."
             )
+        if mechanisms:
+            parts.append(f"Target-group mechanisms: {mechanisms}")
         if not parts and mitigation_measure:
             parts.append(
                 "This adopted proposal should be assessed against the selected "
@@ -800,7 +807,10 @@ class ChatMitigationStepsMixin:
                 error=True,
             )
 
-        local_reason_error = self._local_mitigation_reason_error(reason)
+        local_reason_error = self._local_mitigation_reason_error(
+            reason,
+            mitigation_measure,
+        )
         if local_reason_error:
             return ChatResponse(
                 session_id=session_id,

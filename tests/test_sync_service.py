@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 from typing import Iterator
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -1169,7 +1170,7 @@ class SyncServiceTests(unittest.TestCase):
         finally:
             sync_routes.settings.sync_enabled = original_enabled
 
-    def test_client_user_data_sync_preference_works_when_sync_disabled(self) -> None:
+    def test_client_sync_disabled_endpoints_do_not_prepare_sync_schema(self) -> None:
         user = self._add_user("disabled-local-preference-user@example.com")
         app = FastAPI()
         app.include_router(sync_routes.router)
@@ -1180,14 +1181,17 @@ class SyncServiceTests(unittest.TestCase):
             sync_routes.settings.sync_enabled = False
             client = TestClient(app)
 
-            updated = client.post("/api/sync/client/user-data", json={"enabled": True})
-            status = client.get("/api/sync/client/status")
+            with patch.object(SyncService, "ensure_schema") as ensure_schema:
+                updated = client.post("/api/sync/client/user-data", json={"enabled": True})
+                status = client.get("/api/sync/client/status")
 
             self.assertEqual(updated.status_code, 200)
-            self.assertFalse(updated.json()["error"])
-            self.assertTrue(updated.json()["user_data_sync"]["enabled"])
+            self.assertTrue(updated.json()["error"])
+            self.assertEqual(updated.json()["detail"], "Sync is disabled for this installation.")
+            self.assertFalse(updated.json()["user_data_sync"]["enabled"])
             self.assertFalse(status.json()["enabled"])
-            self.assertTrue(status.json()["user_data_sync"]["enabled"])
+            self.assertFalse(status.json()["user_data_sync"]["enabled"])
+            ensure_schema.assert_not_called()
         finally:
             sync_routes.settings.sync_enabled = original_enabled
 

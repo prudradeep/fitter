@@ -74,6 +74,9 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
             suggested_new_policy_reason=(
                 "It lowers heat exposure and upfront costs for vulnerable households."
             ),
+            suggested_new_policy_target_group_mechanisms=(
+                "Low-income households receive higher grant coverage; older adults receive priority outreach."
+            ),
         )
 
         response = asyncio.run(
@@ -88,7 +91,9 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
         self.assertEqual(session.pending_mitigation_measure, "Targeted heat pump support for vulnerable households")
         self.assertEqual(
             session.pending_mitigation_reason,
-            "It lowers heat exposure and upfront costs for vulnerable households.",
+            "It lowers heat exposure and upfront costs for vulnerable households. "
+            "Target-group mechanisms: Low-income households receive higher grant coverage; "
+            "older adults receive priority outreach.",
         )
         self.assertIn("Country:", response.bot_message)
         self.assertIn("Germany", response.bot_message)
@@ -99,6 +104,8 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
         self.assertIn("Targeted heat pump support for vulnerable households", response.bot_message)
         self.assertIn("Reason:", response.bot_message)
         self.assertIn("lowers heat exposure", response.bot_message)
+        self.assertIn("Target-group mechanisms", response.bot_message)
+        self.assertIn("older adults", response.bot_message)
 
     def test_adopt_falls_back_to_current_policy_mitigation(self):
         engine = _ReasonConfirmationEngine()

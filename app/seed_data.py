@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import secrets
@@ -12,7 +13,11 @@ from app.config import get_settings
 from app.db.legacy_schema_repair import run_legacy_schema_repair
 from app.db.migrations_runtime import run_runtime_migrations
 from app.db.session import SessionLocal, validate_database_connection
-from app.models import AppUser
+from app.models import AppUser, KnowledgeDocument
+from app.resource_paths import resource_path
+from app.services.knowledge_base import MAIN_KB_SCOPE, KnowledgeBaseService
+from app.services.prompt_store import seed_prompts_from_files
+from app.services.sector_prompt_rag import SectorPromptRagService
 
 DEFAULT_APP_USER_EMAIL = "admin@drtransition.local"
 DEFAULT_APP_USER_PASSWORD = os.getenv("DEFAULT_APP_USER_PASSWORD", "")
@@ -20,6 +25,7 @@ DEFAULT_APP_USER_NAME = "Dr Transition Admin"
 DEFAULT_APP_USER_DESIGNATION = "Administrator"
 DEFAULT_APP_USER_ORGANISATION_TYPE = "Local"
 DEFAULT_APP_USER_ORGANISATION_NAME = "Dr Transition"
+KB_ROOT = resource_path("kb")
 
 
 def ensure_default_app_user(
@@ -90,6 +96,53 @@ def _normalized_default_user_role(role: str) -> str:
     return "admin" if normalized == "admin" else "user"
 
 
+async def seed_main_kb_from_files(*, overwrite: bool = False) -> dict[str, object]:
+    if not KB_ROOT.exists():
+        return {"ingested": [], "skipped": [], "failures": [{"source": "kb", "detail": "Bundled kb directory was not found."}]}
+
+    pdf_paths = sorted(path for path in KB_ROOT.rglob("*.pdf") if path.is_file())
+    ingested: list[dict[str, object]] = []
+    skipped: list[str] = []
+    failures: list[dict[str, str]] = []
+
+    with SessionLocal() as db:
+        service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
+        for path in pdf_paths:
+            source_uri = path.relative_to(KB_ROOT).as_posix()
+            if not overwrite:
+                existing = db.scalar(
+                    select(KnowledgeDocument.id).where(
+                        KnowledgeDocument.scope == MAIN_KB_SCOPE,
+                        KnowledgeDocument.user_id.is_(None),
+                        KnowledgeDocument.source_uri == source_uri,
+                    )
+                )
+                if existing:
+                    skipped.append(source_uri)
+                    continue
+            try:
+                result = await service.ingest_file(
+                    source_uri,
+                    path.read_bytes(),
+                    allow_lexical_only=True,
+                )
+            except Exception as exc:
+                logging.getLogger(__name__).exception("Failed to seed KB file %s", source_uri)
+                failures.append({"source": source_uri, "detail": str(exc)})
+                continue
+            if result.get("error"):
+                failures.append(
+                    {
+                        "source": source_uri,
+                        "detail": str(result.get("detail") or "Could not ingest file."),
+                    }
+                )
+                continue
+            ingested.append(result)
+
+    return {"ingested": ingested, "skipped": skipped, "failures": failures}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Apply the database schema and reload reference data from CSV/XLSX files."
@@ -105,6 +158,14 @@ def main() -> None:
         help=(
             "Run the legacy CREATE/ALTER repair path after versioned migrations. "
             "Use only for local/installer recovery, never routine production deploys."
+        ),
+    )
+    parser.add_argument(
+        "--include-basic-data",
+        action="store_true",
+        help=(
+            "Include the base schema.sql INSERT data such as countries, sectors, "
+            "regions, questions, and options."
         ),
     )
     parser.add_argument("--skip-default-user", action="store_true")
@@ -141,6 +202,26 @@ def main() -> None:
             "on clients and creates an admin on sync servers."
         ),
     )
+    parser.add_argument(
+        "--seed-prompts-from-files",
+        action="store_true",
+        help="Seed database-backed prompts from bundled prompt/template files.",
+    )
+    parser.add_argument(
+        "--reindex-sector-prompts",
+        action="store_true",
+        help="Seed sector-prompt knowledge chunks from bundled sector prompt files.",
+    )
+    parser.add_argument(
+        "--seed-main-kb-from-files",
+        action="store_true",
+        help="Seed bundled kb/*.pdf files into the main knowledge base.",
+    )
+    parser.add_argument(
+        "--overwrite-main-kb",
+        action="store_true",
+        help="Re-ingest bundled kb/*.pdf files even if matching source URIs already exist.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -151,8 +232,37 @@ def main() -> None:
     seed_reference_data = not args.skip_reference_data and not args.legacy_schema_repair
     run_runtime_migrations(
         apply_base_schema=not args.skip_schema,
+        include_basic_data=args.include_basic_data if not args.skip_schema else None,
         seed_reference_data=seed_reference_data,
     )
+    if args.seed_prompts_from_files:
+        prompt_count = seed_prompts_from_files()
+        print(f"Prompt library seeded from files: {prompt_count} prompt(s).")
+    if args.reindex_sector_prompts:
+        with SessionLocal() as db:
+            result = asyncio.run(SectorPromptRagService(db).ensure_indexed(force=True))
+        indexed = len(result.get("indexed") or [])
+        skipped = len(result.get("skipped") or [])
+        failures = result.get("failures") or []
+        print(f"Sector prompt knowledge indexed: {indexed} indexed, {skipped} skipped.")
+        if failures:
+            for failure in failures:
+                sector = failure.get("sector") if isinstance(failure, dict) else "unknown"
+                detail = failure.get("detail") if isinstance(failure, dict) else str(failure)
+                print(f"Sector prompt indexing failed for {sector}: {detail}")
+            raise RuntimeError("Sector prompt knowledge indexing failed.")
+    if args.seed_main_kb_from_files:
+        result = asyncio.run(seed_main_kb_from_files(overwrite=args.overwrite_main_kb))
+        ingested = len(result.get("ingested") or [])
+        skipped = len(result.get("skipped") or [])
+        failures = result.get("failures") or []
+        print(f"Main KB files seeded: {ingested} ingested, {skipped} skipped.")
+        if failures:
+            for failure in failures:
+                source = failure.get("source") if isinstance(failure, dict) else "unknown"
+                detail = failure.get("detail") if isinstance(failure, dict) else str(failure)
+                print(f"Main KB seed failed for {source}: {detail}")
+            raise RuntimeError("Main KB file seeding failed.")
     if args.legacy_schema_repair:
         run_legacy_schema_repair(seed_reference_data=True)
     if not args.skip_default_user:

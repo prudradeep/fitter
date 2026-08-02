@@ -1,4 +1,105 @@
+import re
+
 from app.services.chat_json import parse_json_array, parse_json_object
+
+
+def extract_first_url(message: str) -> str:
+    text = str(message or "")
+    match = re.search(r"https?://[^\s<>)\"']+", text)
+    if not match:
+        return ""
+    return match.group(0).rstrip(".,;:]")
+
+
+def normalize_evidence_message(message: str) -> str:
+    _, parsed_evidence = parse_reason_evidence(message)
+    evidence = (parsed_evidence or message or "").strip()
+    if not evidence:
+        return ""
+    if extract_first_url(evidence) and "evidence url:" not in evidence.casefold():
+        return f"Evidence URL: {extract_first_url(evidence)}"
+    return evidence
+
+
+def open_evidence_decision_action(message: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", str(message or "").strip().casefold())
+    compact = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+    if not normalized:
+        return None
+    if extract_first_url(message):
+        return "evidence"
+    yes_phrases = {
+        "yes",
+        "yes i have evidence",
+        "yes, i have evidence",
+        "i have evidence",
+        "i want to add evidence",
+        "add evidence",
+        "provide evidence",
+        "upload evidence",
+        "paste evidence",
+        "i can provide evidence",
+    }
+    no_phrases = {
+        "no",
+        "no evidence",
+        "i do not have evidence",
+        "i don't have evidence",
+        "i dont have evidence",
+        "i don't have it",
+        "i dont have it",
+        "i don't have",
+        "i dont have",
+        "no, i don't have",
+        "no i don't have",
+        "no, i dont have",
+        "no i dont have",
+        "no, i don't know",
+        "no i don't know",
+        "no, i dont know",
+        "no i dont know",
+        "skip evidence",
+        "continue without evidence",
+        "proceed without evidence",
+        "without evidence",
+        "no, continue",
+        "no continue",
+    }
+    if normalized in yes_phrases:
+        return "yes"
+    if normalized in no_phrases:
+        return "no"
+    if compact.startswith("no ") and any(
+        phrase in compact
+        for phrase in (
+            "dont have",
+            "do not have",
+            "not have",
+            "dont know",
+            "do not know",
+            "not know",
+        )
+    ):
+        return "no"
+    if compact.startswith("i ") and any(
+        phrase in compact
+        for phrase in (
+            "dont have",
+            "do not have",
+            "dont know",
+            "do not know",
+        )
+    ):
+        return "no"
+    if "evidence" in normalized and any(
+        phrase in normalized for phrase in ("without", "skip", "do not", "don't", "no")
+    ):
+        return "no"
+    if "evidence" in normalized and any(
+        token in normalized for token in ("add", "provide", "upload", "paste", "have")
+    ):
+        return "yes"
+    return None
 
 
 def parse_additional_dgs(message: str) -> list[str]:

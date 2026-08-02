@@ -1549,6 +1549,7 @@ def repair_partial_installer_schema() -> bool:
 def run_runtime_migrations(
     *,
     apply_base_schema: bool = False,
+    include_basic_data: bool | None = None,
     seed_reference_data: bool = False,
 ) -> None:
     """Apply schema changes through an explicit migration entry point.
@@ -1557,7 +1558,7 @@ def run_runtime_migrations(
     objects. Production deploys should use this versioned path only.
     """
     if apply_base_schema:
-        run_schema_sql()
+        run_schema_sql(include_basic_data=include_basic_data)
     apply_versioned_migrations()
     repair_partial_installer_schema()
     if seed_reference_data:

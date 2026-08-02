@@ -1,7 +1,7 @@
-## Mitigation Validation Needs More Support
+## Clarification needed
 
-I could not validate this mitigation measure because the authoritative corpus does not cover one or more critical dimensions.
+I could not validate this mitigation measure because one or more critical dimensions need clearer support.
 
 {{ reason }}
 
-Your current reason and evidence have been preserved. Revise them or add a published source that covers the identified gap.
+Your current reason and evidence have been preserved. Please clarify the missing support in your own words. Evidence can be added later if needed.

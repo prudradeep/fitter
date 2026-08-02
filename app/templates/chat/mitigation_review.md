@@ -12,6 +12,10 @@ Reason:
 
 {{ reason }}
 
+{% if visibility_notice %}
+> {{ visibility_notice }}
+
+{% endif %}
 {% if target_population %}
 Target population:
 

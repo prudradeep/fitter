@@ -53,6 +53,8 @@ from app.services.chat_options import (
     normalize_for_match,
 )
 from app.services.chat_parsers import (
+    normalize_evidence_message,
+    open_evidence_decision_action,
     is_llm_unavailable_response,
     parse_llm_hazard_list,
     parse_reason_evidence,
@@ -311,6 +313,15 @@ class ChatHazardCreationMixin:
             ).strip()
             return self._hazard_evidence_decision_step(session_id, session)
         if action == CustomHazardAction.REVIEW_GROUPS:
+            generic_group = self._first_generic_affected_group(
+                state.get("affected_groups") or []
+            )
+            if generic_group:
+                return self._custom_hazard_generic_group_clarification_step(
+                    session_id,
+                    session,
+                    generic_group,
+                )
             session.accepted_custom_hazard = hazard
             session.accepted_custom_hazard_reason = (
                 str(state.get("reason") or "").strip()
@@ -371,6 +382,33 @@ class ChatHazardCreationMixin:
             error=False,
         )
 
+    def _custom_hazard_generic_group_clarification_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        group: str,
+    ) -> ChatResponse:
+        state = self._custom_hazard_state(session)
+        state["pending_generic_affected_group"] = group
+        session.phase = ChatPhase.CUSTOM_HAZARD_CLARIFICATION.value
+        question = (
+            f"'{group}' is too broad to use as an affected population group. "
+            "Which specific group is affected? For example, low-income households, "
+            "rural residents, tenants, older adults, workers in a specific sector, "
+            "or another clearly affected group."
+        )
+        state["pending_clarification_questions"] = [question]
+        state["message"] = "A more specific affected population group is needed."
+        return self._custom_hazard_response(
+            session_id=session_id,
+            session=session,
+            step="custom_hazard_clarification",
+            bot_message=markdown_to_html(question),
+            options=HAZARD_ENTRY_OPTIONS,
+            input_mode="textarea",
+            error=False,
+        )
+
     def _custom_hazard_dimension_reason(self, state: dict[str, object]) -> str:
         dimensions = state.get("dimension_scores") if isinstance(state.get("dimension_scores"), dict) else {}
         reasons = [
@@ -409,6 +447,12 @@ class ChatHazardCreationMixin:
         compact = compact_for_match(label)
         if not label:
             return "Please name the affected population group to add."
+        if self._is_generic_affected_group_label(label):
+            return (
+                f"'{label}' is too broad. Please name a more specific affected group, "
+                "such as low-income households, rural residents, tenants, older adults, "
+                "or workers in a specific sector."
+            )
         if self._is_invalid_user_text(label) or len(compact) < 4:
             return "Please add a meaningful affected population group."
 
@@ -481,6 +525,47 @@ class ChatHazardCreationMixin:
             f"'{label}' does not look like an affected population group. "
             "Please add a group of people, households, workers, communities, firms, or residents affected by the hazard."
         )
+
+    @classmethod
+    def _first_generic_affected_group(cls, groups: object) -> str:
+        if not isinstance(groups, list):
+            return ""
+        for group in groups:
+            if isinstance(group, dict):
+                label = str(group.get("group") or group.get("name") or "").strip()
+            else:
+                label = str(group or "").strip()
+            if cls._is_generic_affected_group_label(label):
+                return label
+        return ""
+
+    @staticmethod
+    def _is_generic_affected_group_label(group: str) -> bool:
+        normalized = normalize_for_match(group)
+        compact = compact_for_match(group)
+        generic = {
+            "general population",
+            "population",
+            "people",
+            "persons",
+            "citizens",
+            "communities",
+            "community",
+            "households",
+            "household",
+            "residents",
+            "resident",
+            "users",
+            "user",
+            "consumers",
+            "consumer",
+            "public",
+            "families",
+            "family",
+        }
+        return normalized in {normalize_for_match(item) for item in generic} or compact in {
+            compact_for_match(item) for item in generic
+        }
 
     def _is_user_added_custom_affected_group(
         self,
@@ -1699,8 +1784,10 @@ class ChatHazardCreationMixin:
             state = self._custom_hazard_state(session)
             state["evidence_decision_asked"] = True
         bot_message = message or markdown_to_html(
-            "Do you have evidence to validate this hazard?\n\n"
-            "Choose **Yes** to add a URL or file, or **No** to continue without evidence."
+            "Evidence is optional, but it can make this hazard easier to validate "
+            "and more useful to other users. Do you have evidence for this hazard, "
+            "such as a report, article, dataset, policy document, or URL?\n\n"
+            "Choose **Yes** to add evidence, or **No** to continue without it."
         )
         return ChatResponse(
             session_id=session_id,
@@ -1717,11 +1804,18 @@ class ChatHazardCreationMixin:
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         exact_label = exact_option_label(message, HAZARD_EVIDENCE_DECISION_OPTIONS)
+        open_action = open_evidence_decision_action(message)
+        if open_action == "evidence":
+            return await self._validate_staged_custom_hazard(
+                session_id,
+                session,
+                normalize_evidence_message(message),
+            )
         if exact_label is None:
             fuzzy_label = match_option_label(message, HAZARD_EVIDENCE_DECISION_OPTIONS)
             if fuzzy_label is not None:
-                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
-        action = normalize(exact_label or message)
+                exact_label = fuzzy_label
+        action = normalize(exact_label or open_action or message)
         if action == normalize("Yes"):
             return self._hazard_evidence_input_step(session_id, session)
         if action == normalize("No"):
@@ -1743,7 +1837,8 @@ class ChatHazardCreationMixin:
     ) -> ChatResponse:
         session.phase = "add_hazard_evidence_input"
         bot_message = message or markdown_to_html(
-            "Please add evidence for this hazard. You can paste a URL or attach a supported file."
+            "Great. Paste a URL here or attach a supported file: PDF, DOCX, MD, "
+            "or TXT. If you do not have it ready, choose **Skip** and continue."
         )
         return ChatResponse(
             session_id=session_id,
@@ -1766,8 +1861,7 @@ class ChatHazardCreationMixin:
         if normalize(exact_label or message) == normalize("Skip"):
             return await self._validate_staged_custom_hazard(session_id, session, "")
 
-        _, parsed_evidence = parse_reason_evidence(message)
-        evidence = (parsed_evidence or message or "").strip()
+        evidence = normalize_evidence_message(message)
         if not evidence:
             return self._hazard_evidence_input_step(
                 session_id,

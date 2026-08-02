@@ -1,12 +1,22 @@
 import json
 import unittest
+from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app.config import Settings
-from app.services.llm_logging import log_llm_exchange
+from app.services.llm_logging import _dated_log_path, log_llm_exchange
 
 
 class LlmLoggingTests(unittest.TestCase):
+    def test_dated_log_path_uses_daily_jsonl_file(self):
+        path = _dated_log_path(
+            Path("logs/llm_requests.jsonl"),
+            datetime(2026, 7, 31, 10, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(path, Path("logs/llm_requests-2026-07-31.jsonl"))
+
     def test_log_llm_exchange_writes_jsonl_record(self):
         writes: list[str] = []
         handle = MagicMock()

@@ -61,6 +61,16 @@ class RuntimeMigrationTests(unittest.TestCase):
         mitigation.assert_called_once_with()
         hazards.assert_called_once_with(fake_connection)
 
+    def test_runtime_migrations_can_include_base_schema_data_explicitly(self) -> None:
+        with (
+            patch("app.db.migrations_runtime.run_schema_sql") as run_schema,
+            patch("app.db.migrations_runtime.apply_versioned_migrations"),
+            patch("app.db.migrations_runtime.repair_partial_installer_schema"),
+        ):
+            run_runtime_migrations(apply_base_schema=True, include_basic_data=True)
+
+        run_schema.assert_called_once_with(include_basic_data=True)
+
     def test_base_schema_skips_basic_data_when_disabled(self) -> None:
         executed = self._run_schema_sql(
             """

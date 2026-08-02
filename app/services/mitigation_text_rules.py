@@ -30,12 +30,13 @@ def local_mitigation_field_error(
     measure_error = local_mitigation_measure_error(mitigation_measure, is_invalid_user_text)
     if measure_error:
         return measure_error
-    return local_mitigation_reason_error(reason, is_invalid_user_text)
+    return local_mitigation_reason_error(reason, is_invalid_user_text, mitigation_measure)
 
 
 def local_mitigation_reason_error(
     reason: str,
     is_invalid_user_text: InvalidTextChecker,
+    mitigation_measure: str | None = None,
 ) -> str | None:
     if is_invalid_user_text(reason):
         return (
@@ -48,6 +49,11 @@ def local_mitigation_reason_error(
     compact = compact_for_match(reason)
     if len(compact) < 8:
         return "The reason is too short. Please explain the mechanism in a little more detail."
+    if mitigation_measure and mitigation_response_repeats_source(reason, mitigation_measure):
+        return (
+            "The reason repeats the mitigation measure. Please explain how this "
+            "measure reduces the selected hazard for the affected groups."
+        )
 
     non_answer_patterns = (
         r"\b(?:i\s+)?don\s*t\s+know\b",
@@ -127,6 +133,57 @@ def local_mitigation_reason_error(
         )
 
     return None
+
+
+def local_mitigation_clarification_error(
+    clarification: str,
+    sources: list[str],
+) -> str | None:
+    for source in sources:
+        if mitigation_response_repeats_source(clarification, source):
+            return (
+                "The clarification repeats information already provided. Please add "
+                "new details that explain the mitigation mechanism or missing context."
+            )
+    return None
+
+
+def mitigation_response_repeats_source(response: str, source: str) -> bool:
+    response_key = normalize_for_match(_strip_response_label(response))
+    source_key = normalize_for_match(_strip_response_label(source))
+    if not response_key or not source_key:
+        return False
+    if response_key == source_key:
+        return True
+
+    response_compact = compact_for_match(response_key)
+    source_compact = compact_for_match(source_key)
+    if len(response_compact) >= 16 and len(source_compact) >= 16:
+        if response_compact in source_compact or source_compact in response_compact:
+            return True
+
+    response_words = hazard_similarity_words(response_key)
+    source_words = hazard_similarity_words(source_key)
+    if not response_words or not source_words:
+        return False
+    overlap = len(response_words & source_words)
+    smaller_overlap = overlap / max(1, min(len(response_words), len(source_words)))
+    larger_overlap = overlap / max(1, max(len(response_words), len(source_words)))
+    return smaller_overlap >= 0.9 and larger_overlap >= 0.8
+
+
+def _strip_response_label(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    while True:
+        updated = re.sub(
+            r"^(?:reason|justification|clarification|mitigation measure|mitigation)\s*:\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        ).strip()
+        if updated == text:
+            return text
+        text = updated
 
 
 def mitigations_are_similar(left: str, right: str) -> bool:

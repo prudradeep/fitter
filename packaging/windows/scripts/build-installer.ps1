@@ -1,3 +1,7 @@
+param(
+    [switch]$OfflineAdmin
+)
+
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
@@ -33,4 +37,10 @@ if (-not $iscc) {
     throw "ISCC.exe was not found. Install Inno Setup 6 and ensure ISCC.exe is on PATH."
 }
 
-& $iscc $iss
+$isccArgs = @($iss)
+if ($OfflineAdmin) {
+    $isccArgs += "/DOfflineAdminInstaller"
+    Write-Host "Building offline admin installer with local seeding enabled."
+}
+
+& $iscc @isccArgs
