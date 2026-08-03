@@ -14,6 +14,79 @@ flow begins when the user chooses:
 Add a new Hazard
 ```
 
+**Old Flow Summary**
+
+Previously, the custom hazard flow behaved like this:
+
+```text
+Enter hazard title
+-> accept/reject title
+-> ask for reason
+-> ask evidence with Yes / No buttons only
+-> validate reason and evidence
+-> run duplicate and grounding checks
+-> review affected groups
+-> save hazard
+```
+
+Important limitations in the old flow:
+
+```text
+1. Natural evidence replies such as "no, I don't have" could be rejected by the
+   generic input-quality gate instead of being treated as No.
+2. URL evidence pasted in normal chat text was not always extracted from the
+   evidence decision message.
+3. The dimension review displayed "Custom profile impact reason" as a status
+   card, even though custom affected-group clarification already handled that.
+4. Generic affected groups such as "people" could pass too far before the user
+   was asked for a specific group.
+5. The duplicate confirmation branch could loop on "Possible Duplicate Hazard"
+   after the user chose to continue with a custom hazard.
+6. The affected-group review labelled the refined hazard as "New hazard", which
+   was confusing when the app had rewritten the title.
+7. Strict validation with Crowd Sourcing enabled did not consistently show the
+   platform-visibility notice on review and final success screens.
+```
+
+**New Flow Summary**
+
+The current custom hazard flow is:
+
+```text
+Enter hazard title
+-> deterministic and LLM title screening
+-> duplicate check
+-> ask title clarification if needed
+-> ask reason / justification
+-> ask evidence decision
+-> accept open-chat Yes / No / URL evidence
+-> validate core dimensions first
+-> loop clarification until Hazard, Twin-transition, Sector, and Country/Region fit are clear
+-> ask generic affected-group clarification if needed
+-> review affected groups under "Hazard to be co-created"
+-> show strict + crowd-sourcing visibility notice when applicable
+-> save hazard
+-> show final co-created hazard success message with visibility notice when applicable
+```
+
+Key behavior in the new flow:
+
+```text
+1. Core dimensions are resolved before reason/evidence/group review can complete:
+   Hazard, Twin-transition policy, selected Sector, and Country/Region fit.
+2. Evidence decision accepts buttons and open conversation messages.
+3. "No", "no I don't have", "no, I don't know", and similar messages continue
+   without evidence.
+4. A URL pasted in an open conversation message is extracted as URL evidence.
+5. Generic affected groups are rejected and the user is asked for a more
+   specific targetable group.
+6. The "Custom profile impact reason" display-only card is removed; custom
+   profile clarification remains in the affected-group flow.
+7. Duplicate override is respected after the user chooses to continue.
+8. Strict validation plus Crowd Sourcing shows a visibility notice on review and
+   success screens.
+```
+
 System hazards shown in the normal hazard-selection flow are seeded from the
 authoritative sector prompt files under:
 
@@ -357,6 +430,11 @@ Edit custom hazard
 
 If there is no blocking duplicate, the app continues.
 
+If the user chooses to continue with the custom hazard, the duplicate override
+is stored against the original hazard title. Later validation rounds preserve
+that override even when reason or evidence text has been appended, so the user
+does not get stuck in the same duplicate confirmation loop.
+
 **9. Reason / Justification Clarification**
 
 After the hazard title is accepted, the app stores:
@@ -458,6 +536,20 @@ step = custom_hazard_evidence
 ```
 
 The user can paste an evidence URL or attach a supported file.
+
+The evidence decision step also accepts open conversation messages. For example:
+
+```text
+yes, I have evidence
+I want to add evidence
+no I don't have
+no, I don't know
+continue without evidence
+Use this evidence https://example.org/report.pdf
+```
+
+Open-text `No` messages continue without evidence. Open-text URL messages are
+normalized into URL evidence and proceed to validation.
 
 **12. Validate Reason / Evidence**
 
@@ -628,7 +720,6 @@ Selected sector fit
 Country / region fit
 Affected population groups
 Duplicate check
-Custom profile impact reason
 Clarification progress
 Validation readiness
 ```
@@ -679,6 +770,32 @@ The user can confirm affected groups or edit them.
 If the user adds an affected group without a reason, the app can ask why that
 group is affected.
 
+The review screen labels the refined hazard as:
+
+```text
+Hazard to be co-created:
+```
+
+instead of the older `New hazard:` label. This makes it clear that the app is
+showing the reviewed/refined hazard title.
+
+If a group label is too generic, such as:
+
+```text
+people
+households
+residents
+consumers
+general population
+```
+
+the app asks the user to provide a specific affected group before the hazard can
+be confirmed.
+
+When strict validation and Crowd Sourcing are enabled, the review screen also
+shows a visibility notice explaining that the hazard will be visible to platform
+users interested in the selected region and country.
+
 **20. Finalize Custom Hazard**
 
 Once the hazard is valid and grounded, the app finalizes it:
@@ -711,6 +828,10 @@ session.accepted_custom_hazard_id
 
 If evidence was supplied and accepted, temporary evidence can be promoted to
 validated evidence.
+
+When strict validation and Crowd Sourcing are enabled, the final success message
+also shows that the hazard is now visible to other platform users interested in
+transition risks for the selected region and country.
 
 **21. Population Profile Extraction**
 

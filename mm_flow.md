@@ -12,6 +12,93 @@ Country -> Region -> Sector -> Hazard -> Socio-demographic profiles
 For a custom hazard, the same mitigation flow starts after the custom hazard has
 been accepted and behaves like the selected hazard.
 
+**Old Flow Summary**
+
+Previously, the mitigation-measure flow behaved like this:
+
+```text
+Start mitigation planning
+-> choose manual entry or adopt suggested proposal
+-> validate mitigation measure
+-> ask clarification / reason
+-> ask evidence with Yes / No buttons only
+-> validate grounded mitigation
+-> identify target population from measure and reason
+-> save mitigation measure
+-> concept comparison
+-> implementation challenges
+-> implementation readiness assessment
+-> evaluation
+```
+
+Important limitations in the old flow:
+
+```text
+1. Suggested proposal adoption used the proposal and reason, but target-group
+   mechanisms were not reliably carried into target-population identification.
+2. If the suggested proposal listed multiple target-group mechanisms, target
+   population inference could identify only one group.
+3. Natural evidence replies such as "no, I don't know" could be rejected by the
+   generic input-quality gate instead of being treated as No.
+4. URL evidence pasted in normal chat text was not always extracted from the
+   evidence decision message.
+5. The reason or clarification could repeat the mitigation measure text and
+   still move forward.
+6. Grounded validation ABSTAIN / "needs more support" returned the evidence-only
+   UI with Skip and evidence file controls, even when clarification was needed.
+7. Review of unresolved or partially resolved implementation challenges depended
+   too heavily on stored challenge statuses and could miss unresolved risks that
+   were visible in the readiness assessment text.
+8. Strict validation with Crowd Sourcing enabled did not consistently show the
+   platform-visibility notice on mitigation review.
+```
+
+**New Flow Summary**
+
+The current mitigation-measure flow is:
+
+```text
+Start mitigation planning
+-> choose manual entry or adopt suggested proposal
+-> preserve proposal, reason, and target-group mechanisms
+-> validate mitigation measure
+-> ask clarification / reason
+-> reject reason or clarification if it repeats existing input
+-> ask evidence decision
+-> accept open-chat Yes / No / URL evidence
+-> validate grounded mitigation
+-> if support is missing, return to clarification textarea
+-> identify all target populations from measure, reason, and target-group mechanisms
+-> review target population
+-> save mitigation measure
+-> show strict + crowd-sourcing visibility notice when applicable
+-> concept comparison
+-> implementation challenge discussion
+-> implementation readiness assessment
+-> review unresolved/partial challenges again using stored statuses and visible assessment text
+-> evaluation
+```
+
+Key behavior in the new flow:
+
+```text
+1. Adopted suggested proposals include target-group mechanisms in the stored
+   reason context and in target-population inference.
+2. Every explicit group label in Target-group mechanisms is extracted and merged
+   into the identified target population list.
+3. Evidence decision accepts buttons and open conversation messages.
+4. "No", "no I don't have", "no, I don't know", and similar messages continue
+   without evidence.
+5. A URL pasted in an open conversation message is extracted as URL evidence.
+6. Repeated reason/clarification text is rejected when it repeats the mitigation
+   measure, original input, or existing reason.
+7. Missing support / ABSTAIN outcomes ask for clarification with textarea input
+   instead of showing evidence-only controls.
+8. Readiness review can parse unresolved and partially resolved challenges from
+   visible assessment sections, including markdown headings, bold headings, and
+   bold item lines.
+```
+
 Seeded mitigation-policy suggestions depend on two reference-data steps:
 
 ```text
@@ -167,10 +254,15 @@ Then the app stores:
 
 ```text
 session.pending_mitigation_measure = <suggested measure>
+session.suggested_new_policy_target_group_mechanisms = <target-group mechanisms>
 session.phase = mitigation_clarity
 ```
 
 and asks clarification questions, including the reason/justification.
+
+When target-group mechanisms are present in the suggested proposal, they are
+kept with the adopted measure and later used to infer all intended target
+population groups.
 
 If the user chooses:
 
@@ -562,6 +654,18 @@ Blank answers are rejected.
 
 Gibberish or unrecognizable answers are rejected.
 
+Clarification answers are also rejected if they repeat information already
+provided instead of adding clarification. This includes repeating:
+
+```text
+the mitigation measure
+the original/pending mitigation input
+the existing reason
+```
+
+The user is asked to add new details that explain the mitigation mechanism or
+missing context.
+
 For ordinary clarity questions, the app validates answer quality through:
 
 ```python
@@ -631,6 +735,20 @@ DOCX
 MD
 TXT
 ```
+
+The evidence decision step also accepts open conversation messages. For example:
+
+```text
+yes, I have evidence
+I have evidence
+no I don't have
+no, I don't know
+skip evidence
+Evidence is at https://example.org/retrofit-study.pdf
+```
+
+Open-text `No` messages continue without evidence. Open-text URL messages are
+normalized into URL evidence and proceed to validation.
 
 **12. Evidence Checks**
 
@@ -722,6 +840,18 @@ session.mitigation_grounded_synthesis
 If grounding validation is unavailable, rejected, or abstained, the app returns a
 validation message and does not save the mitigation measure.
 
+For ABSTAIN / missing support outcomes, the app returns to:
+
+```text
+session.phase = mitigation_clarity
+step = mitigation_clarity
+input_mode = textarea
+pending_mitigation_clarity_dimension = justification_clarity
+```
+
+The screen is headed `Clarification needed` and does not show the evidence-only
+controls such as `Skip`, `Back to evidence question`, URL input, or file input.
+
 **14. Target Population Extraction**
 
 After grounded validation succeeds, the app stores:
@@ -739,7 +869,7 @@ ChatService._ensure_mitigation_target_population_from_inputs(...)
 ```
 
 If target population has not already been identified, the app tries to infer it
-from the mitigation measure and reason:
+from the mitigation measure, reason, and any adopted target-group mechanisms:
 
 ```python
 _infer_mitigation_target_population_from_inputs(...)
@@ -761,6 +891,22 @@ pending_mitigation_clarity_dimension = target_population
 ```
 
 and asks the user which target groups the measure should support.
+
+When target-group mechanisms are available, the app deterministically extracts
+each explicit group label before the colon and merges those groups with the
+normal target-population matcher. For example:
+
+```text
+Utility arrears households (twice or more): Provide direct financial support...
+Religious minorities: Ensure equal access...
+```
+
+identifies both:
+
+```text
+Utility arrears households (twice or more)
+Religious minorities
+```
 
 **15. Target Population Review**
 
@@ -977,7 +1123,67 @@ The conversation is stored in:
 session.stats_conversation
 ```
 
-**18. Move To Evaluation**
+When strict validation and Crowd Sourcing are enabled, the mitigation review
+screen shows a visibility notice explaining that the mitigation measure will be
+visible to platform users interested in mitigation options for the selected
+region and country.
+
+**18. Implementation Challenge And Readiness Review**
+
+After concept comparison, the app discusses implementation challenges before
+evaluation. It stores challenge statuses as:
+
+```text
+resolved
+partial
+unresolved
+```
+
+The readiness assessment includes sections such as:
+
+```text
+Resolved challenges
+Partially resolved challenges
+Remaining unresolved risks
+Residual implementation concerns
+Recommended improvements
+```
+
+If the user chooses:
+
+```text
+Review unresolved and partially resolved challenges again
+```
+
+the app now checks both:
+
+```text
+1. Stored implementation_challenges status values.
+2. Visible readiness-assessment text.
+```
+
+The visible assessment parser recognizes:
+
+```text
+### Remaining unresolved risks
+**Remaining Unresolved Risks:**
+1. Remaining unresolved risks
+bold challenge item lines such as **Legal eligibility:** ...
+bullet lines such as - **Administrative burden**: ...
+```
+
+If unresolved or partially resolved items are found in either source, the app
+returns to:
+
+```text
+session.phase = implementation_challenge_discussion
+step = implementation_challenge_discussion
+input_mode = textarea
+```
+
+instead of incorrectly saying all implementation challenges are resolved.
+
+**19. Move To Evaluation**
 
 From mitigation review, the user can choose:
 
@@ -1022,7 +1228,7 @@ input_mode = evaluation_question
 
 and asks the first evaluation question.
 
-**19. Evaluation Question Flow**
+**20. Evaluation Question Flow**
 
 Evaluation answers are handled by:
 
@@ -1084,7 +1290,7 @@ session.evaluation_index
 If more questions remain, it asks the next one. If all questions are complete,
 it moves to the completion step.
 
-**20. Evaluation Complete**
+**21. Evaluation Complete**
 
 When all evaluation questions are answered, the app enters:
 

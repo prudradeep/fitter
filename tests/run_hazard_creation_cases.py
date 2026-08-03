@@ -312,7 +312,11 @@ def row_result(
 async def run_cases(limit: int | None = None) -> list[dict[str, str]]:
     engine = _HazardCreationEngine()
     results: list[dict[str, str]] = []
-    cases = make_test_cases()
+    cases = [
+        item
+        for item in make_test_cases()
+        if str(item.get("Execution Scope") or "Automated runner").strip() == "Automated runner"
+    ]
     if limit is not None:
         cases = cases[:limit]
     for index, item in enumerate(cases, start=1):
