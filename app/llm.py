@@ -27,6 +27,7 @@ async def ask_llm_chat(
     stream: bool = False,
     temperature: float = 0.2,
     max_tokens: int = 700,
+    response_format: str | dict[str, Any] | None = None,
 ) -> str:
     settings = get_settings()
     if sync_server_llm_disabled():
@@ -43,6 +44,8 @@ async def ask_llm_chat(
     }
     if should_disable_thinking(settings.ollama_model):
         payload["think"] = False
+    if response_format is not None:
+        payload["format"] = response_format
     request_id = new_llm_request_id()
     started_at = perf_counter()
 

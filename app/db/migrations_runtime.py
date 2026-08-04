@@ -768,6 +768,25 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD INDEX ix_user_mitigation_measures_user_session_id (user_session_id)"
                         )
                     )
+            if "system_inquiry_telemetry_events" not in table_names:
+                connection.execute(
+                    text(
+                        """
+                        CREATE TABLE system_inquiry_telemetry_events (
+                          id CHAR(36) PRIMARY KEY,
+                          event_key VARCHAR(64) NOT NULL UNIQUE,
+                          payload_json TEXT NOT NULL,
+                          status VARCHAR(20) NOT NULL DEFAULT 'queued',
+                          attempts INT NOT NULL DEFAULT 0,
+                          last_error TEXT NULL,
+                          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          synced_at DATETIME NULL,
+                          INDEX ix_system_inquiry_telemetry_event_key (event_key),
+                          INDEX ix_system_inquiry_telemetry_status (status)
+                        )
+                        """
+                    )
+                )
                 if "ix_user_mitigation_measures_visibility" not in mitigation_indexes:
                     connection.execute(
                         text(

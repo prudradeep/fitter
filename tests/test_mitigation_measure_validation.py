@@ -1331,7 +1331,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertIn("Procedural access", response.bot_message)
         first = (session.system_inquiry_observations or [])[0]
         self.assertEqual(first["candidate_status"], "selected")
-        self.assertEqual(first["library_version"], "1.0-deterministic")
+        self.assertEqual(first["library_version"], "1.0")
         self.assertIn("required_anchors", first)
         self.assertIn("anchor_counts", first)
         self.assertIn("§5.3", first["source_refs"][0]["locator"])
@@ -1542,6 +1542,19 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         )
         self.assertEqual(unknown["source_refs"][0]["locator"], "§4.4")
 
+    def test_system_inquiry_probe_library_is_versioned_static_asset(self):
+        from app.services.system_inquiry_probe_library import system_inquiry_probe_library
+
+        library = system_inquiry_probe_library()
+
+        self.assertEqual(library["library_version"], "1.0")
+        self.assertGreaterEqual(len(library["probes"]), 30)
+        self.assertIn("C1-P1", library["records"])
+        self.assertEqual(
+            _MitigationReviewEngine._system_inquiry_library_version(),
+            "1.0",
+        )
+
     def test_system_inquiry_adds_portfolio_probe_for_shared_target_group(self):
         class _PriorMeasure:
             measure = "A previous electricity voucher for low-income households."
@@ -1674,6 +1687,84 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertEqual(statuses["B1-P1"], "discarded_unstable")
         self.assertEqual(statuses["C3-P1"], "discarded_no_anchor")
         self.assertEqual([item["probe_id"] for item in selected][0], "A5-P1")
+
+    def test_system_inquiry_candidate_dedupe_allows_distinct_anchor_sets(self):
+        engine = _MitigationReviewEngine()
+
+        def candidate(group):
+            return {
+                "candidate_id": f"C3-P1-{group}",
+                "probe_id": "C3-P1",
+                "family": "C_justice",
+                "corpus_label": "unproven",
+                "screen_result": True,
+                "verify_votes": None,
+                "salience": 90,
+                "salience_score": 0.9,
+                "anchors": {"measure": "Measure", "groups": [group]},
+                "anchor_counts": {
+                    "groups": 1,
+                    "hazards": 0,
+                    "measures": 1,
+                    "predictors": 0,
+                },
+                "required_anchors": {"measures": 1, "groups": 1},
+            }
+
+        candidates = [candidate("Tenants"), candidate("Homeowners")]
+
+        selected = engine._system_inquiry_finalize_candidates(candidates, cap=2)
+
+        self.assertEqual([item["candidate_status"] for item in candidates], ["selected", "selected"])
+        self.assertEqual(len(selected), 2)
+
+    def test_system_inquiry_prior_anchor_match_reuses_earlier_response(self):
+        class _PriorMeasure:
+            measure = "Earlier application grant."
+            reason = "It used an application route."
+            target_population = json.dumps(["Low-income households"])
+            system_inquiry_json = json.dumps(
+                {
+                    "annotations": [
+                        {
+                            "annotation_id": "si-001",
+                            "probe_id": "C3-P1",
+                            "status": "current",
+                            "resolution_state": "addressed",
+                            "anchors": {
+                                "hazard": "Heating and cooling costs increase",
+                                "groups": ["Low-income households"],
+                            },
+                            "user_response": (
+                                "Local advisors will complete the form with households."
+                            ),
+                        }
+                    ]
+                }
+            )
+
+        engine = _MitigationReviewEngine()
+        engine._system_inquiry_prior_measure_rows = lambda session: [_PriorMeasure()]
+        session = ChatSession(
+            selected_hazard="Heating and cooling costs increase",
+            mitigation_measure=(
+                "A means-tested application grant for low-income households."
+            ),
+            mitigation_reason="Households apply through the local office.",
+            mitigation_target_population=["Low-income households"],
+        )
+
+        engine._system_inquiry_observations(session)
+        c3 = next(
+            item
+            for item in session.system_inquiry_candidate_audit or []
+            if item["probe_id"] == "C3-P1"
+        )
+
+        self.assertEqual(c3["dedupe_basis"], "probe_id_anchor_set_prior_response")
+        self.assertIn("Earlier you said", c3["observation"])
+        self.assertIn("Local advisors", c3["observation"])
+        self.assertIn("Does your earlier answer still apply", c3["question"])
 
     def test_system_inquiry_candidate_finalization_prefers_portfolio_after_first_measure(self):
         engine = _MitigationReviewEngine()
@@ -2181,18 +2272,18 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertTrue(session.system_inquiry_profile["followup_used"])
         payload = json.loads(engine.db.row.system_inquiry_json)
         self.assertEqual(payload["schema_version"], 1)
-        self.assertEqual(payload["library_version"], "1.0-deterministic")
+        self.assertEqual(payload["library_version"], "1.0")
         self.assertIn("context_fingerprint", payload)
         self.assertIn("context_snapshot", payload)
         self.assertEqual(payload["attributes"]["action_type"], "service")
         self.assertEqual(payload["attributes"]["leverage_depth"], "parameter")
-        self.assertEqual(payload["profile"]["library_version"], "1.0-deterministic")
+        self.assertEqual(payload["profile"]["library_version"], "1.0")
         self.assertEqual(len(payload["profile"]["session_id_anon"]), 16)
         self.assertEqual(payload["profile"]["state_counts"]["addressed"], 1)
         self.assertEqual(payload["profile"]["status_counts"]["current"], 2)
         self.assertEqual(payload["profile"]["leverage_distribution"]["parameter"], 1)
         self.assertEqual(payload["candidate_audit"], [])
-        self.assertEqual(payload["telemetry"]["library_version"], "1.0-deterministic")
+        self.assertEqual(payload["telemetry"]["library_version"], "1.0")
         self.assertEqual(len(payload["telemetry"]["session_id_anon"]), 16)
         self.assertEqual(payload["telemetry"]["measure_ordinal"], 1)
         self.assertFalse(payload["telemetry"]["skip_event"])
@@ -2445,6 +2536,50 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertEqual(by_probe["C4-P1"]["corpus_label"], "unproven")
         self.assertIn("§5.3", by_probe["A6-P1"]["source_refs"][0]["locator"])
 
+    def test_system_inquiry_adds_missing_probe_catalogue_lenses(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="France",
+            sector="Housing",
+            selected_hazard="Unsafe and unaffordable homes",
+            mitigation_measure=(
+                "A means-tested grant routed through advisors supports low-income tenants "
+                "to retrofit homes."
+            ),
+            mitigation_reason=(
+                "If uptake changes demand and participation, the eligibility route should "
+                "adapt over time."
+            ),
+            mitigation_target_population=["Low-income tenants"],
+            mitigation_validation={
+                "dimensions": {
+                    "hazard_fit": {
+                        "status": "SUPPORTED",
+                        "explanation": "Covered.",
+                    },
+                    "justification_soundness": {
+                        "status": "INSUFFICIENT_INFO",
+                        "explanation": "The justification does not show how the route stays fair.",
+                    },
+                }
+            },
+        )
+
+        observations = engine._system_inquiry_observations(session)
+        by_probe = {
+            item["probe_id"]: item
+            for item in (session.system_inquiry_candidate_audit or observations)
+        }
+
+        self.assertIn("A1-P1", by_probe)
+        self.assertIn("A3-P1", by_probe)
+        self.assertIn("B2-P1", by_probe)
+        self.assertIn("B3-P1", by_probe)
+        self.assertIn("B4-P1", by_probe)
+        self.assertEqual(by_probe["B2-P1"]["corpus_label"], "evidenced")
+        self.assertIn("criteria", by_probe["B3-P1"]["observation"].casefold())
+        self.assertIn("intermediary", by_probe["B4-P1"]["observation"].casefold())
+
     def test_system_inquiry_anonymous_session_id_is_stable(self):
         engine = _MitigationReviewEngine()
         session = ChatSession(session_key="session-a")
@@ -2526,6 +2661,10 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             system_inquiry_json = json.dumps(
                 {
                     "profile": {"completion_score": 0.75},
+                    "coverage_summary": {
+                        "uncovered_hazards": ["Heat stress"],
+                        "untargeted_groups": ["Outdoor workers"],
+                    },
                     "annotations": [
                         {
                             "title": "Distributional incidence",
@@ -2552,6 +2691,8 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         report = engine._suggested_mitigation_system_inquiry_report(session)
 
         self.assertIn("Completion score", report)
+        self.assertIn("D4 hazard coverage", report)
+        self.assertIn("D5 group coverage", report)
         self.assertIn("Distributional incidence", report)
         self.assertIn("Add an upfront grant route", report)
         self.assertIn("approved installers directly", report)

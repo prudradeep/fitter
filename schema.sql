@@ -360,6 +360,7 @@ CREATE TABLE IF NOT EXISTS user_mitigation_measures (
   target_population TEXT NULL,
   conclusion TEXT NULL,
   target_groups_json TEXT NULL,
+  system_inquiry_json TEXT NULL,
   validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
   is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -374,6 +375,19 @@ CREATE TABLE IF NOT EXISTS user_mitigation_measures (
   INDEX ix_user_mitigation_measures_system_hazard_id (system_hazard_id),
   INDEX ix_user_mitigation_measures_additional_hazard_id (additional_hazard_id),
   INDEX ix_user_mitigation_measures_visibility (validation_mode, is_crowd_sourced)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS system_inquiry_telemetry_events (
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  event_key VARCHAR(64) NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'queued',
+  attempts INT NOT NULL DEFAULT 0,
+  last_error TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  synced_at DATETIME NULL,
+  INDEX ix_system_inquiry_telemetry_event_key (event_key),
+  INDEX ix_system_inquiry_telemetry_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mitigation_measure_examples (

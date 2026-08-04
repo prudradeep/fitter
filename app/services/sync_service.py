@@ -30,7 +30,12 @@ SYNC_COLUMN_NAMES = {
     "sync_updated_at",
     "sync_deleted_at",
 }
-INTERNAL_TABLES = {"schema_migrations", "sync_state", "sync_clients"}
+INTERNAL_TABLES = {
+    "schema_migrations",
+    "sync_state",
+    "sync_clients",
+    "system_inquiry_telemetry_events",
+}
 DEFAULT_EXCLUDED_TABLES = {"app_rate_limits"}
 LOG_TABLES = {"audit_logs", "llm_exchange_logs"}
 KNOWLEDGE_TABLES = {"knowledge_documents", "knowledge_chunks"}
@@ -308,6 +313,9 @@ class SyncService:
             include_user_data=user_data_enabled_at is not None,
             user_data_enabled_at=user_data_enabled_at,
         )
+        from app.services.system_inquiry_telemetry import push_queued_system_inquiry_telemetry
+
+        telemetry_push = await push_queued_system_inquiry_telemetry(self.db)
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
                 f"{server_url}/api/sync/exchange",
@@ -325,6 +333,7 @@ class SyncService:
             "pushed": {
                 "tables": len(outbound.get("tables") or []),
                 "rows": sum(len(table.get("rows") or []) for table in outbound.get("tables") or []),
+                "system_inquiry_telemetry": telemetry_push.get("pushed", 0),
             },
             "server_applied": data.get("applied"),
             "pulled": {

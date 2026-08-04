@@ -110,6 +110,23 @@ function Wait-SetupProcess {
     return $Process.ExitCode
 }
 
+function Invoke-VisibleSetupCommand {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments,
+        [string]$Activity
+    )
+
+    Write-SetupLog "Starting $Activity"
+    & $FilePath @Arguments
+    $exitCode = $LASTEXITCODE
+    if ($null -eq $exitCode) {
+        $exitCode = 0
+    }
+    Write-SetupLog "$Activity exited with code $exitCode"
+    return $exitCode
+}
+
 function Quote-ProcessArgument {
     param([string]$Value)
 
@@ -578,15 +595,14 @@ function Invoke-WingetInstall {
 
     foreach ($packageId in $PackageIds) {
         Write-SetupLog "Trying winget install $packageId"
-        $process = Start-Process -FilePath $winget -ArgumentList @(
+        $exitCode = Invoke-VisibleSetupCommand -FilePath $winget -Arguments @(
             "install",
             "--id", $packageId,
             "--exact",
             "--silent",
             "--accept-package-agreements",
             "--accept-source-agreements"
-        ) -PassThru -WindowStyle Hidden
-        $exitCode = Wait-SetupProcess -Process $process -Activity "winget install $packageId" -HeartbeatSeconds 20
+        ) -Activity "winget install $packageId"
         if ($exitCode -eq 0) {
             Write-SetupLog "winget installed $packageId"
             return
@@ -1208,8 +1224,7 @@ function Ensure-OllamaModel {
     }
 
     Write-SetupLog "Pulling Ollama model: $Model"
-    $process = Start-Process -FilePath $OllamaExe -ArgumentList @("pull", $Model) -PassThru -WindowStyle Hidden
-    $exitCode = Wait-SetupProcess -Process $process -Activity "ollama pull $Model" -HeartbeatSeconds 20
+    $exitCode = Invoke-VisibleSetupCommand -FilePath $OllamaExe -Arguments @("pull", $Model) -Activity "ollama pull $Model"
     if ($exitCode -ne 0) {
         throw "ollama pull $Model failed with exit code $exitCode"
     }

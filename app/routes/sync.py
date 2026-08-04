@@ -14,6 +14,10 @@ from app.routes.request_limits import InvalidJsonPayload, RequestTooLarge, json_
 from app.services.prompt_loader import clear_prompt_caches
 from app.services.prompt_store import prompt_metadata
 from app.services.sync_service import SyncService
+from app.services.system_inquiry_telemetry import (
+    accept_system_inquiry_telemetry_batch,
+    push_queued_system_inquiry_telemetry,
+)
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 settings = get_settings()
@@ -130,6 +134,37 @@ async def sync_exchange(
 async def sync_run(_: dict[str, object] = Depends(require_sync_token), db: Session = Depends(get_db)) -> dict[str, object]:
     try:
         return await SyncService(db).exchange_with_server()
+    except (httpx.HTTPError, ValueError) as exc:
+        return {"error": True, "detail": str(exc)}
+
+
+@router.post("/system-inquiry-telemetry")
+async def sync_system_inquiry_telemetry_push(
+    request: Request,
+    _: dict[str, object] = Depends(require_sync_token),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    payload = await _sync_payload_or_error(request)
+    if isinstance(payload, JSONResponse):
+        return {"error": True, "detail": payload.body.decode("utf-8", errors="replace")}
+    events = [item for item in payload.get("events") or [] if isinstance(item, dict)]
+    result = accept_system_inquiry_telemetry_batch(db, events)
+    return {"error": False, **result}
+
+
+@router.post("/client/system-inquiry-telemetry")
+async def sync_client_system_inquiry_telemetry(
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    _ = current_user
+    if not _client_sync_configured():
+        return {
+            "error": True,
+            "detail": "Client sync is not configured. Set SYNC_ENABLED, SYNC_MODE=client, SYNC_SERVER_URL, and SYNC_API_TOKEN.",
+        }
+    try:
+        return await push_queued_system_inquiry_telemetry(db)
     except (httpx.HTTPError, ValueError) as exc:
         return {"error": True, "detail": str(exc)}
 

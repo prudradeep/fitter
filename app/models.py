@@ -414,6 +414,19 @@ class UserMitigationMeasure(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class SystemInquiryTelemetryEvent(Base):
+    __tablename__ = "system_inquiry_telemetry_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    event_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", server_default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class MitigationMeasureExample(Base):
     __tablename__ = "mitigation_measure_examples"
 
