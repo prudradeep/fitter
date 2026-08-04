@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.schemas import ChatResponse
 from app.services.chat_mitigation_creation import ChatMitigationCreationMixin
 from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
+from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
 from app.services.validation_service import ChatValidationServiceMixin
 
@@ -68,6 +69,9 @@ class _MitigationReviewEngine(ChatMitigationCreationMixin):
 
     def _promote_temporary_evidence(self, session):
         return None
+
+    def _historical_evaluation_series(self, session):
+        return []
 
     def _evaluation_questions(self):
         return [
@@ -179,6 +183,9 @@ class _MitigationValidationAbstainEngine(
     def _grounding_validation_details(self, session, validation=None):
         return {}
 
+    def _clear_mitigation_clarity_state(self, session):
+        return None
+
     @staticmethod
     def _has_evidence_url_reference(evidence):
         return False
@@ -186,6 +193,46 @@ class _MitigationValidationAbstainEngine(
     @staticmethod
     def _has_user_supplied_evidence(evidence):
         return False
+
+
+class _MitigationValidationUnavailableEngine(_MitigationValidationAbstainEngine):
+    @staticmethod
+    def _has_user_supplied_evidence(evidence):
+        return bool(str(evidence or "").strip())
+
+    async def _validate_mitigation_against_stats(
+        self,
+        session,
+        mitigation_measure,
+        reason,
+        evidence="",
+    ):
+        return None
+
+
+class _MitigationSynthesisUnavailableEngine(_MitigationValidationAbstainEngine):
+    async def _validate_mitigation_against_stats(
+        self,
+        session,
+        mitigation_measure,
+        reason,
+        evidence="",
+    ):
+        return {
+            "valid": True,
+            "outcome": "PASS",
+            "reason": "Supported.",
+            "dimensions": {},
+        }
+
+    async def _grounded_mitigation_synthesis(
+        self,
+        session,
+        mitigation_measure,
+        reason,
+        validation,
+    ):
+        return None
 
 
 class MitigationMeasureValidationTests(unittest.TestCase):
@@ -455,6 +502,89 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         option_labels = [option.label for option in response.options]
         self.assertNotIn("Skip", option_labels)
         self.assertNotIn("Back to evidence question", option_labels)
+
+    def test_mitigation_validation_unavailable_without_evidence_uses_local_fallback(self):
+        engine = _MitigationValidationUnavailableEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+            mitigation_target_population=["Low-income households"],
+        )
+
+        response = asyncio.run(
+            engine._validate_frozen_mitigation_inputs(
+                "test-session",
+                session,
+                "Introduce targeted grants",
+                "It lowers upfront costs.",
+                "",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_target_population_review")
+        self.assertEqual(session.phase, "mitigation_target_population_review")
+        self.assertTrue(session.mitigation_validation["valid"])
+        self.assertTrue(session.mitigation_validation["local_llm_unavailable_fallback"])
+        self.assertEqual(
+            session.mitigation_validation["support_label"],
+            "LOCAL_FALLBACK_NO_LLM",
+        )
+        self.assertIn("Local fallback conclusion", session.mitigation_grounded_synthesis)
+
+    def test_mitigation_validation_unavailable_with_evidence_returns_clarification(self):
+        engine = _MitigationValidationUnavailableEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+            mitigation_target_population=["Low-income households"],
+        )
+
+        response = asyncio.run(
+            engine._validate_frozen_mitigation_inputs(
+                "test-session",
+                session,
+                "Introduce targeted grants",
+                "It lowers upfront costs.",
+                "Evidence URL: https://example.org/report.pdf",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertEqual(response.input_mode, "textarea")
+        option_labels = [option.label for option in response.options]
+        self.assertNotIn("Skip", option_labels)
+        self.assertNotIn("Back to evidence question", option_labels)
+
+    def test_mitigation_synthesis_unavailable_without_evidence_uses_local_fallback(self):
+        engine = _MitigationSynthesisUnavailableEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+            mitigation_target_population=["Low-income households"],
+        )
+
+        response = asyncio.run(
+            engine._validate_frozen_mitigation_inputs(
+                "test-session",
+                session,
+                "Introduce targeted grants",
+                "It lowers upfront costs.",
+                "",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_target_population_review")
+        self.assertEqual(session.phase, "mitigation_target_population_review")
+        self.assertIn("Local fallback conclusion", session.mitigation_grounded_synthesis)
 
     def test_mitigation_evidence_decision_open_text_yes_asks_for_evidence(self):
         engine = _MitigationEvidenceEngine()
@@ -743,7 +873,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         )
         self.assertIn("Bavaria, Germany", response.bot_message)
 
-    def test_mitigation_review_next_step_starts_highest_priority_challenge(self):
+    def test_mitigation_review_next_step_starts_evaluation(self):
         engine = _MitigationReviewEngine()
         session = ChatSession(
             country="Germany",
@@ -757,42 +887,18 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             ),
         )
 
-        challenge_json = json.dumps(
-            [
-                {
-                    "title": "Funding sustainability",
-                    "category": "Cost",
-                    "why_important": "The support may be unaffordable over time.",
-                    "importance": 5,
-                    "implementation_impact": 5,
-                },
-                {
-                    "title": "Administrative burden",
-                    "category": "Operational",
-                    "why_important": "Eligibility checks may delay delivery.",
-                    "importance": 3,
-                    "implementation_impact": 4,
-                },
-            ]
+        response = asyncio.run(
+            engine._handle_mitigation_review(
+                "test-session",
+                session,
+                "Move to next step",
+            )
         )
 
-        with patch(
-            "app.services.chat_mitigation_creation.ask_llm_chat",
-            AsyncMock(return_value=challenge_json),
-        ):
-            response = asyncio.run(
-                engine._handle_mitigation_review(
-                    "test-session",
-                    session,
-                    "Move to next step",
-                )
-            )
-
         self.assertFalse(response.error)
-        self.assertEqual(response.step, "implementation_challenge_discussion")
-        self.assertEqual(session.phase, "implementation_challenge_discussion")
-        self.assertIn("Funding sustainability", response.bot_message)
-        self.assertNotIn("Administrative burden</strong>", response.bot_message)
+        self.assertEqual(response.step, "evaluation_question")
+        self.assertEqual(session.phase, "evaluation_question")
+        self.assertIn("How feasible is the implementation plan?", response.bot_message)
 
     def test_review_cons_are_consolidated_when_generated_list_is_sparse(self):
         engine = _MitigationReviewEngine()
@@ -1147,6 +1253,1374 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertEqual(session.implementation_challenges[1]["status"], "unresolved")
         self.assertIn("Legal eligibility", response.bot_message)
         self.assertNotIn("All implementation challenges", response.bot_message)
+
+    def test_evaluation_complete_offers_system_inquiry(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills from renewable grid upgrade tariffs",
+            hazards=[
+                "Higher electricity bills from renewable grid upgrade tariffs",
+                "Power outages from grid congestion",
+            ],
+            mitigation_measure=(
+                "A grant that offsets electricity bill increases for low-income households."
+            ),
+            mitigation_reason="It reduces bill pressure while grid upgrades are implemented.",
+            mitigation_target_population=["Low-income households"],
+            evaluation_answers=[
+                {
+                    "category": "Systemic and structural",
+                    "question": "How structural is this measure?",
+                    "score": 8,
+                }
+            ],
+        )
+
+        response = engine._evaluation_complete_step("test-session", session)
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "system_inquiry_intro")
+        self.assertEqual(session.phase, "system_inquiry_intro")
+        self.assertTrue(session.system_inquiry_observations)
+        self.assertIn("Start system inquiry", [option.label for option in response.options])
+        self.assertNotIn("Power outages from grid congestion", response.bot_message)
+        self.assertNotIn("selected hazards have no mitigation measure", response.bot_message)
+
+    def test_system_inquiry_uses_cap_and_reports_held_lenses(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills from renewable grid upgrade tariffs",
+            hazard_profiles={
+                "Higher electricity bills from renewable grid upgrade tariffs": [
+                    {"name": "Low-income households"},
+                    {"name": "Tenants"},
+                ]
+            },
+            mitigation_measure=(
+                "A grant application that offsets electricity bill increases for "
+                "low-income households over 18 months."
+            ),
+            mitigation_reason="It reduces bill pressure while grid upgrades are implemented.",
+            mitigation_target_population=["Low-income households"],
+            evaluation_answers=[
+                {
+                    "category": "Systemic and structural",
+                    "question": "How structural is this measure?",
+                    "score": 8,
+                }
+            ],
+        )
+
+        response = engine._system_inquiry_intro_step("test-session", session)
+
+        self.assertEqual(len(session.system_inquiry_observations or []), 2)
+        self.assertIn("C1-P1", [
+            item["probe_id"] for item in session.system_inquiry_observations or []
+        ])
+        self.assertIn("C2-P1", [
+            item["probe_id"] for item in session.system_inquiry_observations or []
+        ])
+        self.assertTrue(session.system_inquiry_held_observations)
+        self.assertIn("Boundary note", response.bot_message)
+        self.assertIn("Procedural access", response.bot_message)
+        first = (session.system_inquiry_observations or [])[0]
+        self.assertEqual(first["candidate_status"], "selected")
+        self.assertEqual(first["library_version"], "1.0-deterministic")
+        self.assertIn("required_anchors", first)
+        self.assertIn("anchor_counts", first)
+        self.assertIn("§5.3", first["source_refs"][0]["locator"])
+        self.assertNotEqual(first["source_refs"][0]["locator"], "§4.4")
+        observations = {
+            item["probe_id"]: item
+            for item in session.system_inquiry_observations or []
+        }
+        self.assertEqual(observations["C1-P1"]["corpus_label"], "evidenced")
+        self.assertEqual(observations["C1-P1"]["anchor_counts"]["predictors"], 1)
+        self.assertEqual(
+            observations["C1-P1"]["citations"][0]["source"],
+            "session_affected_population_profile",
+        )
+        self.assertEqual(observations["C2-P1"]["corpus_label"], "evidenced")
+        self.assertEqual(observations["C2-P1"]["anchor_counts"]["predictors"], 1)
+        held = session.system_inquiry_held_observations or []
+        self.assertTrue(all(item["candidate_status"] == "held_cap" for item in held))
+        audit_statuses = {
+            item["probe_id"]: item["candidate_status"]
+            for item in session.system_inquiry_candidate_audit or []
+        }
+        self.assertEqual(audit_statuses["C1-P1"], "selected")
+        self.assertEqual(audit_statuses["C2-P1"], "selected")
+        self.assertEqual(audit_statuses["C3-P1"], "held_cap")
+
+    def test_system_inquiry_async_intro_runs_constrained_llm_pipeline(self):
+        async def fake_ask_llm_chat(context, messages, **kwargs):
+            if "Extract MeasureAttributes" in context:
+                return json.dumps(
+                    {
+                        "action_type": "grant",
+                        "leverage_depth": "rules",
+                        "delivery_channel": "application",
+                        "cost_incidence": "upfront_user_cost",
+                        "time_to_benefit": "months",
+                        "eligibility_basis": ["income", "tenure"],
+                        "named_sectors": ["housing"],
+                        "requires_capacity": True,
+                        "capacity_type": "installers",
+                    }
+                )
+            payload = json.loads(messages[0]["content"])
+            candidates = payload["candidates"]
+            if "Screen system-inquiry" in context:
+                return json.dumps(
+                    [
+                        {
+                            "candidate_id": item["candidate_id"],
+                            "screen_result": True,
+                            "reason": "Anchored in the dossier.",
+                        }
+                        for item in candidates
+                    ]
+                )
+            if "Verify system-inquiry" in context:
+                return json.dumps(
+                    [
+                        {
+                            "candidate_id": item["candidate_id"],
+                            "verify_votes": 3,
+                            "reason": "The anchors are real.",
+                        }
+                        for item in candidates
+                    ]
+                )
+            if "Adjudicate corpus support" in context:
+                return json.dumps(
+                    [
+                        {
+                            "candidate_id": item["candidate_id"],
+                            "corpus_label": "unproven",
+                            "reason": "No direct corpus evidence supplied.",
+                        }
+                        for item in candidates
+                    ]
+                )
+            return "{}"
+
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills",
+            mitigation_measure=(
+                "A housing retrofit grant application funds installer works for "
+                "low-income tenants over 18 months."
+            ),
+            mitigation_reason="It reduces housing and energy costs.",
+            mitigation_target_population=["Low-income tenants"],
+            evaluation_answers=[
+                {
+                    "category": "Systemic and structural",
+                    "question": "How structural is this measure?",
+                    "score": 8,
+                }
+            ],
+        )
+
+        with patch(
+            "app.services.chat_mitigation_creation.ask_llm_chat",
+            AsyncMock(side_effect=fake_ask_llm_chat),
+        ) as mocked_llm:
+            response = asyncio.run(
+                engine._system_inquiry_intro_step_with_llm("test-session", session)
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "system_inquiry_intro")
+        self.assertEqual(session.system_inquiry_attributes["extraction_method"], "llm_constrained_v1")
+        self.assertEqual(session.system_inquiry_attributes["leverage_depth"], "rules")
+        self.assertEqual(mocked_llm.await_count, 4)
+        audit = session.system_inquiry_candidate_audit or []
+        self.assertTrue(audit)
+        self.assertTrue(all(item.get("screen_method") == "llm_constrained_v1" for item in audit))
+        self.assertTrue(all(item.get("verify_method") == "llm_constrained_v1" for item in audit))
+        self.assertTrue(
+            all(
+                item.get("corpus_adjudication_method") == "llm_constrained_v1"
+                for item in audit
+            )
+        )
+
+    def test_system_inquiry_llm_screen_can_discard_unstable_candidate(self):
+        async def fake_ask_llm_chat(context, messages, **kwargs):
+            if "Extract MeasureAttributes" in context:
+                return json.dumps(
+                    {
+                        "action_type": "grant",
+                        "leverage_depth": "parameter",
+                        "delivery_channel": "application",
+                        "cost_incidence": "upfront_user_cost",
+                        "time_to_benefit": "months",
+                        "eligibility_basis": ["income"],
+                        "named_sectors": [],
+                        "requires_capacity": False,
+                        "capacity_type": "none",
+                    }
+                )
+            payload = json.loads(messages[0]["content"])
+            candidates = payload["candidates"]
+            if "Screen system-inquiry" in context:
+                return json.dumps(
+                    [
+                        {
+                            "candidate_id": item["candidate_id"],
+                            "screen_result": item["probe_id"] != "C3-P1",
+                            "reason": "Screened.",
+                        }
+                        for item in candidates
+                    ]
+                )
+            if "Verify system-inquiry" in context:
+                return json.dumps(
+                    [
+                        {
+                            "candidate_id": item["candidate_id"],
+                            "verify_votes": 3,
+                            "reason": "Verified.",
+                        }
+                        for item in candidates
+                    ]
+                )
+            if "Adjudicate corpus support" in context:
+                return json.dumps(
+                    [
+                        {
+                            "candidate_id": item["candidate_id"],
+                            "corpus_label": "unproven",
+                            "reason": "No direct corpus evidence supplied.",
+                        }
+                        for item in candidates
+                    ]
+                )
+            return "{}"
+
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills",
+            mitigation_measure="An application grant for low-income households.",
+            mitigation_reason="It offsets household bills.",
+            mitigation_target_population=["Low-income households"],
+        )
+
+        with patch(
+            "app.services.chat_mitigation_creation.ask_llm_chat",
+            AsyncMock(side_effect=fake_ask_llm_chat),
+        ):
+            asyncio.run(engine._system_inquiry_intro_step_with_llm("test-session", session))
+
+        audit_statuses = {
+            item["probe_id"]: item["candidate_status"]
+            for item in session.system_inquiry_candidate_audit or []
+        }
+        self.assertEqual(audit_statuses["C3-P1"], "discarded_unstable")
+
+    def test_system_inquiry_probe_metadata_uses_specific_source_refs(self):
+        c1 = _MitigationReviewEngine._system_inquiry_probe_metadata("C1-P1")
+        unknown = _MitigationReviewEngine._system_inquiry_probe_metadata("Z9-P1")
+
+        self.assertEqual(
+            c1["source_refs"][0]["locator"],
+            "§5.3 C1-P1 — UPFRONT-COST-INCIDENCE",
+        )
+        self.assertEqual(unknown["source_refs"][0]["locator"], "§4.4")
+
+    def test_system_inquiry_adds_portfolio_probe_for_shared_target_group(self):
+        class _PriorMeasure:
+            measure = "A previous electricity voucher for low-income households."
+            reason = "It provides support through existing payment rules."
+            target_population = json.dumps(["Low-income households"])
+
+        engine = _MitigationReviewEngine()
+        engine._system_inquiry_prior_measure_rows = lambda session: [_PriorMeasure()]
+        session = ChatSession(
+            selected_hazard="Higher electricity bills from renewable grid upgrade tariffs",
+            mitigation_measure=(
+                "A grant that offsets electricity bill increases for low-income households."
+            ),
+            mitigation_reason="It reduces bill pressure.",
+            mitigation_target_population=["Low-income households"],
+        )
+
+        observations = engine._system_inquiry_observations(session)
+
+        self.assertIn("D2-P1", [item["probe_id"] for item in observations])
+        d2 = next(item for item in observations if item["probe_id"] == "D2-P1")
+        self.assertIn("previous electricity voucher", d2["observation"])
+        self.assertEqual(d2["tier"], "conditional")
+        self.assertEqual(d2["anchor_counts"]["measures"], 2)
+
+    def test_system_inquiry_adds_interaction_probe_for_policy_tension(self):
+        class _PriorMeasure:
+            measure = "A grant that helps low-income households buy efficient heaters."
+            reason = "It provides financial support."
+            target_population = json.dumps(["Low-income households"])
+
+        engine = _MitigationReviewEngine()
+        engine._system_inquiry_prior_measure_rows = lambda session: [_PriorMeasure()]
+        session = ChatSession(
+            selected_hazard="Heating and cooling costs increase",
+            mitigation_measure=(
+                "A regulation that requires households to replace inefficient heaters."
+            ),
+            mitigation_reason="It mandates higher efficiency standards.",
+            mitigation_target_population=["Low-income households"],
+        )
+
+        observations = engine._system_inquiry_observations(session)
+
+        self.assertIn("D1-P1", [item["probe_id"] for item in observations])
+        d1 = next(item for item in observations if item["probe_id"] == "D1-P1")
+        self.assertEqual(d1["tier"], "conditional")
+        self.assertEqual(d1["anchor_counts"]["measures"], 2)
+        self.assertIn("increases obligations", d1["observation"])
+        self.assertIn("efficient heaters", d1["observation"])
+
+    def test_system_inquiry_discards_candidate_missing_required_anchor(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            selected_hazard="",
+            mitigation_measure="A grant for households.",
+            mitigation_reason="It offsets bills.",
+            mitigation_target_population=["Low-income households"],
+        )
+
+        observations = engine._system_inquiry_observations(session)
+
+        self.assertNotIn("C1-P1", [item["probe_id"] for item in observations])
+        discarded = [
+            item
+            for item in (session.system_inquiry_held_observations or [])
+            if item["probe_id"] == "C1-P1"
+        ]
+        self.assertEqual(discarded[0]["candidate_status"], "discarded_no_anchor")
+        audit = {
+            item["probe_id"]: item
+            for item in session.system_inquiry_candidate_audit or []
+        }
+        self.assertEqual(audit["C1-P1"]["candidate_status"], "discarded_no_anchor")
+        self.assertEqual(audit["C1-P1"]["anchor_counts"]["hazards"], 0)
+
+    def test_system_inquiry_candidate_finalization_records_all_terminal_statuses(self):
+        engine = _MitigationReviewEngine()
+
+        def candidate(
+            probe_id,
+            *,
+            candidate_id=None,
+            family="C_justice",
+            corpus_label="unproven",
+            screen_result=True,
+            verify_votes=None,
+            salience=80,
+            groups=1,
+            hazards=1,
+        ):
+            return {
+                "candidate_id": candidate_id or probe_id,
+                "probe_id": probe_id,
+                "family": family,
+                "corpus_label": corpus_label,
+                "screen_result": screen_result,
+                "verify_votes": verify_votes,
+                "salience": salience,
+                "anchor_counts": {
+                    "groups": groups,
+                    "hazards": hazards,
+                    "measures": 1,
+                    "predictors": 0,
+                },
+                "required_anchors": {"hazards": 1},
+            }
+
+        candidates = [
+            candidate("D2-P1", family="D_portfolio", salience=70),
+            candidate("C1-P1", candidate_id="C1-P1-a", salience=95),
+            candidate("C1-P1", candidate_id="C1-P1-b", salience=90),
+            candidate("A4-P1", corpus_label="refuted"),
+            candidate("B1-P1", verify_votes=1),
+            candidate("C3-P1", hazards=0),
+            candidate("A5-P1", corpus_label="evidenced", salience=75),
+        ]
+
+        selected = engine._system_inquiry_finalize_candidates(candidates, cap=3)
+
+        statuses = {
+            item["candidate_id"]: item["candidate_status"]
+            for item in candidates
+        }
+        self.assertEqual(statuses["C1-P1-a"], "selected")
+        self.assertEqual(statuses["D2-P1"], "selected")
+        self.assertEqual(statuses["A5-P1"], "selected")
+        self.assertEqual(statuses["C1-P1-b"], "discarded_dedupe")
+        self.assertEqual(statuses["A4-P1"], "discarded_refuted")
+        self.assertEqual(statuses["B1-P1"], "discarded_unstable")
+        self.assertEqual(statuses["C3-P1"], "discarded_no_anchor")
+        self.assertEqual([item["probe_id"] for item in selected][0], "A5-P1")
+
+    def test_system_inquiry_candidate_finalization_prefers_portfolio_after_first_measure(self):
+        engine = _MitigationReviewEngine()
+
+        def candidate(probe_id, family, salience):
+            return {
+                "candidate_id": probe_id,
+                "probe_id": probe_id,
+                "family": family,
+                "corpus_label": "unproven",
+                "screen_result": True,
+                "verify_votes": None,
+                "salience": salience,
+                "salience_score": salience / 100,
+                "anchor_counts": {
+                    "groups": 1,
+                    "hazards": 1,
+                    "measures": 1,
+                    "predictors": 0,
+                },
+                "required_anchors": {"hazards": 1},
+            }
+
+        candidates = [
+            candidate("C1-P1", "C_justice", 99),
+            candidate("C2-P1", "C_justice", 98),
+            candidate("A4-P1", "A_structure", 97),
+            candidate("D2-P1", "D_portfolio", 70),
+        ]
+
+        selected = engine._system_inquiry_finalize_candidates(
+            candidates,
+            cap=3,
+            require_portfolio=True,
+        )
+
+        self.assertIn("D2-P1", [item["probe_id"] for item in selected])
+        self.assertEqual(
+            next(item for item in candidates if item["probe_id"] == "A4-P1")[
+                "candidate_status"
+            ],
+            "held_cap",
+        )
+
+    def test_system_inquiry_candidate_finalization_applies_cumulative_cap(self):
+        engine = _MitigationReviewEngine()
+
+        def candidate(probe_id, salience):
+            return {
+                "candidate_id": probe_id,
+                "probe_id": probe_id,
+                "family": "C_justice",
+                "corpus_label": "unproven",
+                "screen_result": True,
+                "verify_votes": None,
+                "salience": salience,
+                "salience_score": salience / 100,
+                "anchor_counts": {
+                    "groups": 1,
+                    "hazards": 1,
+                    "measures": 1,
+                    "predictors": 0,
+                },
+                "required_anchors": {"hazards": 1},
+            }
+
+        candidates = [
+            candidate("C1-P1", 95),
+            candidate("C2-P1", 89),
+            candidate("A4-P1", 70),
+        ]
+
+        selected = engine._system_inquiry_finalize_candidates(
+            candidates,
+            cap=3,
+            prior_surface_count=10,
+        )
+
+        self.assertEqual([item["probe_id"] for item in selected], ["C1-P1"])
+        self.assertEqual(
+            next(item for item in candidates if item["probe_id"] == "C2-P1")[
+                "candidate_status"
+            ],
+            "held_cap",
+        )
+
+    def test_system_inquiry_intro_offers_rerun_for_stale_reflections(self):
+        class _Row:
+            user_session_id = None
+            system_inquiry_json = json.dumps(
+                {
+                    "context_fingerprint": "old-context",
+                    "annotations": [{"annotation_id": "si-001"}],
+                }
+            )
+
+        class _Db:
+            def scalar(self, statement):
+                return _Row()
+
+        engine = _MitigationReviewEngine()
+        engine.db = _Db()
+        session = ChatSession(
+            selected_hazard="Higher electricity bills",
+            mitigation_measure="Updated targeted bill support.",
+            mitigation_reason="It adds automatic eligibility.",
+            mitigation_record_id="measure-1",
+            mitigation_target_population=["Low-income households"],
+        )
+
+        response = engine._system_inquiry_intro_step("test-session", session)
+
+        self.assertIn("Re-run note", response.bot_message)
+        self.assertIn("1 reflection response", response.bot_message)
+        self.assertIn("Start system inquiry", [option.label for option in response.options])
+
+    def test_system_inquiry_intro_hides_rerun_note_for_current_reflections(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            selected_hazard="Higher electricity bills",
+            mitigation_measure="Targeted bill support.",
+            mitigation_reason="It adds automatic eligibility.",
+            mitigation_record_id="measure-1",
+            mitigation_target_population=["Low-income households"],
+        )
+        fingerprint = engine._system_inquiry_context_fingerprint(session)
+
+        class _Row:
+            user_session_id = None
+            system_inquiry_json = json.dumps(
+                {
+                    "context_fingerprint": fingerprint,
+                    "annotations": [{"annotation_id": "si-001"}],
+                }
+            )
+
+        class _Db:
+            def scalar(self, statement):
+                return _Row()
+
+        engine.db = _Db()
+
+        response = engine._system_inquiry_intro_step("test-session", session)
+
+        self.assertNotIn("Re-run note", response.bot_message)
+
+    def test_system_inquiry_records_response_and_completes(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills from renewable grid upgrade tariffs",
+            mitigation_measure=(
+                "A grant that offsets electricity bill increases for low-income households."
+            ),
+            mitigation_reason="It reduces bill pressure while grid upgrades are implemented.",
+            mitigation_target_population=["Low-income households"],
+            evaluation_answers=[
+                {
+                    "category": "Systemic and structural",
+                    "question": "How structural is this measure?",
+                    "score": 8,
+                }
+            ],
+        )
+        engine._system_inquiry_intro_step("test-session", session)
+
+        first = asyncio.run(
+            engine._handle_system_inquiry_intro(
+                "test-session",
+                session,
+                "Start system inquiry",
+            )
+        )
+        self.assertEqual(first.step, "system_inquiry_observation")
+        self.assertEqual(session.phase, "system_inquiry_observation")
+
+        while session.phase == "system_inquiry_observation":
+            response = asyncio.run(
+                engine._handle_system_inquiry_observation(
+                    "test-session",
+                    session,
+                    "The measure should add automatic eligibility checks and emergency support.",
+                )
+            )
+
+        self.assertEqual(response.step, "system_inquiry_complete")
+        self.assertTrue(session.system_inquiry_annotations)
+        self.assertTrue(
+            all(
+                item["resolution_state"] == "addressed"
+                for item in session.system_inquiry_annotations or []
+            )
+        )
+        annotation = (session.system_inquiry_annotations or [])[0]
+        self.assertEqual(annotation["version"], 1)
+        self.assertTrue(str(annotation["created_at"]).endswith("Z"))
+        self.assertTrue(annotation["screen_result"])
+        self.assertIn("source_refs", annotation)
+        self.assertEqual(annotation["source_refs"][0]["document"], "System enquiry.md")
+        self.assertIn("salience_score", annotation)
+
+    def test_system_inquiry_partial_response_gets_one_followup(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills from renewable grid upgrade tariffs",
+            mitigation_measure=(
+                "A grant that offsets electricity bill increases for low-income households."
+            ),
+            mitigation_reason="It reduces bill pressure while grid upgrades are implemented.",
+            mitigation_target_population=["Low-income households"],
+        )
+        engine._system_inquiry_intro_step("test-session", session)
+        asyncio.run(
+            engine._handle_system_inquiry_intro(
+                "test-session",
+                session,
+                "Start system inquiry",
+            )
+        )
+
+        followup = asyncio.run(
+            engine._handle_system_inquiry_observation(
+                "test-session",
+                session,
+                "Looks okay.",
+            )
+        )
+
+        self.assertFalse(followup.error)
+        self.assertEqual(followup.step, "system_inquiry_followup")
+        self.assertEqual(session.phase, "system_inquiry_followup")
+        self.assertIn("Specify the mechanism", followup.bot_message)
+        pending = session.system_inquiry_pending_followup or {}
+        adjudication = pending.get("adjudication") or {}
+        self.assertEqual(adjudication["followup_type"], "specify_mechanism")
+
+        response = asyncio.run(
+            engine._handle_system_inquiry_followup(
+                "test-session",
+                session,
+                (
+                    "The measure should include automatic eligibility checks and "
+                    "a local support owner for households without digital access."
+                ),
+            )
+        )
+
+        self.assertEqual(session.system_inquiry_index, 1)
+        self.assertEqual(response.step, "system_inquiry_observation")
+        annotation = (session.system_inquiry_annotations or [])[0]
+        self.assertEqual(annotation["resolution_state"], "addressed")
+        self.assertEqual(annotation["followup_type"], "specify_mechanism")
+        self.assertIn("specify_mechanism", annotation["followup_types"])
+        self.assertEqual(annotation["candidate_status"], "selected")
+        self.assertIn("trigger_basis", annotation)
+        self.assertIn("automatic eligibility", annotation["followup_response"])
+
+    def test_system_inquiry_response_adjudication_uses_constrained_llm(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills",
+            mitigation_measure="An application grant for low-income households.",
+            mitigation_reason="It offsets bills.",
+            mitigation_target_population=["Low-income households"],
+            system_inquiry_attributes={"extraction_method": "llm_constrained_v1"},
+            system_inquiry_observations=[
+                {
+                    "probe_id": "C3-P1",
+                    "title": "Procedural access",
+                    "observation": "The measure requires an application.",
+                    "question": "Who helps applicants complete it?",
+                    "followup_types": ["specify_mechanism"],
+                    "anchors": {
+                        "measure": "An application grant",
+                        "hazard": "Higher electricity bills",
+                        "groups": ["Low-income households"],
+                    },
+                }
+            ],
+            system_inquiry_index=0,
+            system_inquiry_annotations=[],
+            phase="system_inquiry_observation",
+        )
+
+        with patch(
+            "app.services.chat_mitigation_creation.ask_llm_chat",
+            AsyncMock(
+                return_value=json.dumps(
+                    {
+                        "resolution_state": "partially_addressed",
+                        "evaluation": "The response is relevant but needs a mechanism.",
+                        "needs_followup": True,
+                        "followup_type": "specify_mechanism",
+                    }
+                )
+            ),
+        ) as mocked_llm:
+            response = asyncio.run(
+                engine._handle_system_inquiry_observation(
+                    "test-session",
+                    session,
+                    "Local advice centres can help.",
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "system_inquiry_followup")
+        self.assertEqual(mocked_llm.await_count, 1)
+        pending = session.system_inquiry_pending_followup or {}
+        adjudication = pending.get("adjudication") or {}
+        self.assertEqual(adjudication["adjudication_method"], "llm_constrained_v1")
+        self.assertIn("Specify the mechanism", adjudication["followup_question"])
+
+    def test_system_inquiry_followup_uses_probe_specific_group_prompt(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            selected_hazard="Higher electricity bills from renewable grid upgrade tariffs",
+            hazard_profiles={
+                "Higher electricity bills from renewable grid upgrade tariffs": [
+                    {"name": "Low-income households"},
+                    {"name": "Tenants"},
+                ]
+            },
+            mitigation_measure="Targeted electricity bill support.",
+            mitigation_reason="It offsets tariff increases.",
+            mitigation_target_population=["Low-income households"],
+            system_inquiry_observations=[],
+            system_inquiry_index=0,
+            system_inquiry_annotations=[],
+        )
+        observations = engine._system_inquiry_observations(session)
+        c2 = next(item for item in observations if item["probe_id"] == "C2-P1")
+        session.system_inquiry_observations = [c2]
+
+        response = asyncio.run(
+            engine._handle_system_inquiry_observation(
+                "test-session",
+                session,
+                "Maybe.",
+            )
+        )
+
+        self.assertEqual(response.step, "system_inquiry_followup")
+        self.assertIn("Name the group", response.bot_message)
+        pending = session.system_inquiry_pending_followup or {}
+        adjudication = pending.get("adjudication") or {}
+        self.assertEqual(adjudication["followup_type"], "name_group")
+
+    def test_system_inquiry_followup_can_be_skipped(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills from renewable grid upgrade tariffs",
+            mitigation_measure=(
+                "A grant that offsets electricity bill increases for low-income households."
+            ),
+            mitigation_reason="It reduces bill pressure while grid upgrades are implemented.",
+            mitigation_target_population=["Low-income households"],
+        )
+        engine._system_inquiry_intro_step("test-session", session)
+        asyncio.run(
+            engine._handle_system_inquiry_intro(
+                "test-session",
+                session,
+                "Start system inquiry",
+            )
+        )
+        asyncio.run(
+            engine._handle_system_inquiry_observation(
+                "test-session",
+                session,
+                "Not relevant.",
+            )
+        )
+
+        response = asyncio.run(
+            engine._handle_system_inquiry_followup(
+                "test-session",
+                session,
+                "Skip follow-up",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "system_inquiry_observation")
+        annotation = (session.system_inquiry_annotations or [])[0]
+        self.assertEqual(annotation["resolution_state"], "open")
+        self.assertEqual(annotation["followup_response"], "")
+
+    def test_system_inquiry_reasoned_not_applicable_completes_without_followup(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Higher electricity bills from renewable grid upgrade tariffs",
+            mitigation_measure="Targeted electricity bill support.",
+            mitigation_reason="It offsets tariff increases.",
+            mitigation_target_population=["Low-income households"],
+            system_inquiry_observations=[
+                {
+                    "probe_id": "B1-P1",
+                    "lens_id": "B1",
+                    "family": "B_framing",
+                    "title": "Problem framing",
+                    "corpus_label": "unproven",
+                    "observation": "The measure frames the response around bill support.",
+                    "why_it_matters": "Boundaries shape who is included.",
+                    "question": "What sits outside that boundary?",
+                }
+            ],
+            system_inquiry_index=0,
+            system_inquiry_annotations=[],
+            phase="system_inquiry_observation",
+        )
+
+        response = asyncio.run(
+            engine._handle_system_inquiry_observation(
+                "test-session",
+                session,
+                (
+                    "This is not applicable because the adjacent tenant group is already "
+                    "covered by a separate housing support measure."
+                ),
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "system_inquiry_complete")
+        annotation = (session.system_inquiry_annotations or [])[0]
+        self.assertEqual(annotation["resolution_state"], "not_applicable_reasoned")
+        self.assertFalse(session.system_inquiry_pending_followup)
+
+    def test_system_inquiry_complete_builds_profile_and_persists_payload(self):
+        class _Row:
+            system_inquiry_json = None
+
+        class _Db:
+            def __init__(self):
+                self.row = _Row()
+                self.committed = False
+                self.rolled_back = False
+
+            def scalar(self, statement):
+                return self.row
+
+            def commit(self):
+                self.committed = True
+
+            def rollback(self):
+                self.rolled_back = True
+
+        engine = _MitigationReviewEngine()
+        engine.db = _Db()
+        session = ChatSession(
+            selected_hazard="Higher electricity bills",
+            mitigation_measure="Targeted electricity bill support.",
+            mitigation_record_id="measure-1",
+            system_inquiry_coverage_summary={"uncovered_hazards": []},
+            system_inquiry_held_observations=[
+                {
+                    "probe_id": "A4-P1",
+                    "family": "A_structure",
+                    "candidate_status": "held_cap",
+                },
+                {
+                    "probe_id": "C3-P1",
+                    "family": "C_justice",
+                    "candidate_status": "discarded_no_anchor",
+                },
+            ],
+            system_inquiry_annotations=[
+                {
+                    "probe_id": "C1-P1",
+                    "family": "C_justice",
+                    "resolution_state": "addressed",
+                    "followup_response": "",
+                },
+                {
+                    "probe_id": "B1-P1",
+                    "family": "B_framing",
+                    "resolution_state": "partially_addressed",
+                    "followup_response": "Add tenant outreach through local advice centres.",
+                },
+            ],
+        )
+
+        response = engine._system_inquiry_complete_step("test-session", session)
+
+        self.assertFalse(response.error)
+        self.assertTrue(engine.db.committed)
+        self.assertFalse(engine.db.rolled_back)
+        self.assertEqual(session.system_inquiry_profile["annotation_count"], 2)
+        self.assertEqual(session.system_inquiry_profile["completion_score"], 0.75)
+        self.assertTrue(session.system_inquiry_profile["followup_used"])
+        payload = json.loads(engine.db.row.system_inquiry_json)
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["library_version"], "1.0-deterministic")
+        self.assertIn("context_fingerprint", payload)
+        self.assertIn("context_snapshot", payload)
+        self.assertEqual(payload["attributes"]["action_type"], "service")
+        self.assertEqual(payload["attributes"]["leverage_depth"], "parameter")
+        self.assertEqual(payload["profile"]["library_version"], "1.0-deterministic")
+        self.assertEqual(len(payload["profile"]["session_id_anon"]), 16)
+        self.assertEqual(payload["profile"]["state_counts"]["addressed"], 1)
+        self.assertEqual(payload["profile"]["status_counts"]["current"], 2)
+        self.assertEqual(payload["profile"]["leverage_distribution"]["parameter"], 1)
+        self.assertEqual(payload["candidate_audit"], [])
+        self.assertEqual(payload["telemetry"]["library_version"], "1.0-deterministic")
+        self.assertEqual(len(payload["telemetry"]["session_id_anon"]), 16)
+        self.assertEqual(payload["telemetry"]["measure_ordinal"], 1)
+        self.assertFalse(payload["telemetry"]["skip_event"])
+        self.assertEqual(payload["telemetry"]["family_coverage"]["C_justice"], 1.0)
+        self.assertEqual(payload["telemetry"]["leverage_distribution"]["parameter"], 1)
+        telemetry_probe = next(
+            item
+            for item in payload["telemetry"]["probes"]
+            if item["probe_id"] == "B1-P1"
+        )
+        self.assertTrue(telemetry_probe["surfaced"])
+        self.assertEqual(telemetry_probe["resolution_state"], "partially_addressed")
+        self.assertEqual(telemetry_probe["response_length_bucket"], "empty")
+        self.assertTrue(telemetry_probe["followup_used"])
+        self.assertNotIn(
+            "Add tenant outreach",
+            json.dumps(payload["telemetry"], ensure_ascii=False),
+        )
+        self.assertEqual(payload["profile"]["per_family"]["C_justice"]["surfaced"], 1)
+        self.assertEqual(payload["profile"]["per_family"]["C_justice"]["coverage"], 1.0)
+        self.assertEqual(payload["profile"]["per_family"]["B_framing"]["partially"], 1)
+        self.assertEqual(payload["profile"]["per_family"]["B_framing"]["coverage"], 0.5)
+        self.assertEqual(
+            payload["profile"]["per_family"]["A_structure"]["unexamined_held_by_cap"],
+            1,
+        )
+        self.assertEqual(
+            payload["profile"]["per_family"]["C_justice"]["unexamined_held_by_cap"],
+            0,
+        )
+        self.assertEqual(payload["profile"]["trajectory"][0]["ordinal"], 1)
+        self.assertEqual(
+            payload["profile"]["trajectory"][0]["coverage"]["C_justice"],
+            1.0,
+        )
+        self.assertEqual(len(payload["annotations"]), 2)
+        self.assertEqual(payload["annotations"][0]["annotation_id"], "si-001")
+        self.assertEqual(payload["annotations"][0]["version"], 1)
+        self.assertTrue(str(payload["annotations"][0]["created_at"]).endswith("Z"))
+        self.assertEqual(payload["annotations"][0]["citations"], [])
+        self.assertEqual(payload["annotations"][0]["source_refs"], [])
+        self.assertEqual(payload["annotations"][0]["status"], "current")
+        self.assertIsNone(payload["annotations"][0]["superseded_by"])
+        self.assertEqual(
+            payload["annotations"][0]["context_fingerprint"],
+            payload["context_fingerprint"],
+        )
+        self.assertIn("held_observations", payload)
+
+    def test_system_inquiry_complete_ask_another_question_prompts_for_input(self):
+        service = ChatService.__new__(ChatService)
+        service._handle_other_nav_action = AsyncMock(return_value=None)
+        service._is_invalid_user_text = MagicMock(return_value=False)
+        service._open_selection_response_from_any_step = AsyncMock(return_value=None)
+        service._common_user_input_quality_response = AsyncMock(return_value=None)
+        service._handle_anytime_grounded_question = AsyncMock(return_value=None)
+        service._deep_dive = AsyncMock(
+            return_value=ChatResponse(
+                session_id="test-session",
+                step="complete",
+                bot_message="Deep dive answer",
+                options=[],
+                session={},
+                error=False,
+            )
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            phase="system_inquiry_complete",
+        )
+
+        response = asyncio.run(
+            service._chat_response(
+                "test-session",
+                session,
+                "Ask another question",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "complete")
+        self.assertEqual(response.input_mode, "text")
+        self.assertEqual(session.phase, "complete")
+        self.assertIn("What would you like to ask", response.bot_message)
+        service._deep_dive.assert_not_awaited()
+
+    def test_system_inquiry_payload_persists_candidate_audit(self):
+        class _Row:
+            system_inquiry_json = None
+
+        class _Db:
+            def __init__(self):
+                self.row = _Row()
+
+            def scalar(self, statement):
+                return self.row
+
+            def commit(self):
+                return None
+
+            def rollback(self):
+                return None
+
+        engine = _MitigationReviewEngine()
+        engine.db = _Db()
+        session = ChatSession(
+            selected_hazard="",
+            mitigation_measure="A grant for households.",
+            mitigation_reason="It offsets bills.",
+            mitigation_record_id="measure-1",
+            mitigation_target_population=["Low-income households"],
+        )
+        engine._system_inquiry_intro_step("test-session", session)
+
+        engine._system_inquiry_complete_step("test-session", session)
+
+        payload = json.loads(engine.db.row.system_inquiry_json)
+        audit = {
+            item["probe_id"]: item
+            for item in payload["candidate_audit"]
+        }
+        self.assertEqual(audit["C1-P1"]["status"], "discarded_no_anchor")
+        self.assertEqual(audit["C1-P1"]["anchor_counts"]["hazards"], 0)
+        self.assertEqual(audit["B1-P1"]["status"], "discarded_no_anchor")
+        self.assertIn("anchors", audit["C1-P1"])
+        self.assertNotIn("observation", audit["C1-P1"])
+        telemetry = {
+            item["probe_id"]: item
+            for item in payload["telemetry"]["probes"]
+        }
+        self.assertFalse(telemetry["C1-P1"]["anchor_valid"])
+
+        session = ChatSession(
+            selected_hazard="Higher electricity bills",
+            mitigation_measure="A grant for households.",
+            mitigation_reason="It offsets bills.",
+            mitigation_record_id="measure-2",
+            mitigation_target_population=["Low-income households"],
+        )
+        engine._system_inquiry_intro_step("test-session", session)
+        engine._system_inquiry_complete_step("test-session", session)
+        payload = json.loads(engine.db.row.system_inquiry_json)
+        selected_audit = {
+            item["probe_id"]: item
+            for item in payload["candidate_audit"]
+        }
+        self.assertIn(selected_audit["B1-P1"]["status"], {"selected", "held_cap"})
+        self.assertIn("anchors", selected_audit["B1-P1"])
+        self.assertEqual(
+            selected_audit["B1-P1"]["source_refs"][0]["document"],
+            "System enquiry.md",
+        )
+        self.assertNotIn("observation", selected_audit["B1-P1"])
+        self.assertTrue(
+            any(item["status"] == "selected" for item in selected_audit.values())
+        )
+
+    def test_system_inquiry_profile_includes_prior_measure_trajectory(self):
+        class _PriorMeasure:
+            id = "measure-0"
+            measure = "Prior bill rebate."
+            reason = "It offers bill support."
+            target_population = json.dumps(["Low-income households"])
+            system_inquiry_json = json.dumps(
+                {
+                    "profile": {
+                        "per_family": {
+                            "C_justice": {"coverage": 1.0},
+                            "B_framing": {"coverage": 0.5},
+                        }
+                    }
+                }
+            )
+
+        engine = _MitigationReviewEngine()
+        engine._system_inquiry_prior_measure_rows = lambda session: [_PriorMeasure()]
+        session = ChatSession(
+            mitigation_record_id="measure-1",
+            mitigation_measure="Current bill support.",
+            mitigation_reason="It adds automatic support.",
+            system_inquiry_annotations=[
+                {
+                    "probe_id": "B1-P1",
+                    "family": "B_framing",
+                    "resolution_state": "addressed",
+                }
+            ],
+        )
+
+        profile = engine._system_inquiry_profile(session)
+
+        self.assertEqual(len(profile["trajectory"]), 2)
+        self.assertEqual(profile["trajectory"][0]["measure_id"], "measure-0")
+        self.assertEqual(profile["trajectory"][0]["coverage"]["B_framing"], 0.5)
+        self.assertEqual(profile["trajectory"][1]["measure_id"], "measure-1")
+        self.assertEqual(profile["trajectory"][1]["coverage"]["B_framing"], 1.0)
+
+    def test_system_inquiry_attributes_capture_delivery_cost_time_and_capacity(self):
+        engine = _MitigationReviewEngine()
+
+        attributes = engine._system_inquiry_measure_attributes(
+            (
+                "A means-tested grant application funds insulation retrofit works "
+                "for tenants over 18 months using approved installers."
+            ),
+            "It reduces housing and energy costs for low income households.",
+            ["Low-income households", "Tenants"],
+        )
+
+        self.assertEqual(attributes["action_type"], "grant")
+        self.assertEqual(attributes["delivery_channel"], "means_tested")
+        self.assertEqual(attributes["cost_incidence"], "upfront_user_cost")
+        self.assertEqual(attributes["time_to_benefit"], "months")
+        self.assertEqual(attributes["capacity_type"], "installers")
+        self.assertIn("income", attributes["eligibility_basis"])
+        self.assertIn("tenure", attributes["eligibility_basis"])
+
+    def test_system_inquiry_adds_cross_sector_capacity_rebound_and_long_term_probes(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            country="Italy",
+            sector="Energy",
+            selected_hazard="Heating and cooling costs increase",
+            mitigation_measure=(
+                "A grant funds housing retrofit works for low-income households "
+                "over two years using approved installers."
+            ),
+            mitigation_reason=(
+                "The housing retrofit lowers energy demand and reduces exposure "
+                "to heating bills."
+            ),
+            mitigation_target_population=["Low-income households"],
+        )
+
+        observations = engine._system_inquiry_observations(session)
+        by_probe = {
+            item["probe_id"]: item
+            for item in (session.system_inquiry_candidate_audit or observations)
+        }
+
+        self.assertIn("A2-P1", by_probe)
+        self.assertIn("A6-P1", by_probe)
+        self.assertIn("A7-P1", by_probe)
+        self.assertIn("C4-P1", by_probe)
+        self.assertEqual(by_probe["A2-P1"]["tier"], "conditional")
+        self.assertEqual(by_probe["A2-P1"]["anchor_counts"]["sectors"], 1)
+        self.assertEqual(by_probe["A7-P1"]["anchor_counts"]["groups"], 1)
+        self.assertEqual(by_probe["C4-P1"]["corpus_label"], "unproven")
+        self.assertIn("§5.3", by_probe["A6-P1"]["source_refs"][0]["locator"])
+
+    def test_system_inquiry_anonymous_session_id_is_stable(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(session_key="session-a")
+
+        first = engine._system_inquiry_session_id_anon(session)
+        second = engine._system_inquiry_session_id_anon(session)
+        other = engine._system_inquiry_session_id_anon(
+            ChatSession(session_key="session-b")
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 16)
+        self.assertNotEqual(first, other)
+
+    def test_system_inquiry_persistence_supersedes_changed_context(self):
+        class _Row:
+            system_inquiry_json = json.dumps(
+                {
+                    "context_fingerprint": "old-context",
+                    "annotations": [
+                        {
+                            "annotation_id": "si-001",
+                            "probe_id": "C1-P1",
+                            "status": "current",
+                            "resolution_state": "addressed",
+                        }
+                    ],
+                    "superseded_annotations": [
+                        {
+                            "annotation_id": "si-previous",
+                            "probe_id": "B1-P1",
+                            "status": "superseded",
+                        }
+                    ],
+                }
+            )
+
+        class _Db:
+            def __init__(self):
+                self.row = _Row()
+
+            def scalar(self, statement):
+                return self.row
+
+            def commit(self):
+                return None
+
+            def rollback(self):
+                return None
+
+        engine = _MitigationReviewEngine()
+        engine.db = _Db()
+        session = ChatSession(
+            selected_hazard="Higher electricity bills",
+            mitigation_measure="Updated targeted electricity bill support.",
+            mitigation_reason="It adds a new eligibility route.",
+            mitigation_record_id="measure-1",
+            system_inquiry_annotations=[
+                {
+                    "probe_id": "C3-P1",
+                    "family": "C_justice",
+                    "resolution_state": "addressed",
+                }
+            ],
+        )
+
+        engine._system_inquiry_complete_step("test-session", session)
+
+        payload = json.loads(engine.db.row.system_inquiry_json)
+        superseded = payload["superseded_annotations"]
+        self.assertEqual(len(superseded), 2)
+        self.assertEqual(superseded[0]["annotation_id"], "si-previous")
+        self.assertEqual(superseded[1]["annotation_id"], "si-001")
+        self.assertEqual(superseded[1]["status"], "superseded")
+        self.assertEqual(superseded[1]["superseded_by"], payload["context_fingerprint"])
+
+    def test_suggested_mitigation_report_includes_systemic_reflections(self):
+        class _Row:
+            system_inquiry_json = json.dumps(
+                {
+                    "profile": {"completion_score": 0.75},
+                    "annotations": [
+                        {
+                            "title": "Distributional incidence",
+                            "corpus_label": "unproven",
+                            "resolution_state": "addressed",
+                            "status": "current",
+                            "observation_text": "The measure relies on reimbursement.",
+                            "question_text": "What happens if households cannot pay?",
+                            "user_response": "Add an upfront grant route.",
+                            "followup_question": "Specify the mechanism.",
+                            "followup_response": "The agency pays approved installers directly.",
+                        }
+                    ],
+                    "superseded_annotations": [
+                        {"annotation_id": "si-old", "status": "superseded"}
+                    ],
+                }
+            )
+
+        engine = _MitigationReviewEngine()
+        engine._suggested_mitigation_record = lambda session: _Row()
+        session = ChatSession(suggested_mitigation_measure_id="measure-1")
+
+        report = engine._suggested_mitigation_system_inquiry_report(session)
+
+        self.assertIn("Completion score", report)
+        self.assertIn("Distributional incidence", report)
+        self.assertIn("Add an upfront grant route", report)
+        self.assertIn("approved installers directly", report)
+        self.assertIn("Superseded reflection responses retained", report)
+
+    def test_system_inquiry_can_be_skipped(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            phase="system_inquiry_intro",
+            mitigation_measure="Targeted electricity bill support.",
+            mitigation_reason="It offsets tariff increases.",
+            mitigation_target_population=["Low-income households"],
+        )
+        engine._system_inquiry_intro_step("test-session", session)
+
+        response = asyncio.run(
+            engine._handle_system_inquiry_intro(
+                "test-session",
+                session,
+                "Skip system inquiry",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "system_inquiry_complete")
+        self.assertTrue(session.system_inquiry_skipped)
+        self.assertIn("skipped", response.bot_message.casefold())
+
+    def test_system_inquiry_skip_payload_records_telemetry_skip_event(self):
+        class _Row:
+            system_inquiry_json = None
+
+        class _Db:
+            def __init__(self):
+                self.row = _Row()
+
+            def scalar(self, statement):
+                return self.row
+
+            def commit(self):
+                return None
+
+            def rollback(self):
+                return None
+
+        engine = _MitigationReviewEngine()
+        engine.db = _Db()
+        session = ChatSession(
+            country="Italy",
+            sector="Energy",
+            phase="system_inquiry_intro",
+            mitigation_measure="Targeted electricity bill support.",
+            mitigation_record_id="measure-1",
+        )
+        engine._system_inquiry_intro_step("test-session", session)
+
+        asyncio.run(
+            engine._handle_system_inquiry_intro(
+                "test-session",
+                session,
+                "Skip system inquiry",
+            )
+        )
+
+        payload = json.loads(engine.db.row.system_inquiry_json)
+        self.assertTrue(payload["telemetry"]["skip_event"])
+        self.assertEqual(payload["telemetry"]["country"], "Italy")
+        self.assertEqual(payload["telemetry"]["sector"], "Energy")
+        self.assertEqual(payload["telemetry"]["probes"], [])
 
     def test_mitigation_review_prompt_includes_d23_page_range_context(self):
         engine = _MitigationReviewEngine()

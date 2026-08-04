@@ -43,6 +43,10 @@ from app.services.chat_options import (
     REASON_CONFIRMATION_OPTIONS,
     SOCIO_DEMOGRAPHIC_OPTIONS,
     STATS_DEEP_DIVE_OPTIONS,
+    SYSTEM_INQUIRY_COMPLETE_OPTIONS,
+    SYSTEM_INQUIRY_FOLLOWUP_OPTIONS,
+    SYSTEM_INQUIRY_INTRO_OPTIONS,
+    SYSTEM_INQUIRY_OBSERVATION_OPTIONS,
     best_fuzzy_label,
     compact_for_match,
     exact_option_label,
@@ -545,6 +549,35 @@ class ChatService(
         if session.phase == "evaluation_complete":
             return await self._deep_dive(current_session_id, session, clean_message)
 
+        if session.phase == "system_inquiry_intro":
+            return await self._handle_system_inquiry_intro(
+                current_session_id,
+                session,
+                clean_message,
+            )
+
+        if session.phase == "system_inquiry_observation":
+            return await self._handle_system_inquiry_observation(
+                current_session_id,
+                session,
+                clean_message,
+            )
+
+        if session.phase == "system_inquiry_followup":
+            return await self._handle_system_inquiry_followup(
+                current_session_id,
+                session,
+                clean_message,
+            )
+
+        if session.phase == "system_inquiry_complete":
+            if normalize(clean_message) == normalize("Ask another question"):
+                return self._system_inquiry_question_prompt_step(
+                    current_session_id,
+                    session,
+                )
+            return await self._deep_dive(current_session_id, session, clean_message)
+
         if session.phase == "mitigation":
             return await self._deep_dive(current_session_id, session, clean_message)
 
@@ -559,6 +592,24 @@ class ChatService(
             )
 
         return await self._deep_dive(current_session_id, session, clean_message)
+
+    def _system_inquiry_question_prompt_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+    ) -> ChatResponse:
+        session.phase = "complete"
+        return ChatResponse(
+            session_id=session_id,
+            step="complete",
+            bot_message=markdown_to_html(
+                "Sure. What would you like to ask about this session?"
+            ),
+            options=[],
+            session=session.summary(),
+            input_mode="text",
+            error=False,
+        )
 
     async def _common_user_input_quality_response(
         self,
@@ -1721,6 +1772,14 @@ class ChatService(
             labels = [option.label for option in MITIGATION_REVIEW_OPTIONS]
         elif session.phase == "implementation_readiness_assessment":
             labels = [option.label for option in IMPLEMENTATION_READINESS_OPTIONS]
+        elif session.phase == "system_inquiry_intro":
+            labels = [option.label for option in SYSTEM_INQUIRY_INTRO_OPTIONS]
+        elif session.phase == "system_inquiry_observation":
+            labels = [option.label for option in SYSTEM_INQUIRY_OBSERVATION_OPTIONS]
+        elif session.phase == "system_inquiry_followup":
+            labels = [option.label for option in SYSTEM_INQUIRY_FOLLOWUP_OPTIONS]
+        elif session.phase == "system_inquiry_complete":
+            labels = [option.label for option in SYSTEM_INQUIRY_COMPLETE_OPTIONS]
 
         labels.extend(self._other_nav_options(session, self._current_step(session)))
         return bool(labels and best_fuzzy_label(message, labels) is not None)
@@ -1767,6 +1826,14 @@ class ChatService(
             return [option.label for option in MITIGATION_REVIEW_OPTIONS]
         if session.phase == "implementation_readiness_assessment":
             return [option.label for option in IMPLEMENTATION_READINESS_OPTIONS]
+        if session.phase == "system_inquiry_intro":
+            return [option.label for option in SYSTEM_INQUIRY_INTRO_OPTIONS]
+        if session.phase == "system_inquiry_observation":
+            return [option.label for option in SYSTEM_INQUIRY_OBSERVATION_OPTIONS]
+        if session.phase == "system_inquiry_followup":
+            return [option.label for option in SYSTEM_INQUIRY_FOLLOWUP_OPTIONS]
+        if session.phase == "system_inquiry_complete":
+            return [option.label for option in SYSTEM_INQUIRY_COMPLETE_OPTIONS]
         return []
 
     def _fields_are_locally_meaningful(self, fields: dict[str, str]) -> bool:

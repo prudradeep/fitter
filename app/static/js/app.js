@@ -1766,6 +1766,9 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
   }
   if (options.length) {
     const optionLabels = options.map((option) => option.label);
+    if (step === "system_inquiry_observation" || step === "system_inquiry_followup") {
+      return "Write your reflection, or choose an option above...";
+    }
     if (step === "hazard_profile_selection") {
       return "Select a hazard above, or type the hazard name...";
     }
@@ -1809,6 +1812,8 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     custom_hazard_profile_reason: "Explain how this hazard affects the added group...",
     mitigation: "Ask a mitigation question or continue the plan...",
     mitigation_clarity: "Answer all clarification questions...",
+    system_inquiry_observation: "Write your reflection...",
+    system_inquiry_followup: "Write your follow-up reflection...",
     evaluation_question: "Use the score slider below...",
     complete: "Ask a follow-up question...",
     country: "Type or select a country...",
@@ -2948,6 +2953,10 @@ function renderSelectedHazardContext(session = {}) {
     "mitigation_review",
     "evaluation_question",
     "evaluation_complete",
+    "system_inquiry_intro",
+    "system_inquiry_observation",
+    "system_inquiry_followup",
+    "system_inquiry_complete",
   ]);
   const mitigationMeasure = String(session.mitigation_measure || "").trim();
   const showMitigationReviewPanel =
@@ -3858,16 +3867,29 @@ function renderSessions(sessions) {
   }
 
   sessions.forEach((item) => {
+    const isCurrentSession = item.session_id === sessionId;
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "session-item";
+    button.className = isCurrentSession ? "session-item is-current" : "session-item";
     button.dataset.sessionId = item.session_id;
+    if (isCurrentSession) {
+      button.setAttribute("aria-current", "true");
+    }
+    const titleLine = document.createElement("span");
+    titleLine.className = "session-title-line";
     const title = document.createElement("span");
     title.className = "session-title";
     title.textContent = item.title || "New policy session";
+    titleLine.appendChild(title);
+    if (isCurrentSession) {
+      const currentLabel = document.createElement("span");
+      currentLabel.className = "session-current-label";
+      currentLabel.textContent = "Current";
+      titleLine.appendChild(currentLabel);
+    }
     const updatedAt = document.createElement("small");
     updatedAt.textContent = formatSessionDate(item.updated_at);
-    button.appendChild(title);
+    button.appendChild(titleLine);
     button.appendChild(updatedAt);
     button.addEventListener("click", () => restoreSession(item.session_id));
 

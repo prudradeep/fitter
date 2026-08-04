@@ -1918,15 +1918,16 @@ class ChatValidationServiceMixin:
         )
 
         if validation is None:
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_evidence",
-                bot_message=render_message("mitigation_validation_unavailable.md"),
-                options=MITIGATION_EVIDENCE_INPUT_OPTIONS,
-                session=session.summary(),
-                input_mode="evidence_only",
-                error=True,
-            )
+            if not evidence_branch:
+                validation = self._local_mitigation_unavailable_fallback_validation(
+                    mitigation_measure,
+                    reason,
+                )
+            else:
+                return self._mitigation_validation_unavailable_clarification_step(
+                    session_id=session_id,
+                    session=session,
+                )
 
         validation["evaluated_inputs"] = evaluated_inputs.copy()
         outcome = str(validation.get("outcome") or ("PASS" if validation["valid"] else "REJECT"))
@@ -1966,22 +1967,31 @@ class ChatValidationServiceMixin:
                 validation_details=self._grounding_validation_details(session, validation),
             )
 
-        synthesis = await self._grounded_mitigation_synthesis(
-            session=session,
-            mitigation_measure=mitigation_measure,
-            reason=reason,
-            validation=validation,
-        )
-        if synthesis is None:
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_evidence",
-                bot_message=render_message("mitigation_validation_unavailable.md"),
-                options=MITIGATION_EVIDENCE_INPUT_OPTIONS,
-                session=session.summary(),
-                input_mode="evidence_only",
-                error=True,
+        if bool(validation.get("local_llm_unavailable_fallback")):
+            synthesis = self._local_mitigation_unavailable_fallback_synthesis(
+                session,
+                mitigation_measure,
+                reason,
             )
+        else:
+            synthesis = await self._grounded_mitigation_synthesis(
+                session=session,
+                mitigation_measure=mitigation_measure,
+                reason=reason,
+                validation=validation,
+            )
+        if synthesis is None:
+            if not evidence_branch or bool(validation.get("local_llm_unavailable_fallback")):
+                synthesis = self._local_mitigation_unavailable_fallback_synthesis(
+                    session,
+                    mitigation_measure,
+                    reason,
+                )
+            else:
+                return self._mitigation_validation_unavailable_clarification_step(
+                    session_id=session_id,
+                    session=session,
+                )
 
         if evidence_branch:
             self._promote_temporary_evidence(
@@ -2006,6 +2016,109 @@ class ChatValidationServiceMixin:
             mitigation_measure,
             reason,
             evidence_text,
+        )
+
+    def _local_mitigation_unavailable_fallback_validation(
+        self,
+        mitigation_measure: str,
+        reason: str,
+    ) -> dict[str, object]:
+        dimensions: dict[str, dict[str, object]] = {}
+        critical_dimensions = set(
+            getattr(
+                self,
+                "mitigation_critical_grounding_dimensions",
+                ("hazard_fit", "justification_soundness"),
+            )
+        )
+        for name in getattr(
+            self,
+            "mitigation_grounding_dimensions",
+            (
+                "hazard_fit",
+                "mechanism",
+                "justification_soundness",
+                "evidence_quality",
+                "contraindications",
+                "feasibility",
+            ),
+        ):
+            supported = name in critical_dimensions
+            dimensions[name] = {
+                "status": "SUPPORTED" if supported else "INSUFFICIENT_INFO",
+                "citation_ids": [],
+                "support_score": None,
+                "explanation": (
+                    "Accepted from clarified user input while the local LLM was "
+                    "unavailable; this dimension was not grounded against the curated "
+                    "knowledge base."
+                    if supported
+                    else "Not checked because the local LLM was unavailable."
+                ),
+            }
+        return {
+            "valid": True,
+            "outcome": "PASS",
+            "reason": (
+                "Local fallback accepted this mitigation measure because the measure "
+                "and reason were clear enough to continue, but the local LLM was "
+                "unavailable for grounded validation."
+            ),
+            "dimensions": dimensions,
+            "rubric_coverage": 1.0,
+            "retrieval_support": 0.0,
+            "verdict_stability": 0.0,
+            "sample_count": 0,
+            "confidence_score": 30,
+            "support_context": "",
+            "support_label": "LOCAL_FALLBACK_NO_LLM",
+            "local_llm_unavailable_fallback": True,
+            "evaluated_inputs": {
+                "measure_description": mitigation_measure,
+                "justification": reason,
+                "evidence": "",
+            },
+        }
+
+    def _local_mitigation_unavailable_fallback_synthesis(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+    ) -> str:
+        return (
+            "### Local fallback conclusion\n\n"
+            "- The mitigation measure and reason were clear enough to continue while "
+            "the local LLM was unavailable "
+            "(`measure_description`, `justification`, `selected_hazard`).\n\n"
+            "### What to be careful about\n\n"
+            "- This conclusion was not grounded against the curated knowledge base. "
+            "Treat it as provisional and re-run validation when the local model is "
+            "available.\n\n"
+            f"**Mitigation measure:** {mitigation_measure}\n\n"
+            f"**Reason:** {reason}\n\n"
+            f"**Selected hazard:** {session.selected_hazard or 'Not provided'}"
+        )
+
+    def _mitigation_validation_unavailable_clarification_step(
+        self,
+        *,
+        session_id: str,
+        session: ChatSession,
+    ) -> ChatResponse:
+        session.phase = "mitigation_clarity"
+        session.pending_mitigation_clarity_dimension = "justification_clarity"
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_clarity",
+            bot_message=render_message("mitigation_validation_unavailable.md"),
+            options=self._mitigation_clarity_options(),
+            session=session.summary(),
+            input_mode="textarea",
+            input_values={
+                "message": "",
+            },
+            error=True,
         )
 
     async def _validate_mitigation_against_stats(

@@ -26,8 +26,6 @@ Start mitigation planning
 -> identify target population from measure and reason
 -> save mitigation measure
 -> concept comparison
--> implementation challenges
--> implementation readiness assessment
 -> evaluation
 ```
 
@@ -46,10 +44,7 @@ Important limitations in the old flow:
    still move forward.
 6. Grounded validation ABSTAIN / "needs more support" returned the evidence-only
    UI with Skip and evidence file controls, even when clarification was needed.
-7. Review of unresolved or partially resolved implementation challenges depended
-   too heavily on stored challenge statuses and could miss unresolved risks that
-   were visible in the readiness assessment text.
-8. Strict validation with Crowd Sourcing enabled did not consistently show the
+7. Strict validation with Crowd Sourcing enabled did not consistently show the
    platform-visibility notice on mitigation review.
 ```
 
@@ -73,10 +68,8 @@ Start mitigation planning
 -> save mitigation measure
 -> show strict + crowd-sourcing visibility notice when applicable
 -> concept comparison
--> implementation challenge discussion
--> implementation readiness assessment
--> review unresolved/partial challenges again using stored statuses and visible assessment text
 -> evaluation
+-> system inquiry
 ```
 
 Key behavior in the new flow:
@@ -94,9 +87,7 @@ Key behavior in the new flow:
    measure, original input, or existing reason.
 7. Missing support / ABSTAIN outcomes ask for clarification with textarea input
    instead of showing evidence-only controls.
-8. Readiness review can parse unresolved and partially resolved challenges from
-   visible assessment sections, including markdown headings, bold headings, and
-   bold item lines.
+8. Mitigation review moves directly into evaluation.
 ```
 
 Seeded mitigation-policy suggestions depend on two reference-data steps:
@@ -1128,62 +1119,7 @@ screen shows a visibility notice explaining that the mitigation measure will be
 visible to platform users interested in mitigation options for the selected
 region and country.
 
-**18. Implementation Challenge And Readiness Review**
-
-After concept comparison, the app discusses implementation challenges before
-evaluation. It stores challenge statuses as:
-
-```text
-resolved
-partial
-unresolved
-```
-
-The readiness assessment includes sections such as:
-
-```text
-Resolved challenges
-Partially resolved challenges
-Remaining unresolved risks
-Residual implementation concerns
-Recommended improvements
-```
-
-If the user chooses:
-
-```text
-Review unresolved and partially resolved challenges again
-```
-
-the app now checks both:
-
-```text
-1. Stored implementation_challenges status values.
-2. Visible readiness-assessment text.
-```
-
-The visible assessment parser recognizes:
-
-```text
-### Remaining unresolved risks
-**Remaining Unresolved Risks:**
-1. Remaining unresolved risks
-bold challenge item lines such as **Legal eligibility:** ...
-bullet lines such as - **Administrative burden**: ...
-```
-
-If unresolved or partially resolved items are found in either source, the app
-returns to:
-
-```text
-session.phase = implementation_challenge_discussion
-step = implementation_challenge_discussion
-input_mode = textarea
-```
-
-instead of incorrectly saying all implementation challenges are resolved.
-
-**19. Move To Evaluation**
+**18. Move To Evaluation**
 
 From mitigation review, the user can choose:
 
@@ -1228,7 +1164,9 @@ input_mode = evaluation_question
 
 and asks the first evaluation question.
 
-**20. Evaluation Question Flow**
+The mitigation review step moves directly to evaluation.
+
+**19. Evaluation Question Flow**
 
 Evaluation answers are handled by:
 
@@ -1290,7 +1228,7 @@ session.evaluation_index
 If more questions remain, it asks the next one. If all questions are complete,
 it moves to the completion step.
 
-**21. Evaluation Complete**
+**20. Evaluation Complete**
 
 When all evaluation questions are answered, the app enters:
 
@@ -1308,7 +1246,7 @@ _promote_temporary_evidence(session)
 Then it shows:
 
 ```text
-templates/chat/mitigation_recorded.md
+templates/chat/evaluation_complete.md
 ```
 
 The completed mitigation measure now has:
@@ -1321,6 +1259,240 @@ grounding validation details
 saved database record
 evaluation answers
 ```
+
+The app then starts system inquiry:
+
+```text
+session.phase = system_inquiry_intro
+step = system_inquiry_intro
+```
+
+System inquiry generates up to three observations from the current mitigation
+context, evaluation scores, affected groups, target population, and other
+saved measures in the session. The first saved measure is capped at two
+questions; later measures are capped at three. Candidate probes that are not
+shown because of the cap are retained as held observations and named in the
+intro boundary note.
+
+Each candidate is enriched with probe-library metadata before ranking:
+
+```text
+candidate_id
+tier
+library_version
+trigger_basis
+required_anchors
+anchor_counts
+candidate_status
+salience_score
+```
+
+Candidates missing required anchors are marked `discarded_no_anchor` and are not
+shown. Valid candidates beyond the cap are marked `held_cap`.
+
+Before probe selection, the app builds a deterministic MeasureAttributes-style
+profile for the mitigation measure:
+
+```text
+action_type
+leverage_depth
+delivery_channel
+cost_incidence
+time_to_benefit
+eligibility_basis
+named_group_ids
+named_sectors
+requires_capacity
+capacity_type
+```
+
+The current implementation now runs a constrained LLM extraction call first
+(`extraction_method = llm_constrained_v1`) and falls back to code heuristics
+(`deterministic_v1_llm_unavailable`) when the local model is unavailable. Probe
+triggers use the resulting attributes.
+
+Current deterministic probes include:
+
+```text
+C2-P1 recognition / unnamed affected group
+C1-P1 distributional incidence
+C3-P1 procedural access
+A2-P1 cross-sector coupling
+A4-P1 delay and time horizon
+A5-P1 leverage-point self-evaluation mismatch
+A6-P1 policy resistance and rebound
+A7-P1 capacity and stock constraints
+C4-P1 long-term burden
+D1-P1 measure interaction
+D2-P1 same-group cumulative burden
+D3-P1 leverage concentration
+B1-P1 problem framing fallback
+```
+
+`D1-P1` uses deterministic interaction signatures for the initial pairwise
+summary. The candidate then enters the same LLM screen, verify, and corpus
+adjudication stages as the other probes, after anchor validation.
+
+The user can start or skip the inquiry.
+
+If started, each observation enters:
+
+```text
+session.phase = system_inquiry_observation
+step = system_inquiry_observation
+input_mode = textarea
+```
+
+Each response is stored as a system inquiry annotation with a resolution state:
+
+```text
+addressed
+partially_addressed
+not_applicable_reasoned
+acknowledged_unresolved
+open
+```
+
+Thin or dismissive responses receive one follow-up:
+
+```text
+session.phase = system_inquiry_followup
+step = system_inquiry_followup
+input_mode = textarea
+```
+
+The user can answer, skip the follow-up, or end system inquiry. When all
+observations are handled, the app enters:
+
+Follow-up wording is selected from each probe's `followup_types` metadata rather
+than generated freely. Current deterministic follow-up types are:
+
+```text
+specify_mechanism
+name_group
+state_timeframe
+```
+
+```text
+session.phase = system_inquiry_complete
+step = system_inquiry_complete
+```
+
+and shows:
+
+```text
+templates/chat/system_inquiry_complete.md
+```
+
+At completion, the app builds a system inquiry profile and writes the full
+payload to the saved mitigation measure:
+
+```text
+user_mitigation_measures.system_inquiry_json
+```
+
+The payload includes the coverage summary, resolution-state profile, annotations,
+follow-up questions, and follow-up responses.
+
+The system inquiry profile includes `per_family` coverage records for
+`A_structure`, `B_framing`, `C_justice`, and `D_portfolio`. Each family records
+surfaced questions, response-state counts, coverage, and valid probes held by
+the cap. The profile also includes `leverage_distribution`, a count of current
+and prior saved measures classified as `parameter`, `rules`, `goals`, or
+`paradigm`, and `trajectory`, a per-measure sequence of family coverage values
+from prior saved system inquiry payloads plus the current measure.
+
+The profile includes `session_id_anon` and `library_version` so later telemetry
+or evaluation can group profile records without storing a raw session key.
+
+The saved `system_inquiry_json` also includes a `telemetry` object shaped for
+future central aggregation. It contains only anonymised/session context,
+library/model identifiers, measure ordinal, probe outcome states, response
+length buckets, family coverage, leverage distribution, and skip status. It
+does not include composed observation text, user free text, or new knowledge
+claims; those remain local in `annotations`, `held_observations`, and the
+measure-attached payload.
+
+The payload also records `candidate_audit`, a local-only runtime list for every
+candidate probe produced by the deterministic library. Each item records the
+candidate id, probe id, measure id, anchors, anchor counts, screen/verify
+fields, corpus label, citations, salience score, and final status
+(`selected`, `held_cap`, `discarded_no_anchor`, `discarded_dedupe`,
+`discarded_refuted`, or `discarded_unstable`). In the async chat path,
+`discarded_unstable` can now come from the constrained screen/verify stages,
+and `discarded_refuted` can come from constrained corpus adjudication. If the
+LLM is unavailable, the deterministic candidate metadata remains authoritative.
+This preserves why a lens was shown, held, or discarded without placing user
+text or system-inquiry claims into telemetry.
+
+Before candidate finalization, the async chat path runs the constrained LLM
+pipeline:
+
+```text
+P1 MeasureAttributes extraction
+P2 probe screen
+P3 probe verify
+P4 corpus adjudication
+P5 response adjudication during dialogue
+```
+
+If the local LLM is unavailable or returns invalid JSON, each stage keeps the
+deterministic result and continues. Candidate finalization then applies the
+document's bounding rules locally:
+ordinal-1 measures surface at most two observations; later measures surface at
+most three and include a portfolio lens when one is available; no more than two
+selected observations come from one family; after ten prior surfaced
+observations in the session, only candidates with `salience_score >= 0.9` are
+eligible to surface. Other valid candidates remain in the local audit as
+`held_cap`.
+
+Each annotation is written with:
+
+```text
+annotation_id
+version = 1
+created_at
+status = current
+context_fingerprint
+superseded_by = null
+```
+
+Annotations also copy the selected candidate metadata needed for local audit and
+future invalidation: candidate id/status, trigger basis, screen result,
+verification votes, salience score, citations, source references, required
+anchors, anchor counts, and the full anchor graph. User response text remains
+only in the annotation payload attached to the measure.
+
+Implemented probes carry per-probe source references back to the lens catalogue
+entries in `System enquiry.md §5.3`. Unknown future probes fall back to the
+generic runtime schema reference in `§4.4` until their library records are
+authored.
+
+`C1-P1` and `C2-P1` can receive `corpus_label = evidenced` when their
+claim is directly anchored in the session's structured affected-population
+profile. The saved candidate/annotation then includes a local citation with
+`source = session_affected_population_profile` and the matched predictor label.
+The LLM corpus adjudicator may mark a candidate `refuted` when supplied session
+facts directly contradict it, but it can only keep `evidenced` when the
+candidate already carries structured citations. Probes without structured
+profile support remain `unproven`.
+
+The context fingerprint is computed from the selected hazard, mitigation
+measure, mitigation reason, target population, and evaluation scores. If the
+system inquiry is persisted again for the same mitigation record after that
+context changes, previous annotations are retained under
+`superseded_annotations` with `status = superseded` and `superseded_by` pointing
+to the new fingerprint.
+
+When the system inquiry intro opens and the saved mitigation record already has
+current annotations with a different context fingerprint, the app shows a
+re-run note. The user is offered the normal Start / Skip choice; stale
+reflections are never force-regenerated.
+
+When an existing saved mitigation measure is shown through the duplicate-report
+path, the rendered report includes a **Systemic Reflection** section built from
+the current annotations in `system_inquiry_json`. Superseded annotations are not
+rendered inline, but their retained count is shown.
 
 **When Clarification Happens**
 

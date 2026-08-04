@@ -1123,6 +1123,15 @@
   transform: translateX(2px);
 }
 
+.session-item.is-current {
+  background: #eef2ff;
+  box-shadow: inset 3px 0 0 #6d28d9;
+}
+
+.session-item.is-current:hover {
+  background: #e0e7ff;
+}
+
 .session-rename-button {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1145,12 +1154,31 @@
   transform: rotate(-5deg) scale(1.04);
 }
 
-.session-item span {
+.session-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.session-item .session-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.88rem;
   font-weight: 900;
+}
+
+.session-current-label {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4c1d95;
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 4px 6px;
+  text-transform: uppercase;
 }
 
 .session-item small,

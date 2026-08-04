@@ -16,4 +16,8 @@ Reason:
 
 {{ evaluation_report }}
 
+## Systemic Reflection
+
+{{ system_inquiry_report }}
+
 Would you still like to continue creating your mitigation measure?

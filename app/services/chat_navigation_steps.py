@@ -23,6 +23,10 @@ from app.services.chat_options import (
     REASON_CONFIRMATION_OPTIONS,
     SOCIO_DEMOGRAPHIC_OPTIONS,
     STATS_DEEP_DIVE_OPTIONS,
+    SYSTEM_INQUIRY_COMPLETE_OPTIONS,
+    SYSTEM_INQUIRY_FOLLOWUP_OPTIONS,
+    SYSTEM_INQUIRY_INTRO_OPTIONS,
+    SYSTEM_INQUIRY_OBSERVATION_OPTIONS,
     normalize,
     option_list,
 )
@@ -801,6 +805,48 @@ class ChatNavigationStepsMixin:
                 step="evaluation_complete",
                 bot_message=message,
                 options=[],
+                session=session.summary(),
+                error=error,
+            )
+
+        if session.phase == "system_inquiry_intro":
+            return ChatResponse(
+                session_id=session_id,
+                step="system_inquiry_intro",
+                bot_message=message,
+                options=SYSTEM_INQUIRY_INTRO_OPTIONS,
+                session=session.summary(),
+                error=error,
+            )
+
+        if session.phase == "system_inquiry_observation":
+            return ChatResponse(
+                session_id=session_id,
+                step="system_inquiry_observation",
+                bot_message=message,
+                options=SYSTEM_INQUIRY_OBSERVATION_OPTIONS,
+                session=session.summary(),
+                input_mode="textarea",
+                error=error,
+            )
+
+        if session.phase == "system_inquiry_followup":
+            return ChatResponse(
+                session_id=session_id,
+                step="system_inquiry_followup",
+                bot_message=message,
+                options=SYSTEM_INQUIRY_FOLLOWUP_OPTIONS,
+                session=session.summary(),
+                input_mode="textarea",
+                error=error,
+            )
+
+        if session.phase == "system_inquiry_complete":
+            return ChatResponse(
+                session_id=session_id,
+                step="system_inquiry_complete",
+                bot_message=message,
+                options=SYSTEM_INQUIRY_COMPLETE_OPTIONS,
                 session=session.summary(),
                 error=error,
             )

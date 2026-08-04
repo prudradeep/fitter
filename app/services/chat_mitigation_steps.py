@@ -617,6 +617,11 @@ class ChatMitigationStepsMixin:
                     ),
                     reason=self._suggested_mitigation_reason(session),
                     evaluation_report=self._suggested_mitigation_evaluation_report(session),
+                    system_inquiry_report=(
+                        self._suggested_mitigation_system_inquiry_report(session)
+                        if hasattr(self, "_suggested_mitigation_system_inquiry_report")
+                        else "- No system inquiry reflections were found for this mitigation measure."
+                    ),
                 ),
                 options=self._mitigation_existing_report_options(),
                 session=session.summary(),

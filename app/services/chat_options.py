@@ -85,6 +85,25 @@ IMPLEMENTATION_READINESS_OPTIONS = [
     Option(id=2, label="Review unresolved and partially resolved challenges again"),
 ]
 
+SYSTEM_INQUIRY_INTRO_OPTIONS = [
+    Option(id=1, label="Start system inquiry"),
+    Option(id=2, label="Skip system inquiry"),
+]
+
+SYSTEM_INQUIRY_OBSERVATION_OPTIONS = [
+    Option(id=1, label="Skip this question"),
+    Option(id=2, label="End system inquiry"),
+]
+
+SYSTEM_INQUIRY_FOLLOWUP_OPTIONS = [
+    Option(id=1, label="Skip follow-up"),
+    Option(id=2, label="End system inquiry"),
+]
+
+SYSTEM_INQUIRY_COMPLETE_OPTIONS = [
+    Option(id=1, label="Ask another question"),
+]
+
 OTHER_NAV_OPTIONS = [
     "Write mitigation measure again",
     "Analyse another hazard in the same sector",

@@ -724,12 +724,19 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD COLUMN target_groups_json TEXT NULL AFTER conclusion"
                         )
                     )
+                if "system_inquiry_json" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN system_inquiry_json TEXT NULL AFTER target_groups_json"
+                        )
+                    )
                 if "validation_mode" not in mitigation_columns:
                     connection.execute(
                         text(
                             "ALTER TABLE user_mitigation_measures "
                             "ADD COLUMN validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict' "
-                            "AFTER target_groups_json"
+                            "AFTER system_inquiry_json"
                         )
                     )
                 if "is_crowd_sourced" not in mitigation_columns:

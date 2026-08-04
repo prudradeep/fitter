@@ -59,6 +59,16 @@ class ChatSession:
     evaluation_questions: list[dict[str, object]] | None = None
     evaluation_index: int = 0
     evaluation_answers: list[dict[str, object]] | None = None
+    system_inquiry_observations: list[dict[str, object]] | None = None
+    system_inquiry_held_observations: list[dict[str, object]] | None = None
+    system_inquiry_candidate_audit: list[dict[str, object]] | None = None
+    system_inquiry_index: int = 0
+    system_inquiry_annotations: list[dict[str, object]] | None = None
+    system_inquiry_pending_followup: dict[str, object] | None = None
+    system_inquiry_coverage_summary: dict[str, object] | None = None
+    system_inquiry_attributes: dict[str, object] | None = None
+    system_inquiry_profile: dict[str, object] | None = None
+    system_inquiry_skipped: bool = False
     target_population_questions: list[dict[str, object]] | None = None
     target_population_index: int = 0
     target_population_answers: list[dict[str, object]] | None = None
