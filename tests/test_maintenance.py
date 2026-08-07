@@ -7,7 +7,12 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import Settings
 from app.db.session import Base
-from app.models import AppRateLimit, KnowledgeDocument, LlmExchangeLog
+from app.models import (
+    AppRateLimit,
+    KnowledgeDocument,
+    LlmExchangeLog,
+    SystemInquiryTelemetryEvent,
+)
 from app.services.maintenance import cleanup_retained_data
 from app.services.knowledge_base import TEMPORARY_KB_SCOPE
 
@@ -56,6 +61,14 @@ class MaintenanceCleanupTests(unittest.TestCase):
                 created_at=old,
             )
         )
+        self.db.add(
+            SystemInquiryTelemetryEvent(
+                event_key="old-system-inquiry-profile",
+                payload_json="{}",
+                status="synced",
+                created_at=old,
+            )
+        )
         self.db.commit()
 
         result = cleanup_retained_data(
@@ -64,12 +77,14 @@ class MaintenanceCleanupTests(unittest.TestCase):
                 rate_limit_retention_days=1,
                 temporary_knowledge_retention_hours=1,
                 llm_log_retention_days=1,
+                system_inquiry_profile_retention_days=1,
             ),
         )
 
         self.assertEqual(result["rate_limits"], 1)
         self.assertEqual(result["temporary_knowledge_documents"], 1)
         self.assertEqual(result["llm_exchange_logs"], 1)
+        self.assertEqual(result["system_inquiry_telemetry_events"], 1)
         self.assertIsNone(self.db.get(AppRateLimit, "login:test:old"))
 
 

@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.6"
+#define MyAppVersion "0.1.7"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 
@@ -61,6 +61,7 @@ var
   SetupStoppedByCompatibility: Boolean;
   CredentialsForCopy: String;
   CopyCredentialsButton: TNewButton;
+  TestMySqlConnectionButton: TNewButton;
 
 procedure SetDatabaseDefaultsEditable(Editable: Boolean);
 begin
@@ -79,6 +80,13 @@ begin
   Result := IsWin64;
   if not Result then
     MsgBox('Dr Transition requires 64-bit Windows.', mbCriticalError, MB_OK);
+end;
+
+function PowerShellStringLiteral(Value: String): String;
+begin
+  Result := Value;
+  StringChangeEx(Result, '''', '''''', True);
+  Result := '''' + Result + '''';
 end;
 
 procedure CopyCredentialsButtonClick(Sender: TObject);
@@ -102,6 +110,193 @@ begin
     MsgBox('Could not copy admin credentials automatically. The credentials are shown in the setup completion message.', mbError, MB_OK);
 
   DeleteFile(CredentialsPath);
+end;
+
+function RunMySqlConnectionTest(AdminUser: String; AdminPassword: String): Integer;
+var
+  PowerShell: String;
+  TestScriptPath: String;
+  Script: String;
+  Params: String;
+  ResultCode: Integer;
+begin
+  PowerShell := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  TestScriptPath := ExpandConstant('{tmp}\drtransition-mysql-connection-test.ps1');
+
+  Script :=
+    '$ErrorActionPreference = "Stop"' + #13#10 +
+    'function Find-CommandPath { param([string]$Name) $command = Get-Command $Name -ErrorAction SilentlyContinue; if ($command) { return $command.Source }; return $null }' + #13#10 +
+    'function Find-MySqlExe {' + #13#10 +
+    '  $commandPath = Find-CommandPath "mysql.exe"; if ($commandPath) { return $commandPath }' + #13#10 +
+    '  $candidates = @(' + #13#10 +
+    '    "$env:ProgramFiles\MySQL\MySQL Server 8.4\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MySQL\MySQL Server 8.3\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MySQL\MySQL Server 8.2\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MySQL\MySQL Server 8.1\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MySQL\MySQL Server 8.0\bin\mysql.exe",' + #13#10 +
+    '    "${env:ProgramFiles(x86)}\MySQL\MySQL Server 8.0\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MariaDB 11.4\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MariaDB 11.3\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MariaDB 11.2\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MariaDB 11.1\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MariaDB 11.0\bin\mysql.exe",' + #13#10 +
+    '    "$env:ProgramFiles\MariaDB 10.11\bin\mysql.exe"' + #13#10 +
+    '  )' + #13#10 +
+    '  foreach ($candidate in $candidates) { if (Test-Path -LiteralPath $candidate) { return $candidate } }' + #13#10 +
+    '  return $null' + #13#10 +
+    '}' + #13#10 +
+    '$mysql = Find-MySqlExe' + #13#10 +
+    'if (-not $mysql) { exit 2 }' + #13#10 +
+    '$previous = $env:MYSQL_PWD' + #13#10 +
+    'try {' + #13#10 +
+    '  $user = ' + PowerShellStringLiteral(AdminUser) + #13#10 +
+    '  $password = ' + PowerShellStringLiteral(AdminPassword) + #13#10 +
+    '  if ([string]::IsNullOrEmpty($password)) { Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue } else { $env:MYSQL_PWD = $password }' + #13#10 +
+    '  & $mysql --protocol=tcp -h 127.0.0.1 -P 3306 -u $user --connect-timeout=5 --batch --skip-column-names -e "SELECT 1; SHOW GRANTS FOR CURRENT_USER();"' + #13#10 +
+    '  if ($LASTEXITCODE -eq 0) { exit 0 }' + #13#10 +
+    '  exit 1' + #13#10 +
+    '} catch {' + #13#10 +
+    '  exit 1' + #13#10 +
+    '} finally {' + #13#10 +
+    '  if ($null -eq $previous) { Remove-Item Env:\MYSQL_PWD -ErrorAction SilentlyContinue } else { $env:MYSQL_PWD = $previous }' + #13#10 +
+    '}' + #13#10;
+
+  SaveStringToFile(TestScriptPath, Script, False);
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + TestScriptPath + '"';
+
+  if not Exec(PowerShell, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Result := -1
+  else
+    Result := ResultCode;
+
+  DeleteFile(TestScriptPath);
+end;
+
+procedure OpenMySqlRootPasswordResetInstructions();
+var
+  ResultCode: Integer;
+begin
+  ShellExec(
+    'open',
+    'https://dev.mysql.com/doc/refman/8.4/en/resetting-permissions.html',
+    '',
+    '',
+    SW_SHOWNORMAL,
+    ewNoWait,
+    ResultCode
+  );
+end;
+
+function ShowMySqlCredentialFailureOptions(): Integer;
+var
+  Form: TSetupForm;
+  MessageLabel: TNewStaticText;
+  RetryButton: TNewButton;
+  AnotherAccountButton: TNewButton;
+  ResetButton: TNewButton;
+begin
+  Form := CreateCustomForm(ScaleX(360), ScaleY(155), False, True);
+  try
+    Form.Caption := 'MySQL connection failed';
+
+    MessageLabel := TNewStaticText.Create(Form);
+    MessageLabel.Parent := Form;
+    MessageLabel.Left := ScaleX(16);
+    MessageLabel.Top := ScaleY(14);
+    MessageLabel.Width := ScaleX(328);
+    MessageLabel.Height := ScaleY(50);
+    MessageLabel.WordWrap := True;
+    MessageLabel.Caption :=
+      'Unable to connect to MySQL.' + #13#10 +
+      'The administrator account may be incorrect, or the MySQL service may not be running.';
+
+    RetryButton := TNewButton.Create(Form);
+    RetryButton.Parent := Form;
+    RetryButton.Left := ScaleX(16);
+    RetryButton.Top := ScaleY(72);
+    RetryButton.Width := ScaleX(105);
+    RetryButton.Height := ScaleY(28);
+    RetryButton.Caption := 'Retry password';
+    RetryButton.ModalResult := 1;
+
+    AnotherAccountButton := TNewButton.Create(Form);
+    AnotherAccountButton.Parent := Form;
+    AnotherAccountButton.Left := ScaleX(129);
+    AnotherAccountButton.Top := ScaleY(72);
+    AnotherAccountButton.Width := ScaleX(215);
+    AnotherAccountButton.Height := ScaleY(28);
+    AnotherAccountButton.Caption := 'Use another administrator account';
+    AnotherAccountButton.ModalResult := 2;
+
+    ResetButton := TNewButton.Create(Form);
+    ResetButton.Parent := Form;
+    ResetButton.Left := ScaleX(16);
+    ResetButton.Top := ScaleY(108);
+    ResetButton.Width := ScaleX(328);
+    ResetButton.Height := ScaleY(28);
+    ResetButton.Caption := 'Reset MySQL root password';
+    ResetButton.ModalResult := 3;
+
+    Result := Form.ShowModal;
+  finally
+    Form.Free;
+  end;
+end;
+
+function EnsureMySqlAdminCanConnect(ShowSuccess: Boolean): Boolean;
+var
+  TestResult: Integer;
+  Choice: Integer;
+begin
+  Result := False;
+  TestResult := RunMySqlConnectionTest(DatabasePage.Values[1], DatabasePage.Values[2]);
+
+  if TestResult = 2 then
+  begin
+    if ShowSuccess then
+      MsgBox(
+        'MySQL is not installed on this computer.' + #13#10#13#10 +
+        'Dr Transition Setup will install and configure MySQL automatically.',
+        mbInformation,
+        MB_OK);
+    Result := True;
+    Exit;
+  end;
+
+  if TestResult = 0 then
+  begin
+    if ShowSuccess then
+      MsgBox(
+        'Connection successful.' + #13#10#13#10 +
+        'The supplied MySQL administrator credentials have been verified.',
+        mbInformation,
+        MB_OK);
+    Result := True;
+    Exit;
+  end;
+
+  Choice := ShowMySqlCredentialFailureOptions();
+  if Choice = 1 then
+  begin
+    WizardForm.ActiveControl := DatabasePage.Edits[2];
+    DatabasePage.Edits[2].SelectAll;
+  end
+  else if Choice = 2 then
+  begin
+    WizardForm.ActiveControl := DatabasePage.Edits[1];
+    DatabasePage.Edits[1].SelectAll;
+  end
+  else if Choice = 3 then
+  begin
+    OpenMySqlRootPasswordResetInstructions();
+    WizardForm.ActiveControl := DatabasePage.Edits[2];
+    DatabasePage.Edits[2].SelectAll;
+  end;
+end;
+
+procedure TestMySqlConnectionButtonClick(Sender: TObject);
+begin
+  EnsureMySqlAdminCanConnect(True);
 end;
 
 procedure InitializeWizard();
@@ -139,16 +334,31 @@ begin
   DatabasePage.Values[4] := '';
   SetDatabaseDefaultsEditable(False);
 
-  EditDatabaseDefaultsCheck := TNewCheckBox.Create(DatabasePage);
-  EditDatabaseDefaultsCheck.Parent := DatabasePage.Surface;
-  EditDatabaseDefaultsCheck.Left := DatabasePage.Edits[0].Left;
-  EditDatabaseDefaultsCheck.Top := DatabasePage.Edits[0].Top - ScaleY(26);
-  EditDatabaseDefaultsCheck.Width := DatabasePage.SurfaceWidth;
+  { Place the advanced checkbox on the bottom navigation row, at the left side. }
+  EditDatabaseDefaultsCheck := TNewCheckBox.Create(WizardForm);
+  EditDatabaseDefaultsCheck.Parent := WizardForm;
+  EditDatabaseDefaultsCheck.Left := ScaleX(24);
+  EditDatabaseDefaultsCheck.Top :=
+    WizardForm.NextButton.Top +
+    ((WizardForm.NextButton.Height - ScaleY(18)) div 2);
+  EditDatabaseDefaultsCheck.Width :=
+    WizardForm.BackButton.Left - EditDatabaseDefaultsCheck.Left - ScaleX(16);
   EditDatabaseDefaultsCheck.Height := ScaleY(18);
   EditDatabaseDefaultsCheck.Caption := 'Advanced: customize database name and users';
   EditDatabaseDefaultsCheck.Checked := False;
   EditDatabaseDefaultsCheck.Font.Style := [fsBold];
+  EditDatabaseDefaultsCheck.Visible := False;
   EditDatabaseDefaultsCheck.OnClick := @EditDatabaseDefaultsCheckClick;
+
+  TestMySqlConnectionButton := TNewButton.Create(DatabasePage);
+  TestMySqlConnectionButton.Parent := DatabasePage.Surface;
+  DatabasePage.Edits[2].Width := DatabasePage.Edits[2].Width - ScaleX(190);
+  TestMySqlConnectionButton.Left := DatabasePage.Edits[2].Left + DatabasePage.Edits[2].Width + ScaleX(8);
+  TestMySqlConnectionButton.Top := DatabasePage.Edits[2].Top - ScaleY(1);
+  TestMySqlConnectionButton.Width := ScaleX(182);
+  TestMySqlConnectionButton.Height := DatabasePage.Edits[2].Height + ScaleY(2);
+  TestMySqlConnectionButton.Caption := 'Test MySQL connection';
+  TestMySqlConnectionButton.OnClick := @TestMySqlConnectionButtonClick;
 
   ModelPage := CreateInputQueryPage(
     DatabasePage.ID,
@@ -167,12 +377,14 @@ begin
   );
 
 #ifdef OfflineAdminInstaller
+  { Place the credentials button in the bottom-left navigation area. }
+  { This prevents it from overlapping the Launch checkbox on the Finished page. }
   CopyCredentialsButton := TNewButton.Create(WizardForm);
-  CopyCredentialsButton.Parent := WizardForm.FinishedPage;
-  CopyCredentialsButton.Left := WizardForm.FinishedHeadingLabel.Left;
-  CopyCredentialsButton.Top := WizardForm.FinishedHeadingLabel.Top + ScaleY(104);
-  CopyCredentialsButton.Width := ScaleX(170);
-  CopyCredentialsButton.Height := ScaleY(30);
+  CopyCredentialsButton.Parent := WizardForm;
+  CopyCredentialsButton.Left := ScaleX(24);
+  CopyCredentialsButton.Top := WizardForm.NextButton.Top;
+  CopyCredentialsButton.Width := ScaleX(190);
+  CopyCredentialsButton.Height := WizardForm.NextButton.Height;
   CopyCredentialsButton.Caption := 'Copy admin credentials';
   CopyCredentialsButton.Visible := False;
   CopyCredentialsButton.OnClick := @CopyCredentialsButtonClick;
@@ -184,13 +396,6 @@ begin
   Result := Value;
   StringChangeEx(Result, '\', '\\', True);
   StringChangeEx(Result, '"', '\"', True);
-end;
-
-function PowerShellStringLiteral(Value: String): String;
-begin
-  Result := Value;
-  StringChangeEx(Result, '''', '''''', True);
-  Result := '''' + Result + '''';
 end;
 
 function IsAutoModel(Value: String): Boolean;
@@ -431,35 +636,99 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
+
   if CurPageID = DatabasePage.ID then
   begin
+    if Trim(DatabasePage.Values[0]) = '' then
+    begin
+      MsgBox(
+        'Please enter a database name.' + #13#10#13#10 +
+        'The default database name is "dr_transition".',
+        mbError,
+        MB_OK);
+      WizardForm.ActiveControl := DatabasePage.Edits[0];
+      Result := False;
+      Exit;
+    end;
+
     if not IsValidIdentifier(DatabasePage.Values[0]) then
     begin
-      MsgBox('Database name may only contain letters, numbers, and underscores.', mbError, MB_OK);
+      MsgBox(
+        'Invalid database name.' + #13#10#13#10 +
+        'Only letters (A-Z), numbers (0-9), and underscores (_) are allowed.',
+        mbError,
+        MB_OK);
+      WizardForm.ActiveControl := DatabasePage.Edits[0];
+      DatabasePage.Edits[0].SelectAll;
       Result := False;
       Exit;
     end;
+
+    if Trim(DatabasePage.Values[1]) = '' then
+    begin
+      MsgBox(
+        'Please enter the MySQL administrator user name.' + #13#10#13#10 +
+        'The administrator user is usually "root".',
+        mbError,
+        MB_OK);
+      WizardForm.ActiveControl := DatabasePage.Edits[1];
+      Result := False;
+      Exit;
+    end;
+
+    if Trim(DatabasePage.Values[3]) = '' then
+    begin
+      MsgBox(
+        'Please enter an Application Database user name.' + #13#10#13#10 +
+        'This account will be used by Dr Transition to access its local database.',
+        mbError,
+        MB_OK);
+      WizardForm.ActiveControl := DatabasePage.Edits[3];
+      Result := False;
+      Exit;
+    end;
+
     if not IsValidIdentifier(DatabasePage.Values[3]) then
     begin
-      MsgBox('Application DB user may only contain letters, numbers, and underscores.', mbError, MB_OK);
+      MsgBox(
+        'Invalid Application Database user name.' + #13#10#13#10 +
+        'Only letters (A-Z), numbers (0-9), and underscores (_) are allowed.',
+        mbError,
+        MB_OK);
+      WizardForm.ActiveControl := DatabasePage.Edits[3];
+      DatabasePage.Edits[3].SelectAll;
       Result := False;
       Exit;
     end;
-    if DatabasePage.Values[2] = '' then
-    begin
-      MsgBox('Enter the MySQL administrator password. If MySQL has no password, set one first, then rerun setup.', mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
+
     if DatabasePage.Values[4] = '' then
     begin
-      MsgBox('Enter a strong application DB password. Do not reuse the old sample password.', mbError, MB_OK);
+      MsgBox(
+        'Please enter an Application Database password.' + #13#10#13#10 +
+        'This password will be used by Dr Transition to connect to the local database.',
+        mbError,
+        MB_OK);
+      WizardForm.ActiveControl := DatabasePage.Edits[4];
       Result := False;
       Exit;
     end;
-    if (DatabasePage.Values[4] = 'dr_transition_password') or (DatabasePage.Values[4] = 'drtransition_password') then
+
+    if (DatabasePage.Values[4] = 'dr_transition_password') or
+       (DatabasePage.Values[4] = 'drtransition_password') then
     begin
-      MsgBox('Choose a unique application DB password. The sample password is local documentation only and cannot be used by setup.', mbError, MB_OK);
+      MsgBox(
+        'The Application Database password cannot use the sample/default password.' + #13#10#13#10 +
+        'Please choose a strong, unique password.',
+        mbError,
+        MB_OK);
+      WizardForm.ActiveControl := DatabasePage.Edits[4];
+      DatabasePage.Edits[4].SelectAll;
+      Result := False;
+      Exit;
+    end;
+
+    if not EnsureMySqlAdminCanConnect(False) then
+    begin
       Result := False;
       Exit;
     end;
@@ -592,9 +861,14 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  { Show the advanced database checkbox only on the Database Setup page. }
+  EditDatabaseDefaultsCheck.Visible := (CurPageID = DatabasePage.ID);
+
 #ifdef OfflineAdminInstaller
   if CurPageID = wpFinished then
-    CopyCredentialsButton.Visible := (Trim(CredentialsForCopy) <> '');
+    CopyCredentialsButton.Visible := (Trim(CredentialsForCopy) <> '')
+  else
+    CopyCredentialsButton.Visible := False;
 #endif
 end;
 

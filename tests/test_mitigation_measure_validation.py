@@ -2333,6 +2333,36 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         )
         self.assertIn("held_observations", payload)
 
+    def test_system_inquiry_coverage_excludes_macro_profiles_from_affected_groups(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            selected_hazard="Heating and cooling costs increase",
+            mitigation_measure="Targeted retrofit support.",
+            mitigation_target_population=["Tenants"],
+            hazard_profiles={
+                "Heating and cooling costs increase": [
+                    {
+                        "name": "Countries with higher Electricity consumption",
+                        "variable_name": "macro_electricity_consumption",
+                        "variable_type": "macro",
+                    },
+                    {
+                        "name": "Utility arrears: Yes, twice or more",
+                        "variable_name": "utility_arrears",
+                        "variable_type": "individual",
+                    },
+                ]
+            },
+        )
+
+        summary = engine._system_inquiry_coverage_summary(session)
+        formatted = engine._format_system_inquiry_coverage_summary(summary)
+
+        self.assertEqual(summary["affected_group_count"], 1)
+        self.assertEqual(summary["untargeted_groups"], ["Utility arrears: Yes, twice or more"])
+        self.assertNotIn("Countries with higher Electricity consumption", formatted)
+        self.assertIn("Utility arrears: Yes, twice or more", formatted)
+
     def test_system_inquiry_complete_ask_another_question_prompts_for_input(self):
         service = ChatService.__new__(ChatService)
         service._handle_other_nav_action = AsyncMock(return_value=None)

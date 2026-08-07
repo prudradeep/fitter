@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     rate_limit_retention_days: int = 7
     temporary_knowledge_retention_hours: int = 24
     llm_log_retention_days: int = 30
+    system_inquiry_profile_retention_days: int = 365
     sync_enabled: bool = False
     sync_mode: str = "client"
     sync_server_url: str = ""

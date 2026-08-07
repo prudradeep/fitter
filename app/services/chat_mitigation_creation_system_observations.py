@@ -1775,6 +1775,8 @@ class ChatMitigationCreationSystemObservationsMixin:
     def _system_inquiry_affected_group_labels(self, session: ChatSession) -> list[str]:
         values: list[str] = []
         for item in self._system_inquiry_affected_profile_details(session):
+            if str(item.get("variable_type") or "").strip().casefold() == "macro":
+                continue
             label = str(item.get("name") or "").strip()
             if label:
                 values.append(label)

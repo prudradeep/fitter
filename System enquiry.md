@@ -509,13 +509,22 @@ Mirrors the platform's existing knowledge hierarchy, because it is the same prob
 
 | Tier | What it is | What it may do |
 | --- | --- | --- |
-| **T1 — Project-authoritative** | FITTER-EU deliverables, open-lab outputs, survey analysis, published abstract | May **establish** that a lens exists and belongs to the project framework |
+| **T1 — Project-authoritative** | The frozen FITTER-EU v1 corpus defined below | May **establish** that a lens exists and belongs to the project framework |
 | **T2 — Project-cited** | Works cited within FITTER deliverables | May establish a lens; supplies its formal definition |
 | **T3 — General systems literature** | Everything else | May supply **diagnostic machinery only** — questions, signatures, failure patterns. May **never** be the sole basis for a lens's existence |
 
 > **Rule.** Every lens must trace to at least one T1 or T2 anchor.
 
 **Why this matters.** Without it the library is "systems concepts an LLM considered relevant" — unattributable and unfalsifiable. With it, every lens carries provenance into the project's own work, and the method can state that the library operationalises the FITTER-EU framework rather than importing an external one.
+
+**T1 corpus v1.0.** The project-authoritative corpus for this module is frozen to:
+
+1. FITTER-EU deliverables held in the platform knowledge base, including D2.3 and D4.2 extracts used by the current app.
+2. Open-lab outputs that are formally accepted by the consortium and linked to a country, region, or sector represented in the platform.
+3. The platform survey-analysis truth files and derived sector prompt extracts used to create system hazards and affected-population profiles.
+4. Published FITTER-EU abstracts, briefs, or public summaries approved by the consortium.
+
+Working notes, ad hoc meeting notes, user-uploaded material, and generated system-inquiry annotations are not T1. They may inform future authoring, but a probe library release can cite them only after a human review promotes the relevant claim into one of the T1 source classes above.
 
 ### 6.2 The eight steps
 
@@ -595,6 +604,8 @@ The source PDFs are held in a **separate, small index**, used **only** for on-de
 
 Runs only if the measure passed validation (not abstained, not rejected). Abstained and rejected measures are not probed: a measure the platform could not validate should not then be critiqued, as the user would receive two negative signals for one submission.
 
+**Re-submission rule.** If an abstained measure is later edited, re-submitted, and receives a validation pass, it is treated as a new frozen measure and enters System Inquiry normally. The earlier abstention is retained in validation provenance but does not suppress probing after a later pass. Rejected measures follow the same rule only after the rejected content has been materially revised and passes validation.
+
 ### 8.3 Stage 2 — Probe triggering
 
 Pure code, evaluating `ProbeRecord.trigger` against `MeasureAttributes` and the dossier. No model inference. Expected yield: 8–14 triggered probes per measure.
@@ -634,6 +645,18 @@ Stages 1–8 run in that window. Only stage 9 — probes triggered *by* self-eva
 **Result: the module opens in under 3 seconds.** The offline constraint, which appears to be the feature's largest liability, becomes invisible to the user.
 
 Requires: a background job scheduler with clean cancellation, so that a user leaving self-evaluation early aborts in-flight work and resumes correctly.
+
+**Latency and token budget.** The reference budget for v1 is:
+
+| Boundary | Budget |
+| --- | --- |
+| System Inquiry intro after self-evaluation | p50 ≤ 3 seconds, p95 ≤ 8 seconds |
+| First observation after user starts inquiry | p50 ≤ 2 seconds, p95 ≤ 5 seconds |
+| Interactive response adjudication | p50 ≤ 4 seconds, p95 ≤ 10 seconds |
+| Per-measure pre-dialogue LLM output | ≤ 3,600 tokens across P1–P4 |
+| Per-observation dialogue adjudication output | ≤ 450 tokens |
+
+If the p95 intro budget is missed on the reference offline machine, degradation applies in this order: skip corpus adjudication and label remaining candidates `unproven`; reduce verification from 3 votes to 2, then 1; drop conditional probes before core probes; show deterministic D3/D4/D5 coverage rather than blocking the user. The cap rules in §8.7 remain unchanged.
 
 ### 8.7 Stage 10 — Ranking and bounding
 
@@ -1026,6 +1049,8 @@ Telemetry accumulates centrally (§18). Each library version is frozen, versione
 }
 ```
 
+**Retention.** Anonymised System Inquiry telemetry/profile events are retained for 365 days by default, configurable as `SYSTEM_INQUIRY_PROFILE_RETENTION_DAYS`. Retention cleanup deletes expired aggregate telemetry events from the local or central telemetry table. Measure-attached local annotations follow the user's normal project/session data retention policy and are not governed by this aggregate-telemetry limit.
+
 ### 18.3 What never goes central
 
 **No output of this module enters the shared validated knowledge bank in v1.**
@@ -1291,12 +1316,17 @@ Phase 1 is shippable on its own and worth shipping on its own: a user who is tol
 
 | # | Item | Needed for |
 | --- | --- | --- |
-| 1 | Per-session latency and token budget on the reference machine | Cap tuning, batch sizing |
-| 2 | Confirmation of the T1 corpus — which deliverables count as project-authoritative | Protocol step 1 |
-| 3 | Whether the session-close coverage summary appears in the downloadable report or on screen only | §14 |
-| 4 | Whether annotations appear in the report body or an appendix | §10 |
-| 5 | Retention period for the anonymised session profile | §18 |
-| 6 | Whether measures that abstained at validation should be probed later if re-submitted and passed | §8.2 |
+| 1 | Whether the session-close coverage summary appears in the downloadable report or on screen only | §14 |
+| 2 | Whether annotations appear in the report body or an appendix | §10 |
+
+### 21.1 Closed decisions
+
+| Decision | Resolution |
+| --- | --- |
+| Per-session latency and token budget on the reference machine | Use the v1 budget in §8.6; degrade rather than block when p95 budgets are missed |
+| Confirmation of the T1 corpus | Use the frozen T1 corpus v1.0 in §6.1 |
+| Retention period for the anonymised session profile | Retain aggregate System Inquiry telemetry/profile events for 365 days by default (§18.2) |
+| Whether abstained measures should be probed if re-submitted and passed | Yes; a later validation pass enters System Inquiry as a new frozen measure (§8.2) |
 
 ---
 

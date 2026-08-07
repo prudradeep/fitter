@@ -12,6 +12,7 @@ from app.models import SystemInquiryTelemetryEvent
 from app.services.chat_session import ChatSession
 from app.services.system_inquiry_evaluation import (
     evaluate_system_inquiry_predictions,
+    load_expert_system_inquiry_gold_set,
     load_system_inquiry_gold_set,
     validate_expert_system_inquiry_gold_set,
 )
@@ -158,6 +159,17 @@ class SystemInquiryInfrastructureTests(unittest.IsolatedAsyncioTestCase):
             validate_expert_system_inquiry_gold_set(
                 {"cases": [dict(valid_cases[0], label_source="seed") for _ in range(25)]}
             )
+
+    def test_default_expert_gold_set_loads(self) -> None:
+        gold = load_expert_system_inquiry_gold_set()
+
+        self.assertEqual(gold["schema_version"], 1)
+        self.assertEqual(gold["library_version"], "1.0")
+        self.assertGreaterEqual(len(gold["cases"]), 25)
+        self.assertLessEqual(len(gold["cases"]), 30)
+        self.assertTrue(
+            all(case["label_source"] == "consortium_expert" for case in gold["cases"])
+        )
 
     def test_systems_corpus_index_uses_d23_pages_26_to_91(self) -> None:
         index = system_inquiry_corpus_index()
