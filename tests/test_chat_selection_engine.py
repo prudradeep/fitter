@@ -506,6 +506,18 @@ class ChatSelectionEngineTests(unittest.TestCase):
             engine._post_sector_label_from_open_text("I want to create a new hazard"),
             "Add a new Hazard",
         )
+        self.assertEqual(
+            engine._post_sector_label_from_open_text(
+                "The hazard above dont make sense i want to add a new hazard"
+            ),
+            "Add a new Hazard",
+        )
+        self.assertEqual(
+            engine._post_sector_label_from_open_text(
+                "None of these hazards fit. I want to add one."
+            ),
+            "Add a new Hazard",
+        )
         self.assertEqual(engine._post_sector_label_from_open_text("last one"), "Refresh hazards and DGs")
         self.assertEqual(engine._post_sector_label_from_open_text("Update hazards list"), "Refresh hazards and DGs")
         self.assertIsNone(engine._post_sector_label_from_open_text("Other Options"))

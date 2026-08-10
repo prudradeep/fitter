@@ -1,5 +1,7 @@
 from app.schemas import ChatResponse
+from app.llm import ask_llm_chat
 from app.services.chat_formatters import format_hazards
+from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
     HAZARD_ENTRY_OPTIONS,
     POST_SECTOR_OPTIONS,
@@ -10,6 +12,7 @@ from app.services.chat_options import (
     normalize,
     normalize_for_match,
 )
+from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.chat_session import ChatSession
 from app.services.custom_hazard_validation import default_custom_hazard_state
 from app.services.message_renderer import render_message
@@ -80,6 +83,8 @@ class ChatHazardStepsMixin:
         exact_label = exact_option_label(message, POST_SECTOR_OPTIONS)
         if exact_label is None:
             exact_label = self._post_sector_label_from_open_text(message)
+        if exact_label is None:
+            exact_label = await self._post_sector_label_from_llm(session, message)
         if exact_label is None:
             fuzzy_label = match_option_label(message, POST_SECTOR_OPTIONS)
             if fuzzy_label is not None:
@@ -184,6 +189,8 @@ class ChatHazardStepsMixin:
         if exact_label is None:
             exact_label = self._post_sector_label_from_open_text(message)
         if exact_label is None:
+            exact_label = await self._post_sector_label_from_llm(session, message)
+        if exact_label is None:
             fuzzy_label = match_option_label(message, STATS_DEEP_DIVE_OPTIONS)
             if fuzzy_label is not None:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
@@ -263,6 +270,47 @@ class ChatHazardStepsMixin:
             "start a new hazard",
         }:
             return "Add a new Hazard"
+        if (
+            "hazard" in normalized
+            and any(
+                phrase in normalized
+                for phrase in (
+                    "dont make sense",
+                    "do not make sense",
+                    "doesnt make sense",
+                    "does not make sense",
+                    "not make sense",
+                    "none fit",
+                    "none of these fit",
+                    "none of them fit",
+                    "not fit",
+                    "does not fit",
+                    "dont fit",
+                    "do not fit",
+                    "missing",
+                    "not listed",
+                    "not shown",
+                )
+            )
+        ):
+            return "Add a new Hazard"
+        if any(
+            phrase in normalized
+            for phrase in (
+                "want to add one",
+                "add one",
+                "add my own",
+                "create my own",
+                "write my own hazard",
+                "custom hazard",
+                "own hazard",
+                "another hazard",
+                "different hazard",
+                "new risk",
+                "missing risk",
+            )
+        ):
+            return "Add a new Hazard"
         if "hazard" in normalized and any(
             token in normalized
             for token in ("add", "create", "new")
@@ -295,6 +343,63 @@ class ChatHazardStepsMixin:
         if index < 0 or index >= len(labels):
             return None
         return labels[index]
+
+    async def _post_sector_label_from_llm(
+        self,
+        session: ChatSession,
+        message: str,
+    ) -> str | None:
+        value = str(message or "").strip()
+        if not value:
+            return None
+
+        prompt = (
+            "Classify a user message shown after the app has listed hazards for a "
+            "selected country, region, and sector.\n\n"
+            "Return one valid JSON object only:\n"
+            '{"action":"start_mitigation_planning|add_new_hazard|refresh_hazards|'
+            'dive_deeper|none","confidence":"high|medium|low","reason":"Brief reason."}\n\n'
+            "Use add_new_hazard when the user wants to add, create, write, provide, "
+            "or define their own hazard, or says the listed hazards do not fit, do "
+            "not make sense, are missing something, or are not the hazard they want. "
+            "The wording may be informal or indirect.\n"
+            "Use start_mitigation_planning only when they want to move on to "
+            "mitigation planning. Use refresh_hazards only when they want to reload "
+            "or regenerate the hazard list. Use dive_deeper only when they ask for "
+            "statistical details. Use none for questions, navigation, or unrelated text."
+        )
+        response = await ask_llm_chat(
+            context=prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Country: {session.country or ''}\n"
+                        f"Region: {session.region or ''}\n"
+                        f"Sector: {session.sector or ''}\n"
+                        f"Message: {value}"
+                    ),
+                }
+            ],
+            temperature=0.0,
+            max_tokens=120,
+            response_format="json",
+        )
+        if is_llm_unavailable_response(response):
+            return None
+        parsed = parse_json_object(response)
+        if not isinstance(parsed, dict):
+            return None
+        action = str(parsed.get("action") or "").strip().casefold()
+        confidence = str(parsed.get("confidence") or "").strip().casefold()
+        if confidence not in {"high", "medium"}:
+            return None
+        return {
+            "start_mitigation_planning": "Start Mitigation Planning",
+            "add_new_hazard": "Add a new Hazard",
+            "refresh_hazards": "Refresh hazards and DGs",
+            "dive_deeper": "Dive deeper into statistical findings",
+        }.get(action)
 
     def _post_sector_selection_from_open_text(
         self,

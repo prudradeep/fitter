@@ -1,5 +1,7 @@
 from app.schemas import ChatResponse, Option
+from app.llm import ask_llm_chat
 from app.services.chat_formatters import format_all_dgs
+from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
     REASON_CONFIRMATION_OPTIONS,
     exact_option_label,
@@ -8,7 +10,11 @@ from app.services.chat_options import (
     normalize,
     normalize_for_match,
 )
-from app.services.chat_parsers import parse_mitigation_reason, parse_reason_evidence
+from app.services.chat_parsers import (
+    is_llm_unavailable_response,
+    parse_mitigation_reason,
+    parse_reason_evidence,
+)
 from app.services.chat_session import ChatSession
 from app.services.message_renderer import markdown_to_html, render_message
 
@@ -65,6 +71,8 @@ class ChatMitigationStepsMixin:
                 return self._fuzzy_confirmation_step(session_id, session, exact_label)
         action = normalize(exact_label or message)
         open_action = self._reason_confirmation_action_from_open_text(message)
+        if open_action is None:
+            open_action = await self._reason_confirmation_action_from_llm(session, message)
         if exact_label is None and open_action is not None:
             action = open_action
 
@@ -356,7 +364,24 @@ class ChatMitigationStepsMixin:
             "i want to write one",
             "let me create one",
             "write my own",
+            "write my own mitigation",
+            "write my own mitigation measure",
             "create manually",
+            "create my own",
+            "create my own mitigation",
+            "create my own mitigation measure",
+            "add mitigation",
+            "add a mitigation",
+            "add mitigation measure",
+            "add a mitigation measure",
+            "add new mitigation",
+            "add a new mitigation",
+            "add new mitigation measure",
+            "add a new mitigation measure",
+            "new mitigation",
+            "new mitigation measure",
+            "start a new mitigation",
+            "start a new mitigation measure",
             "manual",
         }
         no_phrases = {
@@ -403,7 +428,127 @@ class ChatMitigationStepsMixin:
             return normalize("Adopt mitigation proposal suggested above")
         if "proposal" in normalized and any(token in normalized for token in ("adopt", "use", "show")):
             return normalize("Adopt mitigation proposal suggested above")
+        if (
+            "mitigation" in normalized
+            and any(
+                phrase in normalized
+                for phrase in (
+                    "dont make sense",
+                    "do not make sense",
+                    "doesnt make sense",
+                    "does not make sense",
+                    "not make sense",
+                    "none fit",
+                    "none of these fit",
+                    "none of them fit",
+                    "not fit",
+                    "does not fit",
+                    "dont fit",
+                    "do not fit",
+                    "missing",
+                    "not listed",
+                    "not shown",
+                )
+            )
+        ):
+            return normalize("Yes")
+        if any(
+            phrase in normalized
+            for phrase in (
+                "want to add one",
+                "add one",
+                "add my own",
+                "create my own",
+                "write my own",
+                "custom mitigation",
+                "own mitigation",
+                "another mitigation",
+                "different mitigation",
+                "new measure",
+                "missing measure",
+            )
+        ):
+            return normalize("Yes")
+        if "mitigation" in normalized and any(
+            token in normalized for token in ("add", "create", "new", "write", "manual")
+        ):
+            return normalize("Yes")
         return None
+
+    async def _reason_confirmation_should_handle_before_quality(
+        self,
+        session: ChatSession,
+        message: str,
+    ) -> bool:
+        if self._exact_or_safe_fuzzy_option(message, REASON_CONFIRMATION_OPTIONS) is not None:
+            return True
+        if self._open_option_label_from_text(message, REASON_CONFIRMATION_OPTIONS) is not None:
+            return True
+        if self._reason_confirmation_action_from_open_text(message) is not None:
+            return True
+        if self._looks_like_typed_mitigation_measure(message):
+            return True
+        return await self._reason_confirmation_action_from_llm(session, message) is not None
+
+    async def _reason_confirmation_action_from_llm(
+        self,
+        session: ChatSession,
+        message: str,
+    ) -> str | None:
+        value = str(message or "").strip()
+        if not value:
+            return None
+
+        prompt = (
+            "Classify a user message shown after the app suggests or asks about "
+            "creating a mitigation measure for a selected hazard.\n\n"
+            "Return one valid JSON object only:\n"
+            '{"action":"write_new_mitigation|adopt_suggested_mitigation|'
+            'decline|none","confidence":"high|medium|low","reason":"Brief reason."}\n\n'
+            "Use write_new_mitigation when the user wants to add, create, write, "
+            "provide, define, or use their own mitigation measure, or says the "
+            "suggested/proposed/current mitigation does not fit, does not make "
+            "sense, is missing something, or is not the measure they want. The "
+            "wording may be informal or indirect.\n"
+            "Use adopt_suggested_mitigation only when they want to use/adopt/show "
+            "the suggested proposal. Use decline only when they do not want to "
+            "continue. Use none for questions, navigation, or unrelated text."
+        )
+        response = await ask_llm_chat(
+            context=prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Country: {session.country or ''}\n"
+                        f"Region: {session.region or ''}\n"
+                        f"Sector: {session.sector or ''}\n"
+                        f"Hazard: {session.selected_hazard or session.accepted_custom_hazard or ''}\n"
+                        f"Suggested mitigation: {self._suggested_mitigation_measure_for_context(session)}\n"
+                        f"Message: {value}"
+                    ),
+                }
+            ],
+            temperature=0.0,
+            max_tokens=120,
+            response_format="json",
+        )
+        if is_llm_unavailable_response(response):
+            return None
+        parsed = parse_json_object(response)
+        if not isinstance(parsed, dict):
+            return None
+        action = str(parsed.get("action") or "").strip().casefold()
+        confidence = str(parsed.get("confidence") or "").strip().casefold()
+        if confidence not in {"high", "medium"}:
+            return None
+        return {
+            "write_new_mitigation": normalize("Yes"),
+            "adopt_suggested_mitigation": normalize(
+                "Adopt mitigation proposal suggested above"
+            ),
+            "decline": normalize("No"),
+        }.get(action)
 
     @staticmethod
     def _looks_like_typed_mitigation_measure(message: str) -> bool:

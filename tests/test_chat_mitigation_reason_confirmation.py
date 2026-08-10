@@ -18,6 +18,9 @@ class _ReasonConfirmationEngine(ChatMitigationStepsMixin):
     def _current_policy_mitigation_measure(self, session):
         return "Current policy-based mitigation"
 
+    def _mitigation_measure_examples(self, sector_id):
+        return ""
+
 
 class _ReasonSelectionEngine(_ReasonConfirmationEngine, ChatSelectionStepsMixin):
     def _available_country_names(self):
@@ -59,9 +62,43 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
             "yes",
         )
         self.assertEqual(
+            engine._reason_confirmation_action_from_open_text(
+                "The mitigation above dont make sense i want to add a new mitigation"
+            ),
+            "yes",
+        )
+        self.assertEqual(
+            engine._reason_confirmation_action_from_open_text(
+                "None of these mitigation measures fit. I want to add one."
+            ),
+            "yes",
+        )
+        self.assertEqual(
             engine._reason_confirmation_action_from_open_text("not now"),
             "no",
         )
+
+    def test_open_text_write_new_mitigation_enters_measure_flow(self):
+        engine = _ReasonConfirmationEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Heat stress",
+        )
+
+        response = asyncio.run(
+            engine._handle_reason_confirmation(
+                "test-session",
+                session,
+                "None of these mitigation measures fit. I want to add one.",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_measure")
+        self.assertEqual(session.phase, "mitigation_measure")
+        self.assertIsNone(session.pending_mitigation_measure)
 
     def test_adopt_suggested_mitigation_includes_selected_context(self):
         engine = _ReasonConfirmationEngine()

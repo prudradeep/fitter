@@ -369,6 +369,22 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
+        if session.phase == "hazards":
+            return await self._handle_hazards_action(current_session_id, session, clean_message)
+
+        if (
+            session.phase == "reason_confirmation"
+            and await self._reason_confirmation_should_handle_before_quality(
+                session,
+                clean_message,
+            )
+        ):
+            return await self._handle_reason_confirmation(
+                current_session_id,
+                session,
+                clean_message,
+            )
+
         quality_response = await self._common_user_input_quality_response(
             current_session_id,
             session,
@@ -376,9 +392,6 @@ class ChatService(
         )
         if quality_response is not None:
             return quality_response
-
-        if session.phase == "hazards":
-            return await self._handle_hazards_action(current_session_id, session, clean_message)
 
         if session.phase == "stats_deep_dive":
             return await self._handle_stats_deep_dive(current_session_id, session, clean_message)
