@@ -364,6 +364,11 @@ class ChatService(
         if open_selection_response is not None:
             return open_selection_response
 
+        if session.phase in {"add_hazard", "custom_hazard_input"}:
+            return await self._capture_custom_hazard(
+                current_session_id, session, clean_message
+            )
+
         quality_response = await self._common_user_input_quality_response(
             current_session_id,
             session,
@@ -377,11 +382,6 @@ class ChatService(
 
         if session.phase == "stats_deep_dive":
             return await self._handle_stats_deep_dive(current_session_id, session, clean_message)
-
-        if session.phase in {"add_hazard", "custom_hazard_input"}:
-            return await self._capture_custom_hazard(
-                current_session_id, session, clean_message
-            )
 
         if session.phase == "custom_hazard_title_clarification":
             return await self._handle_custom_hazard_title_clarification(

@@ -394,8 +394,8 @@ Mitigation Measure:
 
 Yes/No evidence + open conversation
 
-Document integration | Downloadable Report: PDF | Docx
-Detailed SRS of this: MD File.
+
+
 
 3 affected groups are not named in the mitigation target population: Dwelling year; Home type: Semi-detached house; Solar install likelihood.
 Encourage user to also include the Mitigation plans for the left-out target population. But don't make it mandatory.
@@ -410,3 +410,19 @@ German,
 Italian,
 Hungarian,
 Portugese,
+
+
+
+Free text Use Cases:
+    1. Response for the question
+    2. Middle of the conversation User ask the question within the scope of the content, as a response of the question.
+        During the conversation with AI, User may ask any question within the scope of the project. The AI should be able to handle the question, respond to the user appropriately and come back to the question where it left the conversation in the middle
+
+Document integration | Downloadable Report: PDF | Docx
+Downloadable report in 3 choices:
+- Per mitigation measure
+- All mitigation measures created by the user against a hazard
+- All mitigation measures created against this hazard from all users - Put together
+
+Detailed SRS of this: MD File. Cloud Enabled
+

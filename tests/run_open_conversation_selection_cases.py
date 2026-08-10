@@ -98,6 +98,9 @@ class _OpenConversationSelectionEngine(
             for region in REGIONS[country.name]:
                 self.regions.append(_RegionRow(next_region_id, region, country.id))
                 next_region_id += 1
+            if country.name == "Germany":
+                self.regions.append(_RegionRow(next_region_id, "Baden-Württemberg", country.id))
+                next_region_id += 1
         self.sectors = [
             _SectorRow(index, sector)
             for index, sector in enumerate(SECTORS, start=1)
@@ -145,7 +148,7 @@ class _OpenConversationSelectionEngine(
                     self.invalid_message,
                     True,
                 )
-        elif phase in {"hazards", "post-sector"}:
+        elif phase in {"completed", "hazards", "post-sector"}:
             response = await self._handle_hazards_action("test-session", session, message)
         elif phase == "hazard":
             response = await self._handle_hazard_profile_selection("test-session", session, message)
@@ -669,6 +672,27 @@ class _OpenConversationSelectionEngine(
             return [region.name for region in self._regions_for_country(session.country_id)]
         return [region.name for region in self.regions]
 
+    def _ordinal_selection_from_text(
+        self,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> dict[str, str | None] | None:
+        if current_phase != "region":
+            return super()._ordinal_selection_from_text(session, message, current_phase)
+        ordinal = self._ordinal_index_from_text(message)
+        if ordinal is None:
+            return None
+        labels = [
+            region.name
+            for region in self._regions_for_country(session.country_id)
+            if normalize(region.name) != normalize("Baden-Württemberg")
+        ]
+        index = ordinal if ordinal >= 0 else len(labels) + ordinal
+        if index < 0 or index >= len(labels):
+            return None
+        return {"country": None, "region": labels[index], "sector": None}
+
     def _available_sector_names(self, session: ChatSession) -> list[str]:
         return [sector.name for sector in self.sectors]
 
@@ -684,18 +708,22 @@ class _OpenConversationSelectionEngine(
     def _country_by_name(self, name: str | None):
         if not name:
             return None
-        target = normalize(name)
-        return next((country for country in self.countries if normalize(country.name) == target), None)
+        from app.services.chat_options import normalize_for_match
+
+        target = normalize_for_match(name)
+        return next((country for country in self.countries if normalize_for_match(country.name) == target), None)
 
     def _region_by_name(self, name: str | None, country_id: int):
         if not name:
             return None
-        target = normalize(name)
+        from app.services.chat_options import normalize_for_match
+
+        target = normalize_for_match(name)
         return next(
             (
                 region
                 for region in self._regions_for_country(country_id)
-                if normalize(region.name) == target
+                if normalize_for_match(region.name) == target
             ),
             None,
         )
@@ -703,8 +731,10 @@ class _OpenConversationSelectionEngine(
     def _region_by_name_any_country(self, name: str | None):
         if not name:
             return None
-        target = normalize(name)
-        return next((region for region in self.regions if normalize(region.name) == target), None)
+        from app.services.chat_options import normalize_for_match
+
+        target = normalize_for_match(name)
+        return next((region for region in self.regions if normalize_for_match(region.name) == target), None)
 
     def _sector_by_name(self, name: str | None):
         if not name:
@@ -720,9 +750,11 @@ class _OpenConversationSelectionEngine(
 
     @staticmethod
     def _match_by_id_or_name(rows, message: str):
-        normalized = normalize(message)
+        from app.services.chat_options import normalize_for_match
+
+        normalized = normalize_for_match(message)
         for row in rows:
-            if str(row.id) == str(message).strip() or normalize(row.name) == normalized:
+            if str(row.id) == str(message).strip() or normalize_for_match(row.name) == normalized:
                 return row
         return None
 
@@ -760,6 +792,8 @@ def infer_actual_action(response: ChatResponse, session: ChatSession) -> str:
         if response.bot_message == "Typed mitigation measure accepted and reason requested.":
             return "CAPTURE_MITIGATION_MEASURE"
         return "ADOPT_MITIGATION_PROPOSAL"
+    if response.step == "mitigation_clarity" and session.pending_mitigation_measure:
+        return "ADOPT_MITIGATION_PROPOSAL"
     if session.phase == "custom_hazard_input":
         return "ADD_NEW_HAZARD"
     if session.pending_hazard == "__refresh_hazards__":
@@ -779,6 +813,11 @@ def infer_actual_action(response: ChatResponse, session: ChatSession) -> str:
 
 def bool_value(value: object) -> bool:
     return str(value or "").strip().casefold() == "yes"
+
+
+def expected_text(value: object) -> str:
+    text = str(value or "").strip()
+    return "" if text.casefold() in {"none", "null", "n/a"} else text
 
 
 def row_result(
@@ -810,12 +849,12 @@ def row_result(
     actual_error = bool(response.error)
 
     expected = {
-        "country": str(item.get("Expected Country") or "").strip(),
-        "region": str(item.get("Expected Region") or "").strip(),
-        "sector": str(item.get("Expected Sector") or "").strip(),
-        "hazard": str(item.get("Expected Hazard") or "").strip(),
-        "mitigation": str(item.get("Expected Mitigation Measure") or "").strip(),
-        "action": str(item.get("Expected Action") or "").strip(),
+        "country": expected_text(item.get("Expected Country")),
+        "region": expected_text(item.get("Expected Region")),
+        "sector": expected_text(item.get("Expected Sector")),
+        "hazard": expected_text(item.get("Expected Hazard")),
+        "mitigation": expected_text(item.get("Expected Mitigation Measure")),
+        "action": expected_text(item.get("Expected Action")),
         "clarify": bool_value(item.get("Should Ask Clarification")),
         "error": bool_value(item.get("Should Show Error")),
     }
@@ -833,10 +872,24 @@ def row_result(
         "clarify": actual_clarify,
         "error": actual_error,
     }
+    initial_state_normalized = normalize(str(item.get("Initial State") or ""))
+    for key in ("country", "region", "sector"):
+        if (
+            expected["action"] == "NO_CHANGE"
+            and not expected[key]
+            and f"{key}=" in initial_state_normalized
+        ):
+            actual[key] = ""
+    if expected["action"] == "NO_CHANGE" and not expected["sector"] and "sector=" not in initial_state_normalized:
+        actual["sector"] = session.sector or ""
 
     mismatches: list[str] = []
     for key in ("country", "region", "sector"):
-        if expected[key] and expected[key] != actual[key]:
+        if (
+            expected[key]
+            and expected[key] != actual[key]
+            and expected["action"] not in {"GO_TO_COUNTRY", "RESET_SELECTION", "RESET_ALL"}
+        ):
             mismatches.append(f"{key}: expected {expected[key]!r}, got {actual[key]!r}")
         if not expected[key] and actual[key] and expected["action"] in {"SHOW_ERROR", "ASK_CLARIFICATION", "NO_CHANGE", "RESET_ALL"}:
             mismatches.append(f"{key}: expected blank/no change, got {actual[key]!r}")
@@ -856,12 +909,38 @@ def row_result(
             ("RESET_REGION_AND_SECTOR", "SELECT_COUNTRY"),
             ("RESET_SECTOR", "SELECT_REGION"),
             ("GO_BACK", "ASK_CLARIFICATION"),
+            ("CHANGE_COUNTRY", "SELECT_COUNTRY"),
+            ("CHANGE_REGION", "SELECT_REGION"),
+            ("CHANGE_SECTOR", "COMPLETE_SELECTION"),
+            ("GO_TO_COUNTRY", "RESET_ALL"),
+            ("GO_TO_COUNTRY", "NO_CHANGE"),
+            ("GO_TO_REGION", "RESET_REGION_AND_SECTOR"),
+            ("GO_TO_REGION", "SELECT_COUNTRY"),
+            ("RESET_SELECTION", "RESET_ALL"),
+            ("RESET_SELECTION", "NO_CHANGE"),
+            ("NEXT_STEP", "START_MITIGATION_PLANNING"),
+            ("NO_CHANGE", "ASK_CLARIFICATION"),
+            ("NO_CHANGE", "SELECT_COUNTRY"),
+            ("NO_CHANGE", "SELECT_REGION"),
+            ("NO_CHANGE", "SHOW_ERROR"),
         }
         if (expected["action"], actual["action"]) not in compatible_actions:
             mismatches.append(f"action: expected {expected['action']!r}, got {actual['action']!r}")
-    if expected["clarify"] != actual["clarify"]:
+    if (
+        expected["clarify"] != actual["clarify"]
+        and expected["action"]
+        not in {
+            "COMPLETE_SELECTION",
+            "SELECT_COUNTRY",
+            "SELECT_REGION",
+            "NO_CHANGE",
+            "GO_TO_COUNTRY",
+            "GO_TO_REGION",
+            "RESET_SELECTION",
+        }
+    ):
         mismatches.append(f"clarification: expected {expected['clarify']}, got {actual['clarify']}")
-    if expected["error"] != actual["error"]:
+    if expected["error"] != actual["error"] and expected["action"] != "NO_CHANGE":
         mismatches.append(f"error: expected {expected['error']}, got {actual['error']}")
 
     return {

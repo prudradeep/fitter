@@ -221,6 +221,7 @@ class ChatHazardStepsMixin:
             "next",
             "next step",
             "continue",
+            "can we continue",
             "continue flow",
             "continue the flow",
             "go ahead",

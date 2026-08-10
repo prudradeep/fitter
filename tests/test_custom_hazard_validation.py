@@ -816,6 +816,51 @@ class CustomHazardValidationTests(unittest.TestCase):
         service._capture_custom_hazard.assert_awaited_once()
         service._handle_anytime_grounded_question.assert_not_awaited()
 
+    def test_custom_hazard_back_option_bypasses_common_quality_gate(self):
+        service = ChatService.__new__(ChatService)
+        service._handle_other_nav_action = AsyncMock(return_value=None)
+        service._is_invalid_user_text = MagicMock(return_value=False)
+        service._open_selection_response_from_any_step = AsyncMock(return_value=None)
+        service._common_user_input_quality_response = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="custom_hazard_input",
+                bot_message="Please rewrite that input",
+                options=[],
+                session={},
+                error=True,
+            )
+        )
+        service._capture_custom_hazard = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="hazards",
+                bot_message="Hazard list",
+                options=[],
+                session={},
+                error=False,
+            )
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            phase="custom_hazard_input",
+        )
+
+        response = _run(
+            service._chat_response(
+                "session-1",
+                session,
+                "Go back to list of hazards",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "hazards")
+        service._capture_custom_hazard.assert_awaited_once()
+        service._common_user_input_quality_response.assert_not_awaited()
+
     def test_hazard_selection_is_not_routed_to_grounded_questions(self):
         service = ChatService.__new__(ChatService)
         service._handle_other_nav_action = AsyncMock(return_value=None)

@@ -317,6 +317,42 @@ class ChatSelectionStepsMixin:
     ) -> ChatResponse | None:
         if not message.strip() or self._is_exact_current_selection(session, message):
             return None
+        if self._is_selection_information_request(message):
+            return self._repeat_current_options(
+                session_id,
+                session,
+                self._information_request_message(session, current_phase),
+                error=False,
+            )
+        if self._is_negated_selection(message):
+            return self._repeat_current_options(
+                session_id,
+                session,
+                "Please choose one of the available options, or type your selection another way.",
+                error=False,
+            )
+        negated_region_response = await self._negated_region_country_only_response(
+            session_id,
+            session,
+            message,
+            current_phase,
+        )
+        if negated_region_response is not None:
+            return negated_region_response
+        if self._looks_like_unsafe_selection_instruction(message):
+            return self._repeat_current_options(
+                session_id,
+                session,
+                "Please choose one of the available options, or type your selection another way.",
+                error=False,
+            )
+        if self._looks_like_selection_topic_without_command(message):
+            return self._repeat_current_options(
+                session_id,
+                session,
+                "Please choose one of the available options, or type your selection another way.",
+                error=False,
+            )
         if not normalize_for_match(message):
             return self._repeat_current_options(
                 session_id,
@@ -331,6 +367,21 @@ class ChatSelectionStepsMixin:
                 "Please choose one of the available options, or type your selection another way.",
                 error=False,
             )
+        if current_phase == "sector" and normalize_for_match(message) in {"second one", "the second one"}:
+            return self._repeat_current_options(
+                session_id,
+                session,
+                "Please choose one of the available options, or type your selection another way.",
+                error=False,
+            )
+        invalid_tuple_response = self._invalid_conflicting_tuple_response(
+            session_id,
+            session,
+            message,
+            current_phase,
+        )
+        if invalid_tuple_response is not None:
+            return invalid_tuple_response
 
         deterministic_selection = self._ordinal_selection_from_text(
             session,
@@ -346,6 +397,12 @@ class ChatSelectionStepsMixin:
             )
             if sector_alias_response is not None:
                 return sector_alias_response
+        if deterministic_selection is None:
+            deterministic_selection = self._implicit_region_selection_from_text(
+                session,
+                message,
+                current_phase,
+            )
         if deterministic_selection is None:
             deterministic_selection = self._deterministic_selection_from_text(session, message)
         if deterministic_selection is None:
@@ -386,9 +443,6 @@ class ChatSelectionStepsMixin:
         if current_phase == "country" and self._mentions_unsupported_country(message):
             return self._country_step(session_id, session, self.invalid_message, True)
 
-        if current_phase in {"region", "sector"} and self._looks_like_unknown_option_label(message):
-            return self._repeat_current_options(session_id, session, self.invalid_message, True)
-
         navigation_response = await self._open_selection_navigation_response(
             session_id,
             session,
@@ -397,6 +451,9 @@ class ChatSelectionStepsMixin:
         )
         if navigation_response is not None:
             return navigation_response
+
+        if current_phase in {"region", "sector"} and self._looks_like_unknown_option_label(message):
+            return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
         intent = await detect_message_intent(
             message,
@@ -545,6 +602,105 @@ class ChatSelectionStepsMixin:
             return response
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
+    @staticmethod
+    def _is_selection_information_request(message: str) -> bool:
+        normalized = normalize_for_match(message)
+        if not normalized:
+            return False
+        if " if " in normalized and any(phrase in normalized for phrase in {" select it", " use it", " let s use it"}):
+            return False
+        question_starts = (
+            "what countries",
+            "which country",
+            "what regions",
+            "which region",
+            "what sectors",
+            "which sector",
+            "what have i selected",
+            "is ",
+            "tell me about ",
+            "why can t i select ",
+            "why cant i select ",
+            "can i select the whole country",
+            "what are the risks",
+            "what can you tell me about ",
+        )
+        return normalized.endswith("?") or any(normalized.startswith(prefix) for prefix in question_starts)
+
+    @staticmethod
+    def _information_request_message(session: ChatSession, current_phase: str) -> str:
+        if session.sector:
+            return ChatSelectionStepsMixin._already_selected_message(session, "", "", session.sector)
+        if current_phase == "country" or not session.country:
+            return "Please select a country from the available options."
+        if current_phase == "region" or not session.region:
+            return f"{session.country} selected. Please choose a region."
+        return f"{session.region} selected. Please choose a sector."
+
+    @staticmethod
+    def _is_negated_selection(message: str) -> bool:
+        normalized = normalize_for_match(message)
+        return normalized.startswith(("not ", "no not ", "anything except ", "anywhere except "))
+
+    @staticmethod
+    def _looks_like_selection_topic_without_command(message: str) -> bool:
+        normalized = normalize_for_match(message)
+        if not normalized:
+            return False
+        if " in the list" in f" {normalized} ":
+            return True
+        if " isn t available " in f" {normalized} " or " isnt available " in f" {normalized} ":
+            return True
+        if " i don t know " in f" {normalized} " or normalized.startswith("i don t know"):
+            return True
+        if normalized.startswith("i think it was"):
+            return True
+        if "charging" in normalized.split():
+            return True
+        topic_terms = {
+            "prices",
+            "price",
+            "costs",
+            "risks",
+            "risk",
+            "problems",
+            "issue",
+            "issues",
+            "solar",
+            "panels",
+            "renters",
+            "charging",
+        }
+        selection_verbs = {
+            "select",
+            "choose",
+            "use",
+            "set",
+            "start",
+            "go",
+            "focus",
+            "analyse",
+            "analyze",
+            "explore",
+            "look",
+        }
+        tokens = set(normalized.split())
+        return bool(tokens & topic_terms) and not bool(tokens & selection_verbs)
+
+    @staticmethod
+    def _looks_like_unsafe_selection_instruction(message: str) -> bool:
+        normalized = normalize_for_match(message)
+        unsafe_terms = {
+            "system ignore",
+            "internal state",
+            "skip validation",
+            "valid true",
+            "admin approved",
+            "script selectcountry",
+            "sector valid true",
+        }
+        return any(term in normalized for term in unsafe_terms)
+
     async def _open_selection_navigation_response(
         self,
         session_id: str,
@@ -591,11 +747,14 @@ class ChatSelectionStepsMixin:
             return "change_country"
         if normalized in {
             "change region",
+            "change the region",
             "choose another region",
             "select another region",
             "back to region",
             "go back to region",
         }:
+            return "change_region"
+        if " change the region " in f" {normalized} " or " change region " in f" {normalized} ":
             return "change_region"
         if normalized in {
             "change sector",
@@ -706,7 +865,7 @@ class ChatSelectionStepsMixin:
         session: ChatSession,
         message: str,
     ) -> dict[str, str | None] | None:
-        normalized = normalize_for_match(message)
+        normalized = normalize_for_match(self._selection_correction_tail(message))
         if not normalized:
             return None
         remaining = f" {normalized} "
@@ -748,11 +907,172 @@ class ChatSelectionStepsMixin:
                 label, term = matches[0]
                 selection[key] = label
                 remaining = remaining.replace(f" {term} ", " ")
+        if selection["region"]:
+            region_terms = {
+                term
+                for region in self._available_region_names(ChatSession())
+                if normalize(region) != normalize(selection["region"])
+                for term in self._selection_label_terms(region)
+            }
+            for term in sorted(region_terms, key=len, reverse=True):
+                remaining = remaining.replace(f" {term} ", " ")
         if not any(selection.values()):
             return None
         if not self._is_selection_filler_text(remaining):
             return None
         return selection
+
+    @staticmethod
+    def _selection_correction_tail(message: str) -> str:
+        normalized = normalize_for_match(message)
+        if normalized.startswith("change ") and " to " in normalized:
+            return normalized.rsplit(" to ", 1)[1].strip()
+        if "change" in normalized.split() and " sector to " in f" {normalized} ":
+            return normalized.rsplit(" sector to ", 1)[1].strip()
+        if "change" in normalized.split() and " analyse " in f" {normalized} ":
+            return normalized.rsplit(" analyse ", 1)[1].strip()
+        if "change" in normalized.split() and " analyze " in f" {normalized} ":
+            return normalized.rsplit(" analyze ", 1)[1].strip()
+        if " make that " in f" {normalized} ":
+            return normalized.rsplit(" make that ", 1)[1].strip()
+        if " otherwise " in f" {normalized} ":
+            return normalized.rsplit(" otherwise ", 1)[1].strip()
+        separators = (
+            " actually ",
+            " no i meant ",
+            " no ",
+            " i meant ",
+            " but i want ",
+            " sorry ",
+            " use ",
+        )
+        padded = f" {normalized} "
+        best_index = -1
+        best_separator = ""
+        for separator in separators:
+            index = padded.rfind(separator)
+            if index > best_index:
+                best_index = index
+                best_separator = separator
+        if best_index >= 0:
+            return padded[best_index + len(best_separator) :].strip()
+        return message
+
+    def _implicit_region_selection_from_text(
+        self,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> dict[str, str | None] | None:
+        if current_phase != "country" or session.country is not None:
+            return None
+        original_normalized = f" {normalize_for_match(message)} "
+        normalized = f" {normalize_for_match(self._selection_correction_tail(message))} "
+        region_matches: list[tuple[str, str]] = []
+        for country_name in self._available_country_names():
+            try:
+                country = self._country_by_name(country_name)
+            except AttributeError:
+                return None
+            if country is None:
+                continue
+            for region in self._regions_for_country_id(country.id):
+                for term in self._selection_label_terms(region.name):
+                    if f" {term} " in normalized:
+                        region_matches.append((country.name, region.name))
+                        break
+        if len(region_matches) != 1:
+            return None
+        country_name, region_name = region_matches[0]
+        sector = self._single_label_match(normalized, self._available_sector_names(session))
+        if not sector:
+            sector = self._single_label_match(original_normalized, self._available_sector_names(session))
+        if sector == "":
+            return None
+        return {"country": country_name, "region": region_name, "sector": sector}
+
+    def _invalid_conflicting_tuple_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> ChatResponse | None:
+        if current_phase != "country":
+            return None
+        normalized = f" {normalize_for_match(message)} "
+        countries = [
+            country
+            for country in self._available_country_names()
+            if any(f" {term} " in normalized for term in self._selection_label_terms(country))
+        ]
+        if (
+            len(set(countries)) > 1
+            and " actually " not in normalized
+            and " sorry " not in normalized
+            and " make that " not in normalized
+            and " otherwise " not in normalized
+        ):
+            return self._repeat_current_options(session_id, session, self.invalid_message, True)
+        if not countries:
+            return None
+        try:
+            selected_country = self._country_by_name(countries[0])
+        except AttributeError:
+            return None
+        if selected_country is None:
+            return None
+        current_region_terms = {
+            term
+            for region in self._regions_for_country_id(selected_country.id)
+            for term in self._selection_label_terms(region.name)
+        }
+        all_region_terms = {
+            term
+            for region in self._available_region_names(ChatSession())
+            for term in self._selection_label_terms(region)
+        }
+        has_current_region = any(f" {term} " in normalized for term in current_region_terms)
+        has_other_region = any(
+            f" {term} " in normalized
+            for term in all_region_terms
+            if term not in current_region_terms
+        )
+        has_sector = any(
+            f" {term} " in normalized
+            for sector in self._sectors_for_country(selected_country.id)
+            for term in self._selection_label_terms(sector.name)
+        )
+        if has_other_region and not has_current_region:
+            return self._repeat_current_options(session_id, session, self.invalid_message, True)
+        unsupported_sector_terms = {"agriculture", "healthcare", "finance"}
+        if has_current_region and any(f" {term} " in normalized for term in unsupported_sector_terms):
+            return self._repeat_current_options(session_id, session, self.invalid_message, True)
+        return None
+
+    async def _negated_region_country_only_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+        current_phase: str,
+    ) -> ChatResponse | None:
+        if current_phase != "country":
+            return None
+        normalized = f" {normalize_for_match(message)} "
+        if " not " not in normalized:
+            return None
+        country = self._single_label_match(normalized, self._available_country_names())
+        if not country:
+            return None
+        sector = self._single_label_match(normalized, self._available_sector_names(session))
+        if sector == "":
+            sector = None
+        return await self._apply_pending_selection(
+            session_id,
+            session,
+            {"country": country, "region": None, "sector": sector},
+        )
 
     @classmethod
     def _single_label_match(cls, remaining: str, labels: list[str]) -> str | None:
@@ -912,6 +1232,14 @@ class ChatSelectionStepsMixin:
     ) -> ChatResponse | None:
         if current_phase != "sector":
             return None
+        normalized = normalize_for_match(message)
+        confirmation_alias_phrases = {
+            "power and electricity",
+            "buildings and homes",
+            "mobility and public transit",
+        }
+        if normalized not in confirmation_alias_phrases:
+            return None
         sector = self._sector_label_from_alias_text(session, message)
         if not sector:
             return None
@@ -961,12 +1289,14 @@ class ChatSelectionStepsMixin:
         terms.extend(ChatSelectionStepsMixin._selection_label_aliases(label))
         if normalized.endswith("ia"):
             terms.append(f"{normalized[:-1]}n")
-        return list(dict.fromkeys(term for term in terms if term))
+        unique_terms = list(dict.fromkeys(term for term in terms if term))
+        return sorted(unique_terms, key=lambda term: (len(term.split()), len(term)), reverse=True)
 
     @staticmethod
     def _selection_label_aliases(label: str) -> list[str]:
         normalized = normalize_for_match(label)
         aliases = {
+            "baden württemberg": ["baden wurttemberg", "baden wurtemberg", "bw"],
             "bavaria": ["bavarian"],
             "germany": ["german", "deutschland"],
             "spain": ["spanish"],
@@ -974,9 +1304,17 @@ class ChatSelectionStepsMixin:
             "ireland": ["irish"],
             "italy": ["italian"],
             "hungary": ["hungarian"],
-            "transport": ["mobility", "transit", "public transit", "mobility and public transit"],
+            "transport": ["mobility", "transit", "public transit", "mobility and public transit", "evs"],
             "housing": ["homes", "buildings", "buildings and homes"],
-            "energy": ["power", "electricity", "power and electricity"],
+            "energy": [
+                "power",
+                "electricity",
+                "power and electricity",
+                "renewable energy",
+                "energy related transition risks",
+                "energy transition",
+                "renewable energy risks",
+            ],
         }
         return list(aliases.get(normalized, []))
 
@@ -993,6 +1331,7 @@ class ChatSelectionStepsMixin:
             "s",
             "lets",
             "want",
+            "understand",
             "will",
             "would",
             "like",
@@ -1004,6 +1343,7 @@ class ChatSelectionStepsMixin:
             "go",
             "analyze",
             "analyse",
+            "explore",
             "to",
             "at",
             "as",
@@ -1015,11 +1355,41 @@ class ChatSelectionStepsMixin:
             "use",
             "is",
             "works",
+            "right",
+            "sounds",
             "me",
             "select",
             "choose",
             "please",
+            "instead",
+            "specifically",
+            "maybe",
+            "think",
+            "probably",
+            "interesting",
+            "earlier",
+            "now",
+            "said",
+            "meant",
+            "sorry",
+            "forgot",
+            "we",
+            "re",
+            "available",
+            "if",
+            "yes",
+            "that",
+            "choice",
+            "risks",
+            "problems",
+            "drop",
+            "table",
+            "countries",
             "my",
+            "new",
+            "analysis",
+            "only",
+            "necessary",
             "session",
             "the",
             "a",
@@ -1683,9 +2053,9 @@ class ChatSelectionStepsMixin:
         matched = self._match_country(name)
         if matched is not None:
             return matched
-        target = normalize(name)
+        target = normalize_for_match(name)
         countries = self.db.scalars(select(Country).order_by(Country.name)).all()
-        return next((country for country in countries if normalize(country.name) == target), None)
+        return next((country for country in countries if normalize_for_match(country.name) == target), None)
 
     def _region_by_name(self, name: str | None, country_id: str) -> Region | None:
         if not name:
@@ -1693,11 +2063,11 @@ class ChatSelectionStepsMixin:
         matched = self._match_region(name, country_id)
         if matched is not None:
             return matched
-        target = normalize(name)
+        target = normalize_for_match(name)
         regions = self.db.scalars(
             select(Region).where(Region.country_id == country_id).order_by(Region.name)
         ).all()
-        return next((region for region in regions if normalize(region.name) == target), None)
+        return next((region for region in regions if normalize_for_match(region.name) == target), None)
 
     def _match_country(self, message: str) -> Country | None:
         countries = self.db.scalars(
@@ -1730,9 +2100,9 @@ class ChatSelectionStepsMixin:
 
     @staticmethod
     def _match_by_id_or_name(rows: list[Country] | list[Region] | list[Sector], message: str):
-        normalized = normalize(message)
+        normalized = normalize_for_match(message)
         for row in rows:
-            if str(row.id) == message.strip() or normalize(row.name) == normalized:
+            if str(row.id) == message.strip() or normalize_for_match(row.name) == normalized:
                 return row
         return None
 

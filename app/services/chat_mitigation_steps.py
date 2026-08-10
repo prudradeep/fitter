@@ -236,9 +236,47 @@ class ChatMitigationStepsMixin:
                     return None
                 return await apply_selection(session_id, session, selection)
 
+        invalid_change_response = self._invalid_open_selection_change_response(
+            session_id,
+            session,
+            message,
+        )
+        if invalid_change_response is not None:
+            return invalid_change_response
+
         navigation_handler = getattr(self, "_open_selection_navigation_response", None)
         if navigation_handler is not None:
             return await navigation_handler(session_id, session, message, current_phase)
+        return None
+
+    def _invalid_open_selection_change_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+    ) -> ChatResponse | None:
+        normalized = normalize_for_match(message)
+        if not normalized.startswith("change ") or " to " not in normalized:
+            return None
+        target = normalized.rsplit(" to ", 1)[1].strip()
+        checks = [
+            ("change country", getattr(self, "_available_country_names", None)),
+            ("change region", getattr(self, "_available_region_names", None)),
+            ("change sector", getattr(self, "_available_sector_names", None)),
+        ]
+        for prefix, provider in checks:
+            if not normalized.startswith(prefix) or provider is None:
+                continue
+            labels = provider(session) if prefix != "change country" else provider()
+            if target not in {normalize_for_match(label) for label in labels}:
+                return ChatResponse(
+                    session_id=session_id,
+                    step=session.phase or "selection",
+                    bot_message=self.invalid_message,
+                    options=[],
+                    session=session.summary(),
+                    error=True,
+                )
         return None
 
     def _open_option_label_from_text(
