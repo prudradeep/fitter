@@ -53,7 +53,7 @@ VALID_HAZARDS = {
         "Small businesses face utility arrears from dynamic electricity pricing and smart meter rollout",
         "Tenants face higher clean heating bills as heat pump tariffs and grid upgrade charges increase",
         "Energy community members face exclusion from solar sharing because smart grid access fees rise",
-        "Fossil-dependent regional workers face job losses and local tax-base decline from coal power phase-out",
+        "Fossil-dependent regional workers face income loss and local tax-base decline from renewable energy transition and fossil fuel phase out",
     ],
     "Housing": [
         "Low-income tenants face rent increases after mandatory green building retrofits",
@@ -175,12 +175,12 @@ TITLE_CLARIFICATION_FLOWS = [
         "hazard": "Digital energy services leave people behind.",
         "answer_1": "Older adults and low-income households without internet access or digital skills are excluded from online-only electricity billing and support services.",
         "answer_2": "",
-        "expected_action": "ACCEPT_HAZARD_NAME",
-        "expected_step": "custom_hazard_validation",
-        "expected_input_mode": "reason_evidence",
+        "expected_action": "ASK_GROUNDING_CLARIFICATION",
+        "expected_step": "custom_hazard_clarification",
+        "expected_input_mode": "textarea",
         "expected_error": False,
-        "expected_message_contains": "Reason and Evidence Needed",
-        "notes": "A meaningful clarification should be validated together with the original hazard title and proceed to reason/evidence.",
+        "expected_message_contains": "more detail",
+        "notes": "A meaningful clarification should be validated together with the original hazard title and then enter grounding clarification if dimensions still need support.",
     },
 ]
 
@@ -273,7 +273,7 @@ FULL_FLOW_SCENARIOS = [
     {
         "category": "Full flow - URL evidence in open chat",
         "sector": "Energy",
-        "hazard": "Fossil-dependent regional workers face job losses and local tax-base decline from coal power phase-out",
+        "hazard": "Fossil-dependent regional workers face income loss and local tax-base decline from renewable energy transition and fossil fuel phase out",
         "reason": "Energy transition policies that phase out coal power can concentrate job losses and local revenue decline in fossil-dependent regions while new clean-energy benefits arrive elsewhere.",
         "evidence_decision": "Use this evidence https://example.org/coal-transition-report.pdf",
         "evidence_input": "https://example.org/coal-transition-report.pdf",
@@ -573,12 +573,12 @@ def make_test_cases() -> list[dict[str, str]]:
                     category="Valid hazard for selected sector",
                     sector=sector,
                     hazard=hazard,
-                    expected_action="ACCEPT_HAZARD_NAME",
-                    expected_step="custom_hazard_validation",
-                    expected_input_mode="reason_evidence",
+                    expected_action="ASK_REASON_JUSTIFICATION|ASK_GROUNDING_CLARIFICATION",
+                    expected_step="custom_hazard_clarification",
+                    expected_input_mode="textarea",
                     expected_pending_hazard=hazard,
-                    expected_message_contains="Reason and Evidence Needed",
-                    notes="A clear sector-specific transition risk should proceed to reason/evidence collection.",
+                    expected_message_contains="",
+                    notes="A clear sector-specific transition risk should ask for reason/justification before evidence, or ask grounding clarification when a model needs more support.",
                 )
             )
 
@@ -589,12 +589,12 @@ def make_test_cases() -> list[dict[str, str]]:
                     category="Valid hazard with sector synonyms",
                     sector=sector,
                     hazard=hazard,
-                    expected_action="ACCEPT_HAZARD_NAME",
-                    expected_step="custom_hazard_validation",
-                    expected_input_mode="reason_evidence",
+                    expected_action="ASK_REASON_JUSTIFICATION|ASK_GROUNDING_CLARIFICATION",
+                    expected_step="custom_hazard_clarification",
+                    expected_input_mode="textarea",
                     expected_pending_hazard=hazard,
-                    expected_message_contains="Reason and Evidence Needed",
-                    notes="Synonyms such as utility, dwelling, flat, transit, or mobility should still fit the selected sector.",
+                    expected_message_contains="",
+                    notes="Synonyms such as utility, dwelling, flat, transit, or mobility should still fit the selected sector and ask for reason/justification before evidence, or ask grounding clarification when a model needs more support.",
                 )
             )
 
@@ -605,12 +605,12 @@ def make_test_cases() -> list[dict[str, str]]:
                     category="Valid mixed-signal hazard",
                     sector=sector,
                     hazard=hazard,
-                    expected_action="ACCEPT_HAZARD_NAME",
-                    expected_step="custom_hazard_validation",
-                    expected_input_mode="reason_evidence",
+                    expected_action="ASK_REASON_JUSTIFICATION|ASK_GROUNDING_CLARIFICATION",
+                    expected_step="custom_hazard_clarification",
+                    expected_input_mode="textarea",
                     expected_pending_hazard=hazard,
-                    expected_message_contains="Reason and Evidence Needed",
-                    notes="Some hazards mention adjacent-sector terms but should pass when the selected-sector mechanism is dominant.",
+                    expected_message_contains="",
+                    notes="Some hazards mention adjacent-sector terms but should pass when the selected-sector mechanism is dominant and ask for reason/justification before evidence, or ask grounding clarification when a model needs more support.",
                 )
             )
 
@@ -629,7 +629,9 @@ def make_test_cases() -> list[dict[str, str]]:
                     expected_rejected_dimension="twin_transition_policy_fit",
                     expected_message_contains=(
                         "general household safety risk|please rewrite"
-                        if is_general_safety or is_structural_safety
+                        if is_general_safety
+                        else "please rewrite"
+                        if is_structural_safety
                         else "hazard"
                     ),
                     notes="Non-hazards, generic questions, benefits, or transition-unrelated risks should not continue.",

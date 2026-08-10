@@ -30,6 +30,8 @@ from tests.generate_open_conversation_selection_test_cases import (
     COUNTRIES,
     REGIONS,
     SECTORS,
+    OUTPUT_FILE as TEST_CASES_FILE,
+    load_or_make_test_cases,
     make_test_cases,
 )
 
@@ -877,10 +879,13 @@ def row_result(
     }
 
 
-async def run_cases(limit: int | None = None) -> list[dict[str, str]]:
+async def run_cases(
+    limit: int | None = None,
+    input_path: str | Path | None = None,
+) -> list[dict[str, str]]:
     engine = _OpenConversationSelectionEngine()
     results: list[dict[str, str]] = []
-    cases = make_test_cases()
+    cases = load_or_make_test_cases(input_path)
     if limit is not None:
         cases = cases[:limit]
     for index, item in enumerate(cases, start=1):
@@ -994,10 +999,14 @@ def result_filename_for_model(model: str) -> str:
     return f"open_conversation_selection_test_results_{slug}.xlsx"
 
 
-async def run_cases_for_model(model: str, limit: int | None = None) -> list[dict[str, str]]:
+async def run_cases_for_model(
+    model: str,
+    limit: int | None = None,
+    input_path: str | Path | None = None,
+) -> list[dict[str, str]]:
     os.environ["OLLAMA_MODEL"] = model
     get_settings.cache_clear()
-    return await run_cases(limit=limit)
+    return await run_cases(limit=limit, input_path=input_path)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1014,6 +1023,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Optional maximum number of generated cases to run per model.",
     )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=Path.cwd() / TEST_CASES_FILE,
+        help="Excel workbook with test cases. Defaults to the workbook in the current directory.",
+    )
     return parser.parse_args()
 
 
@@ -1022,7 +1037,10 @@ def main() -> None:
     models = args.models or [get_settings().ollama_model]
     for model in models:
         print(f"Running open conversation selection cases on Ollama model: {model}")
-        results = asyncio.run(run_cases_for_model(model, limit=args.limit))
+        input_path = args.input if args.input.exists() else None
+        results = asyncio.run(
+            run_cases_for_model(model, limit=args.limit, input_path=input_path)
+        )
         output = write_results_workbook(results, Path.cwd() / result_filename_for_model(model))
         passed = sum(1 for item in results if item["Status"] == "Pass")
         failed = len(results) - passed

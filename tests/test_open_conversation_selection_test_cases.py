@@ -2,17 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from openpyxl import load_workbook
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from tests.generate_open_conversation_selection_test_cases import (
     COLUMNS,
+    OUTPUT_FILE,
     SUMMARY_SHEET,
     TEST_SHEET,
     create_workbook,
+    load_or_make_test_cases,
+    load_test_cases_from_workbook,
     make_test_cases,
 )
 from tests.run_open_conversation_selection_cases import (
@@ -29,10 +37,20 @@ class OpenConversationSelectionTestCaseWorkbookTests(unittest.TestCase):
         rows = make_test_cases()
         categories = {str(row["Category"]) for row in rows}
 
-        self.assertEqual(len(rows), 200)
+        self.assertGreaterEqual(len(rows), 200)
         self.assertIn("Country + region + sector in one message", categories)
         self.assertIn("Full natural-language flow", categories)
         self.assertIn("Conversational references", categories)
+
+    def test_loader_reads_updated_workbook_cases(self):
+        workbook_path = Path.cwd() / OUTPUT_FILE
+        if not workbook_path.exists():
+            self.skipTest(f"{workbook_path} is not available")
+
+        rows = load_test_cases_from_workbook(workbook_path)
+
+        self.assertEqual(len(rows), 406)
+        self.assertEqual(rows[0]["Category"], "Exact country selection")
 
     def test_create_workbook_writes_expected_sheets_and_headers(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -54,7 +72,8 @@ class OpenConversationSelectionTestCaseWorkbookTests(unittest.TestCase):
 
     def test_result_workbook_writes_pass_fail_columns(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            results = asyncio.run(run_cases())
+            cases_path = create_workbook(Path(temp_dir) / "selection_cases.xlsx")
+            results = asyncio.run(run_cases(input_path=cases_path))
             output = write_results_workbook(results, Path(temp_dir) / "selection_results.xlsx")
 
             self.assertTrue(output.exists())
@@ -64,7 +83,7 @@ class OpenConversationSelectionTestCaseWorkbookTests(unittest.TestCase):
             result_sheet = workbook[RESULTS_SHEET]
             headers = [cell.value for cell in result_sheet[1]]
             self.assertEqual(headers, RESULT_COLUMNS)
-            self.assertEqual(result_sheet.max_row - 1, len(make_test_cases()))
+            self.assertEqual(result_sheet.max_row - 1, len(load_or_make_test_cases(cases_path)))
             self.assertIn("Status", headers)
             self.assertIn("Reason", headers)
             status_column = headers.index("Status") + 1

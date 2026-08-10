@@ -4,6 +4,7 @@ from collections import Counter
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -42,6 +43,44 @@ COLUMNS = [
     "Error Message",
     "Notes",
 ]
+
+
+def load_test_cases_from_workbook(
+    input_path: str | Path = OUTPUT_FILE,
+) -> list[dict[str, str]]:
+    workbook_path = Path(input_path).resolve()
+    workbook = load_workbook(workbook_path, data_only=True)
+    if TEST_SHEET not in workbook.sheetnames:
+        raise ValueError(f"Workbook {workbook_path} does not contain a {TEST_SHEET!r} sheet.")
+
+    sheet = workbook[TEST_SHEET]
+    headers = [cell.value for cell in sheet[1]]
+    if headers[: len(COLUMNS)] != COLUMNS:
+        raise ValueError(
+            f"Workbook {workbook_path} has unexpected headers in {TEST_SHEET!r}."
+        )
+
+    rows: list[dict[str, str]] = []
+    for values in sheet.iter_rows(min_row=2, max_col=len(COLUMNS), values_only=True):
+        if not any(value not in (None, "") for value in values):
+            continue
+        item = {
+            column: "" if value is None else str(value)
+            for column, value in zip(COLUMNS, values)
+        }
+        rows.append({column: item[column] for column in COLUMNS[1:]})
+    return rows
+
+
+def load_or_make_test_cases(input_path: str | Path | None = None) -> list[dict[str, str | bool]]:
+    if input_path is not None:
+        return load_test_cases_from_workbook(input_path)
+
+    workbook_path = Path.cwd() / OUTPUT_FILE
+    if workbook_path.exists():
+        return load_test_cases_from_workbook(workbook_path)
+
+    return make_test_cases()
 
 
 def row(

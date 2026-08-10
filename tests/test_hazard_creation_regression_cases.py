@@ -56,22 +56,32 @@ class HazardCreationRegressionCasesTests(unittest.TestCase):
         employment_shock_cases = [
             row
             for row in rows
-            if "job losses and local tax-base decline from coal power phase-out"
+            if "income loss and local tax-base decline from renewable energy transition and fossil fuel phase out"
             in row["User Hazard"]
+            and row["Execution Scope"] == "Automated runner"
         ]
         self.assertTrue(employment_shock_cases)
         self.assertTrue(
-            all(row["Expected Action"] == "ACCEPT_HAZARD_NAME" for row in employment_shock_cases)
+            all(
+                "ASK_REASON_JUSTIFICATION" in row["Expected Action"].split("|")
+                and "ASK_GROUNDING_CLARIFICATION" in row["Expected Action"].split("|")
+                for row in employment_shock_cases
+            )
         )
 
         renoviction_cases = [
             row
             for row in rows
             if "renovation cost burden and renoviction" in row["User Hazard"]
+            and row["Execution Scope"] == "Automated runner"
         ]
         self.assertTrue(renoviction_cases)
         self.assertTrue(
-            all(row["Expected Action"] == "ACCEPT_HAZARD_NAME" for row in renoviction_cases)
+            all(
+                "ASK_REASON_JUSTIFICATION" in row["Expected Action"].split("|")
+                and "ASK_GROUNDING_CLARIFICATION" in row["Expected Action"].split("|")
+                for row in renoviction_cases
+            )
         )
 
         clarification_cases = [
@@ -82,7 +92,7 @@ class HazardCreationRegressionCasesTests(unittest.TestCase):
         actions = {row["Expected Action"] for row in clarification_cases}
         self.assertIn("ASK_TITLE_CLARIFICATION", actions)
         self.assertIn("REASK_TITLE_CLARIFICATION", actions)
-        self.assertIn("ACCEPT_HAZARD_NAME", actions)
+        self.assertIn("ASK_GROUNDING_CLARIFICATION", actions)
 
         context_cases = [
             row

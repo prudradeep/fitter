@@ -400,7 +400,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertIn("What specific harm", response.bot_message)
         self.assertNotEqual(session.phase, "add_hazard_reason")
 
-    def test_clear_hazard_context_asks_evidence_decision_without_reason_prompt(self):
+    def test_clear_hazard_context_asks_reason_before_evidence_decision(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
             sector="Energy",
@@ -466,11 +466,12 @@ class CustomHazardValidationTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(response.step, "custom_hazard_evidence_decision")
-        self.assertEqual([option.label for option in response.options], ["Yes", "No"])
-        self.assertEqual(session.phase, "add_hazard_evidence_decision")
-        self.assertIn("Coal phase-out policy", session.pending_hazard_reason)
-        self.assertTrue(session.custom_hazard["evidence_decision_asked"])
+        self.assertEqual(response.step, "custom_hazard_clarification")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertEqual(session.phase, "add_hazard_reason")
+        self.assertIsNone(session.pending_hazard_reason)
+        self.assertFalse(session.custom_hazard.get("evidence_decision_asked"))
+        self.assertIn("reason or justification", response.bot_message)
 
     def test_generic_extracted_affected_group_asks_clarification(self):
         service = ChatService.__new__(ChatService)
@@ -1515,8 +1516,9 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
 
         self.assertFalse(valid_response.error)
-        self.assertEqual(valid_response.step, "custom_hazard_evidence_decision")
-        self.assertEqual(valid_response.input_mode, "text")
+        self.assertEqual(valid_response.step, "custom_hazard_clarification")
+        self.assertEqual(valid_response.input_mode, "textarea")
+        self.assertEqual(session.phase, "add_hazard_reason")
         self.assertNotEqual(
             session.custom_hazard["dimension_scores"]["twin_transition_policy_fit"].get("status"),
             "REJECTED",

@@ -331,6 +331,7 @@ Dynamic prompting for each model:
 
 uv run python tests/run_open_conversation_selection_cases.py --models qwen3.5:2b qwen3.5:4b ministral-3:8b qwen3.5:9b ministral-3:14b
 
+uv run python tests/run_open_conversation_selection_cases.py --input .\open_conversation_selection_test_cases.xlsx --models qwen3.5:2b qwen3.5:4b
 
 $env:ENV_FILE=".env.server.dev"
 $env:DRTRANSITION_APP_PORT="8001"
@@ -392,3 +393,20 @@ Mitigation Measure:
         On validation No it moved to the Evidences phase.
 
 Yes/No evidence + open conversation
+
+Document integration | Downloadable Report: PDF | Docx
+Detailed SRS of this: MD File.
+
+3 affected groups are not named in the mitigation target population: Dwelling year; Home type: Semi-detached house; Solar install likelihood.
+Encourage user to also include the Mitigation plans for the left-out target population. But don't make it mandatory.
+
+The hazard above dont make sense i want to add a new hazard: Hazard creation in free text conversation
+
+Show a model Name in the chat messages for reference only later it will be removed. Configurable: Enable/Disable
+
+Languages integartion:
+Spanish,
+German,
+Italian,
+Hungarian,
+Portugese,

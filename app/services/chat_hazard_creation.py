@@ -296,12 +296,7 @@ class ChatHazardCreationMixin:
         if action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE} and not str(
             state.get("reason") or session.accepted_custom_hazard_reason or ""
         ).strip():
-            inferred_reason = self._custom_hazard_context_reason(state, hazard)
-            if not inferred_reason:
-                return self._hazard_reason_step(session_id, session, hazard)
-            state["reason"] = inferred_reason
-            session.pending_hazard_reason = inferred_reason
-            session.pending_hazard_evidence = str(state.get("evidence") or "").strip()
+            return self._hazard_reason_step(session_id, session, hazard)
         if (
             action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE}
             and not bool(state.get("evidence_decision_asked"))

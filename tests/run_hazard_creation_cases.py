@@ -234,10 +234,18 @@ def infer_actual_action(response: ChatResponse, session: ChatSession) -> str:
         and session.pending_hazard
     ):
         return "ACCEPT_HAZARD_NAME"
+    if (
+        not response.error
+        and response.step == "custom_hazard_evidence_decision"
+        and session.pending_hazard
+    ):
+        return "ASK_EVIDENCE_DECISION"
     if response.step == "custom_hazard_title_clarification" and response.error:
         return "REASK_TITLE_CLARIFICATION"
     if response.step == "custom_hazard_title_clarification":
         return "ASK_TITLE_CLARIFICATION"
+    if response.step == "custom_hazard_clarification" and session.phase == "add_hazard_reason":
+        return "ASK_REASON_JUSTIFICATION"
     if response.step == "custom_hazard_clarification":
         return "ASK_GROUNDING_CLARIFICATION"
     if response.step == "hazards" and response.input_mode == "textarea":
@@ -259,6 +267,13 @@ def _message_contains(response: str, expected: str) -> bool:
         return True
     normalized_response = response.casefold()
     return all(fragment.casefold() in normalized_response for fragment in fragments)
+
+
+def _matches_expected(actual: str, expected: object) -> bool:
+    values = [item.strip() for item in str(expected or "").split("|") if item.strip()]
+    if not values:
+        return True
+    return actual in values
 
 
 def row_result(
@@ -287,7 +302,7 @@ def row_result(
 
     mismatches: list[str] = []
     for key in ("action", "step", "input_mode", "pending_hazard", "rejected_dimension"):
-        if expected[key] and expected[key] != actual[key]:
+        if not _matches_expected(actual[key], expected[key]):
             mismatches.append(f"{key}: expected {expected[key]!r}, got {actual[key]!r}")
     if expected["error"] != actual["error"]:
         mismatches.append(f"error: expected {expected['error']}, got {actual['error']}")
