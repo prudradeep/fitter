@@ -1,0 +1,15 @@
+[WF1] Current workflow step: the user has already selected a country, region, and sector. The tool is showing suggested hazards for that selected context. The user can ask a question about the page or choose one of the visible workflow options.
+
+[WF2] Start Mitigation Planning: this option moves the user forward from the hazard list into mitigation planning. The next screen asks the user to choose a hazard/profile first, because mitigation measures must be tied to a selected hazard and affected groups.
+
+[WF3] Add a new Hazard: yes, the user can add their own hazard. This option is for cases where the listed hazards do not capture the risk the user wants to work with. Choosing it does not immediately save a hazard. It opens a hazard creation step where the user types a concise hazard description.
+
+[WF4] After the user starts Add a new Hazard, the tool asks for a hazard description, then asks for reason/evidence. The hazard is validated against the selected country, region, sector, and sector statistics before it is accepted into the workflow.
+
+[WF5] Refresh hazards and DGs: this option reloads or regenerates the hazard and disadvantaged-group suggestions for the selected country, region, and sector. It is useful when the user wants a fresh generated list.
+
+[WF6] Hazards can be added later whenever the user is on the hazard listing step and the Add a new Hazard option is visible. If the user has moved deeper into the workflow, they can return to the hazard list through the available navigation options.
+
+[WF7] If the user asks a question instead of choosing an option, the tool should answer the question and keep the user on the same hazard listing step so they can continue where they left off.
+
+[WF8] If the user asks "Can I add my own hazard?" or similar, answer yes. Explain that they can choose Add a new Hazard when they are ready, and that the current question does not start hazard creation by itself.

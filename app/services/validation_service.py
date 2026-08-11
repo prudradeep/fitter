@@ -585,6 +585,14 @@ class ChatValidationServiceMixin:
             reason,
             evidence,
         )
+        if isinstance(
+            session.custom_hazard,
+            dict,
+        ) and self._custom_hazard_dimension_is_supported(
+            session,
+            "selected_sector_fit",
+        ):
+            sector_mismatch_reason = None
         if sector_mismatch_reason:
             if isinstance(session.custom_hazard, dict):
                 return self._custom_hazard_validation_failed_response(
@@ -636,11 +644,24 @@ class ChatValidationServiceMixin:
         if not validation["valid"]:
             self._discard_temporary_evidence(session, evidence)
             if isinstance(session.custom_hazard, dict):
+                reason_text = str(validation["reason"])
+                if self._custom_hazard_has_pending_dimension_clarification(
+                    session
+                ) or self._custom_hazard_validation_failure_needs_clarification(
+                    reason_text
+                ):
+                    return self._custom_hazard_validation_clarification_response(
+                        session_id,
+                        session,
+                        hazard=session.pending_hazard or "New hazard",
+                        reason=reason_text,
+                        evidence=evidence or "",
+                    )
                 return self._custom_hazard_validation_failed_response(
                     session_id,
                     session,
                     hazard=session.pending_hazard or "New hazard",
-                    reason=str(validation["reason"]),
+                    reason=reason_text,
                     evidence=evidence or "",
                 )
             return ChatResponse(
@@ -687,11 +708,24 @@ class ChatValidationServiceMixin:
         if not context_review["valid"]:
             self._discard_temporary_evidence(session, evidence)
             if isinstance(session.custom_hazard, dict):
+                reason_text = str(context_review["reason"])
+                if self._custom_hazard_has_pending_dimension_clarification(
+                    session
+                ) or self._custom_hazard_validation_failure_needs_clarification(
+                    reason_text
+                ):
+                    return self._custom_hazard_validation_clarification_response(
+                        session_id,
+                        session,
+                        hazard=hazard,
+                        reason=reason_text,
+                        evidence=evidence or "",
+                    )
                 return self._custom_hazard_validation_failed_response(
                     session_id,
                     session,
                     hazard=hazard,
-                    reason=str(context_review["reason"]),
+                    reason=reason_text,
                     evidence=evidence or "",
                 )
             return ChatResponse(

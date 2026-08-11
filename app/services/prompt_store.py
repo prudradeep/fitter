@@ -33,6 +33,9 @@ def prompt_metadata(prompt_key: str) -> tuple[str, str | None, str]:
     if len(parts) >= 2 and parts[0] == "chat":
         category = "chat"
         model = None
+    elif len(parts) >= 2 and parts[0] == "workflow":
+        category = "workflow"
+        model = None
     elif prompt_key in SECTOR_PROMPT_KEYS:
         category = "sector"
         model = None

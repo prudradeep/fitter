@@ -9,6 +9,16 @@ The mitigation-measure flow starts only after the user has already selected:
 Country -> Region -> Sector -> Hazard -> Socio-demographic profiles
 ```
 
+Users can enter mitigation planning by choosing **Start Mitigation Planning** on
+the hazard listing step or by typing an equivalent open conversation message
+such as "Start mitigation planning". The app then asks the user to select the
+hazard to analyse. From that hazard-selection step, **Other Options** lets the
+user go back to the hazard listing before choosing a hazard.
+
+During mitigation planning, in-scope workflow questions are answered without
+advancing or resetting the workflow. After the answer, the user remains on the
+same step and can continue where they left off.
+
 For a custom hazard, the same mitigation flow starts after the custom hazard has
 been accepted and behaves like the selected hazard.
 
@@ -88,6 +98,9 @@ Key behavior in the new flow:
 7. Missing support / ABSTAIN outcomes ask for clarification with textarea input
    instead of showing evidence-only controls.
 8. Mitigation review moves directly into evaluation.
+9. Open conversation action text is accepted for mitigation entry, evidence
+   decisions, and mitigation-measure creation when it clearly expresses the
+   intended workflow action.
 ```
 
 Seeded mitigation-policy suggestions depend on two reference-data steps:

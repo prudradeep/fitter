@@ -1,0 +1,9 @@
+[WF1] Current workflow step: the user is deciding how to create a mitigation measure for the selected hazard and affected groups.
+
+[WF2] Writing a mitigation measure manually lets the user enter their own policy action. This is appropriate when the suggested proposal does not fit, misses the user's intended action, or the user wants to define a different measure.
+
+[WF3] Adopting the suggested mitigation proposal uses the proposal currently shown by the tool as the mitigation measure. The tool then continues with validation/clarification for that measure.
+
+[WF4] Choosing No or not now stops this mitigation path and shows other available actions.
+
+[WF5] If the user asks a question at this step, the tool should answer it and keep the user on the mitigation decision step so they can continue afterward.

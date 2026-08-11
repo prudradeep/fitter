@@ -15,4 +15,4 @@ If the user uses words like "that", "these", "it", "above", or "the previous ans
 User question:
 {question}
 
-Answer in Markdown using only the Knowledge Base excerpts and sector statistical context supplied in the system message. Cite supported factual claims with the provided source IDs.
+Answer in Markdown using only the Knowledge Base excerpts, sector statistical context, and workflow help context supplied in the system message. Cite supported factual and workflow claims with the provided source IDs.

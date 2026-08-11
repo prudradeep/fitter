@@ -495,7 +495,11 @@ def _coerce_validation_result(value: dict[str, Any] | None) -> dict[str, Any] | 
             }
         score = _clamp_score(item.get("score"))
         question = str(item.get("clarification_question") or "").strip()
-        needs_clarification = score < 5
+        needs_clarification = score < 5 or (
+            score < SCORE_STRONG
+            and bool(item.get("needs_clarification"))
+            and bool(question)
+        )
         coerced["dimension_scores"][key] = {
             "score": score,
             "reason": str(item.get("reason") or "").strip(),
@@ -556,12 +560,16 @@ def _recommended_action(
         _dimension_score(dimensions, key) < dimension_floor
         for key in CRITICAL_DIMENSIONS
     )
+    critical_needs_clarification = any(
+        _dimension_needs_clarification(dimensions, key)
+        for key in CRITICAL_DIMENSIONS
+    )
     if result.get("duplicate_candidates") and not state.get("duplicate_override_confirmed"):
         return CustomHazardAction.ASK_DUPLICATE_CONFIRMATION
 
     # The core hazard, transition, sector, and location dimensions must resolve
     # before the flow asks for reason/evidence or affected-group review.
-    if critical_low:
+    if critical_low or critical_needs_clarification:
         return CustomHazardAction.REJECT if flattened else CustomHazardAction.ASK_CLARIFICATION
 
     groups_low = _dimension_score(dimensions, "affected_groups_fit") < dimension_floor
@@ -584,6 +592,15 @@ def _validation_thresholds(validation_mode: str) -> dict[str, int]:
     return VALIDATION_THRESHOLDS.get(
         str(validation_mode or "").strip().casefold(),
         VALIDATION_THRESHOLDS["strict"],
+    )
+
+
+def _dimension_needs_clarification(dimensions: dict[str, Any], key: str) -> bool:
+    item = dimensions.get(key) if isinstance(dimensions, dict) else {}
+    if not isinstance(item, dict):
+        return False
+    return bool(item.get("needs_clarification")) and bool(
+        str(item.get("clarification_question") or "").strip()
     )
 
 

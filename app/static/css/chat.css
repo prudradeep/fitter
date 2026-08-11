@@ -1031,7 +1031,7 @@
   background: #000000;
   color: #ffffff;
   border-radius: 9px;
-  max-width: 320px;
+  max-width: 600px;
 }
 
 .message-row.error .bubble {

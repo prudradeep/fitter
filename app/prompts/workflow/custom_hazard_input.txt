@@ -1,0 +1,9 @@
+[WF1] Current workflow step: the user is adding a new hazard for the selected country, region, and sector.
+
+[WF2] The user should type the hazard itself, not the reason yet. A good hazard description names the negative impact or risk in concise language, such as affordability, access, health, employment, safety, or distributional impacts linked to the green/digital transition.
+
+[WF3] After the hazard description is entered, the tool asks for reason and evidence. The reason explains why the hazard is relevant to the selected context; evidence may be a short text or URL.
+
+[WF4] Go back to list of hazards returns to the hazard listing without saving a new hazard.
+
+[WF5] If the user asks a question at this step, the tool should answer it and keep the user in hazard creation so they can continue entering the hazard afterward.

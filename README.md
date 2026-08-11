@@ -2,6 +2,32 @@
 
 Dr Transition is a local browser-based FastAPI application for guided Twin-Transition policy analysis. It uses a single chat endpoint to walk users through country, region, and sector selection, with MySQL-backed reference data and optional local Ollama support.
 
+## Current Conversation Flow
+
+The main chat flow is:
+
+```text
+Country -> Region -> Sector -> Hazard listing
+```
+
+From the hazard listing step, users can:
+
+```text
+Start Mitigation Planning -> select a hazard -> review affected profiles -> create or adopt a mitigation measure
+Add a new Hazard -> describe a custom hazard -> add reason/evidence -> validate -> review affected groups -> save
+Refresh hazards and DGs -> regenerate the sector hazard/profile suggestions
+Dive deeper into statistical findings -> ask follow-up questions about the sector statistics
+```
+
+During any in-scope workflow step, users may also ask project questions such as
+what an action means, whether they can add their own hazard, or what happens
+next. The app answers the question using workflow context, keeps the active
+step, and then returns the user to the same flow position.
+
+At the hazard-selection step, **Other Options** includes **Go back to list of
+hazards** so users can return from mitigation planning hazard selection to the
+hazard overview without starting hazard creation.
+
 ## Prerequisites
 
 - Python 3.12+
@@ -428,6 +454,151 @@ Health check:
 http://localhost:8000/health
 ```
 
+## Test Commands
+
+Install the test tools:
+
+```bash
+uv sync --extra test
+```
+
+Run the full Python test suite:
+
+```bash
+uv run pytest
+```
+
+Run linting:
+
+```bash
+uv run ruff check .
+```
+
+Run the local CI script on Windows:
+
+```powershell
+.\scripts\ci_check.ps1
+```
+
+Run focused conversation-flow checks:
+
+```bash
+uv run pytest tests/test_open_conversation_flow_actions.py tests/test_chat_selection_engine.py
+```
+
+Run the current `new_test_cases.xlsx` workbook against one Qwen model while
+debugging:
+
+```powershell
+uv run python tests/run_open_conversation_selection_cases.py --input .\new_test_cases.xlsx --models qwen3.5:2b
+uv run python tests/run_open_conversation_selection_cases.py --input .\new_test_cases.xlsx --models qwen3.5:4b
+```
+
+Run the same workbook against Qwen 3.5 2B and 4B together:
+
+```powershell
+uv run python tests/run_open_conversation_selection_cases.py `
+  --input .\new_test_cases.xlsx `
+  --models qwen3.5:2b qwen3.5:4b
+```
+
+Generate and run the standard open-conversation regression workbook:
+
+```bash
+uv run python tests/run_open_conversation_selection_regression.py
+```
+
+Run hazard-creation regression cases:
+
+```bash
+uv run python tests/run_hazard_creation_regression.py
+```
+
+Optional browser smoke tests require a running app:
+
+```powershell
+uv sync --extra browser
+uv run playwright install chromium
+$env:DR_TRANSITION_BROWSER_TESTS = "1"
+$env:DR_TRANSITION_BASE_URL = "http://127.0.0.1:8000"
+$env:DR_TRANSITION_TEST_EMAIL = "admin@example.com"
+$env:DR_TRANSITION_TEST_PASSWORD = "local-admin-password"
+.\scripts\ci_check.ps1
+```
+
+## Build Commands
+
+The browser app has no separate frontend build step; static assets are served by
+FastAPI from `app/static` and templates from `app/templates`.
+
+Build the Windows desktop services:
+
+```powershell
+.\packaging\windows\scripts\build-python-services.ps1
+```
+
+Build the Tauri desktop launcher:
+
+```powershell
+.\packaging\windows\scripts\build-desktop-launcher.ps1
+```
+
+Build the installer from an existing payload:
+
+```powershell
+.\packaging\windows\scripts\build-installer.ps1
+```
+
+Build a full Windows release:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1
+```
+
+Build an offline/admin installer when a fully local deployment is required:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1 -OfflineAdmin
+```
+
+## Deployment Commands
+
+For a fresh server database:
+
+```bash
+uv sync
+uv run python scripts/apply_migrations.py --apply-base-schema
+uv run python scripts/apply_migrations.py
+uv run python -m app.seed_data
+```
+
+For an existing deployment after code/schema changes:
+
+```bash
+uv sync
+uv run python scripts/apply_migrations.py
+uv run python -m app.seed_data --skip-schema
+```
+
+Refresh database-backed prompts after changing packaged prompts or chat
+templates:
+
+```bash
+uv run python -c "from app.db.migrations_runtime import run_runtime_migrations; from app.services.prompt_store import seed_prompts_from_files; run_runtime_migrations(seed_reference_data=False); print(f'Seeded/updated {seed_prompts_from_files(overwrite=True)} prompt rows')"
+```
+
+Run the app behind a production process manager:
+
+```bash
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Run retention cleanup:
+
+```bash
+uv run python scripts/cleanup_retained_data.py
+```
+
 ## Windows Desktop Installer
 
 The repository includes an initial Windows desktop packaging layer under
@@ -660,6 +831,10 @@ app/
     audit_log.py          Admin/sensitive action audit records
     rate_limit.py         Login/signup/password rate limits
     llm_logging.py        LLM exchange logging
+  prompts/
+    llm/                  LLM task prompts
+    workflow/             Workflow help context for in-flow user questions
+    *_truth.txt           Sector statistical context prompts
   templates/
     index.html            Main chat shell
     login.html
@@ -714,8 +889,9 @@ README.md
   `app/db/migrations/` plus `scripts/apply_migrations.py` for production updates.
 - Reference-data loading is explicit. Use `scripts/seed_database.ps1` during setup
   or after changing source CSV/XLSX files, not as a normal app startup step.
-- Prompt-library loading is explicit outside sync-server startup. Use
-  `app.services.prompt_store.seed_prompts_from_files(overwrite=True)` after
-  changing packaged prompt files, or `overwrite=False` to preserve DB edits.
+- Prompt-library loading is explicit outside sync-server startup. It includes
+  LLM prompts, workflow help context, sector truth prompts, and chat response
+  templates. Use `app.services.prompt_store.seed_prompts_from_files(overwrite=True)`
+  after changing packaged prompt files, or `overwrite=False` to preserve DB edits.
 - Retention cleanup is handled by `scripts/cleanup_retained_data.py`; schedule it
   with Task Scheduler, systemd timers, or cron in production.

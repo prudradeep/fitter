@@ -274,6 +274,37 @@ uv run python -c "from app.db.migrations_runtime import run_runtime_migrations; 
 Use `overwrite=False` to add only missing prompts and keep prompt content that
 admins edited in the database.
 
+## Pre-Deploy Verification
+
+Run these checks before promoting a backend build:
+
+```bash
+uv sync --extra test
+uv run pytest
+uv run ruff check .
+```
+
+For conversation-flow changes, also run the focused regression tests:
+
+```bash
+uv run pytest tests/test_open_conversation_flow_actions.py tests/test_chat_selection_engine.py
+```
+
+When validating workbook cases against local Ollama models:
+
+```bash
+uv run python tests/run_open_conversation_selection_cases.py --input ./new_test_cases.xlsx --models qwen3.5:2b
+uv run python tests/run_open_conversation_selection_cases.py --input ./new_test_cases.xlsx --models qwen3.5:4b
+```
+
+Run both supported Qwen models together:
+
+```bash
+uv run python tests/run_open_conversation_selection_cases.py \
+  --input ./new_test_cases.xlsx \
+  --models qwen3.5:2b qwen3.5:4b
+```
+
 Start the app once with sync enabled, then call:
 
 ```http

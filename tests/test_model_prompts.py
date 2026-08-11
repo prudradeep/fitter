@@ -86,6 +86,13 @@ class ModelPromptTests(unittest.TestCase):
         with patch("app.config.get_settings", return_value=SimpleNamespace(prompt_source="db")):
             self.assertTrue(prompt_store.should_read_prompts_from_db())
 
+    def test_workflow_prompts_are_categorized_for_database_storage(self) -> None:
+        category, model, display_name = prompt_store.prompt_metadata("workflow/hazards.txt")
+
+        self.assertEqual(category, "workflow")
+        self.assertIsNone(model)
+        self.assertEqual(display_name, "workflow / hazards.txt")
+
     def test_all_model_prompt_directories_are_supported_and_tuned(self) -> None:
         self.assertEqual(prompt_loader.MODEL_PROMPT_DIRS, MODEL_PROMPT_DIRS)
 

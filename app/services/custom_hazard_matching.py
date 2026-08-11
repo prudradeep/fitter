@@ -67,10 +67,13 @@ def duplicate_candidates(
     llm_candidates: list[Any],
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
+    hazard_title_key = normalize_for_match(_hazard_title_from_grounding_text(hazard_text))
     for item in llm_candidates:
         if not isinstance(item, dict):
             continue
         existing = str(item.get("existing_hazard") or item.get("match") or "").strip()
+        if normalize_for_match(existing) == hazard_title_key:
+            continue
         if existing:
             score = _clamp_percent(item.get("similarity_score"))
             candidates.append(
@@ -111,6 +114,14 @@ def duplicate_candidates(
             seen.add(key)
             unique.append(candidate)
     return unique[:3]
+
+
+def _hazard_title_from_grounding_text(hazard_text: str) -> str:
+    for line in str(hazard_text or "").splitlines():
+        cleaned = line.strip()
+        if cleaned:
+            return cleaned
+    return str(hazard_text or "").strip()
 
 
 def extract_affected_groups(text: str) -> list[dict[str, Any]]:

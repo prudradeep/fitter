@@ -522,6 +522,13 @@ class ChatSelectionEngineTests(unittest.TestCase):
         self.assertEqual(engine._post_sector_label_from_open_text("Update hazards list"), "Refresh hazards and DGs")
         self.assertIsNone(engine._post_sector_label_from_open_text("Other Options"))
 
+    def test_post_sector_questions_about_add_hazard_are_not_actions(self):
+        engine = _SelectionEngine()
+
+        self.assertIsNone(engine._post_sector_label_from_open_text("What does 'Add a new hazard' mean?"))
+        self.assertIsNone(engine._post_sector_label_from_open_text("What happens if I add a new hazard?"))
+        self.assertIsNone(engine._post_sector_label_from_open_text("Can hazards be added later?"))
+
     def test_socio_demographic_open_text_maps_to_mitigation_actions(self):
         engine = _SelectionEngine()
 

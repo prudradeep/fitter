@@ -505,18 +505,34 @@ class ApiRouteIntegrationTests(unittest.TestCase):
                 "/api/prompts",
                 json={"prompt_key": "llm/custom_prompt.txt", "content": "Custom prompt"},
             )
+            workflow_response = self.client.post(
+                "/api/prompts",
+                json={
+                    "prompt_key": "workflow/hazards.txt",
+                    "content": "Workflow hazard help",
+                },
+            )
         finally:
             api_routes.settings.sync_enabled = original_enabled
             api_routes.settings.sync_mode = original_mode
 
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(workflow_response.status_code, 200)
         self.assertFalse(response.json()["error"])
+        self.assertFalse(workflow_response.json()["error"])
         prompt = self.db.scalar(select(Prompt).where(Prompt.prompt_key == "llm/custom_prompt.txt"))
+        workflow_prompt = self.db.scalar(select(Prompt).where(Prompt.prompt_key == "workflow/hazards.txt"))
         self.assertIsNotNone(prompt)
+        self.assertIsNotNone(workflow_prompt)
         self.assertEqual(prompt.content, "Custom prompt")
-        audit = self.db.query(AuditLog).filter(AuditLog.action == "prompts.create").one()
-        self.assertEqual(audit.target_id, "llm/custom_prompt.txt")
+        self.assertEqual(workflow_prompt.category, "workflow")
+        self.assertEqual(workflow_prompt.content, "Workflow hazard help")
+        audit_targets = {
+            row.target_id
+            for row in self.db.query(AuditLog).filter(AuditLog.action == "prompts.create").all()
+        }
+        self.assertEqual(audit_targets, {"llm/custom_prompt.txt", "workflow/hazards.txt"})
 
     def test_admin_can_view_and_update_prompt_source_setting(self) -> None:
         api_routes.settings.prompt_source = "auto"

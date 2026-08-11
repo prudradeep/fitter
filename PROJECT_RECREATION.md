@@ -285,7 +285,7 @@ mitigation / free-form deep dive
 3. Region: accept selection, including the national-scope path if offered; then return sectors available for that country.
 4. Sector: load truth/prompt data, establish system hazards and profiles, enrich with regional/national population context, rank hazards, then enter `hazards`.
 5. Hazards: show ranked hazards and allow mitigation planning, custom hazard entry, refresh, and statistical deep dive.
-6. Hazard selection: show affected socio-demographic profiles and let the user add more demographic groups or create a mitigation.
+6. Hazard selection: show hazards for mitigation planning and expose **Other Options -> Go back to list of hazards** so users can return to the hazard overview without starting hazard creation.
 7. Custom hazard: collect hazard, reason, and evidence; validate input quality, semantic duplicates, and statistical support. If accepted, collect target-population answers and persist it.
 8. Additional demographic groups: collect names, optional reason/evidence, reject duplicates, validate against statistics, persist accepted groups.
 9. Mitigation: collect a specific measure and justification/evidence. Detect local and semantic duplicates. Clarify unresolved measure, justification, and evidence dimensions over bounded turns.
@@ -295,7 +295,11 @@ mitigation / free-form deep dive
 13. Evaluation: ask active questions in order, capture 1–10 score plus optional reason/evidence, validate when statistical claims are made, and persist every response.
 14. Completion: present final output and permit ongoing deep-dive questions.
 
-`/reset` clears temporary evidence for the old session, creates a new UUID, and returns to Country. Global navigation actions can rewrite the mitigation/hazard, analyze another hazard, change sector/region/country, or start over while clearing only the dependent state.
+`/reset` clears temporary evidence for the old session, creates a new UUID, and returns to Country. Global navigation actions can go back to the hazard list, rewrite the mitigation/hazard, analyze another hazard, change sector/region/country, or start over while clearing only the dependent state.
+
+Users may ask in-scope workflow questions at any step. The assistant answers
+from workflow context, keeps the active step, and returns the user to the
+interrupted flow instead of treating the question as a workflow action.
 
 ### Fixed action labels
 
@@ -315,6 +319,60 @@ Preserve these labels because client behavior and fuzzy matching depend on them:
 - Choose a different sector
 - Select another region
 - Start over with a different country
+
+## Required commands
+
+Install dependencies:
+
+```bash
+uv sync
+```
+
+Run locally:
+
+```bash
+uv run uvicorn app.main:app --reload --reload-dir app
+```
+
+Run tests and lint:
+
+```bash
+uv sync --extra test
+uv run pytest
+uv run ruff check .
+```
+
+Run focused conversation-flow tests:
+
+```bash
+uv run pytest tests/test_open_conversation_flow_actions.py tests/test_chat_selection_engine.py
+```
+
+Run workbook cases against one Qwen model while debugging:
+
+```bash
+uv run python tests/run_open_conversation_selection_cases.py --input ./new_test_cases.xlsx --models qwen3.5:2b
+uv run python tests/run_open_conversation_selection_cases.py --input ./new_test_cases.xlsx --models qwen3.5:4b
+```
+
+Run workbook cases against Qwen 3.5 2B and 4B together:
+
+```bash
+uv run python tests/run_open_conversation_selection_cases.py --input ./new_test_cases.xlsx --models qwen3.5:2b qwen3.5:4b
+```
+
+Deploy database changes:
+
+```bash
+uv run python scripts/apply_migrations.py
+uv run python -m app.seed_data --skip-schema
+```
+
+Build Windows release artifacts:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1
+```
 
 ## 9. Chat API contract
 

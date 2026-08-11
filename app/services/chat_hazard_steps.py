@@ -82,6 +82,11 @@ class ChatHazardStepsMixin:
 
         exact_label = exact_option_label(message, POST_SECTOR_OPTIONS)
         if exact_label is None:
+            question_handler = getattr(self, "_handle_anytime_grounded_question", None)
+            if question_handler is not None:
+                question_response = await question_handler(session_id, session, message)
+                if question_response is not None:
+                    return question_response
             exact_label = self._post_sector_label_from_open_text(message)
         if exact_label is None:
             exact_label = await self._post_sector_label_from_llm(session, message)
@@ -224,6 +229,8 @@ class ChatHazardStepsMixin:
             return None
         if normalized == "other options":
             return None
+        if self._looks_like_post_sector_question(message):
+            return None
         if normalized in {
             "next",
             "next step",
@@ -343,6 +350,33 @@ class ChatHazardStepsMixin:
         if index < 0 or index >= len(labels):
             return None
         return labels[index]
+
+    @staticmethod
+    def _looks_like_post_sector_question(message: str) -> bool:
+        text = str(message or "").strip()
+        if "?" in text:
+            return True
+        normalized = normalize_for_match(text)
+        return any(
+            normalized.startswith(prefix)
+            for prefix in (
+                "what ",
+                "why ",
+                "how ",
+                "when ",
+                "where ",
+                "which ",
+                "who ",
+                "can ",
+                "could ",
+                "should ",
+                "would ",
+                "is ",
+                "are ",
+                "do ",
+                "does ",
+            )
+        )
 
     async def _post_sector_label_from_llm(
         self,

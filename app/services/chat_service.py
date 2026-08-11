@@ -365,6 +365,14 @@ class ChatService(
             return open_selection_response
 
         if session.phase in {"add_hazard", "custom_hazard_input"}:
+            if not self._matches_current_step_option(session, clean_message):
+                question_response = await self._handle_anytime_grounded_question(
+                    current_session_id,
+                    session,
+                    clean_message,
+                )
+                if question_response is not None:
+                    return question_response
             return await self._capture_custom_hazard(
                 current_session_id, session, clean_message
             )

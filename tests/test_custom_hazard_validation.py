@@ -74,6 +74,84 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(result["next_action"], "ask_duplicate_confirmation")
         self.assertEqual(result["status"], "needs_duplicate_confirmation")
 
+    def test_llm_duplicate_candidate_matching_current_draft_is_ignored(self):
+        hazard = 'Regional employment shock and "left-behind" energy regions.'
+        llm_payload = {
+            "dimension_scores": {
+                "hazard_definition_fit": {"score": 9},
+                "twin_transition_policy_fit": {"score": 8},
+                "selected_sector_fit": {"score": 10},
+                "country_region_fit": {"score": 9},
+                "affected_groups_fit": {"score": 8},
+            },
+            "affected_groups": [
+                {
+                    "group": "Workers in fossil-fuel-dependent regions",
+                    "reason": "Named by the hazard.",
+                }
+            ],
+            "duplicate_candidates": [
+                {
+                    "existing_hazard": hazard,
+                    "similarity_score": 100,
+                    "reason": "The provided text is identical to the existing hazard description.",
+                }
+            ],
+        }
+
+        with patch.object(validator, "_llm_dimension_validation", AsyncMock(return_value=llm_payload)):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    hazard,
+                    "Energy",
+                    "Germany",
+                    "Baden-Württemberg",
+                    [],
+                    {"reason": "Energy decarbonization can concentrate regional job losses."},
+                )
+            )
+
+        self.assertEqual(result["duplicate_candidates"], [])
+        self.assertNotEqual(result["next_action"], "ask_duplicate_confirmation")
+
+    def test_current_draft_in_session_custom_hazards_is_not_duplicate_candidate(self):
+        service = ChatService.__new__(ChatService)
+        service.db = SimpleNamespace(
+            scalars=MagicMock(
+                side_effect=[
+                    SimpleNamespace(all=lambda: []),
+                    SimpleNamespace(all=lambda: []),
+                    SimpleNamespace(all=lambda: []),
+                    SimpleNamespace(all=lambda: []),
+                ]
+            )
+        )
+        hazard = 'Regional employment shock and "left-behind" energy regions.'
+        session = ChatSession(
+            sector_id=1,
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_dimension_check",
+            pending_hazard=hazard,
+            custom_hazards=[hazard],
+            hazard_profiles={hazard: [{"name": "Workers in fossil-fuel-dependent regions"}]},
+            custom_hazard={
+                "raw_text": hazard,
+                "resolved_hazard_text": hazard,
+                "reason": "Energy decarbonization can concentrate regional job losses.",
+                "evidence": "",
+            },
+        )
+
+        with patch.object(validator, "ask_llm_chat", _unavailable):
+            response = _run(
+                service._run_custom_hazard_dimension_check("session-1", session)
+            )
+
+        self.assertNotEqual(response.step, "custom_hazard_duplicate_confirmation")
+        self.assertEqual(session.custom_hazard["duplicate_candidates"], [])
+
     def test_easy_validation_mode_accepts_borderline_dimension_scores(self):
         dimensions = {
             key: {"score": 4}
@@ -624,6 +702,232 @@ class CustomHazardValidationTests(unittest.TestCase):
             "Reason: Coal phase-out policy can cause job losses.",
         )
 
+    def test_no_evidence_validation_failure_with_pending_dimension_question_asks_clarification(self):
+        service = ChatService.__new__(ChatService)
+        service._validate_input_quality = AsyncMock(return_value={"valid": True, "reason": ""})
+        service._validate_hazard_against_stats = AsyncMock(
+            return_value={
+                "valid": False,
+                "reason": (
+                    "Proposed hazard contradicts the sector context and needs a "
+                    "clearer negative impact mechanism."
+                ),
+            }
+        )
+        service._discard_temporary_evidence = MagicMock()
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_decision",
+            pending_hazard="Regional employment shock",
+            pending_hazard_reason="Coal phase-out policy can cause job losses.",
+            custom_hazard={
+                "raw_text": "Regional employment shock",
+                "dimension_scores": {
+                    "hazard_definition_fit": {
+                        "score": 6,
+                        "reason": "The harm needs more detail.",
+                        "needs_clarification": True,
+                        "clarification_question": "What specific job-loss impact is caused by this issue?",
+                    },
+                    "twin_transition_policy_fit": {
+                        "score": 8,
+                        "reason": "The policy context is supported.",
+                        "needs_clarification": False,
+                        "clarification_question": "",
+                    },
+                },
+            },
+        )
+
+        response = _run(
+            service._handle_hazard_evidence_decision("session-1", session, "No")
+        )
+
+        self.assertEqual(response.step, "custom_hazard_clarification")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertEqual(session.phase, "custom_hazard_clarification")
+        self.assertIn("What specific job-loss impact", response.bot_message)
+        self.assertNotIn("Hazard Needs Revision", response.bot_message)
+        self.assertNotEqual(response.input_mode, "reason_evidence")
+
+    def test_review_groups_action_with_pending_core_question_asks_clarification_first(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_dimension_check",
+            pending_hazard='Regional employment shock and "left-behind" energy regions.',
+            custom_hazard={
+                "raw_text": 'Regional employment shock and "left-behind" energy regions.',
+                "reason": "Coal phase-out policy can cause job losses.",
+                "next_action": "review_groups",
+                "affected_groups": [
+                    {
+                        "group": "Energy workers and families in left-behind regions",
+                        "reason": "Implied by employment shock and left-behind status.",
+                    }
+                ],
+                "dimension_scores": {
+                    "hazard_definition_fit": {
+                        "score": 6,
+                        "reason": "Clearly describes negative impact but needs detail.",
+                        "needs_clarification": True,
+                        "clarification_question": "Can you describe the negative impact, risk, or harm caused by this issue?",
+                    },
+                    "twin_transition_policy_fit": {
+                        "score": 8,
+                        "reason": "Policy fit is supported.",
+                        "needs_clarification": False,
+                        "clarification_question": "",
+                    },
+                },
+            },
+        )
+
+        response = _run(service._route_custom_hazard_next_action("session-1", session))
+
+        self.assertEqual(response.step, "custom_hazard_clarification")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertEqual(session.phase, "custom_hazard_clarification")
+        self.assertIn("negative impact, risk, or harm", response.bot_message)
+
+    def test_supported_sector_fit_prevents_legacy_sector_mismatch_failure_after_no_evidence(self):
+        service = ChatService.__new__(ChatService)
+        service._validate_input_quality = AsyncMock(return_value={"valid": True, "reason": ""})
+        service._validate_hazard_against_stats = AsyncMock(
+            return_value={"valid": True, "reason": "Stats validation passed."}
+        )
+        service._review_custom_hazard_context = AsyncMock(
+            return_value={"status": "valid", "valid": True, "reason": ""}
+        )
+        service._run_custom_hazard_dimension_check = AsyncMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="custom_hazard_clarification",
+                bot_message="continued",
+                options=[],
+                session={},
+            )
+        )
+        service._custom_hazard_sector_mismatch_reason = MagicMock(
+            return_value=(
+                "The hazard focuses on regional employment inequality rather than direct energy bills."
+            )
+        )
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_decision",
+            pending_hazard='Regional employment shock and "left-behind" energy regions.',
+            pending_hazard_reason=(
+                "Energy-sector decarbonization can concentrate employment and "
+                "tax-base losses in fossil-dependent regions."
+            ),
+            custom_hazard={
+                "raw_text": 'Regional employment shock and "left-behind" energy regions.',
+                "dimension_scores": {
+                    "selected_sector_fit": {
+                        "score": 10,
+                        "status": "SUPPORTED",
+                        "reason": "Germany's energy sector is explicitly mentioned as the focus.",
+                        "needs_clarification": False,
+                        "clarification_question": "",
+                    },
+                },
+            },
+        )
+
+        response = _run(
+            service._handle_hazard_evidence_decision("session-1", session, "No")
+        )
+
+        self.assertEqual(response.bot_message, "continued")
+        service._validate_hazard_against_stats.assert_awaited_once()
+        service._run_custom_hazard_dimension_check.assert_awaited_once()
+        self.assertNotEqual(response.input_mode, "reason_evidence")
+
+    def test_custom_hazard_failed_response_never_uses_reason_evidence_form(self):
+        service = ChatService.__new__(ChatService)
+        service._same_sector_hazard_names_for_duplicate_check = MagicMock(return_value=[])
+        service._same_scope_custom_hazard_names_for_duplicate_check = MagicMock(return_value=[])
+        service._dedupe_hazard_names = MagicMock(return_value=[])
+        service._local_similar_hazards = MagicMock(return_value=[])
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            custom_hazard={"raw_text": "Regional employment shock"},
+        )
+
+        response = service._custom_hazard_validation_failed_response(
+            "session-1",
+            session,
+            hazard="Regional employment shock",
+            reason="The hazard still needs correction.",
+            dimension="selected_sector_fit",
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "custom_hazard_clarification")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertNotIn("Hazard Needs Revision", response.bot_message)
+        self.assertNotIn("Evidence URL", response.bot_message)
+
+    def test_ask_clarification_with_supported_core_dimensions_reviews_groups(self):
+        service = ChatService.__new__(ChatService)
+        service._custom_hazard_population_review_step = MagicMock(
+            return_value=ChatResponse(
+                session_id="session-1",
+                step="custom_hazard_population_review",
+                bot_message="review groups",
+                options=[],
+                session={},
+            )
+        )
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            custom_hazard={
+                "raw_text": 'Regional employment shock and "left-behind" energy regions.',
+                "reason": "Energy decarbonization can concentrate regional job losses.",
+                "next_action": "ask_clarification",
+                "affected_groups": [
+                    {
+                        "group": "Workers in fossil-fuel-dependent regions",
+                        "reason": "Named in the hazard.",
+                    }
+                ],
+                "dimension_scores": {
+                    "hazard_definition_fit": {
+                        "score": 9,
+                        "needs_clarification": False,
+                    },
+                    "twin_transition_policy_fit": {
+                        "score": 8,
+                        "needs_clarification": False,
+                    },
+                    "selected_sector_fit": {
+                        "score": 10,
+                        "needs_clarification": False,
+                    },
+                    "country_region_fit": {
+                        "score": 9,
+                        "needs_clarification": False,
+                    },
+                },
+            },
+        )
+
+        response = _run(service._route_custom_hazard_next_action("session-1", session))
+
+        self.assertEqual(response.bot_message, "review groups")
+        service._custom_hazard_population_review_step.assert_called_once()
+
     def test_hazard_evidence_decision_open_text_yes_asks_for_evidence(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -1118,6 +1422,66 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(result["next_action"], "ask_clarification")
         self.assertTrue(
             result["dimension_scores"]["twin_transition_policy_fit"]["needs_clarification"]
+        )
+
+    def test_core_dimension_clarification_flag_blocks_group_review_even_above_floor(self):
+        llm_payload = {
+            "dimension_scores": {
+                "hazard_definition_fit": {
+                    "score": 6,
+                    "reason": "A negative impact is implied but needs detail.",
+                    "needs_clarification": True,
+                    "clarification_question": "Can you describe the negative impact, risk, or harm caused by this issue?",
+                },
+                "twin_transition_policy_fit": {
+                    "score": 8,
+                    "reason": "Policy fit is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "selected_sector_fit": {
+                    "score": 10,
+                    "reason": "Sector fit is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "country_region_fit": {
+                    "score": 9,
+                    "reason": "Place fit is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "affected_groups_fit": {
+                    "score": 7,
+                    "reason": "Affected groups are identified.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+            },
+            "affected_groups": [
+                {
+                    "group": "Energy workers and families in left-behind regions",
+                    "reason": "Implied by employment shock and left-behind status.",
+                }
+            ],
+            "duplicate_candidates": [],
+        }
+
+        with patch.object(validator, "_llm_dimension_validation", AsyncMock(return_value=llm_payload)):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    'Regional employment shock and "left-behind" energy regions.',
+                    "Energy",
+                    "Germany",
+                    "Baden-Württemberg",
+                    [],
+                    {"reason": "Coal phase-out policy can cause job losses."},
+                )
+            )
+
+        self.assertEqual(result["next_action"], "ask_clarification")
+        self.assertTrue(
+            result["dimension_scores"]["hazard_definition_fit"]["needs_clarification"]
         )
 
     def test_duplicate_override_survives_grounding_text_with_reason(self):
@@ -1716,6 +2080,74 @@ class CustomHazardValidationTests(unittest.TestCase):
             ],
         )
         self.assertIn("I need a little more detail", response.bot_message)
+
+    def test_repeated_dimension_clarification_after_answer_returns_error(self):
+        service = ChatService.__new__(ChatService)
+        service._same_sector_hazard_names_for_duplicate_check = MagicMock(return_value=[])
+        service._same_scope_custom_hazard_names_for_duplicate_check = MagicMock(return_value=[])
+        service._dedupe_hazard_names = MagicMock(return_value=[])
+        question = "Can you describe the negative impact, risk, or harm caused by this issue?"
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            phase="custom_hazard_clarification",
+            pending_hazard='Regional employment shock and "left-behind" energy regions.',
+            custom_hazard={
+                **validator.default_custom_hazard_state(),
+                "raw_text": 'Regional employment shock and "left-behind" energy regions.',
+                "resolved_hazard_text": 'Regional employment shock and "left-behind" energy regions.',
+                "reason": "Coal phase-out policy can cause job losses.",
+                "pending_clarification_questions": [question],
+            },
+        )
+        dimension_result = {
+            "overall_score": 68,
+            "status": "needs_clarification",
+            "next_action": "ask_clarification",
+            "affected_groups": [
+                {
+                    "group": "Energy workers and families in left-behind regions",
+                    "reason": "The clarification identifies job-loss exposure.",
+                }
+            ],
+            "duplicate_candidates": [],
+            "dimension_scores": {
+                "hazard_definition_fit": {
+                    "score": 6,
+                    "reason": "The negative impact still needs a clearer mechanism.",
+                    "needs_clarification": True,
+                    "clarification_question": question,
+                },
+                "twin_transition_policy_fit": {
+                    "score": 8,
+                    "reason": "The decarbonization policy link is clear.",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+            },
+        }
+
+        with patch(
+            "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+            AsyncMock(return_value=dimension_result),
+        ):
+            response = _run(
+                service._handle_custom_hazard_clarification(
+                    "session-1",
+                    session,
+                    (
+                        "Within the energy sector, decarbonization concentrates job "
+                        "and tax-base losses in fossil-dependent regions."
+                    ),
+                )
+            )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "custom_hazard_clarification")
+        self.assertEqual(session.phase, "custom_hazard_clarification")
+        self.assertIn("still does not resolve", response.bot_message)
+        self.assertIn(question, response.bot_message)
 
     def test_custom_hazard_title_clarification_can_resolve_to_justification_clarification(self):
         service = ChatService.__new__(ChatService)

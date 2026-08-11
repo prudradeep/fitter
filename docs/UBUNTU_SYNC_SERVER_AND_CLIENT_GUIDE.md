@@ -185,6 +185,20 @@ Install dependencies:
 uv sync
 ```
 
+Before deploying or upgrading, run the backend checks:
+
+```bash
+uv sync --extra test
+uv run pytest
+uv run ruff check .
+```
+
+For conversation-flow changes, run the focused checks:
+
+```bash
+uv run pytest tests/test_open_conversation_flow_actions.py tests/test_chat_selection_engine.py
+```
+
 If your deployment needs optional grounding/browser/test extras, install those
 separately. Sync-only central service does not require Ollama, FAISS, reranker,
 or NLI services unless users will also use chat/search directly on the server.
@@ -739,6 +753,14 @@ Pull new code:
 ```bash
 git pull
 uv sync
+```
+
+Run pre-upgrade checks:
+
+```bash
+uv sync --extra test
+uv run pytest
+uv run ruff check .
 ```
 
 Apply migrations:

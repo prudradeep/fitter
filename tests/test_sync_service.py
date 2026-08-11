@@ -133,13 +133,21 @@ class SyncServiceTests(unittest.TestCase):
         original_mode = sync_routes.settings.sync_mode
         sync_routes.settings.sync_mode = "server"
         try:
-            self.db.add(
-                Prompt(
-                    prompt_key="llm/custom_prompt.txt",
-                    category="llm",
-                    display_name="llm / custom_prompt.txt",
-                    content="Server prompt",
-                )
+            self.db.add_all(
+                [
+                    Prompt(
+                        prompt_key="llm/custom_prompt.txt",
+                        category="llm",
+                        display_name="llm / custom_prompt.txt",
+                        content="Server prompt",
+                    ),
+                    Prompt(
+                        prompt_key="workflow/hazards.txt",
+                        category="workflow",
+                        display_name="workflow / hazards.txt",
+                        content="Workflow prompt",
+                    ),
+                ]
             )
             self.db.commit()
 
@@ -148,8 +156,10 @@ class SyncServiceTests(unittest.TestCase):
             sync_routes.settings.sync_mode = original_mode
 
         prompts = self._rows(bundle, "prompts")
-        self.assertEqual(len(prompts), 1)
-        self.assertEqual(prompts[0]["prompt_key"], "llm/custom_prompt.txt")
+        prompt_keys = {row["prompt_key"] for row in prompts}
+        self.assertEqual(prompt_keys, {"llm/custom_prompt.txt", "workflow/hazards.txt"})
+        workflow_prompt = next(row for row in prompts if row["prompt_key"] == "workflow/hazards.txt")
+        self.assertEqual(workflow_prompt["category"], "workflow")
 
     def test_client_does_not_export_prompts(self) -> None:
         original_mode = sync_routes.settings.sync_mode
@@ -223,10 +233,10 @@ class SyncServiceTests(unittest.TestCase):
                             "sync_id": "11111111-1111-4111-8111-111111111111",
                             "origin_device_id": "server-device",
                             "sync_revision": 1,
-                            "prompt_key": "llm/server_prompt.txt",
-                            "category": "llm",
-                            "display_name": "Server Prompt",
-                            "content": "Server prompt",
+                            "prompt_key": "workflow/hazards.txt",
+                            "category": "workflow",
+                            "display_name": "workflow / hazards.txt",
+                            "content": "Server workflow prompt",
                             "source_path": None,
                         }
                     ],
@@ -238,11 +248,12 @@ class SyncServiceTests(unittest.TestCase):
         finally:
             sync_routes.settings.sync_mode = original_mode
 
-        prompt = self.db.scalar(select(Prompt).where(Prompt.prompt_key == "llm/server_prompt.txt"))
+        prompt = self.db.scalar(select(Prompt).where(Prompt.prompt_key == "workflow/hazards.txt"))
         self.assertEqual(result.inserted, 1)
         self.assertTrue(result.prompts_dirty)
         self.assertIsNotNone(prompt)
-        self.assertEqual(prompt.content, "Server prompt")
+        self.assertEqual(prompt.category, "workflow")
+        self.assertEqual(prompt.content, "Server workflow prompt")
 
     def test_client_can_export_app_users_when_user_data_sync_is_disabled(self) -> None:
         user = self._add_user("client-user@example.com")

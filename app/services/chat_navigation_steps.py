@@ -114,6 +114,12 @@ class ChatNavigationStepsMixin:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
             return self._hazard_profile_step(session_id, session)
 
+        if action == normalize("Go back to list of hazards"):
+            if session.sector is None:
+                return self._repeat_current_options(session_id, session, self.invalid_message, True)
+            self._clear_selected_hazard_context(session)
+            return self._hazards_step(session_id, session)
+
         if action == normalize("Add a new hazard"):
             if session.sector is None:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
@@ -430,6 +436,8 @@ class ChatNavigationStepsMixin:
             options.append("Write mitigation measure again")
         if session.sector and session.selected_hazard:
             options.append("Analyse another hazard in the same sector")
+        if session.sector and step == "hazard_profile_selection":
+            options.append("Go back to list of hazards")
         if session.sector and step != "sector":
             options.append("Add a new hazard")
         if session.sector and (

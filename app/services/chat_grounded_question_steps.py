@@ -15,7 +15,7 @@ from app.services.knowledge_base import (
     KnowledgeBaseService,
 )
 from app.services.message_renderer import markdown_to_html
-from app.services.prompt_loader import render_prompt_template
+from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 from app.services.question_intent import detect_user_question_intent
 from app.services.sector_prompt_rag import SectorPromptRagService
 
@@ -109,14 +109,26 @@ class ChatGroundedQuestionStepsMixin:
     async def _answer_grounded_question(
         self, session_id: str, session: ChatSession, question: str
     ) -> tuple[str, dict[str, dict[str, str]]]:
-        (
-            (knowledge_context, knowledge_sources),
-            (stats_context, stats_sources),
-        ) = await asyncio.gather(
-            self._question_knowledge_context(session, question),
-            self._question_stats_context(session, question),
-        )
-        if not knowledge_context.strip() and not stats_context.strip():
+        workflow_context = self._workflow_help_context(session)
+        if self._is_workflow_help_question(session, question):
+            return await self._answer_workflow_help_question(
+                session,
+                question,
+                workflow_context,
+            )
+        else:
+            (
+                (knowledge_context, knowledge_sources),
+                (stats_context, stats_sources),
+            ) = await asyncio.gather(
+                self._question_knowledge_context(session, question),
+                self._question_stats_context(session, question),
+            )
+        if (
+            not knowledge_context.strip()
+            and not stats_context.strip()
+            and not workflow_context.strip()
+        ):
             return (
                 "I do not have enough information in the Knowledge Base or loaded "
                 "sector stats to answer that yet.",
@@ -129,6 +141,8 @@ class ChatGroundedQuestionStepsMixin:
             knowledge_context=knowledge_context
             or "- No relevant Knowledge Base excerpts were found.",
             stats_context=stats_context or "- No relevant sector statistical context was found.",
+            workflow_context=workflow_context
+            or "- No relevant workflow help context is available.",
         )
         messages = [
             {
@@ -157,6 +171,111 @@ class ChatGroundedQuestionStepsMixin:
             max_tokens=800,
         )
         return answer, {**knowledge_sources, **stats_sources}
+
+    async def _answer_workflow_help_question(
+        self,
+        session: ChatSession,
+        question: str,
+        workflow_context: str,
+    ) -> tuple[str, dict[str, dict[str, str]]]:
+        if not workflow_context.strip():
+            return (
+                "The available Workflow Help Context does not contain enough "
+                "information to answer this question.",
+                {},
+            )
+        answer = await ask_llm_chat(
+            context=load_nested_prompt_file("workflow/answer.txt"),
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Session context:\n"
+                        f"- Country: {session.country or 'Not selected'}\n"
+                        f"- Region: {session.region or 'Not selected'}\n"
+                        f"- Sector: {session.sector or 'Not selected'}\n"
+                        f"- Current workflow step: {session.phase or 'Not selected'}\n\n"
+                        "Workflow Help Context:\n"
+                        f"{workflow_context}\n\n"
+                        "User question:\n"
+                        f"{question}"
+                    ),
+                }
+            ],
+            temperature=0.0,
+            max_tokens=350,
+        )
+        return answer, {}
+
+    def _workflow_help_context(self, session: ChatSession) -> str:
+        phase = str(session.phase or "").strip()
+        if phase in {"hazards", "stats_deep_dive"}:
+            return load_nested_prompt_file("workflow/hazards.txt")
+        if phase == "custom_hazard_input":
+            return load_nested_prompt_file("workflow/custom_hazard_input.txt")
+        if phase == "reason_confirmation":
+            return load_nested_prompt_file("workflow/reason_confirmation.txt")
+        return ""
+
+    @staticmethod
+    def _is_workflow_help_question(session: ChatSession, question: str) -> bool:
+        normalized = normalize_for_match(question)
+        if not normalized:
+            return False
+        phase = str(session.phase or "").strip()
+        workflow_terms = {
+            "option",
+            "button",
+            "workflow",
+            "step",
+            "add",
+            "create",
+            "start",
+            "refresh",
+            "later",
+            "own",
+        }
+        if not any(term in normalized.split() for term in workflow_terms):
+            return False
+        if phase in {"hazards", "stats_deep_dive"} and any(
+            phrase in normalized
+            for phrase in (
+                "add hazard",
+                "add a hazard",
+                "add new hazard",
+                "add a new hazard",
+                "add my own hazard",
+                "own hazard",
+                "create hazard",
+                "create a hazard",
+                "start mitigation",
+                "start mitigation planning",
+                "refresh hazards",
+                "refresh dgs",
+            )
+        ):
+            return True
+        if phase == "custom_hazard_input" and any(
+            phrase in normalized
+            for phrase in (
+                "go back",
+                "list of hazards",
+                "hazard description",
+                "what should i type",
+            )
+        ):
+            return True
+        if phase == "reason_confirmation" and any(
+            phrase in normalized
+            for phrase in (
+                "mitigation",
+                "write my own",
+                "adopt",
+                "proposal",
+            )
+        ):
+            return True
+        return False
 
     def _grounded_question_history(
         self,

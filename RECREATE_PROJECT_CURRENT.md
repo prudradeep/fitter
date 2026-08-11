@@ -458,7 +458,10 @@ Preserve:
 - System hazard listing filtered by selected country/sector/region where applicable.
 - Additional hazards filtered by selected country and sector.
 - Additional hazards shown through a dedicated `Show additional hazards` option.
+- The hazard-selection **Other Options** menu includes `Go back to list of hazards`.
 - User-added hazard validation within twin-transition policy context only.
+- Open conversation text that clearly means "add a new hazard" enters the custom hazard flow.
+- Question-shaped messages about hazard actions are answered as workflow help and keep the user on the current step.
 - Target-population mapping for additional hazard profiles.
 - Eurostat population lookup/cache for system, additional, and user-added profiles where possible.
 - Tooltip explanations for Salience, Reach, Effect size, and Relevance.
@@ -483,6 +486,60 @@ Mitigation planning includes three explanatory sections:
    - Uses target-group values `Partially` and hazard mitigation effect values `High`, `Medium`, `Low`.
    - Does not display raw `PP` or `New` in target-group match text.
    - Shows top/best-scoring policy suggestions only.
+
+## Required commands
+
+Install dependencies:
+
+```bash
+uv sync
+```
+
+Run locally:
+
+```bash
+uv run uvicorn app.main:app --reload --reload-dir app
+```
+
+Run tests and lint:
+
+```bash
+uv sync --extra test
+uv run pytest
+uv run ruff check .
+```
+
+Run focused conversation-flow tests:
+
+```bash
+uv run pytest tests/test_open_conversation_flow_actions.py tests/test_chat_selection_engine.py
+```
+
+Run workbook cases against one Qwen model while debugging:
+
+```bash
+uv run python tests/run_open_conversation_selection_cases.py --input ./new_test_cases.xlsx --models qwen3.5:2b
+uv run python tests/run_open_conversation_selection_cases.py --input ./new_test_cases.xlsx --models qwen3.5:4b
+```
+
+Run workbook cases against Qwen 3.5 2B and 4B together:
+
+```bash
+uv run python tests/run_open_conversation_selection_cases.py --input ./new_test_cases.xlsx --models qwen3.5:2b qwen3.5:4b
+```
+
+Deploy database changes:
+
+```bash
+uv run python scripts/apply_migrations.py
+uv run python -m app.seed_data --skip-schema
+```
+
+Build Windows release artifacts:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1
+```
 
 Avoid duplicated `New policy suggestions` headings.
 

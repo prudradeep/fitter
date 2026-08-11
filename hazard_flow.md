@@ -14,6 +14,23 @@ flow begins when the user chooses:
 Add a new Hazard
 ```
 
+Open conversation text such as "None of these hazards fit, I want to add one"
+or "The hazard above does not make sense, I want to add a new hazard" is treated
+as the same action when the user is on the hazard listing step. Question-shaped
+messages such as "What does Add a new Hazard mean?" or "Can I add my own
+hazard?" are answered as workflow help and do not move the user into hazard
+creation.
+
+If the user starts mitigation planning and reaches hazard selection, **Other
+Options** includes:
+
+```text
+Go back to list of hazards
+```
+
+Selecting it clears the selected-hazard context and returns to the hazard
+listing overview.
+
 **Old Flow Summary**
 
 Previously, the custom hazard flow behaved like this:
@@ -85,6 +102,8 @@ Key behavior in the new flow:
 7. Duplicate override is respected after the user chooses to continue.
 8. Strict validation plus Crowd Sourcing shows a visibility notice on review and
    success screens.
+9. In-scope workflow questions are answered in place and the user remains on the
+   same workflow step.
 ```
 
 System hazards shown in the normal hazard-selection flow are seeded from the

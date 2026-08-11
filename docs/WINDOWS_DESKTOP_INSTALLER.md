@@ -54,6 +54,39 @@ Build machines need:
 
 End users should not need these tools after the installer is produced.
 
+## Verify Before Building
+
+From the repository root, run the backend checks before creating a release
+installer:
+
+```powershell
+uv sync --extra test
+uv run pytest
+uv run ruff check .
+```
+
+For recent conversation-flow changes, run:
+
+```powershell
+uv run pytest tests/test_open_conversation_flow_actions.py tests/test_chat_selection_engine.py
+```
+
+If the release depends on workbook behavior, run the current workbook against a
+single local Qwen model while debugging:
+
+```powershell
+uv run python tests/run_open_conversation_selection_cases.py --input .\new_test_cases.xlsx --models qwen3.5:2b
+uv run python tests/run_open_conversation_selection_cases.py --input .\new_test_cases.xlsx --models qwen3.5:4b
+```
+
+Run the supported local Qwen models together before release:
+
+```powershell
+uv run python tests/run_open_conversation_selection_cases.py `
+  --input .\new_test_cases.xlsx `
+  --models qwen3.5:2b qwen3.5:4b
+```
+
 ## Build Python Services
 
 From the repository root:

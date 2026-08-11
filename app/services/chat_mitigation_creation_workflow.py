@@ -335,6 +335,34 @@ class ChatMitigationCreationWorkflowMixin:
             unresolved_dimension,
             selected_hazard=session.selected_hazard or session.accepted_custom_hazard,
         )
+        repeated_questions = self._mitigation_repeated_clarification_questions_after_answer(
+            session,
+            follow_up_questions,
+            clarification_answer,
+        )
+        if repeated_questions and self._mitigation_answer_resolves_follow_up_questions(
+            clarification_answer,
+            follow_up_questions,
+            selected_hazard=session.selected_hazard or session.accepted_custom_hazard,
+        ):
+            session.mitigation_frozen_inputs = self._frozen_mitigation_inputs(
+                clarity,
+                mitigation_measure,
+                reason,
+                evidence_text,
+            )
+            return None
+        if repeated_questions:
+            return self._mitigation_repeated_clarification_error_response(
+                session_id,
+                session,
+                clarity,
+                unresolved_dimension,
+                follow_up_questions,
+                mitigation_measure,
+                reason,
+                evidence_text,
+            )
         question_list = "\n".join(
             f"{index}. {question}"
             for index, question in enumerate(follow_up_questions, start=1)
@@ -379,6 +407,217 @@ class ChatMitigationCreationWorkflowMixin:
                 follow_up_questions,
             ),
         )
+
+    def _mitigation_repeated_clarification_error_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        clarity: dict[str, object],
+        unresolved_dimension: str | None,
+        follow_up_questions: list[str],
+        mitigation_measure: str,
+        reason: str,
+        evidence_text: str,
+    ) -> ChatResponse:
+        dimension_label = self.mitigation_clarity_labels.get(
+            unresolved_dimension,
+            "Mitigation input",
+        )
+        question_list = "\n".join(
+            f"{index}. {question}"
+            for index, question in enumerate(follow_up_questions, start=1)
+        )
+        session.phase = "mitigation_clarity"
+        session.pending_mitigation_measure = mitigation_measure
+        session.pending_mitigation_reason = reason
+        session.pending_mitigation_evidence = evidence_text
+        session.pending_mitigation_clarity_dimension = unresolved_dimension
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_clarity",
+            bot_message=markdown_to_html(
+                "### Clarification still needed\n\n"
+                "That answer did not resolve the mitigation clarification. "
+                "Please add new, specific detail for the remaining question:\n\n"
+                f"**Currently clarifying: {dimension_label}**\n\n"
+                f"{question_list}"
+            ),
+            options=self._mitigation_clarity_options(),
+            session=session.summary(),
+            input_mode="textarea",
+            error=True,
+            validation_details=self._clarity_validation_details(
+                clarity,
+                session,
+                unresolved_dimension,
+                follow_up_questions,
+            ),
+        )
+
+    @classmethod
+    def _mitigation_answer_resolves_follow_up_questions(
+        cls,
+        clarification_answer: str | None,
+        follow_up_questions: list[str],
+        selected_hazard: str | None = None,
+    ) -> bool:
+        answer = str(clarification_answer or "").strip()
+        if len(compact_for_match(answer)) < 40:
+            return False
+        if not follow_up_questions:
+            return False
+        return all(
+            cls._mitigation_answer_resolves_follow_up_question(
+                answer,
+                question,
+                selected_hazard=selected_hazard,
+            )
+            for question in follow_up_questions
+            if str(question or "").strip()
+        )
+
+    @classmethod
+    def _mitigation_answer_resolves_follow_up_question(
+        cls,
+        answer: str,
+        question: str,
+        selected_hazard: str | None = None,
+    ) -> bool:
+        answer_key = normalize_for_match(answer)
+        question_key = normalize_for_match(question)
+
+        if any(term in question_key for term in ("financial instrument", "funding mechanism", "direct assistance")):
+            financial_terms = cls._count_terms(
+                answer_key,
+                (
+                    "grant",
+                    "grants",
+                    "bill credit",
+                    "energy bill credit",
+                    "loan",
+                    "loans",
+                    "subsidy",
+                    "subsidies",
+                    "fund",
+                    "funding",
+                    "social climate fund",
+                    "tax relief",
+                    "voucher",
+                    "allowance",
+                    "rebate",
+                ),
+            )
+            target_terms = cls._count_terms(
+                answer_key,
+                (
+                    "vulnerable",
+                    "low income",
+                    "income tested",
+                    "utility arrears",
+                    "arrears",
+                    "household",
+                    "households",
+                ),
+            )
+            return financial_terms >= 2 and target_terms >= 1
+
+        if any(
+            term in question_key
+            for term in (
+                "retrofit technolog",
+                "building retrofit",
+                "energy efficiency",
+                "rural",
+                "suburban",
+            )
+        ):
+            retrofit_terms = cls._count_terms(
+                answer_key,
+                (
+                    "insulation",
+                    "roof",
+                    "attic",
+                    "external wall",
+                    "wall insulation",
+                    "basement",
+                    "ceiling",
+                    "window",
+                    "windows",
+                    "door",
+                    "doors",
+                    "heat pump",
+                    "heat pumps",
+                    "heating control",
+                    "thermostat",
+                    "heating system optimization",
+                    "hot water",
+                    "clean heating",
+                    "fossil fuel heating",
+                    "energy efficiency",
+                ),
+            )
+            return retrofit_terms >= 3
+
+        if any(term in question_key for term in ("reduce", "mitigate", "impact", "appropriate")):
+            mechanism_terms = cls._count_terms(
+                answer_key,
+                (
+                    "reduce",
+                    "lower",
+                    "support",
+                    "protect",
+                    "grant",
+                    "credit",
+                    "loan",
+                    "insulation",
+                    "retrofit",
+                    "heat pump",
+                    "consumer protection",
+                    "energy advice",
+                ),
+            )
+            hazard_key = normalize_for_match(selected_hazard or "")
+            hazard_terms = [
+                term
+                for term in hazard_key.split()
+                if len(term) >= 5 and term not in {"increase", "costs"}
+            ]
+            mentions_hazard = bool(hazard_terms) and any(term in answer_key for term in hazard_terms)
+            mentions_context = any(
+                term in answer_key
+                for term in (
+                    "hazard",
+                    "energy poverty",
+                    "heating cost",
+                    "cooling cost",
+                    "energy bill",
+                    "baden wurttemberg",
+                    "energy sector",
+                )
+            )
+            return mechanism_terms >= 3 and (mentions_hazard or mentions_context)
+
+        concrete_terms = cls._count_terms(
+            answer_key,
+            (
+                "grant",
+                "credit",
+                "loan",
+                "subsidy",
+                "insulation",
+                "retrofit",
+                "heat pump",
+                "consumer protection",
+                "energy advice",
+                "target",
+                "household",
+            ),
+        )
+        return len(compact_for_match(answer)) >= 140 and concrete_terms >= 4
+
+    @staticmethod
+    def _count_terms(text: str, terms: tuple[str, ...]) -> int:
+        return sum(1 for term in terms if term in text)
 
     def _mitigation_evidence_decision_step(
         self,
@@ -1274,6 +1513,47 @@ class ChatMitigationCreationWorkflowMixin:
             f"{str(entry['role']).strip().title()}:\n{str(entry['content']).strip()}"
             for entry in history
         )
+
+    @classmethod
+    def _mitigation_repeated_clarification_questions_after_answer(
+        cls,
+        session: ChatSession,
+        follow_up_questions: list[str],
+        clarification_answer: str | None,
+    ) -> bool:
+        if not str(clarification_answer or "").strip():
+            return False
+        current_questions = {
+            normalize(question)
+            for question in follow_up_questions
+            if str(question or "").strip()
+        }
+        if not current_questions:
+            return False
+        previous_assistant_questions = cls._last_mitigation_assistant_questions(session)
+        return bool(current_questions & previous_assistant_questions)
+
+    @classmethod
+    def _last_mitigation_assistant_questions(cls, session: ChatSession) -> set[str]:
+        for entry in reversed(session.mitigation_clarification_history or []):
+            if not isinstance(entry, dict) or entry.get("role") != "assistant":
+                continue
+            return {
+                normalize(question)
+                for question in cls._question_lines(str(entry.get("content") or ""))
+                if question
+            }
+        return set()
+
+    @staticmethod
+    def _question_lines(content: str) -> list[str]:
+        questions: list[str] = []
+        for raw_line in str(content or "").splitlines():
+            line = re.sub(r"^\s*(?:[-*]\s*)?\d+[.)]\s*", "", raw_line).strip()
+            if "?" not in line:
+                continue
+            questions.append(line)
+        return questions
 
     @classmethod
     def _unresolved_mitigation_clarity_dimension(

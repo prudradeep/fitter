@@ -399,6 +399,287 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             "Clarification: It lowers upfront costs for low-income households affected by energy poverty.",
         )
 
+    def test_repeated_mitigation_clarification_question_returns_error(self):
+        engine = ChatService.__new__(ChatService)
+        engine._is_invalid_user_text = MagicMock(return_value=False)
+        engine._validate_clarification_answer_quality = AsyncMock(
+            return_value={"valid": True, "reason": "Clear."}
+        )
+        question = "How is the proposed measure expected to reduce the selected hazard's impact?"
+        engine._assess_mitigation_clarity = AsyncMock(
+            return_value={
+                "clear": False,
+                "dimensions": {
+                    "specificity": "NEEDS_CLARIFICATION",
+                    "justification_clarity": "NEEDS_CLARIFICATION",
+                    "evidence_identifiability": "CLEAR",
+                },
+                "follow_up_questions": [question],
+                "frozen_inputs": {},
+                "reason": "The mechanism is still unclear.",
+            }
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+            phase="mitigation_clarity",
+            pending_mitigation_measure="Introduce targeted grants",
+            pending_mitigation_reason="Targeted grants reduce exposure to energy poverty.",
+            pending_mitigation_evidence="",
+            pending_mitigation_clarity_dimension="justification_clarity",
+            mitigation_clarification_history=[
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Currently clarifying: Justification clarity\n\n"
+                        f"Please answer these questions in one response:\n\n1. {question}"
+                    ),
+                }
+            ],
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_clarity_answer(
+                "test-session",
+                session,
+                "It pays part of the upfront bill so low-income households can afford the upgrade.",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertIn("did not resolve", response.bot_message)
+        self.assertIn(question, response.bot_message)
+        self.assertEqual(session.phase, "mitigation_clarity")
+
+    def test_concrete_repeated_mitigation_specificity_answer_moves_to_evidence(self):
+        engine = ChatService.__new__(ChatService)
+        engine._is_invalid_user_text = MagicMock(return_value=False)
+        engine._validate_clarification_answer_quality = AsyncMock(
+            return_value={"valid": True, "reason": "Clear."}
+        )
+        questions = [
+            "What specific financial instruments or funding mechanisms will be used for the direct assistance to vulnerable households?",
+            "Which specific building retrofit technologies or energy-efficiency measures are prioritized for rural and suburban households?",
+        ]
+        engine._assess_mitigation_clarity = AsyncMock(
+            return_value={
+                "clear": False,
+                "dimensions": {
+                    "specificity": "NEEDS_CLARIFICATION",
+                    "justification_clarity": "NEEDS_CLARIFICATION",
+                    "evidence_identifiability": "CLEAR",
+                },
+                "follow_up_questions": questions,
+                "frozen_inputs": {},
+                "reason": "The measure still needs concrete instruments and retrofit details.",
+            }
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            selected_hazard="HEATING AND COOLING COSTS INCREASE",
+            phase="mitigation_clarity",
+            pending_mitigation_measure="Affordable Heating Shield for Baden-Württemberg",
+            pending_mitigation_reason=(
+                "The measure reduces rising heating and cooling costs for vulnerable "
+                "households through affordability support and building upgrades."
+            ),
+            pending_mitigation_evidence="",
+            pending_mitigation_clarity_dimension="specificity",
+            mitigation_clarification_history=[
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Currently clarifying: Specificity\n\n"
+                        "Please answer these questions in one response:\n\n"
+                        f"1. {questions[0]}\n"
+                        f"2. {questions[1]}"
+                    ),
+                }
+            ],
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_clarity_answer(
+                "test-session",
+                session,
+                (
+                    "Financial instruments and funding mechanisms: Use upfront, income-tested grants "
+                    "for vulnerable households, supplemented by energy-bill credits for households in "
+                    "utility arrears and low-interest or zero-interest loans for costs not fully covered "
+                    "by grants. Funding can be structured through Germany's allocation under the EU "
+                    "Social Climate Fund, complemented by Baden-Württemberg energy-efficiency support "
+                    "programmes.\n"
+                    "Prioritized retrofit and energy-efficiency measures: For rural and suburban "
+                    "households, prioritize roof and attic insulation, external-wall insulation, "
+                    "high-performance windows and doors, heat pumps, heating controls and thermostats, "
+                    "heating-system optimization, and hot-water efficiency improvements."
+                ),
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_evidence_decision")
+        self.assertEqual(session.phase, "mitigation_evidence_decision")
+        self.assertIn("Do you have evidence", response.bot_message)
+
+    def test_partial_repeated_mitigation_specificity_answer_still_errors(self):
+        engine = ChatService.__new__(ChatService)
+        engine._is_invalid_user_text = MagicMock(return_value=False)
+        engine._validate_clarification_answer_quality = AsyncMock(
+            return_value={"valid": True, "reason": "Clear."}
+        )
+        questions = [
+            "What specific financial instruments or funding mechanisms will be used for the direct assistance to vulnerable households?",
+            "Which specific building retrofit technologies or energy-efficiency measures are prioritized for rural and suburban households?",
+        ]
+        engine._assess_mitigation_clarity = AsyncMock(
+            return_value={
+                "clear": False,
+                "dimensions": {
+                    "specificity": "NEEDS_CLARIFICATION",
+                    "justification_clarity": "NEEDS_CLARIFICATION",
+                    "evidence_identifiability": "CLEAR",
+                },
+                "follow_up_questions": questions,
+                "frozen_inputs": {},
+                "reason": "The answer does not cover retrofit technologies.",
+            }
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            selected_hazard="HEATING AND COOLING COSTS INCREASE",
+            phase="mitigation_clarity",
+            pending_mitigation_measure="Affordable Heating Shield for Baden-Württemberg",
+            pending_mitigation_reason="The measure reduces energy affordability pressure.",
+            pending_mitigation_evidence="",
+            pending_mitigation_clarity_dimension="specificity",
+            mitigation_clarification_history=[
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Currently clarifying: Specificity\n\n"
+                        "Please answer these questions in one response:\n\n"
+                        f"1. {questions[0]}\n"
+                        f"2. {questions[1]}"
+                    ),
+                }
+            ],
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_clarity_answer(
+                "test-session",
+                session,
+                (
+                    "Use upfront income-tested grants, energy-bill credits, and zero-interest loans "
+                    "for vulnerable households in utility arrears."
+                ),
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertIn(questions[1], response.bot_message)
+
+    def test_repeated_mechanism_clarification_answer_moves_to_evidence(self):
+        engine = ChatService.__new__(ChatService)
+        engine._is_invalid_user_text = MagicMock(return_value=False)
+        engine._validate_clarification_answer_quality = AsyncMock(
+            return_value={"valid": True, "reason": "Clear."}
+        )
+        question = (
+            "How will this mitigation measure reduce the negative impact of the selected hazard "
+            "for the affected profiles, and why is it appropriate for this context?"
+        )
+        engine._assess_mitigation_clarity = AsyncMock(
+            return_value={
+                "clear": False,
+                "dimensions": {
+                    "specificity": "NEEDS_CLARIFICATION",
+                    "justification_clarity": "NEEDS_CLARIFICATION",
+                    "evidence_identifiability": "CLEAR",
+                },
+                "follow_up_questions": [question],
+                "frozen_inputs": {},
+                "reason": "The mitigation mechanism is still unclear.",
+            }
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            selected_hazard="HEATING AND COOLING COSTS INCREASE",
+            phase="mitigation_clarity",
+            pending_mitigation_measure="Affordable Heating Shield for Baden-Württemberg",
+            pending_mitigation_reason="",
+            pending_mitigation_evidence="",
+            pending_mitigation_clarity_dimension="justification_clarity",
+            mitigation_clarification_history=[
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Please answer this clarification question before evidence is collected:\n\n"
+                        f"1. {question}"
+                    ),
+                }
+            ],
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_clarity_answer(
+                "test-session",
+                session,
+                (
+                    "The measure will reduce heating and cooling cost pressure by combining direct "
+                    "bill credits and grants with insulation, clean heating, heat pump support, "
+                    "consumer protection, and energy advice. It protects vulnerable households from "
+                    "energy bill shocks while lowering demand in Baden-Württemberg's Energy sector."
+                ),
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_evidence_decision")
+        self.assertEqual(session.phase, "mitigation_evidence_decision")
+
+    def test_mitigation_follow_up_resolution_helper_requires_all_question_categories(self):
+        questions = [
+            "What specific financial instruments or funding mechanisms will be used for the direct assistance to vulnerable households?",
+            "Which specific building retrofit technologies or energy-efficiency measures are prioritized for rural and suburban households?",
+        ]
+        complete_answer = (
+            "Use income-tested grants, bill credits, and zero-interest loans for vulnerable households "
+            "in utility arrears. Prioritize roof insulation, external-wall insulation, high-performance "
+            "windows, heat pumps, thermostats, and heating-system optimization."
+        )
+        partial_answer = (
+            "Use income-tested grants, bill credits, and zero-interest loans for vulnerable households "
+            "in utility arrears."
+        )
+
+        self.assertTrue(
+            ChatService._mitigation_answer_resolves_follow_up_questions(
+                complete_answer,
+                questions,
+                selected_hazard="HEATING AND COOLING COSTS INCREASE",
+            )
+        )
+        self.assertFalse(
+            ChatService._mitigation_answer_resolves_follow_up_questions(
+                partial_answer,
+                questions,
+                selected_hazard="HEATING AND COOLING COSTS INCREASE",
+            )
+        )
+
     def test_mitigation_reason_same_as_measure_is_rejected(self):
         engine = _MitigationClarificationEngine()
         session = ChatSession(

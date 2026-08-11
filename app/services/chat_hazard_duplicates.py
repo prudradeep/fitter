@@ -13,11 +13,17 @@ logger = logging.getLogger(__name__)
 
 
 def same_sector_hazard_names(db: Any, session: ChatSession) -> list[str]:
-    names: list[object] = [
+    session_names: list[object] = [
         *(session.hazards or []),
         *(session.custom_hazards or []),
         *(session.additional_hazards or []),
         *hazard_names(session),
+    ]
+    current_draft_keys = _current_draft_hazard_keys(session)
+    names: list[object] = [
+        name
+        for name in session_names
+        if normalize_for_match(str(name or "")) not in current_draft_keys
     ]
     if session.sector_id is not None:
         try:
@@ -53,6 +59,22 @@ def same_sector_hazard_names(db: Any, session: ChatSession) -> list[str]:
             logger.exception("Failed to load same-sector hazards for duplicate check")
 
     return dedupe_hazard_names(names)
+
+
+def _current_draft_hazard_keys(session: ChatSession) -> set[str]:
+    values: list[object] = [session.pending_hazard]
+    custom_state = session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
+    values.extend(
+        [
+            custom_state.get("raw_text"),
+            custom_state.get("resolved_hazard_text"),
+        ]
+    )
+    return {
+        key
+        for key in (normalize_for_match(str(value or "")) for value in values)
+        if key
+    }
 
 
 def same_scope_custom_hazard_names(

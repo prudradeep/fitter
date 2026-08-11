@@ -416,7 +416,7 @@ Portugese,
 Free text Use Cases:
     1. Response for the question
     2. Middle of the conversation User ask the question within the scope of the content, as a response of the question.
-        During the conversation with AI, User may ask any question within the scope of the project. The AI should be able to handle the question, respond to the user appropriately and come back to the question where it left the conversation in the middle
+        During the conversation, User may ask any question within the scope of the project. The Tool should be able to handle the question, respond to the user appropriately and come back to the question where it left the conversation in the middle
 
 Document integration | Downloadable Report: PDF | Docx
 Downloadable report in 3 choices:
