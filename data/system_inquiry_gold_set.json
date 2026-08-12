@@ -8,7 +8,7 @@
       "country": "Italy",
       "measure": "A regional grant covering 60% of deep insulation retrofit costs for dwellings with damp or draught problems. Homeowners apply with a certified survey; works are completed within 18 to 24 months.",
       "expert_probe_ids": ["A4-P1", "C1-P1", "C2-P1", "C3-P1", "D2-P1"],
-      "expert_notes": "Expert-labelled seed case based on the worked example in System enquiry.md."
+      "expert_notes": "Expert-labelled seed case based on the worked example in System inquiry.md."
     },
     {
       "case_id": "transport-automatic-scrappage",

@@ -455,6 +455,22 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         self.assertIn("Affected and target populations", normalized_text)
         self.assertIn("Target population", normalized_text)
         self.assertIn("This comparison brings together 2 mitigation measures", normalized_text)
+        self.assertNotIn(
+            "All mitigation measures created against this hazard from all users",
+            normalized_text,
+        )
+
+        user_scope_response = self.client.get("/api/sessions/report-session/report?scope=user_hazard")
+
+        self.assertEqual(user_scope_response.status_code, 200)
+        user_scope_reader = PdfReader(BytesIO(user_scope_response.content))
+        user_scope_text = " ".join(
+            (page.extract_text() or "") for page in user_scope_reader.pages
+        )
+        self.assertNotIn(
+            "All mitigation measures created by me against this hazard",
+            " ".join(user_scope_text.split()),
+        )
 
     def test_restore_session_uses_persisted_current_step_options(self) -> None:
         session = UserSession(

@@ -426,3 +426,18 @@ Downloadable report in 3 choices:
 
 Detailed SRS of this: MD File. Cloud Enabled
 
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+That is a legitimate document, but it is not the same thing as an SRS for non-technical reviewers and alpha testers.
+
+It answers "what" but almost never "why."
+
+It has no rationale layer for content quality
+
+It is silent on several things that non-technical EU reviewers reliably ask about first — data protection, accessibility, language coverage, and how long a user waits
+
+Validation outcomes have no defined consequences. §7.6 distinguishes supported, contradicted, insufficient, unavailable. Nowhere does the document say what the user sees for each, or what they can still do. Can a user save a hazard the system marked contradicted? If yes, is it flagged in the report? If no, that's a hard block and needs stating. Right now this is genuinely ambiguous.
+
+D7 — "May" is not a requirement. §4.3.4: hazard ranking "may use salience, effect size, and reach where data is available." Either it does or it doesn't. Reviewers assessing policy relevance will want to know how the ordering is produced and whether the user can see why a hazard ranks highly.
+
+Report readiness threshold undefined. /report/status returns whether there's "enough data." Enough is not specified anywhere.

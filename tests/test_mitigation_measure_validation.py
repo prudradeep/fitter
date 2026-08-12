@@ -2416,7 +2416,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertTrue(str(annotation["created_at"]).endswith("Z"))
         self.assertTrue(annotation["screen_result"])
         self.assertIn("source_refs", annotation)
-        self.assertEqual(annotation["source_refs"][0]["document"], "System enquiry.md")
+        self.assertEqual(annotation["source_refs"][0]["document"], "System inquiry.md")
         self.assertIn("salience_score", annotation)
 
     def test_system_inquiry_partial_response_gets_one_followup(self):
@@ -2988,7 +2988,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertIn("anchors", selected_audit["B1-P1"])
         self.assertEqual(
             selected_audit["B1-P1"]["source_refs"][0]["document"],
-            "System enquiry.md",
+            "System inquiry.md",
         )
         self.assertNotIn("observation", selected_audit["B1-P1"])
         self.assertTrue(

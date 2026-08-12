@@ -1421,7 +1421,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / A2 Cross-sector coupling",
                     }
                 ],
@@ -1433,7 +1433,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / A1 Boundary of the measure",
                     }
                 ],
@@ -1445,7 +1445,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / A3 Feedback loops",
                     }
                 ],
@@ -1457,7 +1457,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 A4-P1 — DELAY-INCIDENCE",
                     }
                 ],
@@ -1469,7 +1469,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / B2 Untested assumptions",
                     }
                 ],
@@ -1481,7 +1481,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / B3 Worldview plurality and expertise",
                     }
                 ],
@@ -1493,7 +1493,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / B4 Boundary judgements of power and legitimacy",
                     }
                 ],
@@ -1505,7 +1505,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 A5-P1 — DEPTH-SELFEVAL-MISMATCH",
                     }
                 ],
@@ -1517,7 +1517,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / A6 Policy resistance and rebound",
                     }
                 ],
@@ -1529,7 +1529,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / A7 Capacity and stock constraints",
                     }
                 ],
@@ -1541,7 +1541,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 C1-P1 — UPFRONT-COST-INCIDENCE",
                     }
                 ],
@@ -1553,7 +1553,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 C2-P1 — PREDICTOR-UNNAMED",
                     }
                 ],
@@ -1565,7 +1565,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 C3-P1 — APPLICATION-BARRIER",
                     }
                 ],
@@ -1577,7 +1577,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / C4 Intergenerational and ecological burden",
                     }
                 ],
@@ -1589,7 +1589,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 D1-P1 — ASSUMPTION-UNDERMINE",
                     }
                 ],
@@ -1601,7 +1601,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 D2-P1 — SAME-GROUP-COMPOUND",
                     }
                 ],
@@ -1613,7 +1613,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 D3-P1 — DEPTH-CONCENTRATION",
                     }
                 ],
@@ -1625,7 +1625,7 @@ class ChatMitigationCreationSystemObservationsMixin:
                 "source_refs": [
                     {
                         "tier": "T3",
-                        "document": "System enquiry.md",
+                        "document": "System inquiry.md",
                         "locator": "§5.3 Lens catalogue / B framing fallback",
                     }
                 ],
@@ -1642,7 +1642,7 @@ class ChatMitigationCreationSystemObservationsMixin:
             [
                 {
                     "tier": "T3",
-                    "document": "System enquiry.md",
+                    "document": "System inquiry.md",
                     "locator": "§4.4",
                 }
             ],

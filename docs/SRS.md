@@ -18,7 +18,7 @@ Prepared for: Dr Transition product and engineering team
   - [4.5 Affected Population Group Review](#45-affected-population-group-review)
   - [4.6 Mitigation Measure Creation](#46-mitigation-measure-creation)
   - [4.7 Mitigation Evaluation](#47-mitigation-evaluation)
-  - [4.8 System Enquiry](#48-system-enquiry)
+  - [4.8 System Inquiry](#48-system-inquiry)
   - [4.9 PDF Report Export](#49-pdf-report-export)
   - [4.10 Cloud Sync](#410-cloud-sync)
 - [5. Data Handled by the Tool](#5-data-handled-by-the-tool)
@@ -30,7 +30,7 @@ Prepared for: Dr Transition product and engineering team
 
 ## 1. Purpose
 
-Dr Transition is a guided policy-analysis tool for exploring regional twin-transition risks and mitigation options. It helps authenticated users select a geography and sector, review hazards, create custom hazards, identify affected population groups, create mitigation measures, complete evaluation and system enquiry, and export the completed analysis as a PDF report.
+Dr Transition is a guided policy-analysis tool for exploring regional twin-transition risks and mitigation options. It helps authenticated users select a geography and sector, review hazards, create custom hazards, identify affected population groups, create mitigation measures, complete evaluation and system inquiry, and export the completed analysis as a PDF report.
 
 This SRS describes the current intended flow of the tool.
 
@@ -48,7 +48,7 @@ Login or sign up
 -> Review affected population groups
 -> Create or adopt mitigation measure
 -> Evaluate mitigation measure
--> Complete system enquiry
+-> Complete system inquiry
 -> Download PDF report
 ```
 
@@ -58,7 +58,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 
 | User | Description | Current capabilities |
 | --- | --- | --- |
-| Registered user | Authenticated analyst, practitioner, researcher, or stakeholder. | Run guided sessions, create hazards, create mitigation measures, complete system enquiry, export PDF reports. |
+| Registered user | Authenticated analyst, practitioner, researcher, or stakeholder. | Run guided sessions, create hazards, create mitigation measures, complete system inquiry, export PDF reports. |
 | Admin user | Authenticated user with admin role. | Access admin-only operations such as metrics and selected prompt/sync management actions. |
 | Cloud Sync client | Configured installation using a sync token. | Pull, push, or exchange permitted data bundles according to sync permissions. |
 
@@ -177,18 +177,18 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
    - Availability/Timeliness.
 5. After evaluation is complete, the tool moves to the next available workflow step.
 
-### 4.8 System Enquiry
+### 4.8 System Inquiry
 
-1. After mitigation evaluation, the user enters the system enquiry flow.
-2. The tool asks system-level enquiry questions based on the selected context, hazard, affected groups, mitigation measure, and evaluation results.
+1. After mitigation evaluation, the user enters the system inquiry flow.
+2. The tool asks system-level inquiry questions based on the selected context, hazard, affected groups, mitigation measure, and evaluation results.
 3. The user responds through the chat interface.
-4. The tool records system enquiry responses and telemetry according to configured retention and sync rules.
-5. After system enquiry is complete, the tool offers final PDF report export.
+4. The tool records system inquiry responses and telemetry according to configured retention and sync rules.
+5. After system inquiry is complete, the tool offers final PDF report export.
 
 ### 4.9 PDF Report Export
 
 1. The tool provides a PDF report export after mitigation-measure creation.
-2. The tool provides a final PDF report export after system enquiry completion.
+2. The tool provides a final PDF report export after system inquiry completion.
 3. The PDF is generated from the latest saved session state and related persisted records.
 4. The report does not require the user to re-enter information already collected in the workflow.
 5. The mitigation-completion report includes:
@@ -203,14 +203,14 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
    - evidence URLs or uploaded-evidence metadata;
    - validation and grounding summaries;
    - completed evaluation answers when available.
-6. The final system-enquiry report includes:
+6. The final system-inquiry report includes:
    - Policy Objectives;
    - Stakeholder and Hazard Analysis;
    - Identified Gaps and Areas Requiring Improvement;
    - Mitigation Measure Creation;
    - Mitigation Measure Evaluation;
    - Comparison of Mitigation Measures where available;
-   - System Enquiry findings;
+   - System Inquiry findings;
    - Conclusions and Recommendations.
 7. If optional report fields are missing, the tool omits them or marks them as not provided.
 8. The tool does not fabricate report content.
@@ -232,7 +232,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 10. Temporary knowledge is excluded from normal sync bundles.
 11. User-data synchronization occurs only when the sync client has user-data permission.
 12. Prompt synchronization and prompt management occur only when the sync client has prompt-management permission.
-13. System enquiry telemetry can be queued and synchronized through Cloud Sync.
+13. System inquiry telemetry can be queued and synchronized through Cloud Sync.
 14. In sync-only server mode, ordinary app APIs are blocked unless the deployment explicitly enables them.
 
 ## 5. Data Handled by the Tool
@@ -251,7 +251,7 @@ The tool stores and uses:
 - evidence URLs and uploaded-evidence metadata;
 - validation and grounding results;
 - evaluation answers;
-- system enquiry responses and telemetry;
+- system inquiry responses and telemetry;
 - prompt records;
 - Cloud Sync metadata;
 - generated PDF report metadata when report metadata is persisted.
@@ -354,12 +354,12 @@ The main interface is a chat workflow with:
 3. Given a mitigation clarification answer does not resolve the pending question, the tool returns a clarification-still-needed error instead of looping.
 4. Given target populations are identified, the user can confirm, add, remove, or edit them before saving.
 
-### 9.3 System Enquiry and PDF Export
+### 9.3 System Inquiry and PDF Export
 
-1. Given mitigation evaluation is complete, the tool starts system enquiry.
-2. Given system enquiry is complete, the tool offers final PDF report export.
+1. Given mitigation evaluation is complete, the tool starts system inquiry.
+2. Given system inquiry is complete, the tool offers final PDF report export.
 3. Given a user downloads the mitigation-completion PDF, the report includes the selected context, hazard, affected groups, mitigation measure, target populations, evidence references, and validation summary.
-4. Given a user downloads the final PDF after system enquiry, the report includes Policy Objectives, Stakeholder and Hazard Analysis, Identified Gaps, Mitigation Measure Creation, Mitigation Measure Evaluation, Comparison where available, System Enquiry findings, Conclusions, and Recommendations.
+4. Given a user downloads the final PDF after system inquiry, the report includes Policy Objectives, Stakeholder and Hazard Analysis, Identified Gaps, Mitigation Measure Creation, Mitigation Measure Evaluation, Comparison where available, System Inquiry findings, Conclusions, and Recommendations.
 5. Given optional report data is missing, the report omits it or marks it as not provided.
 6. Given a user requests another user's report, the tool rejects the request.
 

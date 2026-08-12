@@ -1477,7 +1477,7 @@ anchors, anchor counts, and the full anchor graph. User response text remains
 only in the annotation payload attached to the measure.
 
 Implemented probes carry per-probe source references back to the lens catalogue
-entries in `System enquiry.md §5.3`. Unknown future probes fall back to the
+entries in `System inquiry.md §5.3`. Unknown future probes fall back to the
 generic runtime schema reference in `§4.4` until their library records are
 authored.
 

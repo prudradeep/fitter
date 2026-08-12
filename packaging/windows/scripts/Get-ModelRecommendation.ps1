@@ -17,6 +17,7 @@ $ErrorActionPreference = "Stop"
 # -------------------------------------------------------
 
 $MinimumRamGb = 8
+$MinimumReportedRamGb = 7
 $CpuFallbackModel = "qwen3.5:2b"
 $CpuFallbackContextLength = 4096
 
@@ -114,15 +115,15 @@ $ModelTiers = @(
     },
     [ordered]@{
         Tier = "entry-gpu"
-        MinRamGb = 8
+        MinRamGb = 7
         MinGpuVramGb = 2
         RecommendedModel = "qwen3.5:2b"
         ContextLength = 4096
         Reason = "Entry-level dedicated GPU detected. Qwen 3.5 2B offers the best balance of speed, memory efficiency, and instruction following for low-end systems."
-    }
+    },
     [ordered]@{
         Tier = "cpu"
-        MinRamGb = 8
+        MinRamGb = 7
         MinGpuVramGb = 0
         RecommendedModel = "qwen3.5:2b"
         ContextLength = 2048
@@ -262,11 +263,11 @@ $GpuSupported = Test-GpuSupported -Name $GpuName
 # Model selection
 # -------------------------------------------------------
 
-if ($RamGb -lt $MinimumRamGb) {
+if ($RamGb -lt $MinimumReportedRamGb) {
     $recommendation = New-Recommendation `
         -RecommendedModel "none" `
         -Tier "unsupported" `
-        -Reason "The system has $RamGb GB RAM. At least $MinimumRamGb GB RAM is required for local Dr. Transition model inference." `
+        -Reason "The system reports $RamGb GB usable RAM. An 8 GB-class system must report at least $MinimumReportedRamGb GB usable RAM for local Dr. Transition model inference." `
         -InferenceMode "unsupported" `
         -RamGb $RamGb `
         -GpuVramGb $GpuVramGb `

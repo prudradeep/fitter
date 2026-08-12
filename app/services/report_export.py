@@ -50,12 +50,13 @@ def mitigation_report_pdf(
         current_user_id=current_user_id,
     )
     title = _scope_title(normalized_scope)
+    pdf_title = _pdf_scope_title(normalized_scope, title)
     lines = _report_lines(
         db,
         user_session,
         session_data,
         measures,
-        title=title,
+        title=pdf_title,
     )
     filename = f"dr-transition-{_slug(title)}-{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
     return ReportResult(filename=filename, content=_simple_pdf(lines))
@@ -129,6 +130,12 @@ def _scope_title(scope: str) -> str:
     if scope == REPORT_SCOPE_ALL_HAZARD:
         return "All mitigation measures created against this hazard from all users"
     return "Mitigation measure"
+
+
+def _pdf_scope_title(scope: str, title: str) -> str:
+    if scope in {REPORT_SCOPE_USER_HAZARD, REPORT_SCOPE_ALL_HAZARD}:
+        return ""
+    return title
 
 
 def _report_lines(
@@ -817,19 +824,24 @@ def _line_required_height(text: str) -> int:
 
 def _cover_page(title: str, subtitle: str, generated: str) -> list[str]:
     page = _page_shell(1, subtitle)
-    page.extend(
+    generated_y = 672 if not subtitle else 640
+    cover = [
+        _rect(0, 618, 612, 174, 0.07, 0.11, 0.20),
+        _rect(0, 600, 612, 20, 0.36, 0.16, 0.75),
+        _text(48, 735, "DR TRANSITION", "/F2", 13, 0.85, 0.78, 1.0),
+        _text(48, 700, "Mitigation Measure Report", "/F2", 25, 1, 1, 1),
+    ]
+    if subtitle:
+        cover.append(_text(49, 672, _fit_text(subtitle, 62), "/F1", 13, 0.90, 0.93, 1.0))
+    cover.extend(
         [
-            _rect(0, 618, 612, 174, 0.07, 0.11, 0.20),
-            _rect(0, 600, 612, 20, 0.36, 0.16, 0.75),
-            _text(48, 735, "DR TRANSITION", "/F2", 13, 0.85, 0.78, 1.0),
-            _text(48, 700, "Mitigation Measure Report", "/F2", 25, 1, 1, 1),
-            _text(49, 672, _fit_text(subtitle, 62), "/F1", 13, 0.90, 0.93, 1.0),
-            _text(49, 640, generated, "/F1", 9, 0.78, 0.84, 0.94),
+            _text(49, generated_y, generated, "/F1", 9, 0.78, 0.84, 0.94),
             _rect(48, 558, 516, 42, 0.96, 0.97, 1.0),
             _text(64, 582, "Professional policy report generated from the mitigation workflow", "/F2", 11, 0.10, 0.08, 0.18),
             _text(64, 564, "Structure follows the supplied report.docx template sections.", "/F1", 9, 0.36, 0.42, 0.52),
         ]
     )
+    page.extend(cover)
     return page
 
 
