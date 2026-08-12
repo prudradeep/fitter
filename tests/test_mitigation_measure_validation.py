@@ -280,7 +280,36 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertIsNone(session.pending_mitigation_measure)
         self.assertIn("restates the hazard", response.bot_message)
 
-    def test_concrete_measure_uses_measure_only_prompt_and_moves_to_clarification(self):
+    def test_concrete_contextual_measure_moves_to_clarification_without_llm_gate(self):
+        engine = _MitigationMeasureEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Heat stress",
+        )
+
+        with patch(
+            "app.services.validation_service.ask_llm_chat",
+            new=AsyncMock(side_effect=AssertionError("LLM should not be needed.")),
+        ) as ask_mock:
+            response = asyncio.run(
+                engine._capture_mitigation_measure(
+                    "test-session",
+                    session,
+                    "Introduce targeted grants for low-income households to install heat pumps.",
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertEqual(
+            session.pending_mitigation_measure,
+            "Introduce targeted grants for low-income households to install heat pumps.",
+        )
+        self.assertIsNone(ask_mock.await_args)
+
+    def test_measure_only_prompt_excludes_reason_when_llm_gate_is_needed(self):
         engine = _MitigationMeasureEngine()
         session = ChatSession(
             country="Germany",
@@ -310,16 +339,12 @@ class MitigationMeasureValidationTests(unittest.TestCase):
                 engine._capture_mitigation_measure(
                     "test-session",
                     session,
-                    "Introduce targeted grants for low-income households to install heat pumps.",
+                    "Introduce heat pump grants.",
                 )
             )
 
         self.assertFalse(response.error)
         self.assertEqual(response.step, "mitigation_clarity")
-        self.assertEqual(
-            session.pending_mitigation_measure,
-            "Introduce targeted grants for low-income households to install heat pumps.",
-        )
         call = ask_mock.await_args.kwargs
         self.assertIn("validate ONLY the mitigation measure itself", call["context"])
         self.assertIn("Be reasonably permissive", call["context"])
@@ -329,6 +354,110 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertIn("Do NOT evaluate or request the implementation reason or justification.", user_content)
         self.assertNotIn("Reason:", user_content)
         self.assertNotIn("Justification:", user_content)
+
+    def test_home_energy_affordability_grant_is_accepted_with_session_context(self):
+        engine = _MitigationMeasureEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            selected_hazard="HEATING AND COOLING COSTS INCREASE",
+        )
+
+        with patch(
+            "app.services.validation_service.ask_llm_chat",
+            new=AsyncMock(side_effect=AssertionError("LLM should not be needed.")),
+        ) as ask_mock:
+            response = asyncio.run(
+                engine._capture_mitigation_measure(
+                    "test-session",
+                    session,
+                    (
+                        "Targeted Home Energy Affordability Grant: Provide income-based "
+                        "grants for insulation, efficient windows, heat pumps, and "
+                        "heating-system upgrades for households experiencing repeated "
+                        "utility arrears."
+                    ),
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertEqual(session.phase, "mitigation_clarity")
+        self.assertIsNone(ask_mock.await_args)
+        self.assertIn("Targeted Home Energy Affordability Grant", session.pending_mitigation_measure)
+
+    def test_bill_credit_and_energy_assessment_measure_moves_to_clarification(self):
+        engine = _MitigationMeasureEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            selected_hazard="HEATING AND COOLING COSTS INCREASE",
+        )
+
+        with patch(
+            "app.services.validation_service.ask_llm_chat",
+            new=AsyncMock(side_effect=AssertionError("LLM should not be needed.")),
+        ):
+            response = asyncio.run(
+                engine._capture_mitigation_measure(
+                    "test-session",
+                    session,
+                    (
+                        "Provide temporary bill credits combined with free "
+                        "energy-efficiency assessments for low-income households "
+                        "until longer-term building upgrades are completed."
+                    ),
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertEqual(session.phase, "mitigation_clarity")
+        self.assertIn("temporary bill credits", session.pending_mitigation_measure)
+
+    def test_missing_context_llm_rejection_is_routed_to_clarification(self):
+        engine = _MitigationMeasureEngine()
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+        )
+        llm_payload = {
+            "status": "INVALID",
+            "summary": (
+                "The mitigation measure is provided but lacks specific details "
+                "regarding the hazard type, sector relevance, and alignment with "
+                "European Twin Transition objectives."
+            ),
+            "checks": {
+                "hazard_fit": False,
+                "sector_fit": False,
+                "country_region_fit": True,
+                "twin_transition_fit": False,
+                "policy_quality": True,
+            },
+            "clarification_question": "How does it relate to the selected hazard?",
+            "suggested_improvement": "State the hazard and sector fit.",
+        }
+
+        with patch(
+            "app.services.validation_service.ask_llm_chat",
+            new=AsyncMock(return_value=json.dumps(llm_payload)),
+        ):
+            response = asyncio.run(
+                engine._capture_mitigation_measure(
+                    "test-session",
+                    session,
+                    "Provide temporary bill credits.",
+                )
+            )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertEqual(session.phase, "mitigation_clarity")
 
     def test_short_meaningful_measure_is_sent_to_validator_not_locally_rejected(self):
         engine = _MitigationMeasureEngine()
@@ -398,6 +527,44 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             session.pending_mitigation_reason,
             "Clarification: It lowers upfront costs for low-income households affected by energy poverty.",
         )
+
+    def test_clarification_after_declining_evidence_does_not_ask_again(self):
+        engine = _MitigationClarificationEngine()
+        engine._validate_frozen_mitigation_inputs = AsyncMock(
+            return_value=ChatResponse(
+                session_id="test-session",
+                step="mitigation_target_population_review",
+                bot_message="validated without evidence",
+                options=[],
+                session={},
+                error=False,
+            )
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            selected_hazard="Energy poverty",
+            pending_mitigation_measure="Introduce targeted grants",
+            pending_mitigation_reason="",
+            pending_mitigation_evidence="",
+            mitigation_evidence_declined=True,
+            pending_mitigation_clarity_dimension="justification_clarity",
+        )
+
+        response = asyncio.run(
+            engine._handle_mitigation_clarity_answer(
+                "test-session",
+                session,
+                "It lowers upfront costs for low-income households affected by energy poverty.",
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "mitigation_target_population_review")
+        self.assertEqual(response.bot_message, "validated without evidence")
+        engine._validate_frozen_mitigation_inputs.assert_awaited_once()
+        self.assertEqual(engine._validate_frozen_mitigation_inputs.await_args.args[4], "")
 
     def test_repeated_mitigation_clarification_question_returns_error(self):
         engine = ChatService.__new__(ChatService)
@@ -917,6 +1084,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             engine._validate_frozen_mitigation_inputs.await_args.args[4],
             "",
         )
+        self.assertTrue(session.mitigation_evidence_declined)
 
     def test_mitigation_evidence_decision_open_text_no_i_dont_know_validates(self):
         engine = _MitigationEvidenceEngine()
@@ -948,6 +1116,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             engine._validate_frozen_mitigation_inputs.await_args.args[4],
             "",
         )
+        self.assertTrue(session.mitigation_evidence_declined)
 
     def test_mitigation_evidence_decision_accepts_url_in_open_text(self):
         engine = _MitigationEvidenceEngine()
@@ -979,6 +1148,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             engine._validate_frozen_mitigation_inputs.await_args.args[4],
             "Evidence URL: https://example.org/retrofit-study.pdf",
         )
+        self.assertFalse(session.mitigation_evidence_declined)
 
     def test_practical_considerations_ignore_schema_placeholder_heading(self):
         payload = {
@@ -2397,7 +2567,8 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         )
 
         self.assertEqual(response.step, "system_inquiry_followup")
-        self.assertIn("Name the group", response.bot_message)
+        self.assertIn("Optional coverage check", response.bot_message)
+        self.assertIn("keep the current target population as is", response.bot_message)
         pending = session.system_inquiry_pending_followup or {}
         adjudication = pending.get("adjudication") or {}
         self.assertEqual(adjudication["followup_type"], "name_group")
@@ -2643,6 +2814,9 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertEqual(summary["untargeted_groups"], ["Utility arrears: Yes, twice or more"])
         self.assertNotIn("Countries with higher Electricity consumption", formatted)
         self.assertIn("Utility arrears: Yes, twice or more", formatted)
+        self.assertIn("Optional coverage suggestion", formatted)
+        self.assertIn("not mandatory", formatted)
+        self.assertNotIn("not named in the mitigation target population", formatted)
 
     def test_system_inquiry_complete_ask_another_question_prompts_for_input(self):
         service = ChatService.__new__(ChatService)
@@ -3004,6 +3178,8 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertIn("Completion score", report)
         self.assertIn("D4 hazard coverage", report)
         self.assertIn("D5 group coverage", report)
+        self.assertIn("consider adding mitigation plans", report)
+        self.assertIn("not mandatory", report)
         self.assertIn("Distributional incidence", report)
         self.assertIn("Add an upfront grant route", report)
         self.assertIn("approved installers directly", report)

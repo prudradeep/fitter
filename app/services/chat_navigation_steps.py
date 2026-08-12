@@ -308,6 +308,7 @@ class ChatNavigationStepsMixin:
     def _clear_mitigation_clarity_state(session: ChatSession) -> None:
         session.pending_mitigation_reason = None
         session.pending_mitigation_evidence = None
+        session.mitigation_evidence_declined = False
         session.pending_mitigation_clarity_dimension = None
         session.mitigation_clarity_turns = 0
         session.mitigation_clarification_history = None

@@ -174,6 +174,14 @@ class ChatMitigationCreationWorkflowMixin:
             return clarity_response
 
         frozen_inputs = session.mitigation_frozen_inputs or {}
+        if session.mitigation_evidence_declined:
+            return await self._validate_frozen_mitigation_inputs(
+                session_id,
+                session,
+                frozen_inputs.get("measure_description") or mitigation_measure,
+                frozen_inputs.get("justification") or reason,
+                "",
+            )
         return self._mitigation_evidence_decision_step(
             session_id,
             session,
@@ -394,7 +402,7 @@ class ChatMitigationCreationWorkflowMixin:
                 f"**Currently clarifying: {dimension_label}**\n\n"
                 f"Please answer these questions in one response:\n\n{question_list}\n\n"
                 "I will use your answers only to clarify the measure and "
-                "justification. Evidence will be collected next."
+                "justification."
             ),
             options=self._mitigation_clarity_options(),
             session=session.summary(),
@@ -681,6 +689,7 @@ class ChatMitigationCreationWorkflowMixin:
                         "extractable text or a supported file: PDF, DOCX, MD, or TXT."
                     ),
                 )
+            session.mitigation_evidence_declined = False
             return await self._validate_frozen_mitigation_inputs(
                 session_id,
                 session,
@@ -689,8 +698,11 @@ class ChatMitigationCreationWorkflowMixin:
                 evidence_text,
             )
         if action == normalize("Yes"):
+            session.mitigation_evidence_declined = False
             return self._mitigation_evidence_input_step(session_id, session)
         if action == normalize("No"):
+            session.mitigation_evidence_declined = True
+            session.pending_mitigation_evidence = ""
             return await self._validate_frozen_mitigation_inputs(
                 session_id,
                 session,
@@ -762,6 +774,7 @@ class ChatMitigationCreationWorkflowMixin:
             )
         if action == normalize("Skip"):
             evidence_text = ""
+            session.mitigation_evidence_declined = True
         else:
             evidence_text = normalize_evidence_message(message)
             if not evidence_text:
@@ -782,6 +795,7 @@ class ChatMitigationCreationWorkflowMixin:
                         "extractable text or a supported file: PDF, DOCX, MD, or TXT."
                     ),
                 )
+            session.mitigation_evidence_declined = False
         return await self._validate_frozen_mitigation_inputs(
             session_id,
             session,

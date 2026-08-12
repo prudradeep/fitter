@@ -1487,10 +1487,11 @@ class ChatMitigationCreationPolicyMixin:
                 )
             if untargeted:
                 lines.append(
-                    f"- D5 group coverage: {len(untargeted)} affected group"
-                    f"{' is' if len(untargeted) == 1 else 's are'} not named in the mitigation target population: "
+                    f"- D5 group coverage: consider adding mitigation plans for "
+                    f"{len(untargeted)} left-out affected group"
+                    f"{'' if len(untargeted) == 1 else 's'}: "
                     + "; ".join(untargeted[:5])
-                    + "."
+                    + ". This is encouraged for completeness, but it is not mandatory."
                 )
 
         for annotation in annotations:

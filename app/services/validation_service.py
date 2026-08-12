@@ -1639,6 +1639,10 @@ class ChatValidationServiceMixin:
             "retrofits",
             "renovation",
             "renovations",
+            "credit",
+            "credits",
+            "assessment",
+            "assessments",
         }
         has_intervention = any(term in normalized.split() for term in intervention_terms)
         if token_count < 2 or (token_count < 5 and not has_intervention):
@@ -1653,6 +1657,16 @@ class ChatValidationServiceMixin:
                     "Name the intervention or action, such as grants, subsidies, retrofits, smart meters, or infrastructure upgrades."
                 ),
             )
+        if self._mitigation_measure_is_concrete_for_session_context(
+            session,
+            normalized,
+            token_count,
+            intervention_terms,
+        ):
+            return self._mitigation_measure_only_review_payload(
+                "VALID",
+                "The mitigation measure is concrete enough for the selected context.",
+            )
         return (
             self._mitigation_measure_only_review_payload(
                 "VALID",
@@ -1663,9 +1677,72 @@ class ChatValidationServiceMixin:
         )
 
     @staticmethod
+    def _mitigation_measure_is_concrete_for_session_context(
+        session: ChatSession,
+        normalized_measure: str,
+        token_count: int,
+        intervention_terms: set[str],
+    ) -> bool:
+        if token_count < 9:
+            return False
+        if not (session.sector and (session.selected_hazard or session.pending_hazard)):
+            return False
+        tokens = set(normalized_measure.split())
+        intervention_count = len(tokens & intervention_terms)
+        if intervention_count < 2:
+            return False
+        target_terms = {
+            "household",
+            "households",
+            "tenant",
+            "tenants",
+            "resident",
+            "residents",
+            "worker",
+            "workers",
+            "families",
+            "vulnerable",
+            "income",
+            "arrears",
+            "rural",
+            "suburban",
+            "homeowners",
+            "low",
+        }
+        delivery_terms = {
+            "grant",
+            "grants",
+            "subsidy",
+            "subsidies",
+            "credit",
+            "credits",
+            "loan",
+            "loans",
+            "support",
+            "programme",
+            "program",
+            "advice",
+            "service",
+            "services",
+            "upgrade",
+            "upgrades",
+        }
+        return bool(tokens & target_terms) and bool(tokens & delivery_terms)
+
+    @staticmethod
     def _normalize_mitigation_measure_only_review(payload: dict[str, object]) -> dict[str, object]:
         status = str(payload.get("status") or "").strip().upper()
         if status not in {"VALID", "INVALID", "NEEDS_CLARIFICATION"}:
+            status = "NEEDS_CLARIFICATION"
+        summary = str(payload.get("summary") or "").strip()
+        clarification_question = str(payload.get("clarification_question") or "").strip()
+        suggested_improvement = str(payload.get("suggested_improvement") or "").strip()
+        explanatory_text = " ".join(
+            part for part in (summary, clarification_question, suggested_improvement) if part
+        ).casefold()
+        if status == "INVALID" and ChatValidationServiceMixin._is_missing_context_rejection(
+            explanatory_text
+        ):
             status = "NEEDS_CLARIFICATION"
         checks = payload.get("checks") if isinstance(payload.get("checks"), dict) else {}
         normalized_checks: dict[str, bool] = {}
@@ -1685,11 +1762,38 @@ class ChatValidationServiceMixin:
                 normalized_checks[key] = status == "VALID"
         return {
             "status": status,
-            "summary": str(payload.get("summary") or "").strip(),
+            "summary": summary,
             "checks": normalized_checks,
-            "clarification_question": str(payload.get("clarification_question") or "").strip(),
-            "suggested_improvement": str(payload.get("suggested_improvement") or "").strip(),
+            "clarification_question": clarification_question,
+            "suggested_improvement": suggested_improvement,
         }
+
+    @staticmethod
+    def _is_missing_context_rejection(reason: str) -> bool:
+        missing_context_terms = (
+            "lacks specific details",
+            "without these details",
+            "cannot be fully validated",
+            "hazard type",
+            "sector relevance",
+            "alignment with",
+            "specific objective",
+            "does not explicitly state the hazard",
+            "does not state the sector",
+            "missing context",
+        )
+        hard_mismatch_terms = (
+            "clear mismatch",
+            "clearly belongs to another sector",
+            "explicitly refers to another country",
+            "unrelated to the hazard",
+            "not a mitigation measure",
+            "contradicts",
+            "geographically inconsistent",
+        )
+        return any(term in reason for term in missing_context_terms) and not any(
+            term in reason for term in hard_mismatch_terms
+        )
 
     @classmethod
     def _mitigation_measure_only_review_payload(

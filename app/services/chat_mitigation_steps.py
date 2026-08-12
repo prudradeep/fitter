@@ -683,7 +683,18 @@ class ChatMitigationStepsMixin:
                 input_mode="mitigation_measure",
                 error=True,
             )
-        if str(input_review.get("status") or "").upper() != "VALID":
+        review_status = str(input_review.get("status") or "").upper()
+        if review_status == "NEEDS_CLARIFICATION":
+            checks = input_review.get("checks") if isinstance(input_review.get("checks"), dict) else {}
+            if bool(checks.get("policy_quality", True)):
+                session.pending_mitigation_measure = mitigation_measure
+                return await self._start_mitigation_clarification_step(
+                    session_id,
+                    session,
+                    mitigation_measure,
+                    initial_reason or "",
+                )
+        if review_status != "VALID":
             reason = self._mitigation_measure_validation_message(input_review)
             return ChatResponse(
                 session_id=session_id,
@@ -885,6 +896,7 @@ class ChatMitigationStepsMixin:
         session.pending_mitigation_measure = mitigation_measure
         session.pending_mitigation_reason = initial_reason.strip()
         session.pending_mitigation_evidence = ""
+        session.mitigation_evidence_declined = False
         session.mitigation_frozen_inputs = None
         clarity_runner = getattr(self, "_run_mitigation_clarity_track", None)
         if clarity_runner is not None:
@@ -915,6 +927,7 @@ class ChatMitigationStepsMixin:
         session.pending_mitigation_measure = mitigation_measure
         session.pending_mitigation_reason = initial_reason.strip()
         session.pending_mitigation_evidence = ""
+        session.mitigation_evidence_declined = False
         session.pending_mitigation_clarity_dimension = "justification_clarity"
         session.mitigation_clarity_turns += 1
         question = (

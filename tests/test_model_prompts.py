@@ -107,6 +107,8 @@ class ModelPromptTests(unittest.TestCase):
                 self.assertEqual(prompt_path.parent.name, directory)
                 self.assertTrue(prompt.startswith(f"MODEL OPTIMIZATION - {model}"))
                 self.assertIn("TASK RESULT GUARDRAILS - validation and classification", prompt)
+                self.assertIn("Do not require the mitigation measure text itself to repeat", prompt)
+                self.assertIn("Do not return INVALID for missing labels alone", prompt)
 
     def test_user_templates_are_not_prefixed_with_model_tuning(self) -> None:
         for model in MODEL_PROMPT_DIRS:

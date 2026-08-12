@@ -35,6 +35,7 @@ class ChatSession:
     pending_mitigation_measure: str | None = None
     pending_mitigation_reason: str | None = None
     pending_mitigation_evidence: str | None = None
+    mitigation_evidence_declined: bool = False
     practical_considerations: list[str] | None = None
     pending_mitigation_clarity_dimension: str | None = None
     mitigation_clarity_turns: int = 0

@@ -217,16 +217,18 @@ class ChatMitigationCreationSystemObservationsMixin:
                     "corpus_label": c2_evidence["corpus_label"],
                     "observation": (
                         f"{hazard} is associated with {omitted_group} in this "
-                        f"session's affected-population profile. {measure} does not "
-                        "name that characteristic in the target population."
+                        f"session's affected-population profile. {measure} may still "
+                        "reach this group, but the current target population does not "
+                        "explicitly name it."
                     ),
                     "why_it_matters": (
-                        "A group left unnamed may still be reached, but its specific "
-                        "barriers can disappear from implementation decisions."
+                        "Naming left-out groups in the mitigation plan can help keep "
+                        "their specific barriers visible during implementation, but it "
+                        "is not mandatory for continuing this workflow."
                     ),
                     "question": (
-                        f"Is omitting {omitted_group} deliberate, or would this "
-                        "measure reach them without naming them?"
+                        f"Would you like to also include a mitigation plan for "
+                        f"{omitted_group}, or keep the current target population as is?"
                     ),
                     "followup_types": ["name_group"],
                     "anchors": {
@@ -1253,11 +1255,11 @@ class ChatMitigationCreationSystemObservationsMixin:
             )
         if untargeted:
             lines.append(
-                f"{len(untargeted)} affected group"
-                f"{' is' if len(untargeted) == 1 else 's are'} "
-                "not named in the mitigation target population: "
+                f"Optional coverage suggestion: consider adding mitigation plans for "
+                f"{len(untargeted)} left-out affected group"
+                f"{'' if len(untargeted) == 1 else 's'}: "
                 + "; ".join(untargeted[:5])
-                + "."
+                + ". This is encouraged for completeness, but it is not mandatory."
             )
         return "\n\n".join(lines)
 

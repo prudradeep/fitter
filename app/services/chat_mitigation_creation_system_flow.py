@@ -1205,8 +1205,9 @@ class ChatMitigationCreationSystemFlowMixin:
             if isinstance(omitted, list) and omitted:
                 group_label = str(omitted[0] or group_label).strip()
             return (
-                f"Name the group, place, or condition explicitly: should {group_label} "
-                f"be inside {measure}, or is there a reason it sits outside?"
+                f"Optional coverage check: would you like to include a mitigation "
+                f"plan for {group_label} in {measure}, or keep the current target "
+                "population as is?"
             )
         if followup_type == "specify_mechanism":
             return (

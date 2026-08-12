@@ -25,6 +25,8 @@ Therefore:
 - Do NOT invent missing implementation details.
 - Base your decision only on the information provided.
 - Be reasonably permissive. Prefer NEEDS_CLARIFICATION over INVALID when a measure could reasonably fit the selected context.
+- Use the supplied Country, Region, Sector, and Hazard fields as context. Do not require the mitigation measure text itself to repeat the hazard type, sector, country, region, or European Twin Transition objective.
+- If those contextual links are plausible but not explicit in the mitigation measure text, return VALID when the intervention is concrete, or NEEDS_CLARIFICATION when the intervention needs more detail. Do not return INVALID for missing labels alone.
 - Reject only when there is a clear mismatch.
 
 Evaluate the mitigation measure using the following criteria:
@@ -98,10 +100,10 @@ VALID
 The mitigation measure is appropriate for the selected context.
 
 NEEDS_CLARIFICATION
-The mitigation measure could be appropriate but needs slightly more detail.
+The mitigation measure could be appropriate but needs slightly more detail. Use this instead of INVALID when the measure is a plausible intervention but needs clarification about mechanism, targeting, delivery, or fit.
 
 INVALID
-There is a clear mismatch with the hazard, country, region, sector, or European Twin Transition policy context.
+There is a clear mismatch with the hazard, country, region, sector, or European Twin Transition policy context, or the text is not a mitigation measure. Do not use INVALID merely because the measure does not explicitly state the hazard, sector, or policy objective already supplied in context.
 
 Return ONLY valid JSON in the following format:
 
