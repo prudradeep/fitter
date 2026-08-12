@@ -2,11 +2,13 @@ import json
 import unittest
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from io import BytesIO
 from typing import Iterator
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
+from pypdf import PdfReader
 from sqlalchemy import create_engine
 from sqlalchemy import inspect
 from sqlalchemy import select
@@ -26,8 +28,10 @@ from app.models import (
     Prompt,
     Region,
     Sector,
+    SystemHazardSocioDemographic,
     UserChatMessage,
     UserMitigationMeasure,
+    UserQuestionResponse,
     UserSession,
 )
 from app.resource_paths import resource_path
@@ -337,6 +341,121 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(audit.user_id, self.user.id)
         self.assertEqual(audit.target_type, "session")
 
+    def test_mitigation_report_export_returns_pdf(self) -> None:
+        session = UserSession(
+            session_key="report-session",
+            title="Report",
+            user_id=self.user.id,
+            session_data=json.dumps(
+                {
+                    "country": "Germany",
+                    "region": "Baden-Württemberg",
+                    "sector": "Energy",
+                    "selected_hazard": "MISSING OUT ON SOLAR SAVINGS",
+                    "mitigation_record_id": "measure-report-1",
+                    "mitigation_measure": "Provide targeted rooftop solar subsidies.",
+                    "affected_profiles": ["Low-income households"],
+                }
+            ),
+        )
+        question = EvaluationQuestion(
+            id="report-q1",
+            category="The transformative impact",
+            chart_title="Direct Effect",
+            question="Direct Effect",
+            sort_order=1,
+            active=True,
+        )
+        other_user = AppUser(
+            email="other@example.com",
+            name="Other",
+            password_hash=hash_password("OldPassword!1"),
+            designation="Lead",
+            organisation_type="Local",
+            organisation_name="Other Org",
+            role="user",
+        )
+        other_session = UserSession(
+            session_key="other-report-session",
+            title="Other report",
+            user_id=None,
+            session_data="{}",
+        )
+        self.db.add_all([session, question, other_user, other_session])
+        self.db.commit()
+        self.db.refresh(session)
+        self.db.refresh(other_user)
+        other_session.user_id = other_user.id
+        self.db.add_all(
+            [
+                UserMitigationMeasure(
+                    id="measure-report-1",
+                    user_session_id=session.id,
+                    system_hazard_id="hazard-1",
+                    measure="Provide targeted rooftop solar subsidies.",
+                    reason="It lowers upfront installation cost for exposed households.",
+                    target_population=json.dumps(["Low-income households"]),
+                    system_inquiry_json=json.dumps(
+                        {
+                            "summary": "1 reflection response was recorded.",
+                            "annotations": [
+                                {
+                                    "lens_title": "Distributional incidence",
+                                    "resolution_state": "addressed",
+                                    "user_response": "Prioritise lower-income households.",
+                                }
+                            ],
+                        }
+                    ),
+                ),
+                UserMitigationMeasure(
+                    id="measure-report-2",
+                    user_session_id=other_session.id,
+                    system_hazard_id="hazard-1",
+                    measure="Offer low-interest solar loans.",
+                    reason="It spreads installation costs over time.",
+                    target_population=json.dumps(["Homeowner households"]),
+                ),
+                UserQuestionResponse(
+                    user_session_id=session.id,
+                    mitigation_measure_id="measure-report-1",
+                    question_id="report-q1",
+                    category="The transformative impact",
+                    response_text="8",
+                    score=8,
+                    reason="Strong direct affordability benefit.",
+                    evidence="Evaluation note",
+                ),
+                SystemHazardSocioDemographic(
+                    id="profile-report-1",
+                    system_hazard_id="hazard-1",
+                    sector_id="energy",
+                    variable_name="issue_high_energy_bills",
+                    profile="Low-income households with high energy bills",
+                    explanation="This group is exposed to high upfront installation costs.",
+                    statistical_basis="Survey and sector-prompt evidence.",
+                    source="sector_prompt",
+                ),
+            ]
+        )
+        self.db.commit()
+
+        response = self.client.get("/api/sessions/report-session/report?scope=all_hazard")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/pdf")
+        self.assertIn("attachment;", response.headers["content-disposition"])
+        self.assertTrue(response.content.startswith(b"%PDF-1.4"))
+        self.assertIn(b"%%EOF", response.content[-32:])
+        reader = PdfReader(BytesIO(response.content))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        normalized_text = " ".join(text.split())
+        self.assertIn("high energy bills", normalized_text)
+        self.assertIn("Sector statistical data", normalized_text)
+        self.assertIn("Affected and target populations", normalized_text)
+        self.assertIn("Target population", normalized_text)
+        self.assertIn("This comparison brings together 2 mitigation measures", normalized_text)
+
     def test_restore_session_uses_persisted_current_step_options(self) -> None:
         session = UserSession(
             session_key="mitigation-session",
@@ -577,6 +696,60 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(
             restored_data["mitigation_target_population"],
             ["Low-income households", "Homeowner households"],
+        )
+
+    def test_restore_session_recovers_system_inquiry_complete_report_options(self) -> None:
+        session = UserSession(
+            session_key="stale-system-inquiry-session",
+            title="System inquiry",
+            user_id=self.user.id,
+            session_data=json.dumps(
+                {
+                    "country": "Germany",
+                    "region": "Baden-Württemberg",
+                    "sector": "Energy",
+                    "phase": "complete",
+                    "selected_hazard": "MISSING OUT ON SOLAR SAVINGS",
+                    "mitigation_measure": "Provide targeted rooftop solar subsidies.",
+                    "mitigation_record_id": "measure-system-inquiry-1",
+                }
+            ),
+        )
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        self.db.add_all(
+            [
+                UserMitigationMeasure(
+                    id="measure-system-inquiry-1",
+                    user_session_id=session.id,
+                    measure="Provide targeted rooftop solar subsidies.",
+                    reason="It lowers upfront installation cost.",
+                    target_population=json.dumps(["Low-income households"]),
+                ),
+                UserChatMessage(
+                    user_session_id=session.id,
+                    role="bot",
+                    content="<h2>System Inquiry Recorded</h2><p>System inquiry was skipped.</p>",
+                    is_error=False,
+                    created_at=datetime(2026, 1, 1, 12, 0, 0),
+                ),
+            ]
+        )
+        self.db.commit()
+
+        response = self.client.get("/api/sessions/stale-system-inquiry-session")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["step"], "system_inquiry_complete")
+        self.assertIn(
+            "Download report - Mitigation measure",
+            [option["label"] for option in payload["options"]],
+        )
+        self.assertIn(
+            "Download report - All mitigation measures created against this hazard from all users",
+            [option["label"] for option in payload["options"]],
         )
 
     def test_session_import_rejects_oversized_request_before_read(self) -> None:

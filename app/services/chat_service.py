@@ -597,6 +597,16 @@ class ChatService(
                     current_session_id,
                     session,
                 )
+            if normalize(clean_message).startswith(normalize("Download report")):
+                return self._repeat_current_options(
+                    current_session_id,
+                    session,
+                    (
+                        "Use one of the report download buttons below. Reports are "
+                        "generated as PDF files only."
+                    ),
+                    False,
+                )
             return await self._deep_dive(current_session_id, session, clean_message)
 
         if session.phase == "mitigation":

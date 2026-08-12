@@ -203,6 +203,11 @@ const appState = {
   currentOptions: [],
   currentOtherOptions: [],
 };
+const reportOptionScopes = new Map([
+  ["download report mitigation measure", "current"],
+  ["download report all mitigation measures created by me against this hazard", "user_hazard"],
+  ["download report all mitigation measures created against this hazard from all users", "all_hazard"],
+]);
 
 let sessionId = localStorage.getItem(sessionKey);
 let loading = false;
@@ -3410,6 +3415,43 @@ function handleLocalHazardAction(label = "") {
   return true;
 }
 
+function reportScopeForOption(label = "") {
+  return reportOptionScopes.get(normalizeForMatch(label)) || "";
+}
+
+async function downloadMitigationReport(scope) {
+  if (!sessionId || !scope) return;
+  const response = await fetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/report?scope=${encodeURIComponent(scope)}`,
+  );
+  if (response.status === 401) {
+    window.location.href = "/login";
+    return;
+  }
+  if (!response.ok) {
+    let detail = "Could not generate the report.";
+    try {
+      const payload = await response.json();
+      detail = payload.detail || detail;
+    } catch (_error) {
+      // Keep the generic message when the server did not return JSON.
+    }
+    throw new Error(detail);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = filenameMatch?.[1] || `dr-transition-report-${scope}.pdf`;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function renderTargetPopulationOptions(options = []) {
   const previouslySelected = selectedTargetPopulationLabels(currentTargetPopulationQuestion?.id);
   const normalOptions = options.filter(
@@ -3478,6 +3520,19 @@ function createOptionButton(label, extraClass = "") {
   button.addEventListener("click", () => {
     pauseSpeech();
     collapseExpandedMessages();
+    const reportScope = reportScopeForOption(label);
+    if (reportScope) {
+      button.disabled = true;
+      downloadMitigationReport(reportScope)
+        .catch((error) => {
+          console.error("Report download failed", error);
+          addMessage("bot", error.message || "Could not generate the report.", true);
+        })
+        .finally(() => {
+          button.disabled = false;
+        });
+      return;
+    }
     if (label === "Dive deeper into statistical findings") {
       openStatsDeepDiveDialog();
       return;

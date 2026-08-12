@@ -101,7 +101,10 @@ SYSTEM_INQUIRY_FOLLOWUP_OPTIONS = [
 ]
 
 SYSTEM_INQUIRY_COMPLETE_OPTIONS = [
-    Option(id=1, label="Ask another question"),
+    Option(id=1, label="Download report - Mitigation measure"),
+    Option(id=2, label="Download report - All mitigation measures created by me against this hazard"),
+    Option(id=3, label="Download report - All mitigation measures created against this hazard from all users"),
+    Option(id=4, label="Ask another question"),
 ]
 
 OTHER_NAV_OPTIONS = [

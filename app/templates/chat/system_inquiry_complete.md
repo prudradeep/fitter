@@ -4,4 +4,10 @@
 
 {{ coverage_summary }}
 
-You can ask a follow-up question about the session, or start a new session when ready.
+Downloadable report options are available below. Reports are generated in PDF format only:
+
+- Mitigation measure
+- All mitigation measures created by you against this hazard
+- All mitigation measures created against this hazard from all users, put together
+
+You can also ask a follow-up question about the session, or start a new session when ready.

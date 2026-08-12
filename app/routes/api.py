@@ -35,6 +35,7 @@ from app.services.hazard_salience import country_hazard_salience
 from app.services.prompt_loader import clear_prompt_caches
 from app.services.prompt_store import list_prompts, prompt_metadata, seed_prompts_from_files_for_session
 from app.services.rate_limit import record_failed_attempt, reset_rate_limit, retry_after_seconds
+from app.services.report_export import REPORT_SCOPES, mitigation_report_pdf
 from app.services.sector_prompt_rag import SectorPromptRagService, SECTOR_PROMPT_SCOPE
 from app.services.sync_permissions import sync_client_permission_enabled
 
@@ -85,6 +86,15 @@ def _session_data_needs_message_recovery(
 ) -> bool:
     if not messages:
         return False
+    latest_bot = next(
+        (message for message in reversed(messages) if message.role == "bot" and not message.is_error),
+        None,
+    )
+    if latest_bot is not None:
+        latest_phase = _recoverable_phase_from_bot_text(_plain_message_text(latest_bot.content))
+        saved_phase = str(session_data.get("phase") or "").strip() if session_data else ""
+        if latest_phase and saved_phase != latest_phase:
+            return True
     if not session_data:
         return True
     has_context = any(
@@ -99,6 +109,12 @@ def _session_data_needs_message_recovery(
     return any(_message_indicates_later_phase(message.content) for message in messages)
 
 
+def _recoverable_phase_from_bot_text(text: str) -> str:
+    if "System Inquiry Recorded" in text:
+        return "system_inquiry_complete"
+    return ""
+
+
 def _message_indicates_later_phase(content: str) -> bool:
     text = _plain_message_text(content)
     indicators = (
@@ -110,6 +126,7 @@ def _message_indicates_later_phase(content: str) -> bool:
         "Target population",
         "Concept Comparision",
         "Concept Comparison",
+        "System Inquiry Recorded",
     )
     return any(indicator in text for indicator in indicators)
 
@@ -168,7 +185,16 @@ def _recover_session_data_from_messages(
         return recovered
 
     latest_text = _plain_message_text(latest_bot.content)
-    if re.search(r"\bQuestion\s+\d+\s+of\s+\d+\b", latest_text) and "score slider" in latest_text:
+    if "System Inquiry Recorded" in latest_text:
+        recovered.update(
+            {
+                "phase": "system_inquiry_complete",
+                "current_step": "system_inquiry_complete",
+                "current_input_mode": "text",
+                "current_options": [],
+            }
+        )
+    elif re.search(r"\bQuestion\s+\d+\s+of\s+\d+\b", latest_text) and "score slider" in latest_text:
         recovered.update(_recover_evaluation_state(service, messages, latest_text))
     elif "Do you have evidence" in latest_text:
         recovered.update(
@@ -660,6 +686,50 @@ async def export_session(
             for message in rows
         ],
     }
+
+
+@router.get("/sessions/{session_key}/report")
+async def export_mitigation_report(
+    session_key: str,
+    scope: str = Query(default="current", max_length=40),
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    user_session = db.scalar(
+        select(UserSession).where(
+            UserSession.session_key == session_key,
+            UserSession.user_id == current_user.id,
+        )
+    )
+    if user_session is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    if scope not in REPORT_SCOPES:
+        raise HTTPException(status_code=400, detail="Unknown report scope.")
+
+    session_data: dict[str, object] = {}
+    if user_session.session_data:
+        try:
+            parsed = json.loads(user_session.session_data)
+            if isinstance(parsed, dict):
+                session_data = parsed
+        except json.JSONDecodeError:
+            session_data = {}
+    try:
+        report = mitigation_report_pdf(
+            db,
+            user_session,
+            session_data,
+            scope=scope,
+            current_user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(
+        content=report.content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{report.filename}"'},
+    )
 
 
 @router.post("/sessions/import")
