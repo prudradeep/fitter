@@ -1186,8 +1186,10 @@ function renderStageIcons(key, session = {}, options = appState.currentOptions, 
   if (!stageIconGrid) return;
   const hazardContextOnly = key === "hazards" && shouldShowHazardContextOnly();
   const practicalVisible = shouldShowPracticalConsiderationsVisual(appState.currentStep, session);
-  if (key === "mitigation") {
-    renderedStageCardsKey = `icons-${key}-hidden`;
+  const mitigationMeasure = String(session?.mitigation_measure || "").trim();
+  const mitigationContextOnly = mitigationMeasure && ["mitigation", "evaluation"].includes(key);
+  if (mitigationContextOnly) {
+    renderedStageCardsKey = `icons-${key}-mitigation-context-hidden`;
     clearElement(stageIconGrid);
     stageIconGrid.hidden = true;
     if (!keepMap && stageMap) stageMap.hidden = true;

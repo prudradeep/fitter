@@ -21,6 +21,7 @@ class ChatMitigationCreationSystemFlowMixin:
         session.system_inquiry_annotations = []
         session.system_inquiry_pending_followup = None
         session.system_inquiry_coverage_summary = self._system_inquiry_coverage_summary(session)
+        session.system_inquiry_coverage_completion_done = False
         session.system_inquiry_skipped = False
         session.phase = "system_inquiry_intro"
 
@@ -61,6 +62,7 @@ class ChatMitigationCreationSystemFlowMixin:
         session.system_inquiry_annotations = []
         session.system_inquiry_pending_followup = None
         session.system_inquiry_coverage_summary = self._system_inquiry_coverage_summary(session)
+        session.system_inquiry_coverage_completion_done = False
         session.system_inquiry_skipped = False
         session.phase = "system_inquiry_intro"
 
@@ -259,6 +261,64 @@ class ChatMitigationCreationSystemFlowMixin:
             error=bool(error_reason),
         )
 
+    def _system_inquiry_coverage_completion_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error_reason: str = "",
+    ) -> ChatResponse:
+        groups = self._system_inquiry_untargeted_coverage_groups(session)
+        observation = {
+            "probe_id": "D5-COVERAGE",
+            "lens_id": "D5",
+            "family": "D_portfolio",
+            "tier": "optional",
+            "title": "Affected group completeness",
+            "corpus_label": "unproven",
+            "observation": "Some affected groups are not named in the current mitigation coverage.",
+            "question": "Add an optional completeness note for the left-out affected groups.",
+            "followup_types": ["coverage_completion"],
+            "anchors": {
+                "measure": session.mitigation_measure or "the measure",
+                "hazard": session.selected_hazard or "the selected hazard",
+                "omitted_groups": groups,
+            },
+            "salience_score": 0.0,
+        }
+        session.phase = "system_inquiry_followup"
+        session.system_inquiry_pending_followup = {
+            "index": len(session.system_inquiry_observations or []),
+            "observation": observation,
+            "user_response": "",
+            "adjudication": {
+                "resolution_state": "open",
+                "evaluation": "Optional affected-group completeness note requested.",
+                "followup_question": self._system_inquiry_coverage_completion_question(groups),
+                "followup_type": "coverage_completion",
+            },
+        }
+        message = render_message(
+            "system_inquiry_followup.md",
+            evaluation="",
+            followup_question=self._system_inquiry_coverage_completion_question(groups),
+        )
+        if error_reason:
+            message = (
+                render_message("input_validation_failed.md", reason=error_reason)
+                + "\n\n"
+                + message
+            )
+        return ChatResponse(
+            session_id=session_id,
+            step="system_inquiry_followup",
+            bot_message=message,
+            options=[Option(id=1, label="Skip"), Option(id=2, label="End system inquiry")],
+            session=session.summary(),
+            input_mode="textarea",
+            error=bool(error_reason),
+        )
+
     async def _handle_system_inquiry_followup(
         self,
         session_id: str,
@@ -287,6 +347,31 @@ class ChatMitigationCreationSystemFlowMixin:
             if isinstance(pending.get("adjudication"), dict)
             else {}
         )
+        followup_type = str(adjudication.get("followup_type") or "").strip()
+
+        if followup_type == "coverage_completion":
+            if action in {normalize("Skip"), normalize("Skip follow-up"), normalize("End system inquiry")}:
+                session.system_inquiry_coverage_completion_done = True
+                session.system_inquiry_pending_followup = None
+                return self._system_inquiry_complete_step(session_id, session)
+            if self._is_invalid_user_text(message) or len(compact_for_match(message)) < 4:
+                return self._system_inquiry_coverage_completion_step(
+                    session_id,
+                    session,
+                    error_reason="Please add a short completeness note, or choose Skip.",
+                )
+            self._append_system_inquiry_annotation(
+                session,
+                observation,
+                user_response=message.strip(),
+                resolution_state="addressed",
+                evaluation="Optional affected-group completeness note recorded.",
+                followup_question=str(adjudication.get("followup_question") or ""),
+                followup_type=followup_type,
+            )
+            session.system_inquiry_coverage_completion_done = True
+            session.system_inquiry_pending_followup = None
+            return self._system_inquiry_complete_step(session_id, session)
 
         if action == normalize("End system inquiry"):
             self._append_system_inquiry_annotation(
@@ -304,7 +389,7 @@ class ChatMitigationCreationSystemFlowMixin:
         followup_response = ""
         final_state = str(adjudication.get("resolution_state") or "open")
         final_evaluation = str(adjudication.get("evaluation") or "").strip()
-        if action == normalize("Skip follow-up"):
+        if action in {normalize("Skip follow-up"), normalize("Skip")}:
             final_evaluation = (
                 final_evaluation
                 or "The original response did not fully resolve the system inquiry."
@@ -314,7 +399,7 @@ class ChatMitigationCreationSystemFlowMixin:
                 return self._system_inquiry_followup_step(
                     session_id,
                     session,
-                    error_reason="Please add a short follow-up, or choose Skip follow-up.",
+                    error_reason="Please add a short follow-up, or choose Skip.",
                 )
             followup_response = message.strip()
             combined = f"{user_response}\n\n{followup_response}".strip()
@@ -353,6 +438,12 @@ class ChatMitigationCreationSystemFlowMixin:
         *,
         skipped: bool = False,
     ) -> ChatResponse:
+        if (
+            not skipped
+            and not session.system_inquiry_coverage_completion_done
+            and self._system_inquiry_untargeted_coverage_groups(session)
+        ):
+            return self._system_inquiry_coverage_completion_step(session_id, session)
         session.phase = "system_inquiry_complete"
         annotations = session.system_inquiry_annotations or []
         if skipped:
@@ -392,6 +483,26 @@ class ChatMitigationCreationSystemFlowMixin:
             session=session.summary(),
             error=False,
         )
+
+    @staticmethod
+    def _system_inquiry_coverage_completion_question(groups: list[str]) -> str:
+        group_list = "; ".join(groups[:5])
+        return (
+            "Affected groups not yet covered: "
+            f"{group_list}. "
+            "You can add a completeness note for these groups, or skip this optional step."
+        )
+
+    @staticmethod
+    def _system_inquiry_untargeted_coverage_groups(session: ChatSession) -> list[str]:
+        coverage = session.system_inquiry_coverage_summary
+        if not isinstance(coverage, dict):
+            return []
+        return [
+            str(item).strip()
+            for item in (coverage.get("untargeted_groups") or [])
+            if str(item).strip()
+        ]
 
     def _append_system_inquiry_annotation(
         self,

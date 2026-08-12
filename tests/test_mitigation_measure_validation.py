@@ -2814,9 +2814,76 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertEqual(summary["untargeted_groups"], ["Utility arrears: Yes, twice or more"])
         self.assertNotIn("Countries with higher Electricity consumption", formatted)
         self.assertIn("Utility arrears: Yes, twice or more", formatted)
-        self.assertIn("Optional coverage suggestion", formatted)
-        self.assertIn("not mandatory", formatted)
+        self.assertIn("Affected groups not yet covered", formatted)
+        self.assertNotIn("Optional coverage suggestion", formatted)
         self.assertNotIn("not named in the mitigation target population", formatted)
+
+    def test_system_inquiry_complete_prompts_for_optional_group_completeness(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            selected_hazard="Heating and cooling costs increase",
+            mitigation_measure="Targeted retrofit support.",
+            mitigation_target_population=["Tenants"],
+            system_inquiry_observations=[],
+            system_inquiry_annotations=[],
+            system_inquiry_coverage_summary={
+                "untargeted_groups": [
+                    "Higher Home problems count",
+                    "Utility arrears: Yes, twice or more",
+                ]
+            },
+        )
+
+        response = engine._system_inquiry_complete_step("test-session", session)
+
+        self.assertEqual(response.step, "system_inquiry_followup")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertEqual([option.label for option in response.options], ["Skip", "End system inquiry"])
+        self.assertIn("Affected groups not yet covered", response.bot_message)
+        self.assertIn("Higher Home problems count", response.bot_message)
+        self.assertIn("Utility arrears: Yes, twice or more", response.bot_message)
+        self.assertNotIn("Optional coverage suggestion", response.bot_message)
+
+        completed = asyncio.run(
+            engine._handle_system_inquiry_followup(
+                "test-session",
+                session,
+                "Skip",
+            )
+        )
+
+        self.assertEqual(completed.step, "system_inquiry_complete")
+        self.assertTrue(session.system_inquiry_coverage_completion_done)
+        self.assertIsNone(session.system_inquiry_pending_followup)
+
+    def test_system_inquiry_group_completeness_note_is_recorded(self):
+        engine = _MitigationReviewEngine()
+        session = ChatSession(
+            selected_hazard="Heating and cooling costs increase",
+            mitigation_measure="Targeted retrofit support.",
+            mitigation_target_population=["Tenants"],
+            system_inquiry_observations=[],
+            system_inquiry_annotations=[],
+            system_inquiry_coverage_summary={
+                "untargeted_groups": ["Utility arrears: Yes, twice or more"]
+            },
+        )
+        engine._system_inquiry_complete_step("test-session", session)
+
+        completed = asyncio.run(
+            engine._handle_system_inquiry_followup(
+                "test-session",
+                session,
+                "Add a bill-arrears outreach route through energy advisors.",
+            )
+        )
+
+        self.assertEqual(completed.step, "system_inquiry_complete")
+        annotation = (session.system_inquiry_annotations or [])[0]
+        self.assertEqual(annotation["probe_id"], "D5-COVERAGE")
+        self.assertEqual(annotation["followup_type"], "coverage_completion")
+        self.assertEqual(annotation["resolution_state"], "addressed")
+        self.assertIn("bill-arrears outreach", annotation["user_response"])
 
     def test_system_inquiry_complete_ask_another_question_prompts_for_input(self):
         service = ChatService.__new__(ChatService)

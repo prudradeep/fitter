@@ -1255,11 +1255,9 @@ class ChatMitigationCreationSystemObservationsMixin:
             )
         if untargeted:
             lines.append(
-                f"Optional coverage suggestion: consider adding mitigation plans for "
-                f"{len(untargeted)} left-out affected group"
-                f"{'' if len(untargeted) == 1 else 's'}: "
+                f"Affected groups not yet covered: "
                 + "; ".join(untargeted[:5])
-                + ". This is encouraged for completeness, but it is not mandatory."
+                + "."
             )
         return "\n\n".join(lines)
 

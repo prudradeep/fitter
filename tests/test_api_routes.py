@@ -1,6 +1,7 @@
 import json
 import unittest
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from typing import Iterator
 
 from fastapi import FastAPI
@@ -15,7 +16,20 @@ from unittest.mock import patch
 
 from app.auth import create_auth_token, get_current_user, hash_password, verify_password
 from app.db.session import Base
-from app.models import AppRateLimit, AppUser, AuditLog, Prompt, UserChatMessage, UserSession
+from app.models import (
+    AppRateLimit,
+    AppUser,
+    AuditLog,
+    Country,
+    CountrySector,
+    EvaluationQuestion,
+    Prompt,
+    Region,
+    Sector,
+    UserChatMessage,
+    UserMitigationMeasure,
+    UserSession,
+)
 from app.resource_paths import resource_path
 from app.services.rate_limit import clear_rate_limits
 from app.services.sync_service import SyncService
@@ -358,6 +372,212 @@ class ApiRouteIntegrationTests(unittest.TestCase):
             ["Use existing mitigation", "Write mitigation again"],
         )
         self.assertNotIn("Spain", [option["label"] for option in payload["options"]])
+
+    def test_restore_session_ignores_stale_country_options_for_current_phase(self) -> None:
+        session = UserSession(
+            session_key="evidence-session",
+            title="Evidence session",
+            user_id=self.user.id,
+            session_data=json.dumps(
+                {
+                    "country": "Spain",
+                    "region": "Catalonia",
+                    "sector": "Energy",
+                    "phase": "mitigation_evidence_decision",
+                    "pending_mitigation_measure": "Provide bill credits.",
+                    "pending_mitigation_reason": "It reduces bill pressure.",
+                    "current_step": "country",
+                    "current_input_mode": "text",
+                    "current_options": [
+                        {"id": "es", "label": "Spain"},
+                        {"id": "de", "label": "Germany"},
+                    ],
+                }
+            ),
+        )
+        self.db.add(session)
+        self.db.commit()
+
+        response = self.client.get("/api/sessions/evidence-session")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["error"])
+        self.assertEqual(payload["step"], "mitigation_evidence_decision")
+        self.assertEqual(
+            [option["label"] for option in payload["options"]],
+            ["Yes", "No"],
+        )
+        self.assertNotIn("Spain", [option["label"] for option in payload["options"]])
+
+    def test_restore_session_ignores_matching_stale_options_for_optionless_phase(self) -> None:
+        session = UserSession(
+            session_key="evaluation-session",
+            title="Evaluation session",
+            user_id=self.user.id,
+            session_data=json.dumps(
+                {
+                    "country": "Germany",
+                    "region": "Bavaria",
+                    "sector": "Energy",
+                    "phase": "evaluation_question",
+                    "evaluation_questions": [
+                        {
+                            "id": "q2",
+                            "category": "The transformative impact",
+                            "question": "Systemic & Structural Impact",
+                        }
+                    ],
+                    "evaluation_index": 0,
+                    "current_step": "evaluation_question",
+                    "current_input_mode": "text",
+                    "current_options": [
+                        {"id": "de", "label": "Germany"},
+                        {"id": "hu", "label": "Hungary"},
+                        {"id": "ie", "label": "Ireland"},
+                    ],
+                }
+            ),
+        )
+        self.db.add(session)
+        self.db.commit()
+
+        response = self.client.get("/api/sessions/evaluation-session")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["error"])
+        self.assertEqual(payload["step"], "evaluation_question")
+        self.assertEqual(payload["input_mode"], "evaluation_question")
+        self.assertEqual(payload["options"], [])
+
+    def test_restore_session_recovers_current_phase_from_messages_when_session_data_is_blank(self) -> None:
+        country = Country(id="de", name="Germany")
+        region = Region(id="bw", country_id="de", name="Baden-Württemberg")
+        sector = Sector(id="energy", name="Energy")
+        self.db.add_all(
+            [
+                country,
+                region,
+                sector,
+                CountrySector(country_id="de", sector_id="energy"),
+                EvaluationQuestion(
+                    id="q1",
+                    category="The transformative impact",
+                    chart_title="Direct impact",
+                    question="Direct Impact",
+                    sort_order=1,
+                    active=True,
+                ),
+                EvaluationQuestion(
+                    id="q2",
+                    category="The transformative impact",
+                    chart_title="Systemic & Structural Impact",
+                    question="Systemic & Structural Impact",
+                    sort_order=2,
+                    active=True,
+                ),
+            ]
+        )
+        session = UserSession(
+            session_key="blank-evaluation-session",
+            title="Evaluation",
+            user_id=self.user.id,
+            session_data=json.dumps(
+                {
+                    "country": None,
+                    "region": None,
+                    "sector": None,
+                    "selected_hazard": None,
+                    "mitigation_measure": None,
+                }
+            ),
+        )
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        self.db.add(
+            UserMitigationMeasure(
+                id="measure-1",
+                user_session_id=session.id,
+                measure=(
+                    "Provide temporary bill credits combined with free energy-efficiency "
+                    "assessments for low-income households until longer-term building "
+                    "upgrades are completed."
+                ),
+                reason="It directly reduces interim affordability pressure.",
+                target_population=json.dumps(["Low-income households", "Homeowner households"]),
+            )
+        )
+        started_at = datetime(2026, 1, 1, 12, 0, 0)
+        transcript = [
+            ("user", "Germany"),
+            ("user", "Baden-Württemberg"),
+            ("user", "Energy"),
+            ("bot", "<p>Selected hazard: <strong>MISSING OUT ON SOLAR SAVINGS</strong></p>"),
+            (
+                "user",
+                "Mitigation measure: Provide temporary bill credits combined with free "
+                "energy-efficiency assessments for low-income households until longer-term "
+                "building upgrades are completed.",
+            ),
+            (
+                "bot",
+                "<h3>Target population identified</h3><p>I identified these target-population "
+                "groups from the mitigation information:</p><ul><li><strong>Homeowner "
+                "households</strong></li></ul><p>Choose Continue to use these groups.</p>",
+            ),
+            (
+                "bot",
+                "<p>The transformative impact</p><p>Question 1 of 2</p>"
+                "<p>1. Direct Impact (Weight: ~35%)</p>"
+                "<p>Use the score slider below.</p>",
+            ),
+            ("user", "Score: 9"),
+            (
+                "bot",
+                "<p>The transformative impact</p><p>Question 2 of 2</p>"
+                "<p>2. Systemic & Structural Impact (Weight: ~35%)</p>"
+                "<p>Use the score slider below.</p>",
+            ),
+        ]
+        for index, (role, content) in enumerate(transcript):
+            self.db.add(
+                UserChatMessage(
+                    user_session_id=session.id,
+                    role=role,
+                    content=content,
+                    is_error=False,
+                    created_at=started_at + timedelta(seconds=index),
+                )
+            )
+        self.db.commit()
+
+        response = self.client.get("/api/sessions/blank-evaluation-session")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["error"])
+        self.assertEqual(payload["step"], "evaluation_question")
+        self.assertEqual(payload["input_mode"], "evaluation_question")
+        self.assertEqual(payload["options"], [])
+        self.assertEqual(payload["session"]["country"], "Germany")
+        self.assertEqual(payload["session"]["region"], "Baden-Württemberg")
+        self.assertEqual(payload["session"]["sector"], "Energy")
+        self.assertEqual(payload["session"]["selected_hazard"], "MISSING OUT ON SOLAR SAVINGS")
+        self.assertIn("temporary bill credits", payload["session"]["mitigation_measure"])
+        self.assertEqual(
+            payload["session"]["benefited_profiles"],
+            ["Low-income households", "Homeowner households"],
+        )
+        self.db.refresh(session)
+        restored_data = json.loads(session.session_data or "{}")
+        self.assertEqual(restored_data["phase"], "evaluation_question")
+        self.assertEqual(restored_data["evaluation_index"], 1)
+        self.assertEqual(
+            restored_data["mitigation_target_population"],
+            ["Low-income households", "Homeowner households"],
+        )
 
     def test_session_import_rejects_oversized_request_before_read(self) -> None:
         with self._temporary_route_limits(max_session_import_bytes=32):

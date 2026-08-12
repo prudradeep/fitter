@@ -1,5 +1,6 @@
 import json
 import re
+from html import unescape
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, set_auth_cookie, verify_password
 from app.config import get_settings
 from app.db.session import get_db
-from app.models import AppUser, Country, Prompt, Region, Sector, UserChatMessage, UserSession
+from app.models import AppUser, Country, Prompt, Region, Sector, UserChatMessage, UserMitigationMeasure, UserSession
 from app.routes.request_limits import (
     InvalidJsonPayload,
     RequestTooLarge,
@@ -25,6 +26,7 @@ from app.routes.request_limits import (
 from app.schemas import ChatRequest, ChatResponse, Option
 from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
+from app.services.chat_parsers import parse_evaluation_answer
 from app.services.audit_log import record_audit_event
 from app.services.hazard_effect_size import hazard_effect_size_rows
 from app.services.hazard_ranking_service import HazardRankingService
@@ -64,6 +66,323 @@ def _restore_other_options(options: object) -> list[str]:
     if not isinstance(options, list):
         return []
     return [str(option).strip() for option in options if str(option or "").strip()]
+
+
+def _should_restore_persisted_current_prompt(
+    chat_session,
+    current_step: str,
+) -> bool:
+    saved_step = str(getattr(chat_session, "current_step", "") or "").strip()
+    if not saved_step:
+        return False
+    phase = str(getattr(chat_session, "phase", "") or "").strip()
+    return phase in {"", "wizard"}
+
+
+def _session_data_needs_message_recovery(
+    session_data: dict[str, object],
+    messages: list[UserChatMessage],
+) -> bool:
+    if not messages:
+        return False
+    if not session_data:
+        return True
+    has_context = any(
+        str(session_data.get(key) or "").strip()
+        for key in ("country", "country_id", "region", "region_id", "sector", "sector_id", "phase")
+    )
+    if not has_context:
+        return True
+    phase = str(session_data.get("phase") or "").strip()
+    if phase not in {"", "wizard", "country"}:
+        return False
+    return any(_message_indicates_later_phase(message.content) for message in messages)
+
+
+def _message_indicates_later_phase(content: str) -> bool:
+    text = _plain_message_text(content)
+    indicators = (
+        "Selected hazard:",
+        "Mitigation measure:",
+        "Question 1 of",
+        "Question 2 of",
+        "Use the score slider",
+        "Target population",
+        "Concept Comparision",
+        "Concept Comparison",
+    )
+    return any(indicator in text for indicator in indicators)
+
+
+def _plain_message_text(content: str) -> str:
+    return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", str(content or "")))).strip()
+
+
+def _recover_session_data_from_messages(
+    service: ChatService,
+    user_session: UserSession,
+    messages: list[UserChatMessage],
+) -> dict[str, object]:
+    recovered: dict[str, object] = {}
+    user_messages = [message for message in messages if message.role == "user" and not message.is_error]
+    country = None
+    region = None
+    sector = None
+    for message in user_messages:
+        country = service._match_country(_plain_message_text(message.content))
+        if country is not None:
+            recovered.update({"country_id": country.id, "country": country.name})
+            break
+    if country is not None:
+        for message in user_messages:
+            region = service._match_region(_plain_message_text(message.content), country.id)
+            if region is not None:
+                recovered.update({"region_id": region.id, "region": region.name})
+                break
+        for message in user_messages:
+            sector = service._match_sector(_plain_message_text(message.content), country.id)
+            if sector is not None:
+                recovered.update({"sector_id": sector.id, "sector": sector.name})
+                break
+
+    selected_hazard_values = _latest_section_list_values(messages, "Selected hazard")
+    selected_hazard = selected_hazard_values[0] if selected_hazard_values else None
+    if selected_hazard:
+        recovered["selected_hazard"] = selected_hazard
+    mitigation_measure = _latest_user_prefixed_value(messages, "Mitigation measure")
+    if mitigation_measure:
+        recovered["mitigation_measure"] = mitigation_measure
+        recovered["pending_mitigation_measure"] = mitigation_measure
+    mitigation_record_details = _recover_mitigation_record_details(service, user_session.id)
+    if mitigation_record_details:
+        recovered.update(mitigation_record_details)
+    target_population = _latest_target_population_values(messages)
+    if target_population and not recovered.get("mitigation_target_population"):
+        recovered["mitigation_target_population"] = target_population
+
+    latest_bot = next(
+        (message for message in reversed(messages) if message.role == "bot" and not message.is_error),
+        None,
+    )
+    if latest_bot is None:
+        return recovered
+
+    latest_text = _plain_message_text(latest_bot.content)
+    if re.search(r"\bQuestion\s+\d+\s+of\s+\d+\b", latest_text) and "score slider" in latest_text:
+        recovered.update(_recover_evaluation_state(service, messages, latest_text))
+    elif "Do you have evidence" in latest_text:
+        recovered.update(
+            {
+                "phase": "mitigation_evidence_decision",
+                "current_step": "mitigation_evidence_decision",
+                "current_input_mode": "text",
+            }
+        )
+    elif "Target population" in latest_text:
+        recovered.update(
+            {
+                "phase": "mitigation_target_population_review",
+                "current_step": "mitigation_target_population_review",
+                "current_input_mode": "text",
+            }
+        )
+    elif "Concept Comparision" in latest_text or "Concept Comparison" in latest_text:
+        recovered.update(
+            {
+                "phase": "mitigation_review",
+                "current_step": "mitigation_review",
+                "current_input_mode": "text",
+            }
+        )
+    elif "Mitigation measure" in latest_text:
+        recovered.update(
+            {
+                "phase": "mitigation_measure",
+                "current_step": "mitigation_measure",
+                "current_input_mode": "text",
+            }
+        )
+    return recovered
+
+
+def _latest_user_prefixed_value(messages: list[UserChatMessage], label: str) -> str | None:
+    prefix = f"{label}:"
+    for message in reversed(messages):
+        if message.role != "user" or message.is_error:
+            continue
+        text = _plain_message_text(message.content)
+        if text.casefold().startswith(prefix.casefold()):
+            value = text[len(prefix):].strip()
+            return value or None
+    return None
+
+
+def _recover_mitigation_record_details(
+    service: ChatService,
+    user_session_id: str,
+) -> dict[str, object]:
+    row = service.db.scalar(
+        select(UserMitigationMeasure)
+        .where(UserMitigationMeasure.user_session_id == user_session_id)
+        .order_by(desc(UserMitigationMeasure.created_at), desc(UserMitigationMeasure.id))
+    )
+    if row is None:
+        return {}
+    recovered: dict[str, object] = {
+        "mitigation_record_id": row.id,
+        "mitigation_measure": row.measure,
+        "mitigation_reason": row.reason,
+    }
+    target_population = _json_string_list(row.target_population)
+    if target_population:
+        recovered["mitigation_target_population"] = target_population
+    return recovered
+
+
+def _json_string_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = value
+    values = parsed if isinstance(parsed, list) else str(parsed or "").split(",")
+    labels: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        label = _plain_message_text(str(item)).strip(" -.")
+        key = label.casefold()
+        if label and key not in seen:
+            seen.add(key)
+            labels.append(label)
+    return labels
+
+
+def _latest_target_population_values(messages: list[UserChatMessage]) -> list[str]:
+    return _latest_section_list_values(messages, "Target population")
+
+
+def _latest_section_list_values(messages: list[UserChatMessage], label: str) -> list[str]:
+    for message in reversed(messages):
+        content = str(message.content or "")
+        if label not in _plain_message_text(content):
+            continue
+        block = _labeled_section_block(content, label)
+        labels = _html_list_labels(block)
+        if labels:
+            return labels
+    return []
+
+
+def _labeled_section_block(content: str, label: str) -> str:
+    label_pattern = rf"{re.escape(label)}(?: identified)?\s*:?"
+    match = re.search(label_pattern, content, re.IGNORECASE)
+    if not match:
+        return content
+    block = content[match.end():]
+    stop = re.search(
+        r"(<div\b|<h[1-6]\b|Choose\s+|Concept Comparision|Concept Comparison|"
+        r"Selected hazard\s*:|Target population\s*:|Reason\s*:|Mitigation measure\s*:)",
+        block,
+        re.IGNORECASE,
+    )
+    return block[: stop.start()] if stop else block
+
+
+def _html_list_labels(content: str) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    matches = re.findall(r"<li\b[^>]*>(.*?)</li>", content, flags=re.IGNORECASE | re.DOTALL)
+    if not matches:
+        matches = re.findall(r"<strong\b[^>]*>(.*?)</strong>", content, flags=re.IGNORECASE | re.DOTALL)
+    for item in matches:
+        label = _plain_message_text(item).strip(" -.")
+        key = label.casefold()
+        if label and key not in seen:
+            seen.add(key)
+            labels.append(label)
+    return labels
+
+
+def _recover_evaluation_state(
+    service: ChatService,
+    messages: list[UserChatMessage],
+    latest_text: str,
+) -> dict[str, object]:
+    question_match = re.search(r"\bQuestion\s+(\d+)\s+of\s+(\d+)\b", latest_text)
+    current_number = int(question_match.group(1)) if question_match else 1
+    total = int(question_match.group(2)) if question_match else current_number
+    questions = service._evaluation_questions()
+    if not questions:
+        questions = _fallback_evaluation_questions(latest_text, current_number, total)
+    evaluation_index = max(0, min(current_number - 1, max(len(questions) - 1, 0)))
+    return {
+        "phase": "evaluation_question",
+        "current_step": "evaluation_question",
+        "current_input_mode": "evaluation_question",
+        "current_options": [],
+        "evaluation_questions": questions,
+        "evaluation_index": evaluation_index,
+        "evaluation_answers": _recover_evaluation_answers(messages, questions, evaluation_index),
+    }
+
+
+def _fallback_evaluation_questions(
+    latest_text: str,
+    current_number: int,
+    total: int,
+) -> list[dict[str, object]]:
+    category = "Evaluation"
+    category_match = re.search(r"^(.*?)\s+Question\s+\d+\s+of\s+\d+", latest_text)
+    if category_match:
+        category = category_match.group(1).strip() or category
+    question_title = "Evaluation question"
+    title_match = re.search(rf"\b{current_number}\.\s*(.+?)(?:\s*\(|\s+To what extent|$)", latest_text)
+    if title_match:
+        question_title = title_match.group(1).strip() or question_title
+    questions: list[dict[str, object]] = []
+    for index in range(max(total, current_number)):
+        questions.append(
+            {
+                "id": f"recovered-evaluation-{index + 1}",
+                "category": category,
+                "chart_title": question_title if index + 1 == current_number else f"Question {index + 1}",
+                "question": question_title if index + 1 == current_number else f"Question {index + 1}",
+            }
+        )
+    return questions
+
+
+def _recover_evaluation_answers(
+    messages: list[UserChatMessage],
+    questions: list[dict[str, object]],
+    evaluation_index: int,
+) -> list[dict[str, object]]:
+    answers: list[dict[str, object]] = []
+    evaluation_started = False
+    for message in messages:
+        text = _plain_message_text(message.content)
+        if message.role == "bot" and re.search(r"\bQuestion\s+\d+\s+of\s+\d+\b", text):
+            evaluation_started = True
+            continue
+        if not evaluation_started or message.role != "user" or message.is_error:
+            continue
+        score, reason, evidence = parse_evaluation_answer(text)
+        if score is None or len(answers) >= evaluation_index or len(answers) >= len(questions):
+            continue
+        question = questions[len(answers)]
+        answers.append(
+            {
+                "question_id": question["id"],
+                "category": question["category"],
+                "chart_title": question.get("chart_title") or question["question"],
+                "question": question["question"],
+                "score": score,
+                "reason": reason,
+                "evidence": evidence,
+            }
+        )
+    return answers
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -229,25 +548,35 @@ async def restore_session(
             session_data = json.loads(user_session.session_data)
         except json.JSONDecodeError:
             session_data = {}
-    chat_session = session_store.put(session_key, session_data)
-    chat_session.session_key = session_key
     service = ChatService(
         db,
         user_id=current_user.id,
         is_admin=_is_admin_user(current_user),
     )
-    current_prompt = service._repeat_current_options(session_key, chat_session, "", False)
-    if chat_session.current_step:
-        current_prompt.step = chat_session.current_step
-        current_prompt.input_mode = chat_session.current_input_mode or current_prompt.input_mode
-        current_prompt.options = _restore_options(chat_session.current_options)
-        current_prompt.other_options = _restore_other_options(chat_session.current_other_options)
-    service._attach_other_options(current_prompt, chat_session)
     messages = db.scalars(
         select(UserChatMessage)
         .where(UserChatMessage.user_session_id == user_session.id)
         .order_by(UserChatMessage.created_at, UserChatMessage.id)
     ).all()
+    recovered_from_messages = False
+    if _session_data_needs_message_recovery(session_data, messages):
+        recovered = _recover_session_data_from_messages(service, user_session, messages)
+        if recovered:
+            session_data = {**session_data, **recovered}
+            recovered_from_messages = True
+
+    chat_session = session_store.put(session_key, session_data)
+    chat_session.session_key = session_key
+    if recovered_from_messages:
+        service._ensure_user_session(session_key, chat_session)
+
+    current_prompt = service._repeat_current_options(session_key, chat_session, "", False)
+    if _should_restore_persisted_current_prompt(chat_session, current_prompt.step):
+        current_prompt.step = chat_session.current_step
+        current_prompt.input_mode = chat_session.current_input_mode or current_prompt.input_mode
+        current_prompt.options = _restore_options(chat_session.current_options)
+        current_prompt.other_options = _restore_other_options(chat_session.current_other_options)
+    service._attach_other_options(current_prompt, chat_session)
     return {
         "error": False,
         "session_id": session_key,

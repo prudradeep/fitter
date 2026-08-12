@@ -67,6 +67,7 @@ class ChatSession:
     system_inquiry_annotations: list[dict[str, object]] | None = None
     system_inquiry_pending_followup: dict[str, object] | None = None
     system_inquiry_coverage_summary: dict[str, object] | None = None
+    system_inquiry_coverage_completion_done: bool = False
     system_inquiry_attributes: dict[str, object] | None = None
     system_inquiry_profile: dict[str, object] | None = None
     system_inquiry_skipped: bool = False
