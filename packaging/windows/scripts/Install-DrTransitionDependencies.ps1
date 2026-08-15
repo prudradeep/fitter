@@ -110,19 +110,65 @@ function Wait-SetupProcess {
     return $Process.ExitCode
 }
 
+function Write-SetupProgress {
+    param(
+        [string]$Activity,
+        [int]$Percent,
+        [string]$Status = ""
+    )
+
+    $Percent = [math]::Max(0, [math]::Min(100, $Percent))
+    $message = if ([string]::IsNullOrWhiteSpace($Status)) {
+        "[PROGRESS] $Activity|$Percent"
+    } else {
+        "[PROGRESS] $Activity|$Percent|$Status"
+    }
+
+    # Write to both the normal setup log and stdout. The outer installer can
+    # parse lines beginning with [PROGRESS] to update its own progress bar.
+    Write-SetupLog $message
+    Write-Progress -Activity $Activity -Status $Status -PercentComplete $Percent
+}
+
 function Invoke-VisibleSetupCommand {
     param(
         [string]$FilePath,
         [string[]]$Arguments,
-        [string]$Activity
+        [string]$Activity,
+        [int]$StartPercent = 0,
+        [int]$EndPercent = 100
     )
 
     Write-SetupLog "Starting $Activity"
-    & $FilePath @Arguments
+    Write-SetupProgress -Activity $Activity -Percent $StartPercent -Status "Starting..."
+
+    # Execute the native tool normally so its own download/install progress
+    # remains visible. Tee-Object lets us inspect each emitted line without
+    # losing it from the installer console.
+    $nativeOutput = & $FilePath @Arguments 2>&1 | ForEach-Object {
+        $line = [string]$_
+        Write-Host $line
+
+        # winget and ollama commonly report progress as NN% or NN.N%.
+        if ($line -match '(?<!\d)(100|[1-9]?\d)(?:\.\d+)?%') {
+            $nativePercent = [int][double]$Matches[1]
+            $mappedPercent = $StartPercent + [int](($EndPercent - $StartPercent) * ($nativePercent / 100.0))
+            Write-SetupProgress -Activity $Activity -Percent $mappedPercent -Status $line.Trim()
+        }
+        $line
+    }
+
     $exitCode = $LASTEXITCODE
     if ($null -eq $exitCode) {
         $exitCode = 0
     }
+
+    if ($exitCode -eq 0 -or $exitCode -eq 3010) {
+        Write-SetupProgress -Activity $Activity -Percent $EndPercent -Status "Completed"
+    } else {
+        Write-SetupProgress -Activity $Activity -Percent $StartPercent -Status "Failed (exit code $exitCode)"
+    }
+    Write-Progress -Activity $Activity -Completed
     Write-SetupLog "$Activity exited with code $exitCode"
     return $exitCode
 }
@@ -586,27 +632,196 @@ function Install-MySqlService {
     }
 }
 
+
+function Invoke-DownloadWithProgress {
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$OutFile,
+        [Parameter(Mandatory = $true)][string]$Activity,
+        [int]$StartPercent = 0,
+        [int]$EndPercent = 80
+    )
+
+    Write-SetupLog "Downloading: $Url"
+    Write-SetupProgress -Activity $Activity -Percent $StartPercent -Status "Connecting..."
+
+    $request = [System.Net.HttpWebRequest]::Create($Url)
+    $request.AllowAutoRedirect = $true
+    $request.UserAgent = "DrTransition-Installer/1.0"
+    $response = $null
+    $stream = $null
+    $fileStream = $null
+
+    try {
+        $response = $request.GetResponse()
+        $totalBytes = [int64]$response.ContentLength
+        $stream = $response.GetResponseStream()
+        $fileStream = [System.IO.FileStream]::new($OutFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $buffer = [byte[]]::new(65536)
+        [int64]$totalRead = 0
+        $lastUpdate = [DateTime]::MinValue
+        $barWidth = 40
+
+        while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $fileStream.Write($buffer, 0, $read)
+            $totalRead += $read
+
+            $now = [DateTime]::UtcNow
+            if (($now - $lastUpdate).TotalMilliseconds -ge 200) {
+                if ($totalBytes -gt 0) {
+                    $downloadPct = [math]::Min(100.0, ($totalRead / $totalBytes) * 100.0)
+                    $filled = [math]::Floor($barWidth * $downloadPct / 100.0)
+                    $empty = $barWidth - $filled
+                    $bar = ('#' * $filled) + (' ' * $empty)
+                    $downloadedMb = [math]::Round($totalRead / 1MB, 1)
+                    $totalMb = [math]::Round($totalBytes / 1MB, 1)
+                    $status = "{0:N1} MB / {1:N1} MB ({2:N1}%)" -f $downloadedMb, $totalMb, $downloadPct
+                    Write-Host -NoNewline ("`r[{0}] {1}" -f $bar, $status)
+
+                    $mapped = $StartPercent + [int](($EndPercent - $StartPercent) * ($downloadPct / 100.0))
+                    Write-SetupProgress -Activity $Activity -Percent $mapped -Status $status
+                } else {
+                    $downloadedMb = [math]::Round($totalRead / 1MB, 1)
+                    $status = "$downloadedMb MB downloaded..."
+                    Write-Host -NoNewline "`r$status"
+                    Write-SetupProgress -Activity $Activity -Percent $StartPercent -Status $status
+                }
+                $lastUpdate = $now
+            }
+        }
+
+        Write-Host ""
+        if ($totalBytes -gt 0) {
+            Write-Host ("[{0}] 100.0%" -f ('#' * $barWidth))
+        }
+        Write-SetupProgress -Activity $Activity -Percent $EndPercent -Status "Download completed"
+    }
+    finally {
+        if ($null -ne $fileStream) { $fileStream.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+        if ($null -ne $response) { $response.Dispose() }
+    }
+}
+
+function Test-OllamaInstallerSignature {
+    param([Parameter(Mandatory = $true)][string]$FilePath)
+
+    Write-SetupProgress -Activity "Installing Ollama" -Percent 82 -Status "Verifying digital signature..."
+    $sig = Get-AuthenticodeSignature -FilePath $FilePath
+    if ($sig.Status -ne "Valid") {
+        throw "Ollama installer signature verification failed: $($sig.Status)"
+    }
+
+    $subject = [string]$sig.SignerCertificate.Subject
+    if ($subject -notmatch '(^|, )O=Ollama Inc\.(,|$)') {
+        throw "Ollama installer has an unexpected signer: $subject"
+    }
+
+    Write-SetupLog "Ollama installer signature verified: $subject"
+}
+
+function Install-OllamaDirect {
+    $activity = "Installing Ollama"
+    $downloadUrl = "https://ollama.com/download/OllamaSetup.exe"
+    $tempInstaller = Join-Path $env:TEMP "DrTransition-OllamaSetup.exe"
+
+    try {
+        Write-SetupLog "Installing Ollama from official installer"
+        Invoke-DownloadWithProgress -Url $downloadUrl -OutFile $tempInstaller -Activity $activity -StartPercent 0 -EndPercent 80
+        Test-OllamaInstallerSignature -FilePath $tempInstaller
+
+        # This marker is used by Ollama during upgrade/install so the app can start quietly.
+        $markerDir = Join-Path $env:LOCALAPPDATA "Ollama"
+        $markerFile = Join-Path $markerDir "upgraded"
+        New-Item -ItemType Directory -Force -Path $markerDir | Out-Null
+        New-Item -ItemType File -Force -Path $markerFile | Out-Null
+
+        Write-SetupProgress -Activity $activity -Percent 85 -Status "Installing Ollama..."
+        Write-SetupLog "Starting Ollama installer"
+        $process = Start-Process -FilePath $tempInstaller `
+            -ArgumentList "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES" `
+            -PassThru
+
+        # The Ollama/Inno installer does not expose a trustworthy numeric install percentage.
+        # Keep the user informed with stage-based progress while the installer is running.
+        $installStage = 85
+        while (-not $process.HasExited) {
+            Start-Sleep -Seconds 1
+            $process.Refresh()
+            if (-not $process.HasExited -and $installStage -lt 98) {
+                $installStage++
+                Write-SetupProgress -Activity $activity -Percent $installStage -Status "Installing Ollama..."
+            }
+        }
+        $process.WaitForExit()
+        $process.Refresh()
+
+        if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
+            throw "Ollama installation failed with exit code $($process.ExitCode)."
+        }
+
+        Write-SetupProgress -Activity $activity -Percent 100 -Status "Ollama installation completed"
+        Write-Progress -Activity $activity -Completed
+        Write-SetupLog "Ollama installed successfully (exit code $($process.ExitCode))"
+    }
+    finally {
+        Remove-Item -LiteralPath $tempInstaller -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-WingetInstall {
     param([string[]]$PackageIds)
+
     $winget = Find-CommandPath "winget.exe"
     if (-not $winget) {
         throw "winget.exe was not found. Install App Installer from Microsoft Store, or install the dependency manually."
     }
 
     foreach ($packageId in $PackageIds) {
+        $activity = "Installing $packageId"
         Write-SetupLog "Trying winget install $packageId"
-        $exitCode = Invoke-VisibleSetupCommand -FilePath $winget -Arguments @(
-            "install",
-            "--id", $packageId,
-            "--exact",
-            "--silent",
-            "--accept-package-agreements",
-            "--accept-source-agreements"
-        ) -Activity "winget install $packageId"
-        if ($exitCode -eq 0) {
-            Write-SetupLog "winget installed $packageId"
+        Write-SetupProgress -Activity $activity -Percent 0 -Status "Locating package..."
+
+        # IMPORTANT: Do not pipe winget output through ForEach-Object/Tee-Object.
+        # Winget draws its download progress bar using console control / carriage-return
+        # sequences. Piping its output turns stdout into a non-interactive stream and
+        # can suppress or flatten the native progress display. Running it directly
+        # preserves the same live progress bar and downloaded-size counter that users
+        # see when they run winget manually in PowerShell.
+        Write-SetupProgress -Activity $activity -Percent 5 -Status "Downloading package (live winget progress shown below)..."
+        Write-Host ""
+        Write-Host "========== winget progress: $packageId ==========" -ForegroundColor Cyan
+
+        & $winget install `
+            --id $packageId `
+            --exact `
+            --source winget `
+            --silent `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --disable-interactivity
+
+        $exitCode = $LASTEXITCODE
+        if ($null -eq $exitCode) {
+            $exitCode = 0
+        }
+
+        Write-Host "========== end winget progress: $packageId ==========" -ForegroundColor Cyan
+        Write-Host ""
+
+        if ($exitCode -eq 0 -or $exitCode -eq 3010) {
+            # Winget does not expose a reliable numeric MSI/EXE installation percentage
+            # to callers. Its native console UI is therefore the source of truth while
+            # downloading/installing; mark the structured installer progress complete
+            # only after winget returns successfully.
+            Write-SetupProgress -Activity $activity -Percent 100 -Status "Download and installation completed"
+            Write-Progress -Activity $activity -Completed
+            Write-SetupLog "winget installed $packageId (exit code $exitCode)"
             return
         }
+
+        Write-SetupProgress -Activity $activity -Percent 0 -Status "Failed (exit code $exitCode)"
+        Write-Progress -Activity $activity -Completed
         Write-SetupLog "winget failed for $packageId with exit code $exitCode"
     }
 
@@ -895,13 +1110,27 @@ function Wait-OllamaReachable {
         if (Test-Ollama) {
             return $true
         }
+
         if ($null -ne $Process) {
             $Process.Refresh()
             if ($Process.HasExited) {
-                Write-SetupLog "Ollama server process exited with code $($Process.ExitCode)"
+                $exitCode = $Process.ExitCode
+                Write-SetupLog "Ollama server process exited with code $exitCode"
+
+                # Ollama's desktop/background process can start automatically after
+                # installation. In that race, our second 'ollama serve' may exit because
+                # port 11434 is already bound. Check the API again before treating that
+                # process exit as a failure.
+                Start-Sleep -Seconds 2
+                if (Test-Ollama) {
+                    Write-SetupLog "Ollama API is reachable through an existing instance"
+                    return $true
+                }
+
                 break
             }
         }
+
         if ($attempt -eq 10 -or $attempt -eq 25 -or $attempt -eq 40) {
             Write-SetupLog "Waiting for Ollama API at $OllamaBaseUrl"
         }
@@ -919,25 +1148,42 @@ function Wait-OllamaReachable {
 function Ensure-Ollama {
     Write-SetupLog "Checking Ollama installation"
     $ollama = Find-OllamaExe
+
     if (-not $ollama -and $InstallOllama) {
-        Write-SetupLog "Ollama is missing; attempting installation"
-        Invoke-WingetInstall -PackageIds @("Ollama.Ollama")
-        Start-Sleep -Seconds 5
+        Write-SetupLog "Ollama is missing; downloading and installing from ollama.com"
+        Install-OllamaDirect
+        Start-Sleep -Seconds 2
         $ollama = Find-OllamaExe
     }
 
     if (-not $ollama) {
         throw "ollama.exe was not found. Install Ollama and rerun setup."
     }
-    Write-SetupLog "Ollama executable is available; installation will be skipped"
 
-    if (-not (Test-Ollama)) {
+    # The Ollama installer can start the server automatically. Give it time to
+    # finish its background startup before deciding whether we need to launch it.
+    $startupWaitSeconds = 10
+    Write-SetupLog "Waiting $startupWaitSeconds seconds before checking Ollama server state"
+    Start-Sleep -Seconds $startupWaitSeconds
+
+    if (Test-Ollama) {
+        Write-SetupLog "Ollama is already running; manual server start will be skipped"
+    } else {
+        Write-SetupLog "Ollama is not running after the startup wait; starting Ollama server"
         $process = Start-OllamaServer -OllamaExe $ollama
+
         if (-not (Wait-OllamaReachable -Process $process)) {
-            throw "Ollama is installed but not reachable at $OllamaBaseUrl."
+            # Another Ollama instance may have started during the race window.
+            # Re-check the API before treating the manual start as a failure.
+            Start-Sleep -Seconds 2
+            if (-not (Test-Ollama)) {
+                throw "Ollama is installed but not reachable at $OllamaBaseUrl."
+            }
+            Write-SetupLog "Ollama API is reachable through an existing instance"
         }
     }
 
+    Write-SetupLog "Checking whether Ollama API is reachable"
     if (-not (Wait-OllamaReachable)) {
         throw "Ollama is installed but not reachable at $OllamaBaseUrl."
     }
@@ -1224,7 +1470,8 @@ function Ensure-OllamaModel {
     }
 
     Write-SetupLog "Pulling Ollama model: $Model"
-    $exitCode = Invoke-VisibleSetupCommand -FilePath $OllamaExe -Arguments @("pull", $Model) -Activity "ollama pull $Model"
+    Write-SetupProgress -Activity "Downloading Ollama model $Model" -Percent 1 -Status "Preparing model download..."
+    $exitCode = Invoke-VisibleSetupCommand -FilePath $OllamaExe -Arguments @("pull", $Model) -Activity "Downloading Ollama model $Model" -StartPercent 2 -EndPercent 100
     if ($exitCode -ne 0) {
         throw "ollama pull $Model failed with exit code $exitCode"
     }

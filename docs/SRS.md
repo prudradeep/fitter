@@ -10,23 +10,24 @@ Prepared for: Dr Transition product and engineering team
 - [1. Purpose](#1-purpose)
 - [2. Product Scope](#2-product-scope)
 - [3. Users](#3-users)
-- [4. Current End-to-End Flow](#4-current-end-to-end-flow)
-  - [4.1 Authentication](#41-authentication)
-  - [4.2 Country, Region, and Sector Selection](#42-country-region-and-sector-selection)
-  - [4.3 Hazard Review](#43-hazard-review)
-  - [4.4 Custom Hazard Creation](#44-custom-hazard-creation)
-  - [4.5 Affected Population Group Review](#45-affected-population-group-review)
-  - [4.6 Mitigation Measure Creation](#46-mitigation-measure-creation)
-  - [4.7 Mitigation Evaluation](#47-mitigation-evaluation)
-  - [4.8 System Inquiry](#48-system-inquiry)
-  - [4.9 PDF Report Export](#49-pdf-report-export)
-  - [4.10 Cloud Sync](#410-cloud-sync)
-- [5. Data Handled by the Tool](#5-data-handled-by-the-tool)
-- [6. Main Interfaces](#6-main-interfaces)
-- [7. Current Validation Rules](#7-current-validation-rules)
-- [8. Non-Functional Requirements](#8-non-functional-requirements)
-- [9. Acceptance Criteria](#9-acceptance-criteria)
-- [10. Traceability](#10-traceability)
+- [4. Reviewer Rationale](#4-reviewer-rationale)
+- [5. Current End-to-End Flow](#5-current-end-to-end-flow)
+  - [5.1 Authentication](#51-authentication)
+  - [5.2 Country, Region, and Sector Selection](#52-country-region-and-sector-selection)
+  - [5.3 Hazard Review](#53-hazard-review)
+  - [5.4 Custom Hazard Creation](#54-custom-hazard-creation)
+  - [5.5 Affected Population Group Review](#55-affected-population-group-review)
+  - [5.6 Mitigation Measure Creation](#56-mitigation-measure-creation)
+  - [5.7 Mitigation Evaluation](#57-mitigation-evaluation)
+  - [5.8 System Inquiry](#58-system-inquiry)
+  - [5.9 PDF Report Export](#59-pdf-report-export)
+  - [5.10 Cloud Sync](#510-cloud-sync)
+- [6. Data Handled by the Tool](#6-data-handled-by-the-tool)
+- [7. Main Interfaces](#7-main-interfaces)
+- [8. Current Validation Rules](#8-current-validation-rules)
+- [9. Non-Functional Requirements](#9-non-functional-requirements)
+- [10. Acceptance Criteria](#10-acceptance-criteria)
+- [11. Traceability](#11-traceability)
 
 ## 1. Purpose
 
@@ -62,9 +63,24 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 | Admin user | Authenticated user with admin role. | Access admin-only operations such as metrics and selected prompt/sync management actions. |
 | Cloud Sync client | Configured installation using a sync token. | Pull, push, or exchange permitted data bundles according to sync permissions. |
 
-## 4. Current End-to-End Flow
+## 4. Reviewer Rationale
 
-### 4.1 Authentication
+Dr Transition exists to make transition-risk analysis easier to review, challenge, and reuse. The workflow is structured because non-technical policy reviewers need to understand why a hazard or mitigation measure is being considered, which evidence supports it, which groups may be affected, and where uncertainty remains.
+
+The tool must therefore do more than collect answers. It must:
+
+- show the reason a workflow step is being asked;
+- distinguish user judgement from system-suggested content;
+- preserve evidence, validation outcomes, and unresolved caveats;
+- let reviewers see why hazards and mitigation measures are prominent;
+- make report content traceable to user inputs, seeded reference data, or validation results;
+- avoid fabricating conclusions when evidence or optional data is missing.
+
+Content quality is treated as a product requirement. A saved hazard, affected group, mitigation measure, system inquiry response, or report section must be clear enough for a reviewer to understand the policy issue, its context, its affected population, and its evidential limits without reading source code or internal logs.
+
+## 5. Current End-to-End Flow
+
+### 5.1 Authentication
 
 1. The user opens Dr Transition.
 2. If the user is not authenticated, the tool shows login or signup.
@@ -73,7 +89,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 5. After successful authentication, the user enters the main chat workflow.
 6. The tool protects authenticated routes, applies rate limits to login/signup, and stores the active user session through secure cookies.
 
-### 4.2 Country, Region, and Sector Selection
+### 5.2 Country, Region, and Sector Selection
 
 1. The chat asks the user to select a country.
 2. After country selection, the chat asks for a region or national scope.
@@ -82,7 +98,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 5. If the user asks an in-scope question about the workflow, the tool answers it and keeps the user on the same step.
 6. If the user gives an invalid selection, the tool returns a clear error and stays on the current step.
 
-### 4.3 Hazard Review
+### 5.3 Hazard Review
 
 1. After sector selection, the tool displays hazards relevant to the selected context.
 2. The hazard list can include system hazards, additional seeded hazards, and permitted user-created hazards.
@@ -92,9 +108,15 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
    - refresh hazards and affected population groups;
    - ask a statistical deep-dive question;
    - navigate back through available workflow options.
-4. Hazard ranking may use salience, effect size, and reach where data is available.
+4. Hazard ranking uses the formula `salience_score + effect_size_score + reach_score`.
+5. `salience_score` is derived from country and sector concern data where available.
+6. `effect_size_score` is derived from sector hazard predictor effects where available.
+7. `reach_score` is derived from matched population profiles and regional or national population share where available.
+8. Missing salience, effect-size, or reach inputs contribute `0` to the relevant score rather than hiding the hazard.
+9. Ranked hazard responses expose the component scores, relevance score, predictor counts, matched profiles, and regional or national population percentages so users and reviewers can see why a hazard ranks highly.
+10. Hazards are sorted by descending relevance score, then descending salience score, then descending effect-size score, then hazard name.
 
-### 4.4 Custom Hazard Creation
+### 5.4 Custom Hazard Creation
 
 1. The user chooses to add a new hazard.
 2. The tool asks for a custom hazard title or description.
@@ -123,7 +145,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 19. If a real duplicate is detected, the tool shows the suggested existing hazard and asks the user whether to continue, explore the existing hazard, or revise.
 20. If the user chooses to continue after a duplicate warning, the tool respects that choice for the same draft.
 
-### 4.5 Affected Population Group Review
+### 5.5 Affected Population Group Review
 
 1. After the hazard is valid enough to proceed, the tool identifies affected population groups.
 2. For system hazards, affected groups come from seeded hazard-profile mappings where available.
@@ -134,7 +156,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 7. Generic groups such as "people" or "general population" require clarification when a more specific targetable group is needed.
 8. After confirmation, the tool saves the custom hazard and affected groups.
 
-### 4.6 Mitigation Measure Creation
+### 5.6 Mitigation Measure Creation
 
 1. The user starts mitigation planning from the hazard review flow.
 2. The user selects a hazard for mitigation planning.
@@ -162,7 +184,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 18. The tool saves the mitigation measure, reason, target population, conclusion, evidence, validation mode, and crowd-sourcing state.
 19. After mitigation measure creation is complete, the tool offers PDF report export for the current analysis.
 
-### 4.7 Mitigation Evaluation
+### 5.7 Mitigation Evaluation
 
 1. After mitigation review, the tool presents evaluation questions.
 2. The user answers evaluation questions through the chat interface.
@@ -177,7 +199,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
    - Availability/Timeliness.
 5. After evaluation is complete, the tool moves to the next available workflow step.
 
-### 4.8 System Inquiry
+### 5.8 System Inquiry
 
 1. After mitigation evaluation, the user enters the system inquiry flow.
 2. The tool asks system-level inquiry questions based on the selected context, hazard, affected groups, mitigation measure, and evaluation results.
@@ -185,7 +207,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 4. The tool records system inquiry responses and telemetry according to configured retention and sync rules.
 5. After system inquiry is complete, the tool offers final PDF report export.
 
-### 4.9 PDF Report Export
+### 5.9 PDF Report Export
 
 1. The tool provides a PDF report export after mitigation-measure creation.
 2. The tool provides a final PDF report export after system inquiry completion.
@@ -217,8 +239,11 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 9. The PDF download is available only to the session owner or an authorized admin.
 10. If report generation fails, the tool shows a clear error and does not change workflow state.
 11. Generated PDF filenames include a safe session or project identifier and generation date.
+12. A mitigation-completion report is ready when the session has a saved mitigation measure linked to the current session.
+13. A final system-inquiry report is ready when the mitigation-completion threshold is met and system inquiry has either recorded at least one response or been explicitly skipped or ended by the user.
+14. If a report request does not meet the readiness threshold, the API returns a clear not-ready error rather than generating a partial report.
 
-### 4.10 Cloud Sync
+### 5.10 Cloud Sync
 
 1. The tool supports Cloud Sync in disabled, client, and server modes.
 2. Sync endpoints require a valid sync token when Cloud Sync is enabled.
@@ -235,7 +260,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 13. System inquiry telemetry can be queued and synchronized through Cloud Sync.
 14. In sync-only server mode, ordinary app APIs are blocked unless the deployment explicitly enables them.
 
-## 5. Data Handled by the Tool
+## 6. Data Handled by the Tool
 
 The tool stores and uses:
 
@@ -256,9 +281,9 @@ The tool stores and uses:
 - Cloud Sync metadata;
 - generated PDF report metadata when report metadata is persisted.
 
-## 6. Main Interfaces
+## 7. Main Interfaces
 
-### 6.1 User Interface
+### 7.1 User Interface
 
 The main interface is a chat workflow with:
 
@@ -272,7 +297,7 @@ The main interface is a chat workflow with:
 - validation and grounding status cards;
 - PDF report download actions.
 
-### 6.2 API Interface
+### 7.2 API Interface
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -291,7 +316,7 @@ The main interface is a chat workflow with:
 | POST | `/api/sync/push` | Apply an allowed Cloud Sync bundle. |
 | POST | `/api/sync/exchange` | Push and pull in one Cloud Sync transaction. |
 
-## 7. Current Validation Rules
+## 8. Current Validation Rules
 
 1. The selected country, region or national scope, and sector anchor all later validation.
 2. The tool clarifies unclear user intent before accepting or saving user-created content.
@@ -299,16 +324,23 @@ The main interface is a chat workflow with:
 4. A "No evidence" response continues the workflow without evidence.
 5. Evidence URLs and uploaded files are used only when readable and relevant.
 6. The tool distinguishes supported, contradicted, insufficient, and unavailable validation outcomes.
-7. The tool does not invent missing evidence or fill missing report fields with fabricated content.
-8. The tool does not move past unresolved core custom hazard clarification.
-9. The tool does not repeat the same unresolved clarification question indefinitely.
-10. The tool does not treat the current draft custom hazard as a duplicate of itself.
-11. The tool respects a user's explicit decision to continue after a duplicate warning for the same draft.
-12. Generic affected population groups require clarification when a more specific group is needed.
+7. A supported outcome allows the workflow to continue and is shown in validation summaries and reports as supporting evidence or sufficient grounding.
+8. A contradicted outcome blocks saving for core custom hazard dimensions and mitigation dimensions unless the user revises the content or provides new evidence that changes the outcome.
+9. A contradicted non-core or evidential caveat is preserved as a warning and must appear in the validation summary and report if the related content is saved.
+10. An insufficient outcome means the system cannot yet confirm the claim. For core custom hazard and mitigation requirements, the user must clarify or revise before saving. For optional evidence or non-core dimensions, the tool may allow continuation but must preserve the caveat.
+11. An unavailable outcome means the relevant validation service, model, retrieval, document extraction, or URL ingestion could not complete. The user sees a validation-unavailable message and can retry, revise, continue without optional evidence where allowed, or stop the workflow.
+12. The tool does not save a custom hazard while hazard definition, twin transition policy fit, sector fit, or country/region fit is contradicted or still insufficient.
+13. The tool does not save a mitigation measure while required clarity, hazard relevance, sector/geography fit, or target-population fit is contradicted or still insufficient.
+14. The tool does not invent missing evidence or fill missing report fields with fabricated content.
+15. The tool does not move past unresolved core custom hazard clarification.
+16. The tool does not repeat the same unresolved clarification question indefinitely.
+17. The tool does not treat the current draft custom hazard as a duplicate of itself.
+18. The tool respects a user's explicit decision to continue after a duplicate warning for the same draft.
+19. Generic affected population groups require clarification when a more specific group is needed.
 
-## 8. Non-Functional Requirements
+## 9. Non-Functional Requirements
 
-### 8.1 Security and Privacy
+### 9.1 Security, Privacy, and Data Protection
 
 1. The tool requires authentication for user workflows.
 2. Users can access only their own sessions unless they are authorized admins.
@@ -316,30 +348,61 @@ The main interface is a chat workflow with:
 4. Sync endpoints require valid sync tokens.
 5. Production deployments require secure secrets, secure cookies, CSRF protection, and security headers.
 6. LLM payload logging is disabled outside development unless explicitly allowed.
+7. The tool must collect only the account, workflow, evidence, telemetry, and report data needed to operate the service.
+8. User-uploaded evidence and evidence URLs must be associated with the owning user session and not exposed to other ordinary users.
+9. Reports must distinguish user-provided content, seeded reference data, and validation or system-generated summaries when those content types appear in the same report section.
+10. System inquiry telemetry used for aggregate learning must be anonymised or pseudonymised and governed by the configured retention period.
+11. Cloud Sync must transfer only permitted data scopes for the authenticated sync client.
+12. Deployments intended for EU review or pilots must provide a privacy notice that explains controller/contact details, purpose, lawful basis, categories of data, retention, access controls, and user rights.
 
-### 8.2 Reliability
+### 9.2 Reliability
 
 1. If LLM, retrieval, reranker, NLI, document extraction, or URL ingestion is unavailable, the tool reports a clear validation-unavailable outcome.
 2. Validation failures preserve relevant user input.
 3. PDF generation failure does not corrupt session state.
 4. Cloud Sync reports applied, skipped, and dirty states clearly.
 
-### 8.3 Usability
+### 9.3 Usability
 
 1. Each chat step makes the next user action clear.
 2. The tool keeps users on the correct step after invalid input.
 3. In-scope help questions do not move the workflow forward.
 4. PDF export actions appear only when the session has enough saved data for the report type.
+5. Validation summaries must use plain language suitable for non-technical reviewers.
+6. Where a recommendation, ranking, or validation outcome is generated by the system, the UI must expose the main reason or component scores that produced it.
 
-### 8.4 Maintainability
+### 9.4 Accessibility
+
+1. The web interface must support keyboard navigation for primary chat, option, evidence, evaluation, and report-export controls.
+2. Interactive controls must have accessible names and visible focus states.
+3. Text, controls, and validation states must meet WCAG 2.1 AA contrast expectations in production themes.
+4. Error, validation, and status messages must not rely on colour alone.
+5. Uploaded evidence controls and generated PDF actions must remain usable with assistive technology.
+
+### 9.5 Language Coverage
+
+1. The alpha workflow language is English.
+2. User-entered country, region, sector, hazard, mitigation, evidence, and free-text responses may contain local-language terms where they are meaningful in the selected policy context.
+3. System prompts, validation summaries, workflow options, and PDF section headings are delivered in English unless a deployment explicitly enables localisation.
+4. Future localisation must preserve validation meaning and report traceability rather than translating only labels.
+
+### 9.6 Performance and Waiting Time
+
+1. Cached or deterministic UI steps must respond within 3 seconds at p50 and 8 seconds at p95.
+2. LLM-assisted validation, retrieval, and system inquiry steps must show progress or a waiting state when they exceed 3 seconds.
+3. LLM-assisted validation, retrieval, and system inquiry steps must complete within 30 seconds at p95 in the alpha deployment, excluding external network outages and first-time model startup.
+4. PDF generation for an eligible report must complete within 10 seconds at p95 for ordinary alpha-test sessions.
+5. When a step exceeds its expected waiting time, the tool must preserve user input and show a retryable or actionable message.
+
+### 9.7 Maintainability
 
 1. Workflow messages are maintained through Markdown templates where appropriate.
 2. LLM prompts are maintained through prompt files or prompt database rows.
 3. Current workflow behavior is covered by tests for hazard creation, mitigation creation, duplicate detection, evidence decisions, clarification loops, Cloud Sync, and PDF export.
 
-## 9. Acceptance Criteria
+## 10. Acceptance Criteria
 
-### 9.1 Custom Hazard Flow
+### 10.1 Custom Hazard Flow
 
 1. Given a user enters a clear custom hazard, the tool collects reason, asks for optional evidence, validates core dimensions, reviews affected groups, and saves the hazard.
 2. Given the user selects "No" for evidence, the tool continues without evidence.
@@ -347,14 +410,14 @@ The main interface is a chat workflow with:
 4. Given all core custom hazard dimensions are supported, the tool does not ask the same core clarification again.
 5. Given the only duplicate match is the current draft hazard, the tool does not display a duplicate warning.
 
-### 9.2 Mitigation Flow
+### 10.2 Mitigation Flow
 
 1. Given a user selects a hazard for mitigation planning, the tool supports adopting a suggested mitigation or entering one manually.
 2. Given the mitigation measure is saved, the tool offers PDF report export.
 3. Given a mitigation clarification answer does not resolve the pending question, the tool returns a clarification-still-needed error instead of looping.
 4. Given target populations are identified, the user can confirm, add, remove, or edit them before saving.
 
-### 9.3 System Inquiry and PDF Export
+### 10.3 System Inquiry and PDF Export
 
 1. Given mitigation evaluation is complete, the tool starts system inquiry.
 2. Given system inquiry is complete, the tool offers final PDF report export.
@@ -362,8 +425,23 @@ The main interface is a chat workflow with:
 4. Given a user downloads the final PDF after system inquiry, the report includes Policy Objectives, Stakeholder and Hazard Analysis, Identified Gaps, Mitigation Measure Creation, Mitigation Measure Evaluation, Comparison where available, System Inquiry findings, Conclusions, and Recommendations.
 5. Given optional report data is missing, the report omits it or marks it as not provided.
 6. Given a user requests another user's report, the tool rejects the request.
+7. Given a report request lacks a saved mitigation measure, the tool returns a not-ready error and does not generate a PDF.
+8. Given a final report request occurs before system inquiry is answered, skipped, or ended, the tool returns a not-ready error and does not generate a final PDF.
 
-### 9.4 Cloud Sync
+### 10.4 Hazard Ranking
+
+1. Given ranked hazards are requested for a valid country, region or national scope, and sector, the tool returns hazards ordered by `salience_score + effect_size_score + reach_score`.
+2. Given one or more ranking component scores are unavailable for a hazard, the missing component contributes `0` and the returned row still shows the available components.
+3. Given reviewers inspect a ranked hazard row, the response includes component scores and matched population information where available.
+
+### 10.5 Validation Outcomes
+
+1. Given a core custom hazard validation dimension is contradicted or insufficient, the tool asks for revision or clarification and does not save the custom hazard.
+2. Given a required mitigation validation dimension is contradicted or insufficient, the tool asks for revision or clarification and does not save the mitigation measure.
+3. Given optional evidence validation is unavailable, the tool shows the unavailable state and allows the user to retry or continue without optional evidence where the workflow permits.
+4. Given saved content has non-blocking caveats, the report includes those caveats in the validation summary.
+
+### 10.6 Cloud Sync
 
 1. Given Cloud Sync is disabled, sync endpoints return unavailable responses.
 2. Given Cloud Sync is enabled and the token is invalid, sync endpoints reject the request.
@@ -371,7 +449,7 @@ The main interface is a chat workflow with:
 4. Given a permitted Cloud Sync client pushes data, the response reports inserted, updated, skipped, dirty knowledge scopes, and prompt dirty state.
 5. Given temporary knowledge exists locally, Cloud Sync excludes it from normal sync bundles.
 
-## 10. Traceability
+## 11. Traceability
 
 | Area | Key files |
 | --- | --- |
