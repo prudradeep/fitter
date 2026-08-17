@@ -3,7 +3,8 @@ param(
     [string]$VersionPart = "Patch",
     [string]$Version = "",
     [switch]$NoVersionBump,
-    [switch]$OfflineAdmin
+    [switch]$OfflineAdmin,
+    [switch]$PrepackageDependencies
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,5 +26,8 @@ if (-not $NoVersionBump) {
 $installerArgs = @{}
 if ($OfflineAdmin) {
     $installerArgs.OfflineAdmin = $true
+}
+if ($PrepackageDependencies) {
+    $installerArgs.PrepackageDependencies = $true
 }
 & (Join-Path $PSScriptRoot "build-installer.ps1") @installerArgs

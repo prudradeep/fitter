@@ -162,6 +162,46 @@ To package the current already-built payload without changing the version:
 .\packaging\windows\scripts\build-installer.ps1
 ```
 
+To build only the local database/model preparation installer, without the
+desktop launcher or full app installer:
+
+```powershell
+.\packaging\windows\scripts\build-mysql-ollama-installer.ps1
+```
+
+This produces:
+
+```text
+build/windows-dependencies-installer/DrTransitionDatabaseModelSetup-<version>.exe
+```
+
+To include offline MySQL and Ollama installers in the payload, place the vendor
+installers under:
+
+```text
+packaging/windows/offline/mysql/
+packaging/windows/offline/ollama/
+```
+
+Then pass:
+
+```powershell
+.\packaging\windows\scripts\build-installer.ps1 -PrepackageDependencies
+```
+
+For the standalone database/model preparation installer, use:
+
+```powershell
+.\packaging\windows\scripts\build-mysql-ollama-installer.ps1 -PrepackageDependencies
+```
+
+Use `-PrepackageDependencies` together with `-OfflineAdmin` for a fully local
+installer build:
+
+```powershell
+.\packaging\windows\scripts\build-installer.ps1 -OfflineAdmin -PrepackageDependencies
+```
+
 This assembles:
 
 ```text
@@ -171,7 +211,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionSetup-0.1.8.exe
+build/windows-installer/DrTransitionSetup-0.1.9.exe
 ```
 
 If you only run `build-python-services.ps1`, you will get the service executables
@@ -250,6 +290,25 @@ The installer now performs the first dependency setup pass:
 - Does not ingest bundled `kb/*.pdf` files locally; Main KB is pulled from the central server
 - Pulls the required Ollama chat and embedding models
 
+For machines that need only local database/model preparation, build the
+standalone installer:
+
+```powershell
+.\packaging\windows\scripts\build-mysql-ollama-installer.ps1
+```
+
+or bundle offline MySQL/Ollama installers:
+
+```powershell
+.\packaging\windows\scripts\build-mysql-ollama-installer.ps1 -PrepackageDependencies
+```
+
+This standalone installer installs/checks MySQL and Ollama, creates the
+application database/user, applies schema/migrations, seeds bundled base lookup
+rows and reference data, seeds database-backed prompts from packaged prompt
+files, and pulls the selected chat and embedding models. It does not install the
+desktop launcher, grounding services, or create a default app user.
+
 The default installer remains a sync-client build and does not create a local
 default user or seed reference data. To build the optional fully local installer
 for offline/admin deployments, pass the offline-admin build flag:
@@ -262,6 +321,12 @@ or for a full release build:
 
 ```powershell
 .\packaging\windows\scripts\build-release.ps1 -OfflineAdmin
+```
+
+To include the offline dependency installers in a full release build:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1 -OfflineAdmin -PrepackageDependencies
 ```
 
 This produces `DrTransitionOfflineAdminSetup-<version>.exe`, uses a runtime
@@ -281,12 +346,35 @@ or a common Ollama `server.json` location, the installer preserves that path
 before starting Ollama or pulling models. It does not reset the model directory
 to Ollama's default path.
 
-Missing dependencies are installed with `winget`:
+When `-PrepackageDependencies` is used, the installer payload includes:
+
+```text
+installers/mysql/<bundled MySQL .msi or .exe>
+installers/ollama/<bundled Ollama .exe>
+```
+
+At setup time, missing MySQL and Ollama installations are installed from those
+bundled files first. Bundled dependency installers are launched visibly, so the
+user completes the official MySQL/Ollama installer window and Dr Transition
+continues after verifying the installed binaries. If no bundled installer is
+present, missing dependencies are installed online with `winget` or direct
+download:
 
 ```text
 Oracle.MySQL
-Ollama.Ollama
+https://ollama.com/download/OllamaSetup.exe
 ```
+
+Use an official MySQL Server package that installs `mysql.exe` and `mysqld.exe`
+on the target machine. The setup script verifies both binaries after running the
+bundled MySQL installer and stops with a clear error if the package only installs
+the MySQL Installer shell rather than the server binaries. Use the official
+Ollama `OllamaSetup.exe` for the Ollama bundle.
+
+Prepackaging Ollama installs the Ollama application offline. Ollama model pulls
+still require network access unless the target machine already has the required
+models in its Ollama model store or a separate model-bundle/import process is
+added.
 
 The setup log is written to:
 

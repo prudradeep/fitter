@@ -17,3 +17,4 @@ dist/
 desktop/tauri/node_modules/
 desktop/tauri/src-tauri/target/
 points
+packaging/windows/offline

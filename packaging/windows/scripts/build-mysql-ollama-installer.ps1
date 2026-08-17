@@ -5,42 +5,37 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
-$installerBuildRoot = Join-Path $root "build\windows-installer"
-$payload = Join-Path $root "build\windows-installer\payload"
+$iss = Join-Path $root "packaging\windows\DrTransitionMySqlOllama.iss"
+$fullInstallerIss = Join-Path $root "packaging\windows\DrTransition.iss"
+$installerBuildRoot = Join-Path $root "build\windows-dependencies-installer"
+$payload = Join-Path $installerBuildRoot "payload"
 $backendPayload = Join-Path $payload "backend"
-$configPayload = Join-Path $payload "config"
 $scriptsPayload = Join-Path $payload "scripts"
 $installersPayload = Join-Path $payload "installers"
+$backendBuild = Join-Path $root "dist\drtransition-backend"
 
 if (Test-Path -LiteralPath $payload) {
     $resolvedPayload = Resolve-Path -LiteralPath $payload
     if (-not $resolvedPayload.Path.StartsWith((Join-Path $installerBuildRoot ""), [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to remove path outside build\windows-installer: $($resolvedPayload.Path)"
+        throw "Refusing to remove path outside build\windows-dependencies-installer: $($resolvedPayload.Path)"
     }
     Remove-Item -LiteralPath $resolvedPayload.Path -Recurse -Force
 }
+
+if (-not (Test-Path -LiteralPath $backendBuild)) {
+    Write-Host "Missing Python backend build: $backendBuild"
+    Write-Host "Running build-python-services.ps1 first..."
+    & (Join-Path $PSScriptRoot "build-python-services.ps1")
+}
+
+if (-not (Test-Path -LiteralPath $backendBuild)) {
+    throw "Missing PyInstaller backend output: $backendBuild. Run build-python-services.ps1 first."
+}
+
 New-Item -ItemType Directory -Force -Path $backendPayload | Out-Null
-New-Item -ItemType Directory -Force -Path $configPayload | Out-Null
 New-Item -ItemType Directory -Force -Path $scriptsPayload | Out-Null
-
-$serviceNames = @("drtransition-backend", "drtransition-grounding")
-foreach ($serviceName in $serviceNames) {
-    $source = Join-Path $root "dist\$serviceName"
-    if (-not (Test-Path $source)) {
-        throw "Missing PyInstaller output: $source. Run build-python-services.ps1 first."
-    }
-    Copy-Item -Path $source -Destination $backendPayload -Recurse -Force
-}
-
-$tauriExe = Join-Path $root "desktop\tauri\src-tauri\target\release\drtransition.exe"
-if (-not (Test-Path $tauriExe)) {
-    throw "Missing Tauri executable: $tauriExe. Run npm install and npm run tauri:build in desktop\tauri first."
-}
-Copy-Item -LiteralPath $tauriExe -Destination (Join-Path $payload "DrTransition.exe") -Force
-
-Copy-Item -LiteralPath (Join-Path $root "packaging\windows\config\default.config.json") -Destination $configPayload -Force
+Copy-Item -Path $backendBuild -Destination $backendPayload -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Install-DrTransitionDependencies.ps1") -Destination $scriptsPayload -Force
-Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Test-SystemCompatibility.ps1") -Destination $scriptsPayload -Force
 Copy-Item -LiteralPath (Join-Path $root "packaging\windows\scripts\Get-ModelRecommendation.ps1") -Destination $scriptsPayload -Force
 Copy-Item -LiteralPath (Join-Path $root "schema.sql") -Destination $payload -Force
 
@@ -53,6 +48,7 @@ if ($PrepackageDependencies) {
 
     $mysqlInstaller = Get-ChildItem -LiteralPath $mysqlOffline -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension -in @(".msi", ".exe") } |
+        Sort-Object Name |
         Select-Object -First 1
     if (-not $mysqlInstaller) {
         throw "Missing offline MySQL installer. Place a MySQL Server .msi/.exe in $mysqlOffline."
@@ -60,6 +56,7 @@ if ($PrepackageDependencies) {
 
     $ollamaInstaller = Get-ChildItem -LiteralPath $ollamaOffline -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -ieq "OllamaSetup.exe" -or $_.Extension -eq ".exe" } |
+        Sort-Object Name |
         Select-Object -First 1
     if (-not $ollamaInstaller) {
         throw "Missing offline Ollama installer. Place OllamaSetup.exe in $ollamaOffline."
@@ -74,4 +71,27 @@ if ($PrepackageDependencies) {
     Write-Host "  Ollama: $($ollamaInstaller.Name)"
 }
 
-Write-Host "Installer payload assembled at $payload"
+$isccCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+$iscc = if ($isccCommand) {
+    $isccCommand.Source
+} elseif (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") {
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+} elseif (Test-Path "$env:ProgramFiles\Inno Setup 6\ISCC.exe") {
+    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+} else {
+    $null
+}
+
+if (-not $iscc) {
+    throw "ISCC.exe was not found. Install Inno Setup 6 and ensure ISCC.exe is on PATH."
+}
+
+$version = "0.1.0"
+$fullInstallerText = Get-Content -LiteralPath $fullInstallerIss -Raw
+if ($fullInstallerText -match '#define\s+MyAppVersion\s+"([^"]+)"') {
+    $version = $Matches[1]
+}
+
+Write-Host "Dependency installer payload assembled at $payload"
+Write-Host "Building MySQL/Ollama-only installer version $version"
+& $iscc $iss "/DMyAppVersion=$version"

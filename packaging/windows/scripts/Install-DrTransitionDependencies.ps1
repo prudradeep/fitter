@@ -30,7 +30,8 @@ param(
     [switch]$SeedMainKbFromFiles,
     [switch]$SkipDefaultAppUser,
     [switch]$SkipReferenceData,
-    [switch]$SkipDatabaseSeed
+    [switch]$SkipDatabaseSeed,
+    [switch]$DependenciesOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,6 +44,7 @@ $envPath = Join-Path $programData ".env"
 $runtimeTemplate = Join-Path $InstallDir "config\.env"
 $backendExe = Join-Path $InstallDir "backend\drtransition-backend\drtransition-backend.exe"
 $setupLog = Join-Path $logDir "installer-setup.log"
+$script:MySqlInitializationOutput = ""
 
 New-Item -ItemType Directory -Force -Path $programData | Out-Null
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
@@ -79,6 +81,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfigPath) -and (Test-Path -LiteralPath 
             "SkipDefaultAppUser" { if ([bool]$property.Value) { $SkipDefaultAppUser = $true } }
             "SkipReferenceData" { if ([bool]$property.Value) { $SkipReferenceData = $true } }
             "SkipDatabaseSeed" { if ([bool]$property.Value) { $SkipDatabaseSeed = $true } }
+            "DependenciesOnly" { if ([bool]$property.Value) { $DependenciesOnly = $true } }
         }
     }
 }
@@ -124,9 +127,10 @@ function Write-SetupProgress {
         "[PROGRESS] $Activity|$Percent|$Status"
     }
 
-    # Write to both the normal setup log and stdout. The outer installer can
-    # parse lines beginning with [PROGRESS] to update its own progress bar.
-    Write-SetupLog $message
+    # Keep machine-readable progress in the setup log without echoing every
+    # update into the visible console. Frequent progress log lines otherwise
+    # collide with native carriage-return progress bars during large downloads.
+    Add-Content -LiteralPath $setupLog -Value ("{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $message) -Encoding UTF8
     Write-Progress -Activity $Activity -Status $Status -PercentComplete $Percent
 }
 
@@ -142,25 +146,143 @@ function Invoke-VisibleSetupCommand {
     Write-SetupLog "Starting $Activity"
     Write-SetupProgress -Activity $Activity -Percent $StartPercent -Status "Starting..."
 
-    # Execute the native tool normally so its own download/install progress
-    # remains visible. Tee-Object lets us inspect each emitted line without
-    # losing it from the installer console.
-    $nativeOutput = & $FilePath @Arguments 2>&1 | ForEach-Object {
-        $line = [string]$_
-        Write-Host $line
+    $stdoutPath = Join-Path $env:TEMP ("drtransition-native-out-" + [guid]::NewGuid() + ".log")
+    $stderrPath = Join-Path $env:TEMP ("drtransition-native-err-" + [guid]::NewGuid() + ".log")
+    $progressState = @{
+        LastPercent = $StartPercent
+        LastProgressAt = Get-Date
+        LastConsolePercent = -1
+        LastConsoleStatus = ""
+        StdoutLength = 0
+        StderrLength = 0
+    }
+    $heartbeatSeconds = 10
+
+    function Write-NativeSetupLine {
+        param([string]$Line)
+
+        if ([string]::IsNullOrWhiteSpace($Line)) {
+            return
+        }
+
+        $line = ([string]$Line) -replace "`e\[[0-9;?]*[ -/]*[@-~]", ""
+        $line = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            return
+        }
 
         # winget and ollama commonly report progress as NN% or NN.N%.
         if ($line -match '(?<!\d)(100|[1-9]?\d)(?:\.\d+)?%') {
             $nativePercent = [int][double]$Matches[1]
             $mappedPercent = $StartPercent + [int](($EndPercent - $StartPercent) * ($nativePercent / 100.0))
+            $progressState.LastPercent = [math]::Max($progressState.LastPercent, $mappedPercent)
+            $progressState.LastProgressAt = Get-Date
             Write-SetupProgress -Activity $Activity -Percent $mappedPercent -Status $line.Trim()
+            if (
+                $nativePercent -eq 100 -or
+                $progressState.LastConsolePercent -lt 0 -or
+                $nativePercent -ge ($progressState.LastConsolePercent + 5)
+            ) {
+                Write-Host $line
+                $progressState.LastConsolePercent = $nativePercent
+                $progressState.LastConsoleStatus = $line
+            }
+            return
         }
-        $line
+
+        # Ollama redraws spinner/progress rows with carriage returns. Once its
+        # output is redirected, those frames can appear as many repeated lines.
+        if ($line -match '^pulling manifest\b') {
+            if ($progressState.LastConsoleStatus -ne "pulling manifest") {
+                Write-Host "pulling manifest..."
+                $progressState.LastConsoleStatus = "pulling manifest"
+            }
+            return
+        }
+
+        if ($line -ne $progressState.LastConsoleStatus) {
+            Write-Host $line
+            $progressState.LastConsoleStatus = $line
+        }
     }
 
-    $exitCode = $LASTEXITCODE
+    function Read-NativeSetupFile {
+        param(
+            [string]$Path,
+            [string]$LengthKey
+        )
+
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return
+        }
+
+        $file = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+        if (-not $file -or $file.Length -le $progressState[$LengthKey]) {
+            return
+        }
+
+        $reader = $null
+        $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $stream.Seek([int64]$progressState[$LengthKey], [System.IO.SeekOrigin]::Begin) | Out-Null
+            $reader = [System.IO.StreamReader]::new($stream)
+            $text = $reader.ReadToEnd()
+            $progressState[$LengthKey] = $stream.Position
+        } finally {
+            if ($reader) {
+                $reader.Dispose()
+            } else {
+                $stream.Dispose()
+            }
+        }
+
+        foreach ($line in ($text -split "`r`n|`n|`r")) {
+            Write-NativeSetupLine -Line $line
+        }
+    }
+
+    $process = Start-Process -FilePath $FilePath `
+        -ArgumentList (Join-ProcessArguments $Arguments) `
+        -RedirectStandardOutput $stdoutPath `
+        -RedirectStandardError $stderrPath `
+        -PassThru `
+        -WindowStyle Hidden
+    # Touch the handle immediately; without this, PowerShell can leave ExitCode
+    # unset for some redirected native processes even after WaitForExit().
+    $null = $process.Handle
+
+    try {
+        while (-not $process.HasExited) {
+            Read-NativeSetupFile -Path $stdoutPath -LengthKey "StdoutLength"
+            Read-NativeSetupFile -Path $stderrPath -LengthKey "StderrLength"
+
+            if (((Get-Date) - $progressState.LastProgressAt).TotalSeconds -ge $heartbeatSeconds -and $progressState.LastPercent -lt ($EndPercent - 1)) {
+                $progressState.LastPercent += 1
+                $progressState.LastProgressAt = Get-Date
+                Write-SetupProgress -Activity $Activity -Percent $progressState.LastPercent -Status "Still running..."
+            }
+
+            Start-Sleep -Milliseconds 500
+        }
+
+        $process.WaitForExit()
+        $process.Refresh()
+        Read-NativeSetupFile -Path $stdoutPath -LengthKey "StdoutLength"
+        Read-NativeSetupFile -Path $stderrPath -LengthKey "StderrLength"
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $exitCode = $process.ExitCode
     if ($null -eq $exitCode) {
-        $exitCode = 0
+        if ($progressState.LastPercent -ge $EndPercent) {
+            Write-SetupLog "$Activity completed its native progress output but did not report an exit code; treating it as success."
+            $exitCode = 0
+        } else {
+            Write-SetupLog "$Activity did not report an exit code and only reached $($progressState.LastPercent)% progress."
+            $exitCode = -1
+        }
     }
 
     if ($exitCode -eq 0 -or $exitCode -eq 3010) {
@@ -357,6 +479,28 @@ function Find-CommandPath {
     return $null
 }
 
+function Find-BundledDependencyInstaller {
+    param([string]$DependencyName)
+
+    if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+        return $null
+    }
+
+    $dependencyDir = Join-Path $InstallDir "installers\$DependencyName"
+    if (-not (Test-Path -LiteralPath $dependencyDir)) {
+        return $null
+    }
+
+    $installer = Get-ChildItem -LiteralPath $dependencyDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in @(".msi", ".exe") } |
+        Sort-Object Name |
+        Select-Object -First 1
+    if ($installer) {
+        return $installer.FullName
+    }
+    return $null
+}
+
 function Find-MySqlExe {
     $commandPath = Find-CommandPath "mysql.exe"
     if ($commandPath) {
@@ -495,14 +639,18 @@ log-error="$($errorLog -replace '\\', '/')"
     return $defaultsFile
 }
 
-function Get-MySqlDataDirFromDefaultsFile {
-    param([string]$DefaultsFile)
+function Get-MySqlServerConfigValue {
+    param(
+        [string]$DefaultsFile,
+        [string]$Name
+    )
 
     if (-not (Test-Path -LiteralPath $DefaultsFile)) {
         return $null
     }
 
     $inServerSection = $false
+    $escapedName = [regex]::Escape($Name)
     foreach ($line in Get-Content -LiteralPath $DefaultsFile) {
         $trimmed = $line.Trim()
         if ($trimmed -match '^\[(.+)\]$') {
@@ -512,11 +660,26 @@ function Get-MySqlDataDirFromDefaultsFile {
         if (-not $inServerSection) {
             continue
         }
-        if ($trimmed -match '^datadir\s*=\s*(.+)$') {
-            return ($Matches[1].Trim().Trim('"') -replace '/', '\')
+        if ($trimmed -match "^$escapedName\s*=\s*(.+)$") {
+            return $Matches[1].Trim().Trim('"')
         }
     }
     return $null
+}
+
+function Convert-MySqlConfigPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+    return ($Path.Trim().Trim('"') -replace '/', '\')
+}
+
+function Get-MySqlDataDirFromDefaultsFile {
+    param([string]$DefaultsFile)
+
+    return Convert-MySqlConfigPath (Get-MySqlServerConfigValue -DefaultsFile $DefaultsFile -Name "datadir")
 }
 
 function Test-MySqlDataDirectoryInitialized {
@@ -537,15 +700,46 @@ function Initialize-MySqlDataDirectory {
     }
 
     Write-SetupLog "Initializing MySQL data directory"
-    $process = Start-Process -FilePath $MySqlDExe -ArgumentList (Join-ProcessArguments @(
-        "--defaults-file=$DefaultsFile",
-        "--initialize",
-        "--console"
-    )) -Wait -PassThru -WindowStyle Hidden
-    if ($process.ExitCode -ne 0) {
-        throw "MySQL data directory initialization failed with exit code $($process.ExitCode)."
+    $stdoutPath = Join-Path $env:TEMP ("drtransition-mysql-init-out-" + [guid]::NewGuid() + ".log")
+    $stderrPath = Join-Path $env:TEMP ("drtransition-mysql-init-err-" + [guid]::NewGuid() + ".log")
+    try {
+        $process = Start-Process -FilePath $MySqlDExe -ArgumentList (Join-ProcessArguments @(
+            "--defaults-file=$DefaultsFile",
+            "--initialize",
+            "--console"
+        )) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -Wait -PassThru -WindowStyle Hidden
+
+        $stdout = ""
+        $stderr = ""
+        if (Test-Path -LiteralPath $stdoutPath) {
+            $stdout = Get-Content -LiteralPath $stdoutPath -Raw
+        }
+        if (Test-Path -LiteralPath $stderrPath) {
+            $stderr = Get-Content -LiteralPath $stderrPath -Raw
+        }
+        $script:MySqlInitializationOutput = @($stdout, $stderr) -join "`n"
+
+        if ($process.ExitCode -ne 0) {
+            throw "MySQL data directory initialization failed with exit code $($process.ExitCode)."
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
     }
     return $true
+}
+
+function Find-MySqlTemporaryRootPasswordInText {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $null
+    }
+    $matches = [regex]::Matches($Text, 'temporary password.*root@localhost:\s*(.+)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($matches.Count -eq 0) {
+        return $null
+    }
+    return $matches[$matches.Count - 1].Groups[1].Value.Trim()
 }
 
 function Get-MySqlTemporaryRootPassword {
@@ -556,22 +750,47 @@ function Get-MySqlTemporaryRootPassword {
         throw "Could not determine MySQL data directory for temporary password lookup."
     }
 
-    $logCandidates = @(
+    $password = Find-MySqlTemporaryRootPasswordInText -Text $script:MySqlInitializationOutput
+    if ($password) {
+        return $password
+    }
+
+    $logCandidates = [System.Collections.Generic.List[string]]::new()
+    @(
         (Join-Path $dataDir "error.log"),
         (Join-Path $dataDir "$env:COMPUTERNAME.err")
-    )
-    foreach ($log in $logCandidates) {
-        if (-not (Test-Path -LiteralPath $log)) {
-            continue
-        }
-        $match = Get-Content -LiteralPath $log |
-            Select-String -Pattern 'temporary password.*root@localhost:\s*(.+)$' |
-            Select-Object -Last 1
-        if ($match) {
-            return $match.Matches[0].Groups[1].Value.Trim()
+    ) | ForEach-Object { $logCandidates.Add($_) }
+
+    $configuredLog = Convert-MySqlConfigPath (Get-MySqlServerConfigValue -DefaultsFile $DefaultsFile -Name "log-error")
+    if (-not [string]::IsNullOrWhiteSpace($configuredLog)) {
+        if ([System.IO.Path]::IsPathRooted($configuredLog)) {
+            $logCandidates.Add($configuredLog)
+        } else {
+            $logCandidates.Add((Join-Path $dataDir $configuredLog))
         }
     }
 
+    Get-ChildItem -LiteralPath $dataDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in @(".err", ".log") } |
+        Sort-Object LastWriteTime |
+        ForEach-Object { $logCandidates.Add($_.FullName) }
+
+    $checkedLogs = [System.Collections.Generic.List[string]]::new()
+    foreach ($log in $logCandidates) {
+        if ([string]::IsNullOrWhiteSpace($log) -or $checkedLogs.Contains($log)) {
+            continue
+        }
+        $checkedLogs.Add($log)
+        if (-not (Test-Path -LiteralPath $log)) {
+            continue
+        }
+        $password = Find-MySqlTemporaryRootPasswordInText -Text (Get-Content -LiteralPath $log -Raw)
+        if ($password) {
+            return $password
+        }
+    }
+
+    Write-SetupLog "Checked MySQL initialization output and $($checkedLogs.Count) possible MySQL log file path(s) for the temporary root password."
     throw "Could not find MySQL temporary root password in the data directory logs."
 }
 
@@ -720,15 +939,18 @@ function Test-OllamaInstallerSignature {
     Write-SetupLog "Ollama installer signature verified: $subject"
 }
 
-function Install-OllamaDirect {
+function Install-OllamaFromInstaller {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallerPath,
+        [switch]$Interactive,
+        [switch]$RemoveInstallerWhenDone
+    )
+
     $activity = "Installing Ollama"
-    $downloadUrl = "https://ollama.com/download/OllamaSetup.exe"
-    $tempInstaller = Join-Path $env:TEMP "DrTransition-OllamaSetup.exe"
 
     try {
-        Write-SetupLog "Installing Ollama from official installer"
-        Invoke-DownloadWithProgress -Url $downloadUrl -OutFile $tempInstaller -Activity $activity -StartPercent 0 -EndPercent 80
-        Test-OllamaInstallerSignature -FilePath $tempInstaller
+        Write-SetupLog "Installing Ollama from installer: $InstallerPath"
+        Test-OllamaInstallerSignature -FilePath $InstallerPath
 
         # This marker is used by Ollama during upgrade/install so the app can start quietly.
         $markerDir = Join-Path $env:LOCALAPPDATA "Ollama"
@@ -736,11 +958,17 @@ function Install-OllamaDirect {
         New-Item -ItemType Directory -Force -Path $markerDir | Out-Null
         New-Item -ItemType File -Force -Path $markerFile | Out-Null
 
-        Write-SetupProgress -Activity $activity -Percent 85 -Status "Installing Ollama..."
-        Write-SetupLog "Starting Ollama installer"
-        $process = Start-Process -FilePath $tempInstaller `
-            -ArgumentList "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES" `
-            -PassThru
+        if ($Interactive) {
+            Write-SetupProgress -Activity $activity -Percent 85 -Status "Complete the Ollama installer window..."
+            Write-SetupLog "Starting interactive Ollama installer"
+            $process = Start-Process -FilePath $InstallerPath -PassThru
+        } else {
+            Write-SetupProgress -Activity $activity -Percent 85 -Status "Installing Ollama..."
+            Write-SetupLog "Starting silent Ollama installer"
+            $process = Start-Process -FilePath $InstallerPath `
+                -ArgumentList "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES" `
+                -PassThru
+        }
 
         # The Ollama/Inno installer does not expose a trustworthy numeric install percentage.
         # Keep the user informed with stage-based progress while the installer is running.
@@ -750,7 +978,11 @@ function Install-OllamaDirect {
             $process.Refresh()
             if (-not $process.HasExited -and $installStage -lt 98) {
                 $installStage++
-                Write-SetupProgress -Activity $activity -Percent $installStage -Status "Installing Ollama..."
+                if ($Interactive) {
+                    Write-SetupProgress -Activity $activity -Percent $installStage -Status "Waiting for Ollama installer..."
+                } else {
+                    Write-SetupProgress -Activity $activity -Percent $installStage -Status "Installing Ollama..."
+                }
             }
         }
         $process.WaitForExit()
@@ -765,8 +997,20 @@ function Install-OllamaDirect {
         Write-SetupLog "Ollama installed successfully (exit code $($process.ExitCode))"
     }
     finally {
-        Remove-Item -LiteralPath $tempInstaller -Force -ErrorAction SilentlyContinue
+        if ($RemoveInstallerWhenDone) {
+            Remove-Item -LiteralPath $InstallerPath -Force -ErrorAction SilentlyContinue
+        }
     }
+}
+
+function Install-OllamaDirect {
+    $activity = "Installing Ollama"
+    $downloadUrl = "https://ollama.com/download/OllamaSetup.exe"
+    $tempInstaller = Join-Path $env:TEMP "DrTransition-OllamaSetup.exe"
+
+    Write-SetupLog "Installing Ollama from official download"
+    Invoke-DownloadWithProgress -Url $downloadUrl -OutFile $tempInstaller -Activity $activity -StartPercent 0 -EndPercent 80
+    Install-OllamaFromInstaller -InstallerPath $tempInstaller -RemoveInstallerWhenDone
 }
 
 function Invoke-WingetInstall {
@@ -782,28 +1026,46 @@ function Invoke-WingetInstall {
         Write-SetupLog "Trying winget install $packageId"
         Write-SetupProgress -Activity $activity -Percent 0 -Status "Locating package..."
 
-        # IMPORTANT: Do not pipe winget output through ForEach-Object/Tee-Object.
-        # Winget draws its download progress bar using console control / carriage-return
-        # sequences. Piping its output turns stdout into a non-interactive stream and
-        # can suppress or flatten the native progress display. Running it directly
-        # preserves the same live progress bar and downloaded-size counter that users
-        # see when they run winget manually in PowerShell.
-        Write-SetupProgress -Activity $activity -Percent 5 -Status "Downloading package (live winget progress shown below)..."
+        # IMPORTANT: Do not run winget through redirected stdout/stderr here. Winget can
+        # lose its process exit code in that mode during installer handoff. Start-Process
+        # keeps winget isolated from PowerShell's success stream so its output cannot
+        # become part of Ensure-MySql's returned mysql.exe path.
+        Write-SetupProgress -Activity $activity -Percent 5 -Status "Downloading package..."
         Write-Host ""
         Write-Host "========== winget progress: $packageId ==========" -ForegroundColor Cyan
 
-        & $winget install `
-            --id $packageId `
-            --exact `
-            --source winget `
-            --silent `
-            --accept-package-agreements `
-            --accept-source-agreements `
-            --disable-interactivity
+        $wingetArgs = @(
+            "install",
+            "--id",
+            $packageId,
+            "--exact",
+            "--source",
+            "winget",
+            "--silent",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--disable-interactivity"
+        )
 
-        $exitCode = $LASTEXITCODE
+        Write-SetupLog "Starting $activity"
+        $process = Start-Process -FilePath $winget `
+            -ArgumentList (Join-ProcessArguments $wingetArgs) `
+            -NoNewWindow `
+            -PassThru
+
+        $installPercent = 5
+        while (-not $process.HasExited) {
+            Start-Sleep -Seconds 10
+            if (-not $process.HasExited -and $installPercent -lt 95) {
+                $installPercent += 5
+                Write-SetupProgress -Activity $activity -Percent $installPercent -Status "Still running..."
+            }
+        }
+        $process.WaitForExit()
+        $process.Refresh()
+        $exitCode = $process.ExitCode
         if ($null -eq $exitCode) {
-            $exitCode = 0
+            $exitCode = -1
         }
 
         Write-Host "========== end winget progress: $packageId ==========" -ForegroundColor Cyan
@@ -826,6 +1088,47 @@ function Invoke-WingetInstall {
     }
 
     throw "Could not install any package from: $($PackageIds -join ', ')"
+}
+
+function Install-MySqlBundled {
+    param([Parameter(Mandatory = $true)][string]$InstallerPath)
+
+    $activity = "Installing MySQL"
+    Write-SetupLog "Installing MySQL from bundled installer: $InstallerPath"
+    Write-SetupProgress -Activity $activity -Percent 5 -Status "Complete the MySQL installer window..."
+
+    $extension = [System.IO.Path]::GetExtension($InstallerPath).ToLowerInvariant()
+    if ($extension -eq ".msi") {
+        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList (Join-ProcessArguments @(
+            "/i",
+            $InstallerPath,
+            "/norestart"
+        )) -PassThru
+    } elseif ($extension -eq ".exe") {
+        $process = Start-Process -FilePath $InstallerPath -PassThru
+    } else {
+        throw "Unsupported bundled MySQL installer type: $InstallerPath"
+    }
+
+    $installPercent = 5
+    while (-not $process.HasExited) {
+        Start-Sleep -Seconds 10
+        if (-not $process.HasExited -and $installPercent -lt 95) {
+            $installPercent += 5
+            Write-SetupProgress -Activity $activity -Percent $installPercent -Status "Waiting for MySQL installer..."
+        }
+    }
+    $process.WaitForExit()
+    $process.Refresh()
+
+    if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
+        Write-SetupProgress -Activity $activity -Percent 5 -Status "Failed (exit code $($process.ExitCode))"
+        throw "Bundled MySQL installer failed with exit code $($process.ExitCode)."
+    }
+
+    Write-SetupProgress -Activity $activity -Percent 100 -Status "Bundled MySQL installer completed"
+    Write-Progress -Activity $activity -Completed
+    Write-SetupLog "Bundled MySQL installer completed successfully (exit code $($process.ExitCode))"
 }
 
 function Start-MySqlService {
@@ -893,7 +1196,10 @@ function Invoke-MySqlSqlWithPassword {
             $mysqlArgs += "--connect-expired-password"
         }
         $mysqlArgs += @("-e", "source $tempSql")
-        & $MySqlExe @mysqlArgs
+        $mysqlOutput = & $MySqlExe @mysqlArgs 2>&1
+        foreach ($line in $mysqlOutput) {
+            Write-Host $line
+        }
         if ($LASTEXITCODE -ne 0) {
             throw "mysql.exe exited with code $LASTEXITCODE"
         }
@@ -907,6 +1213,17 @@ function Invoke-MySqlSqlWithPassword {
     }
 }
 
+function Test-MySqlAdminPassword {
+    param([string]$MySqlExe)
+
+    try {
+        Invoke-MySqlSqlWithPassword -MySqlExe $MySqlExe -Sql "SELECT 1;" -User $MySqlAdminUser -Password $MySqlAdminPassword
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Set-FreshMySqlRootPassword {
     param([string]$MySqlExe, [string]$DefaultsFile)
 
@@ -914,7 +1231,7 @@ function Set-FreshMySqlRootPassword {
         throw "MySQL administrator password is required to finish fresh MySQL setup."
     }
 
-    Write-SetupLog "Setting MySQL root password for fresh local install"
+    Write-SetupLog "Setting MySQL root password from temporary initialization password"
     $temporaryPassword = Get-MySqlTemporaryRootPassword -DefaultsFile $DefaultsFile
     $quotedPassword = Quote-SqlString $MySqlAdminPassword
     $sql = @"
@@ -930,13 +1247,47 @@ FLUSH PRIVILEGES;
     Invoke-MySqlSqlWithPassword -MySqlExe $MySqlExe -Sql $sql -User "root" -Password $temporaryPassword -ConnectExpiredPassword
 }
 
+function Repair-MySqlRootPasswordFromTemporaryIfNeeded {
+    param([string]$MySqlExe, [string]$DefaultsFile)
+
+    if ([string]::IsNullOrWhiteSpace($MySqlAdminPassword)) {
+        return
+    }
+    if (Test-MySqlAdminPassword -MySqlExe $MySqlExe) {
+        return
+    }
+
+    Write-SetupLog "MySQL administrator password was not accepted; checking for a temporary initialization password"
+    try {
+        Set-FreshMySqlRootPassword -MySqlExe $MySqlExe -DefaultsFile $DefaultsFile
+    } catch {
+        throw "MySQL administrator password was not accepted, and setup could not repair it with the temporary initialization password. $($_.Exception.Message)"
+    }
+}
+
 function Ensure-MySql {
     Write-SetupLog "Checking MySQL installation"
     $mysql = Find-MySqlExe
 
     if (-not $mysql -and $InstallMySql) {
-        Write-SetupLog "MySQL executable was not found; attempting installation"
-        Invoke-WingetInstall -PackageIds @("Oracle.MySQL")
+        $bundledMySqlInstaller = Find-BundledDependencyInstaller -DependencyName "mysql"
+        if ($bundledMySqlInstaller) {
+            Write-SetupLog "MySQL executable was not found; using bundled installer"
+            Install-MySqlBundled -InstallerPath $bundledMySqlInstaller
+        } else {
+            Write-SetupLog "MySQL executable was not found; attempting online installation"
+            try {
+                Invoke-WingetInstall -PackageIds @("Oracle.MySQL")
+            } catch {
+                Write-SetupLog "winget reported a MySQL installation failure: $($_.Exception.Message)"
+                Write-SetupLog "Checking whether MySQL was installed despite the winget status"
+                Start-Sleep -Seconds 5
+                if (-not (Find-MySqlExe) -or -not (Find-MySqlDExe)) {
+                    throw
+                }
+                Write-SetupLog "MySQL binaries were found after winget failure; continuing setup"
+            }
+        }
         Start-Sleep -Seconds 5
         $mysql = Find-MySqlExe
     } else {
@@ -949,7 +1300,7 @@ function Ensure-MySql {
 
     $mysqld = Find-MySqlDExe
     if (-not $mysqld) {
-        throw "mysqld.exe was not found after MySQL installation. The Oracle.MySQL winget package did not install MySQL Server binaries."
+        throw "mysqld.exe was not found after MySQL installation. Use a bundled MySQL Server package that installs server binaries, or install MySQL Server manually and rerun setup."
     }
 
     $defaultsFile = New-MySqlDefaultsFile -MySqlDExe $mysqld
@@ -964,6 +1315,8 @@ function Ensure-MySql {
 
     if ($freshDataDirectory) {
         Set-FreshMySqlRootPassword -MySqlExe $mysql -DefaultsFile $defaultsFile
+    } else {
+        Repair-MySqlRootPasswordFromTemporaryIfNeeded -MySqlExe $mysql -DefaultsFile $defaultsFile
     }
 
     Write-SetupLog "MySQL is reachable"
@@ -1150,8 +1503,14 @@ function Ensure-Ollama {
     $ollama = Find-OllamaExe
 
     if (-not $ollama -and $InstallOllama) {
-        Write-SetupLog "Ollama is missing; downloading and installing from ollama.com"
-        Install-OllamaDirect
+        $bundledOllamaInstaller = Find-BundledDependencyInstaller -DependencyName "ollama"
+        if ($bundledOllamaInstaller) {
+            Write-SetupLog "Ollama is missing; using bundled installer"
+            Install-OllamaFromInstaller -InstallerPath $bundledOllamaInstaller -Interactive
+        } else {
+            Write-SetupLog "Ollama is missing; downloading and installing from ollama.com"
+            Install-OllamaDirect
+        }
         Start-Sleep -Seconds 2
         $ollama = Find-OllamaExe
     }
@@ -1194,8 +1553,20 @@ function Ensure-Ollama {
 
 function Get-OllamaModelRecommendation {
     try {
-        $computer = Get-CimInstance Win32_ComputerSystem
-        $gpu = Get-CimInstance Win32_VideoController | Sort-Object AdapterRAM -Descending | Select-Object -First 1
+        try {
+            $computer = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+            $gpu = Get-CimInstance Win32_VideoController -ErrorAction Stop | Sort-Object AdapterRAM -Descending | Select-Object -First 1
+        } catch {
+            Write-SetupLog "Could not inspect RAM/GPU for automatic model selection; using safe CPU fallback qwen3.5:2b. $($_.Exception.Message)"
+            return [pscustomobject]@{
+                recommendedModel = "qwen3.5:2b"
+                compatibleModels = @("qwen3.5:2b")
+                tier = "cpu-fallback"
+                reason = "Hardware inspection failed during setup, so the safe CPU fallback model was selected."
+                inferenceMode = "cpu"
+            }
+        }
+
         $ramGb = [math]::Round($computer.TotalPhysicalMemory / 1GB, 1)
         $gpuVramGb = Get-VideoControllerDedicatedVramGb -Gpu $gpu
         $gpuName = if ($gpu.Name) { [string]$gpu.Name } else { "" }
@@ -1204,11 +1575,19 @@ function Get-OllamaModelRecommendation {
             throw "Model recommendation script was not found: $recommendationScript"
         }
 
+        $global:LASTEXITCODE = $null
         $json = & $recommendationScript -RamGb $ramGb -GpuVramGb $gpuVramGb -GpuName $gpuName
-        if ($LASTEXITCODE -ne 0) {
+        if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
             throw "Model recommendation script exited with code $LASTEXITCODE"
         }
-        return ($json | ConvertFrom-Json)
+        if ([string]::IsNullOrWhiteSpace(($json | Out-String))) {
+            throw "Model recommendation script returned no JSON output."
+        }
+        $recommendation = $json | ConvertFrom-Json
+        if ([string]::IsNullOrWhiteSpace([string]$recommendation.recommendedModel)) {
+            throw "Model recommendation script returned JSON without a recommendedModel value."
+        }
+        return $recommendation
     } catch {
         throw "Could not determine a supported local LLM model. $($_.Exception.Message)"
     }
@@ -1260,7 +1639,10 @@ function Invoke-MySqlSql {
     $previous = $env:MYSQL_PWD
     try {
         $env:MYSQL_PWD = $MySqlAdminPassword
-        & $MySqlExe --protocol=tcp -h 127.0.0.1 -P 3306 -u $MySqlAdminUser --default-character-set=utf8mb4 -e "source $tempSql"
+        $mysqlOutput = & $MySqlExe --protocol=tcp -h 127.0.0.1 -P 3306 -u $MySqlAdminUser --default-character-set=utf8mb4 -e "source $tempSql" 2>&1
+        foreach ($line in $mysqlOutput) {
+            Write-Host $line
+        }
         if ($LASTEXITCODE -ne 0) {
             throw "mysql.exe exited with code $LASTEXITCODE"
         }
@@ -1480,6 +1862,15 @@ function Ensure-OllamaModel {
 
 try {
     Write-SetupLog "Starting Dr Transition dependency setup"
+
+    if ($DependenciesOnly) {
+        Write-SetupLog "Dependencies-only mode enabled; installing/checking MySQL and Ollama only"
+        Ensure-MySql | Out-Null
+        Ensure-Ollama | Out-Null
+        Write-SetupLog "Dr Transition MySQL and Ollama dependency setup completed"
+        return
+    }
+
     $OllamaModel = Normalize-OllamaModelName -Model $OllamaModel
     $OllamaEmbeddingModel = Normalize-OllamaModelName -Model $OllamaEmbeddingModel
 

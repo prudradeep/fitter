@@ -555,10 +555,36 @@ Build a full Windows release:
 .\packaging\windows\scripts\build-release.ps1
 ```
 
+Build only the local database/model preparation installer:
+
+```powershell
+.\packaging\windows\scripts\build-mysql-ollama-installer.ps1
+```
+
+This produces `build\windows-dependencies-installer\DrTransitionDatabaseModelSetup-<version>.exe`.
+It installs/checks MySQL and Ollama, creates the app database/user, applies and
+seeds the database schema/reference/prompt data, and pulls the selected Ollama
+chat and embedding models without installing the desktop app.
+
 Build an offline/admin installer when a fully local deployment is required:
 
 ```powershell
 .\packaging\windows\scripts\build-release.ps1 -OfflineAdmin
+```
+
+To prepackage offline MySQL and Ollama installers, place the official vendor
+installers under `packaging/windows/offline/mysql/` and
+`packaging/windows/offline/ollama/`, then add `-PrepackageDependencies`:
+
+```powershell
+.\packaging\windows\scripts\build-release.ps1 -OfflineAdmin -PrepackageDependencies
+```
+
+For the standalone database/model preparation installer with bundled MySQL and
+Ollama installers:
+
+```powershell
+.\packaging\windows\scripts\build-mysql-ollama-installer.ps1 -PrepackageDependencies
 ```
 
 ## Deployment Commands

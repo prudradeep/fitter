@@ -1,5 +1,6 @@
 param(
-    [switch]$OfflineAdmin
+    [switch]$OfflineAdmin,
+    [switch]$PrepackageDependencies
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,7 +21,11 @@ foreach ($requiredServiceBuild in $requiredServiceBuilds) {
     }
 }
 
-& (Join-Path $PSScriptRoot "assemble-installer-payload.ps1")
+$assembleArgs = @{}
+if ($PrepackageDependencies) {
+    $assembleArgs.PrepackageDependencies = $true
+}
+& (Join-Path $PSScriptRoot "assemble-installer-payload.ps1") @assembleArgs
 
 $isccCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
 $iscc = if ($isccCommand) {
