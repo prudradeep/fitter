@@ -967,7 +967,8 @@ function Install-OllamaFromInstaller {
             Write-SetupLog "Starting silent Ollama installer"
             $process = Start-Process -FilePath $InstallerPath `
                 -ArgumentList "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES" `
-                -PassThru
+                -PassThru `
+                -WindowStyle Hidden
         }
 
         # The Ollama/Inno installer does not expose a trustworthy numeric install percentage.
@@ -1095,17 +1096,34 @@ function Install-MySqlBundled {
 
     $activity = "Installing MySQL"
     Write-SetupLog "Installing MySQL from bundled installer: $InstallerPath"
-    Write-SetupProgress -Activity $activity -Percent 5 -Status "Complete the MySQL installer window..."
+    Write-SetupProgress -Activity $activity -Percent 5 -Status "Installing MySQL in the background..."
+
+    if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
+        throw "Bundled MySQL installer was not found: $InstallerPath"
+    }
+
+    $installerItem = Get-Item -LiteralPath $InstallerPath
+    if ($installerItem.Length -le 0) {
+        throw "Bundled MySQL installer is empty: $InstallerPath"
+    }
 
     $extension = [System.IO.Path]::GetExtension($InstallerPath).ToLowerInvariant()
     if ($extension -eq ".msi") {
-        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList (Join-ProcessArguments @(
+        $msiLogPath = Join-Path $logDir "mysql-bundled-msiexec.log"
+        $msiArguments = @(
             "/i",
-            $InstallerPath,
-            "/norestart"
-        )) -PassThru
+            (Quote-ProcessArgument $InstallerPath),
+            "/quiet",
+            "/norestart",
+            "/l*v",
+            (Quote-ProcessArgument $msiLogPath)
+        ) -join " "
+        Write-SetupLog "Starting msiexec.exe $msiArguments"
+        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArguments -PassThru -WindowStyle Hidden
     } elseif ($extension -eq ".exe") {
-        $process = Start-Process -FilePath $InstallerPath -PassThru
+        $exeArguments = "/quiet /norestart"
+        Write-SetupLog "Starting bundled MySQL executable installer silently: $InstallerPath $exeArguments"
+        $process = Start-Process -FilePath $InstallerPath -ArgumentList $exeArguments -PassThru -WindowStyle Hidden
     } else {
         throw "Unsupported bundled MySQL installer type: $InstallerPath"
     }
@@ -1115,7 +1133,7 @@ function Install-MySqlBundled {
         Start-Sleep -Seconds 10
         if (-not $process.HasExited -and $installPercent -lt 95) {
             $installPercent += 5
-            Write-SetupProgress -Activity $activity -Percent $installPercent -Status "Waiting for MySQL installer..."
+            Write-SetupProgress -Activity $activity -Percent $installPercent -Status "Installing MySQL in the background..."
         }
     }
     $process.WaitForExit()
@@ -1506,7 +1524,7 @@ function Ensure-Ollama {
         $bundledOllamaInstaller = Find-BundledDependencyInstaller -DependencyName "ollama"
         if ($bundledOllamaInstaller) {
             Write-SetupLog "Ollama is missing; using bundled installer"
-            Install-OllamaFromInstaller -InstallerPath $bundledOllamaInstaller -Interactive
+            Install-OllamaFromInstaller -InstallerPath $bundledOllamaInstaller
         } else {
             Write-SetupLog "Ollama is missing; downloading and installing from ollama.com"
             Install-OllamaDirect

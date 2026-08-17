@@ -51,9 +51,15 @@ if ($PrepackageDependencies) {
     $mysqlPayload = Join-Path $installersPayload "mysql"
     $ollamaPayload = Join-Path $installersPayload "ollama"
 
-    $mysqlInstaller = Get-ChildItem -LiteralPath $mysqlOffline -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -in @(".msi", ".exe") } |
-        Select-Object -First 1
+    $preferredMySqlInstaller = Join-Path $mysqlOffline "mysql-8.4.11-winx64.msi"
+    $mysqlInstaller = if (Test-Path -LiteralPath $preferredMySqlInstaller -PathType Leaf) {
+        Get-Item -LiteralPath $preferredMySqlInstaller
+    } else {
+        Get-ChildItem -LiteralPath $mysqlOffline -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @(".msi", ".exe") } |
+            Sort-Object Name |
+            Select-Object -First 1
+    }
     if (-not $mysqlInstaller) {
         throw "Missing offline MySQL installer. Place a MySQL Server .msi/.exe in $mysqlOffline."
     }

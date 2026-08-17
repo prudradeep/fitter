@@ -354,22 +354,25 @@ installers/ollama/<bundled Ollama .exe>
 ```
 
 At setup time, missing MySQL and Ollama installations are installed from those
-bundled files first. Bundled dependency installers are launched visibly, so the
-user completes the official MySQL/Ollama installer window and Dr Transition
-continues after verifying the installed binaries. If no bundled installer is
-present, missing dependencies are installed online with `winget` or direct
-download:
+bundled files first. Bundled dependency installers run silently in the
+background and Dr Transition continues after verifying the installed binaries.
+The MySQL MSI writes a detailed native installer log to
+`%LOCALAPPDATA%\DrTransition\logs\mysql-bundled-msiexec.log`. If no bundled
+installer is present, missing dependencies are installed online with `winget` or
+direct download:
 
 ```text
 Oracle.MySQL
 https://ollama.com/download/OllamaSetup.exe
 ```
 
-Use an official MySQL Server package that installs `mysql.exe` and `mysqld.exe`
-on the target machine. The setup script verifies both binaries after running the
-bundled MySQL installer and stops with a clear error if the package only installs
-the MySQL Installer shell rather than the server binaries. Use the official
-Ollama `OllamaSetup.exe` for the Ollama bundle.
+Use `mysql-8.4.11-winx64.msi` as the preferred bundled MySQL Server package; the
+prepackaging scripts choose that file when it is present under
+`packaging/windows/offline/mysql/`. The setup script verifies `mysql.exe` and
+`mysqld.exe` after running the bundled MySQL installer and stops with a clear
+error if the package only installs the MySQL Installer shell rather than the
+server binaries. Use the official Ollama `OllamaSetup.exe` for the Ollama
+bundle.
 
 Prepackaging Ollama installs the Ollama application offline. Ollama model pulls
 still require network access unless the target machine already has the required
