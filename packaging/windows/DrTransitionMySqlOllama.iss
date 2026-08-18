@@ -14,7 +14,11 @@ DefaultDirName={autopf}\Dr Transition Dependencies
 DefaultGroupName=Dr Transition Dependencies
 DisableProgramGroupPage=yes
 OutputDir=..\..\build\windows-dependencies-installer
-OutputBaseFilename=DrTransitionDatabaseModelSetup-{#MyAppVersion}
+#ifdef PrepackageDependenciesInstaller
+OutputBaseFilename=DrTransitionDatabaseModelPrepackagedSetup-{#MyAppVersion}
+#else
+OutputBaseFilename=DrTransitionDatabaseModelOnlineSetup-{#MyAppVersion}
+#endif
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

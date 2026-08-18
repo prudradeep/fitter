@@ -99,4 +99,11 @@ if ($fullInstallerText -match '#define\s+MyAppVersion\s+"([^"]+)"') {
 
 Write-Host "Dependency installer payload assembled at $payload"
 Write-Host "Building MySQL/Ollama-only installer version $version"
-& $iscc $iss "/DMyAppVersion=$version"
+$isccArgs = @($iss, "/DMyAppVersion=$version")
+if ($PrepackageDependencies) {
+    $isccArgs += "/DPrepackageDependenciesInstaller"
+    Write-Host "Building MySQL/Ollama-only installer with prepackaged dependency installers."
+} else {
+    Write-Host "Building MySQL/Ollama-only installer with online dependency setup."
+}
+& $iscc @isccArgs

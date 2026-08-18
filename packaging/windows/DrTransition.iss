@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.9"
+#define MyAppVersion "0.1.10"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 
@@ -13,9 +13,17 @@ DefaultGroupName=Dr Transition
 DisableProgramGroupPage=yes
 OutputDir=..\..\build\windows-installer
 #ifdef OfflineAdminInstaller
-OutputBaseFilename=DrTransitionOfflineAdminSetup-{#MyAppVersion}
+#ifdef PrepackageDependenciesInstaller
+OutputBaseFilename=DrTransitionOfflineAdminPrepackagedSetup-{#MyAppVersion}
 #else
-OutputBaseFilename=DrTransitionSetup-{#MyAppVersion}
+OutputBaseFilename=DrTransitionOfflineAdminOnlineSetup-{#MyAppVersion}
+#endif
+#else
+#ifdef PrepackageDependenciesInstaller
+OutputBaseFilename=DrTransitionPrepackagedSetup-{#MyAppVersion}
+#else
+OutputBaseFilename=DrTransitionOnlineSetup-{#MyAppVersion}
+#endif
 #endif
 Compression=lzma2/ultra64
 SolidCompression=yes

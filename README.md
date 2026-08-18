@@ -561,7 +561,7 @@ Build only the local database/model preparation installer:
 .\packaging\windows\scripts\build-mysql-ollama-installer.ps1
 ```
 
-This produces `build\windows-dependencies-installer\DrTransitionDatabaseModelSetup-<version>.exe`.
+This produces `build\windows-dependencies-installer\DrTransitionDatabaseModelOnlineSetup-<version>.exe`.
 It installs/checks MySQL and Ollama, creates the app database/user, applies and
 seeds the database schema/reference/prompt data, and pulls the selected Ollama
 chat and embedding models without installing the desktop app.
@@ -586,6 +586,8 @@ Ollama installers:
 ```powershell
 .\packaging\windows\scripts\build-mysql-ollama-installer.ps1 -PrepackageDependencies
 ```
+
+This produces `build\windows-dependencies-installer\DrTransitionDatabaseModelPrepackagedSetup-<version>.exe`.
 
 ## Deployment Commands
 

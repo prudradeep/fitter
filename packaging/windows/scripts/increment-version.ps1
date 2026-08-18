@@ -190,7 +190,7 @@ Update-JsonVersion `
 
 Update-TextFile `
     -RelativePath "docs\WINDOWS_DESKTOP_INSTALLER.md" `
-    -Pattern 'DrTransitionSetup-\d+\.\d+\.\d+\.exe' `
-    -Replacement "DrTransitionSetup-$newVersion.exe"
+    -Pattern 'DrTransitionOnlineSetup-\d+\.\d+\.\d+\.exe' `
+    -Replacement "DrTransitionOnlineSetup-$newVersion.exe"
 
 Write-Host "Windows build version: $currentVersion -> $newVersion"

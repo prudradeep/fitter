@@ -47,5 +47,11 @@ if ($OfflineAdmin) {
     $isccArgs += "/DOfflineAdminInstaller"
     Write-Host "Building offline admin installer with local seeding enabled."
 }
+if ($PrepackageDependencies) {
+    $isccArgs += "/DPrepackageDependenciesInstaller"
+    Write-Host "Building installer with prepackaged dependency installers."
+} else {
+    Write-Host "Building installer with online dependency setup."
+}
 
 & $iscc @isccArgs

@@ -172,7 +172,7 @@ desktop launcher or full app installer:
 This produces:
 
 ```text
-build/windows-dependencies-installer/DrTransitionDatabaseModelSetup-<version>.exe
+build/windows-dependencies-installer/DrTransitionDatabaseModelOnlineSetup-<version>.exe
 ```
 
 To include offline MySQL and Ollama installers in the payload, place the vendor
@@ -211,7 +211,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionSetup-0.1.9.exe
+build/windows-installer/DrTransitionOnlineSetup-0.1.10.exe
 ```
 
 If you only run `build-python-services.ps1`, you will get the service executables
@@ -329,7 +329,7 @@ To include the offline dependency installers in a full release build:
 .\packaging\windows\scripts\build-release.ps1 -OfflineAdmin -PrepackageDependencies
 ```
 
-This produces `DrTransitionOfflineAdminSetup-<version>.exe`, uses a runtime
+This produces `DrTransitionOfflineAdminPrepackagedSetup-<version>.exe`, uses a runtime
 template with sync disabled, seeds the bundled base lookup rows and reference
 data locally, seeds the database prompt library from bundled prompt/template
 files, indexes the bundled sector-prompt knowledge chunks, creates or reuses
