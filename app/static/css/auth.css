@@ -136,10 +136,6 @@
   font-weight: 900;
 }
 
-.roadmap-list li:nth-child(2) {
-  font-style: italic;
-}
-
 .auth-brand {
   display: flex;
   gap: 14px;
@@ -333,7 +329,8 @@
   grid-template-columns: minmax(46vw, 1fr) minmax(520px, 0.92fr);
   align-items: center;
   gap: clamp(28px, 4vw, 72px);
-  padding: clamp(24px, 5vw, 96px) clamp(32px, 5vw, 104px) clamp(22px, 4vw, 72px) 0;
+  padding: clamp(24px, 5vw, 96px) clamp(32px, 5vw, 104px) clamp(22px, 4vw, 72px)
+    0;
 }
 
 .landing-map-panel {
@@ -374,7 +371,7 @@
 }
 
 .landing-copy .analysis-pill {
-  min-height: 40px;
+  min-height: 30px;
   padding: 0 22px;
   border-color: #9aa8bd;
   color: #68758a;
@@ -383,7 +380,7 @@
 }
 
 .landing-copy .roadmap-kicker {
-  margin: 28px 0 32px;
+  margin: 20px 0 20px;
   color: #121827;
   font-size: clamp(1.2rem, 1.8vw, 1.55rem);
   font-weight: 500;
@@ -404,11 +401,19 @@
 }
 
 .landing-copy h2 {
+  display: flex;
+  align-items: center;
+  justify-content: normal;
+  column-gap: 15px;
   margin: 0 0 26px;
   color: #333746;
   font-size: clamp(1.35rem, 2vw, 1.75rem);
   line-height: 1.25;
   font-weight: 800;
+}
+
+.landing-copy h2 > img {
+  width: 32px;
 }
 
 .landing-copy .roadmap-list {
@@ -733,4 +738,3 @@
   font-size: 1.85rem;
   font-weight: 900;
 }
-

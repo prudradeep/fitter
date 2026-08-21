@@ -8,7 +8,8 @@ Take a moment to dive into the findings by clicking on **Dive Deeper into Statis
 ---
 What would you like to do next?
 - Add more hazards for your region?
-- Plan mitigation of the above listed hazards?
+- Draft a mitigation approach for one of the above listed hazards?
 - Dive deeper into the findings from the statistical analysis of the survey
+- ⁠Go back
 
 Choose and let me know

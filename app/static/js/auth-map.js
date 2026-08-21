@@ -14,7 +14,8 @@ document.querySelectorAll("[data-coverage-map]").forEach(async (container) => {
 
   try {
     const response = await fetch("/static/mapdata/custom/europe.geo.json");
-    if (!response.ok) throw new Error(`Map data failed with status ${response.status}`);
+    if (!response.ok)
+      throw new Error(`Map data failed with status ${response.status}`);
     const topology = await response.json();
     /* const mainCountries = [
       "Germany",
@@ -68,6 +69,10 @@ document.querySelectorAll("[data-coverage-map]").forEach(async (container) => {
         map: topology,
       },
       title: { text: null },
+      subtitle: {
+        text: "Hover over countries for a summary",
+        verticalAlign: 'bottom',
+      },
       credits: { enabled: false },
       legend: { enabled: false },
       mapNavigation: { enabled: false, enableMouseWheelZoom: false },
