@@ -8,6 +8,29 @@ from app.config import Settings, _env_files
 
 
 class SettingsSafetyTests(unittest.TestCase):
+    def test_client_mode_uses_sqlite_when_database_url_is_left_at_default(self) -> None:
+        settings = Settings(app_mode="client")
+
+        self.assertEqual(settings.app_mode, "client")
+        self.assertEqual(settings.database_url, "sqlite:///data/dr_transition.db")
+
+    def test_sync_client_mode_derives_client_app_mode(self) -> None:
+        settings = Settings(sync_enabled=True, sync_mode="client")
+
+        self.assertEqual(settings.app_mode, "client")
+        self.assertEqual(settings.database_url, "sqlite:///data/dr_transition.db")
+
+    def test_client_mode_rejects_explicit_mysql_database_url(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                app_mode="client",
+                database_url="mysql+pymysql://user:strong-password@db.example/app",
+            )
+
+    def test_server_mode_rejects_sqlite_database_url(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(app_mode="server", database_url="sqlite:///data/dr_transition.db")
+
     def test_auto_migrate_is_rejected_outside_development(self) -> None:
         with self.assertRaises(ValidationError):
             Settings(

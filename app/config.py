@@ -36,6 +36,9 @@ DEFAULT_PRODUCTION_CSP = (
     "upgrade-insecure-requests"
 )
 
+DEFAULT_MYSQL_DATABASE_URL = "mysql+pymysql://dr_transition:dr_transition_password@localhost:3306/dr_transition"
+DEFAULT_SQLITE_DATABASE_PATH = "data/dr_transition.db"
+
 
 def _env_files() -> tuple[Path, ...]:
     explicit_env_file = os.getenv("ENV_FILE")
@@ -61,6 +64,7 @@ def _frozen_program_data_path(relative_path: str) -> str:
 
 class Settings(BaseSettings):
     app_name: str = "Dr Transition"
+    app_mode: str = ""
     app_env: str = "development"
     app_debug: bool = False
     secret_key: str = Field(default="development-only-secret")
@@ -69,7 +73,8 @@ class Settings(BaseSettings):
     csrf_protection_enabled: bool | None = None
     database_auto_migrate: bool = False
 
-    database_url: str = "mysql+pymysql://dr_transition:dr_transition_password@localhost:3306/dr_transition"
+    database_url: str = DEFAULT_MYSQL_DATABASE_URL
+    sqlite_database_path: str = DEFAULT_SQLITE_DATABASE_PATH
     database_pool_size: int = 5
     database_max_overflow: int = 10
     database_pool_timeout_seconds: int = 30
@@ -149,11 +154,27 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_safe_runtime_defaults(self) -> "Settings":
+        self.app_mode = self._normalized_app_mode()
         self.prompt_source = self.prompt_source.strip().casefold()
         if self.prompt_source not in {"auto", "db", "file"}:
             raise ValueError("PROMPT_SOURCE must be one of: auto, db, file")
+        if not str(self.database_url or "").strip() or (
+            self.is_client_mode and self.database_url == DEFAULT_MYSQL_DATABASE_URL
+        ):
+            self.database_url = self.sqlite_database_url
+        if self.is_client_mode and self._database_url_is_mysql(self.database_url):
+            raise ValueError(
+                "Client mode must use SQLite. Set APP_MODE=server for MySQL deployments "
+                "or set DATABASE_URL to a sqlite:/// URL for desktop clients."
+            )
+        if self.is_server_mode and self._database_url_is_sqlite(self.database_url):
+            raise ValueError(
+                "Server mode must not use SQLite. Set APP_MODE=client for desktop clients "
+                "or configure DATABASE_URL for MySQL."
+            )
         self.faiss_index_path = _frozen_program_data_path(self.faiss_index_path)
         self.llm_log_path = _frozen_program_data_path(self.llm_log_path)
+        self.sqlite_database_path = _frozen_program_data_path(self.sqlite_database_path)
         if not self.is_development:
             unsafe_secrets = {"", "development-only-secret", "change-this-secret-key-before-production"}
             if self.secret_key.strip() in unsafe_secrets:
@@ -166,7 +187,9 @@ class Settings(BaseSettings):
                     "run migrations explicitly before deployment."
                 )
             unsafe_database_markers = {"dr_transition_password", "drtransition_password"}
-            if any(marker in self.database_url for marker in unsafe_database_markers):
+            if self._database_url_is_mysql(self.database_url) and any(
+                marker in self.database_url for marker in unsafe_database_markers
+            ):
                 raise ValueError("DATABASE_URL must not use a sample local-only database password.")
             if self.llm_log_include_payloads and not self.llm_log_allow_production_payloads:
                 raise ValueError(
@@ -176,6 +199,46 @@ class Settings(BaseSettings):
             if self.content_security_policy == DEFAULT_DEVELOPMENT_CSP:
                 self.content_security_policy = DEFAULT_PRODUCTION_CSP
         return self
+
+    def _normalized_app_mode(self) -> str:
+        configured = str(self.app_mode or "").strip().casefold()
+        if configured:
+            if configured not in {"server", "client"}:
+                raise ValueError("APP_MODE must be one of: server, client")
+            return configured
+        if bool(self.sync_enabled):
+            sync_mode = str(self.sync_mode or "").strip().casefold()
+            if sync_mode in {"server", "client"}:
+                return sync_mode
+        if self._database_url_is_sqlite(self.database_url):
+            return "client"
+        if self._database_url_is_mysql(self.database_url):
+            return "server"
+        return "server"
+
+    @property
+    def sqlite_database_url(self) -> str:
+        path = str(self.sqlite_database_path or DEFAULT_SQLITE_DATABASE_PATH).strip()
+        if path.startswith("sqlite:"):
+            return path
+        normalized_path = path.replace("\\", "/")
+        return f"sqlite:///{normalized_path}"
+
+    @staticmethod
+    def _database_url_is_mysql(database_url: str) -> bool:
+        return str(database_url or "").strip().casefold().startswith(("mysql://", "mysql+"))
+
+    @staticmethod
+    def _database_url_is_sqlite(database_url: str) -> bool:
+        return str(database_url or "").strip().casefold().startswith("sqlite")
+
+    @property
+    def is_client_mode(self) -> bool:
+        return self.app_mode == "client"
+
+    @property
+    def is_server_mode(self) -> bool:
+        return self.app_mode == "server"
 
     @property
     def is_development(self) -> bool:

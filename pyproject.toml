@@ -1,6 +1,6 @@
 [project]
 name = "dr-transition"
-version = "0.1.10"
+version = "0.1.11"
 description = "A digital coach for Twin-Transition policy analysis"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -8,7 +8,6 @@ dependencies = [
     "fastapi>=0.115.12",
     "uvicorn[standard]>=0.34.2",
     "sqlalchemy>=2.0.41",
-    "pymysql>=1.1.1",
     "pydantic>=2.11.4",
     "pydantic-settings>=2.9.1",
     "jinja2>=3.1.6",
@@ -20,18 +19,24 @@ dependencies = [
     "cryptography>=42.0.0",
     "python-multipart>=0.0.20",
     "pypdf>=5.5.0",
-    "faiss-cpu>=1.8.0",
-    "numpy>=1.26.0",
     "openpyxl>=3.1.5",
 ]
 
 [project.optional-dependencies]
+server = [
+    "pymysql>=1.1.1",
+]
+client = [
+    "faiss-cpu>=1.8.0",
+    "numpy>=1.26.0",
+]
 grounding = [
     "sentence-transformers>=3.4.0",
 ]
 test = [
     "pytest>=8.0.0",
     "ruff>=0.8.0",
+    "pymysql>=1.1.1",
 ]
 browser = [
     "playwright>=1.49.0",
@@ -41,6 +46,9 @@ dev = [
     "ruff>=0.8.0",
     "playwright>=1.49.0",
     "mypy>=1.13.0",
+    "pymysql>=1.1.1",
+    "faiss-cpu>=1.8.0",
+    "numpy>=1.26.0",
 ]
 
 [tool.uv]

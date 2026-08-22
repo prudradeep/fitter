@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.10"
+#define MyAppVersion "0.1.11"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 
@@ -317,7 +317,11 @@ begin
     '- 64-bit Windows' + #13#10 +
     '- 8 GB RAM minimum, 16 GB+ recommended' + #13#10 +
     '- 10 GB free disk space before optional model downloads' + #13#10#13#10 +
-    'Ollama, MySQL, and model setup are handled by the packaging helper scripts for this first installer layer.';
+#ifdef OfflineAdminInstaller
+    'Ollama, MySQL, and model setup are handled by the packaging helper scripts for this offline/admin installer.';
+#else
+    'Ollama, SQLite, and model setup are handled by the packaging helper scripts for this sync-client installer.';
+#endif
   CompatibilityPage := CreateOutputMsgPage(
     wpWelcome,
     'System Compatibility',
@@ -645,6 +649,7 @@ function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
 
+#ifdef OfflineAdminInstaller
   if CurPageID = DatabasePage.ID then
   begin
     if Trim(DatabasePage.Values[0]) = '' then
@@ -741,12 +746,22 @@ begin
       Exit;
     end;
   end;
+#endif
 
   if CurPageID = ModelPage.ID then
   begin
     Result := EnsureRecommendedModelSupported();
     Exit;
   end;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+#ifndef OfflineAdminInstaller
+  if PageID = DatabasePage.ID then
+    Result := True;
+#endif
 end;
 
 procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
@@ -767,7 +782,11 @@ begin
     '  "OllamaModel": "' + JsonEscape(ModelPage.Values[0]) + '",' + #13#10 +
     '  "OllamaEmbeddingModel": "' + JsonEscape(ModelPage.Values[1]) + '",' + #13#10 +
     '  "OllamaBaseUrl": "http://127.0.0.1:11434",' + #13#10 +
+#ifdef OfflineAdminInstaller
     '  "InstallMySql": true,' + #13#10 +
+#else
+    '  "InstallMySql": false,' + #13#10 +
+#endif
     '  "InstallOllama": true,' + #13#10 +
     '  "PullModels": true,' + #13#10 +
 #ifdef OfflineAdminInstaller

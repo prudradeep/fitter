@@ -1,6 +1,6 @@
 [package]
 name = "drtransition"
-version = "0.1.10"
+version = "0.1.11"
 description = "Dr Transition desktop launcher"
 edition = "2021"
 

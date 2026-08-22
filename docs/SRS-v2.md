@@ -18,7 +18,16 @@ Out of scope for new requirements in this document: accessibility, GDPR/data-pro
 
 The Windows package configuration defines a local backend on `127.0.0.1:8000`, a reranker service on `127.0.0.1:8081`, an NLI service on `127.0.0.1:8082`, Ollama at `http://127.0.0.1:11434`, `%ProgramData%\DrTransition` as data storage, and `%LOCALAPPDATA%\DrTransition\logs` as log storage. [packaging/windows/config/default.config.json :: backend/grounding/ollama/paths]
 
-The Python settings default to MySQL at `mysql+pymysql://dr_transition:dr_transition_password@localhost:3306/dr_transition`, Ollama model `qwen3.5:4b`, embedding model `nomic-embed-text`, Ollama timeout `1200` seconds, upload/import/URL limits of `10 * 1024 * 1024` bytes, JSON body limit `1 * 1024 * 1024` bytes, reranker timeout `60` seconds, NLI timeout `60` seconds, Eurostat timeout `20` seconds, Eurostat cache expiry `3` months, and sync interval `3600` seconds. [app/config.py :: Settings]
+The Python settings support server and client deployment modes through
+`APP_MODE`. Server deployments use MySQL through `DATABASE_URL`; desktop client
+deployments use `APP_MODE=client`, a SQLite `DATABASE_URL` such as
+`sqlite:///data/dr_transition.db`, and `SYNC_SERVER_URL` for central
+synchronization. The settings also define Ollama model `qwen3.5:4b`, embedding
+model `nomic-embed-text`, Ollama timeout `1200` seconds, upload/import/URL
+limits of `10 * 1024 * 1024` bytes, JSON body limit `1 * 1024 * 1024` bytes,
+reranker timeout `60` seconds, NLI timeout `60` seconds, Eurostat timeout `20`
+seconds, Eurostat cache expiry `3` months, and sync interval `3600` seconds.
+[app/config.py :: Settings] [app/db/session.py :: engine_options]
 
 ```mermaid
 flowchart TD

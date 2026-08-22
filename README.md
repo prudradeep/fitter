@@ -1,6 +1,16 @@
 # Dr Transition
 
-Dr Transition is a local browser-based FastAPI application for guided Twin-Transition policy analysis. It uses a single chat endpoint to walk users through country, region, and sector selection, with MySQL-backed reference data and optional local Ollama support.
+Dr Transition is a FastAPI application for guided Twin-Transition policy
+analysis. It supports two deployment shapes:
+
+- Central server mode uses FastAPI with MySQL as the authoritative shared
+  database.
+- Desktop/client mode uses a local FastAPI backend with SQLite for offline data
+  and FAISS for local semantic search.
+
+Clients do not connect to MySQL directly. When synchronization is enabled, local
+SQLite clients communicate with the central server only through authenticated
+FastAPI sync APIs.
 
 ## Current Conversation Flow
 
@@ -30,11 +40,19 @@ hazard overview without starting hazard creation.
 
 ## Prerequisites
 
+For central server deployments:
+
 - Python 3.12+
 - UV
 - MySQL 8+
+
+For desktop/client deployments:
+
+- Python runtime bundled by the installer
+- SQLite local database, configured through `DATABASE_URL`
 - FAISS for local knowledge-base vector search
-- Ollama, with the chat and embedding models available locally
+- Ollama, with the chat and embedding models available locally when the client
+  uses local chat or embeddings
 
 ## Install UV
 
@@ -52,16 +70,30 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 ## Configure Environment
 
-Copy the example file and adjust credentials for your local MySQL instance:
+Copy the example file and adjust it for either server or client mode:
 
 ```bash
 cp .env.example .env
 ```
 
-Example database URL:
+Server mode uses MySQL:
 
 ```env
+APP_MODE=server
+SYNC_MODE=server
 DATABASE_URL="mysql+pymysql://drtransition:<choose-a-strong-local-password>@localhost:3306/drtransition"
+```
+
+Client mode uses SQLite:
+
+```env
+APP_MODE=client
+SYNC_MODE=client
+DATABASE_URL="sqlite:///data/dr_transition.db"
+SQLITE_DATABASE_PATH="data/dr_transition.db"
+SYNC_SERVER_URL="https://your-sync-host.example"
+SYNC_API_TOKEN="<server-issued-client-token>"
+SYNC_DEVICE_ID="<stable-client-uuid>"
 ```
 
 The password placeholder is local setup guidance only. Choose a unique password
@@ -108,7 +140,11 @@ database backup:
 uv run python scripts/repair_legacy_schema.py --seed-reference-data
 ```
 
-## MySQL Setup
+## Server MySQL Setup
+
+Use MySQL only for central server or deliberate offline-admin/server-style
+deployments. Normal desktop clients should use SQLite and must not be configured
+with MySQL host, port, user, or password values.
 
 Create the database using the SQL file:
 
@@ -131,12 +167,13 @@ mysql -u drtransition -p drtransition < schema.sql
 
 ## Seed Reference Data
 
-The application no longer applies `schema.sql` or reloads CSV/XLSX reference data
-on every startup. Run migrations first, then run the seed command only when
-setting up the database or after changing the source files such as `mm.csv`,
-`additionalHazards.csv`, `additionalHazardProfiles.csv`,
-`MM Target group.xlsx`, `sectoral_challenges.xlsx`, `hazards.xlsx`, or the
-sector prompt files under `app/prompts/*_truth.txt`.
+The application no longer applies `schema.sql` or reloads CSV/XLSX reference
+data on every startup. Run migrations first, then run the seed command only when
+setting up the central server database, preparing an offline-admin database, or
+after changing the source files such as `mm.csv`, `additionalHazards.csv`,
+`additionalHazardProfiles.csv`, `MM Target group.xlsx`,
+`sectoral_challenges.xlsx`, `hazards.xlsx`, or the sector prompt files under
+`app/prompts/*_truth.txt`.
 
 Reference seeding also extracts the authoritative hazard names from each sector
 prompt into `system_hazards`. This runs before `hazards.xlsx` is mapped into
@@ -311,6 +348,15 @@ docs/BACKEND_SYNC_DEPLOYMENT.md
 docs/UBUNTU_SYNC_SERVER_AND_CLIENT_GUIDE.md
 ```
 
+The database ownership boundary is:
+
+```text
+Central server: MySQL authoritative data
+Desktop client: SQLite local/offline data
+Vector search: FAISS local derived index
+Sync boundary: authenticated FastAPI APIs
+```
+
 ## Ollama Setup
 
 Install Ollama from https://ollama.com, start the Ollama service, then pull the chat and embedding models:
@@ -371,7 +417,11 @@ run retention cleanup with `LLM_LOG_RETENTION_DAYS`.
 
 ## FAISS Knowledge Base
 
-The app stores knowledge-base document metadata and chunk text/source/page records in MySQL. It stores vector embeddings in a local FAISS index file. Configure the index path and embedding model in `.env` when needed:
+The app stores knowledge-base document metadata and chunk text/source/page
+records in the active relational database: MySQL on the central server, SQLite
+on a desktop client. Vector embeddings are stored in a local FAISS index file.
+FAISS files are derived index data and are not synchronized as database files.
+Configure the index path and embedding model in `.env` when needed:
 
 ```env
 FAISS_INDEX_PATH="data/knowledge.faiss"
@@ -430,8 +480,22 @@ score or strict LLM entailment verification.
 
 ## Install Dependencies
 
+Base package:
+
 ```bash
 uv sync
+```
+
+Central server with MySQL driver:
+
+```bash
+uv sync --extra server
+```
+
+Desktop/client with local FAISS:
+
+```bash
+uv sync --extra client
 ```
 
 ## Run Locally
@@ -555,7 +619,7 @@ Build a full Windows release:
 .\packaging\windows\scripts\build-release.ps1
 ```
 
-Build only the local database/model preparation installer:
+Build only the legacy/local database and model preparation installer:
 
 ```powershell
 .\packaging\windows\scripts\build-mysql-ollama-installer.ps1
@@ -564,7 +628,8 @@ Build only the local database/model preparation installer:
 This produces `build\windows-dependencies-installer\DrTransitionDatabaseModelOnlineSetup-<version>.exe`.
 It installs/checks MySQL and Ollama, creates the app database/user, applies and
 seeds the database schema/reference/prompt data, and pulls the selected Ollama
-chat and embedding models without installing the desktop app.
+chat and embedding models without installing the desktop app. This is for
+server-style/offline-admin preparation, not for normal sync clients.
 
 Build an offline/admin installer when a fully local deployment is required:
 
@@ -594,7 +659,7 @@ This produces `build\windows-dependencies-installer\DrTransitionDatabaseModelPre
 For a fresh server database:
 
 ```bash
-uv sync
+uv sync --extra server
 uv run python scripts/apply_migrations.py --apply-base-schema
 uv run python scripts/apply_migrations.py
 uv run python -m app.seed_data
@@ -603,7 +668,7 @@ uv run python -m app.seed_data
 For an existing deployment after code/schema changes:
 
 ```bash
-uv sync
+uv sync --extra server
 uv run python scripts/apply_migrations.py
 uv run python -m app.seed_data --skip-schema
 ```
@@ -641,7 +706,10 @@ The packaged desktop target is:
 
 On launch, `DrTransition.exe` starts the backend, reranker, and NLI services as
 hidden local processes, waits for their health checks, then opens the app in its
-own desktop window instead of the user's browser.
+own desktop window instead of the user's browser. The normal desktop client
+runtime should be configured with SQLite, local FAISS, and an optional central
+sync URL. It should not install MySQL, start MySQL, or store central MySQL
+credentials.
 
 Build documentation is in:
 
@@ -848,12 +916,14 @@ app/
     api.py                Chat, session, knowledge, admin APIs
     auth.py               Login/signup/logout routes
     request_limits.py     Upload/body size guardrails
+    sync.py               Sync status, push, pull, exchange, and client helpers
   services/
     chat_service.py       Conversation orchestration
     chat_*                Flow-specific chat modules
     custom_hazard_*       Custom hazard validation/matching/rules
     mitigation_*          Mitigation validation and formatting helpers
     knowledge_base.py     Knowledge document ingestion/search/delete
+    sync_service.py       Authenticated bundle sync and sync metadata
     sector_prompt_rag.py  Sector prompt retrieval index
     maintenance.py        Retention cleanup logic
     audit_log.py          Admin/sensitive action audit records
@@ -910,7 +980,12 @@ README.md
 ## Notes
 
 - Persistent session records, chat messages, reference data, knowledge metadata,
-  audit logs, rate limits, and LLM exchange logs are stored in MySQL.
+  audit logs, rate limits, and LLM exchange logs are stored in the configured
+  relational database. Use MySQL for central server mode and SQLite for desktop
+  client mode.
+- Client/server synchronization must use `/api/sync/*` over HTTPS with a
+  server-issued token; clients must never receive or use central MySQL
+  credentials.
 - `app.services.chat_session.session_store` still keeps live in-memory flow state
   for active conversations; persisted sessions can be restored through the UI.
 - Schema changes should go through `schema.sql` for fresh installs and

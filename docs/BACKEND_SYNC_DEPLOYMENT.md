@@ -9,6 +9,19 @@ For a complete Ubuntu server and local client setup walkthrough, see:
 docs/UBUNTU_SYNC_SERVER_AND_CLIENT_GUIDE.md
 ```
 
+The database boundary is intentional:
+
+```text
+Central server: FastAPI + MySQL
+Desktop client: local FastAPI + SQLite + FAISS
+Sync boundary: authenticated HTTPS calls to /api/sync/*
+```
+
+The client must never connect directly to the central MySQL database and should
+not contain central MySQL host, port, username, password, or root-password
+values. Server deployments keep MySQL; client deployments use SQLite for local
+offline state and cached synchronized data.
+
 The sync design keeps each installation's local integer primary keys intact.
 Rows are matched across machines by `sync_id`, while foreign keys in sync
 payloads are resolved through referenced rows' `sync_id` values.
@@ -36,6 +49,55 @@ The sync service also does not sync internal control tables:
 `sync_clients` is server-owned credential state. Create or rotate those rows on
 the central server only; clients receive only their raw token in local
 configuration.
+
+## Data Ownership
+
+Current table ownership is implemented at the sync-service scope level:
+
+```text
+SERVER_ONLY
+  sync_clients
+  sync_operations
+  sync_changes
+  schema_migrations
+
+CLIENT_ONLY
+  sync_outbox
+  local FAISS index files
+  client runtime .env
+  local sync opt-out state in sync_state
+
+SERVER_TO_CLIENT
+  prompts
+  knowledge_documents scope=main
+  knowledge_documents scope=sector_prompt
+  knowledge_chunks belonging to those scopes
+  reference and policy tables exported by SyncService.sync_tables()
+
+BIDIRECTIONAL
+  app_users, encrypted in sync payloads
+  user_sessions
+  user_chat_messages
+  user_activities
+  custom_hazards
+  custom_hazard_profiles
+  user_hazards
+  user_hazard_socio_demographics
+  user_mitigation_measures
+  user_question_responses
+  knowledge_documents scope=validated_evidence
+  knowledge_chunks belonging to validated_evidence
+
+EXCLUDED
+  app_rate_limits
+  system_inquiry_telemetry_events, handled by its own telemetry endpoint
+  knowledge_documents scope=temporary
+  knowledge_chunks belonging to temporary
+  audit_logs and llm_exchange_logs unless SYNC_INCLUDE_LOGS=true
+```
+
+The actual schema remains the source of truth. Do not add new replicated tables
+without deciding their ownership class first.
 
 ## Knowledge Base Sync
 
@@ -144,6 +206,8 @@ Set production-safe application values:
 APP_ENV=production
 APP_DEBUG=false
 SECRET_KEY="<strong unique random secret>"
+APP_MODE=server
+SYNC_MODE=server
 DATABASE_URL="mysql+pymysql://drtransition:<password>@<mysql-host>:3306/drtransition"
 DATABASE_AUTO_MIGRATE=false
 AUTH_COOKIE_SECURE=true
@@ -156,6 +220,7 @@ Enable sync on the central server:
 
 ```env
 SYNC_ENABLED=true
+APP_MODE=server
 SYNC_MODE=server
 SYNC_INCLUDE_LOGS=false
 SYNC_SERVER_EXPOSE_APP_APIS=false
@@ -215,7 +280,10 @@ On each local installation that should sync to the central backend:
 
 ```env
 SYNC_ENABLED=true
+APP_MODE=client
 SYNC_MODE=client
+DATABASE_URL="sqlite:///data/dr_transition.db"
+SQLITE_DATABASE_PATH="data/dr_transition.db"
 SYNC_SERVER_URL="https://your-sync-host.example"
 SYNC_API_TOKEN="<raw token printed by scripts/create_sync_client.py>"
 SYNC_DEVICE_ID="<stable UUID for this installation>"
@@ -223,6 +291,9 @@ SYNC_INCLUDE_LOGS=false
 SYNC_AUTO_ON_STARTUP=true
 SYNC_INTERVAL_SECONDS=3600
 ```
+
+Do not set MySQL connection variables on normal clients. The only server
+connection a client needs is `SYNC_SERVER_URL` plus the server-issued sync token.
 
 If `SYNC_DEVICE_ID` is omitted, the app derives a stable value from local
 settings. For managed fleets, explicitly set a UUID per installation so device
@@ -279,7 +350,7 @@ admins edited in the database.
 Run these checks before promoting a backend build:
 
 ```bash
-uv sync --extra test
+uv sync --extra test --extra server
 uv run pytest
 uv run ruff check .
 ```
@@ -339,6 +410,10 @@ POST /api/sync/pull
 POST /api/sync/push
 POST /api/sync/exchange
 POST /api/sync/run
+POST /api/sync/client/run
+GET  /api/sync/client/status
+POST /api/sync/client/user-data
+POST /api/sync/system-inquiry-telemetry
 ```
 
 Use cases:
@@ -348,6 +423,10 @@ Use cases:
 - `/api/sync/push`: upload and apply a sync bundle to the receiver
 - `/api/sync/exchange`: upload local bundle and receive receiver bundle in one call
 - `/api/sync/run`: client-side helper that exchanges with configured `SYNC_SERVER_URL`
+- `/api/sync/client/run`: authenticated UI helper for a signed-in local user
+- `/api/sync/client/status`: local client sync configuration and dirty-index status
+- `/api/sync/client/user-data`: local opt-in/opt-out for user-data sync
+- `/api/sync/system-inquiry-telemetry`: telemetry queue upload with sync auth
 
 Manual status check:
 
@@ -368,7 +447,7 @@ curl -X POST -H "Authorization: Bearer $SYNC_API_TOKEN" \
 Install dependencies:
 
 ```bash
-uv sync
+uv sync --extra server
 ```
 
 Run directly for a smoke test:
@@ -486,6 +565,13 @@ operate where supported, but vector search may be stale.
 ## Limitations In Current First Pass
 
 - Sync currently exchanges full bundles rather than cursor-based deltas.
+- `sync_outbox`, `sync_changes`, and `sync_operations` foundation tables are
+  created with sync schema initialization, but the current sync run still
+  exports from the database snapshot rather than draining the outbox.
+- `/api/sync/pull` currently returns a bundle, not changes after a cursor; the
+  change-log table is present for the next incremental cursor implementation.
+- Push idempotency is still row-identity/revision based; operation-id replay
+  handling has storage support but is not yet wired into `/api/sync/push`.
 - Conflict handling stores revision metadata but does not yet present a manual conflict UI.
 - Delete/tombstone fields are present for future delete sync, but current behavior focuses on insert/update.
 - KB dirty scopes are recorded, but automatic FAISS rebuild scheduling is not yet implemented.

@@ -1520,6 +1520,24 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
 
 def repair_partial_installer_schema() -> bool:
     """Repair local databases left incomplete by an interrupted installer seed."""
+    if engine.dialect.name == "sqlite":
+        inspector = inspect(engine)
+        table_names = set(inspector.get_table_names())
+        required_tables = {
+            "app_users",
+            "countries",
+            "regions",
+            "sectors",
+            "user_sessions",
+            "knowledge_documents",
+            "knowledge_chunks",
+        }
+        if required_tables - table_names:
+            logger.info("Initializing SQLite client database schema")
+            Base.metadata.create_all(bind=engine)
+            return True
+        return False
+
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
     missing_required_tables = {
@@ -1583,6 +1601,11 @@ def run_runtime_migrations(
     Normal application startup should not create, alter, or drop legacy-repair
     objects. Production deploys should use this versioned path only.
     """
+    if engine.dialect.name == "sqlite":
+        Base.metadata.create_all(bind=engine)
+        logger.info("SQLite client database schema initialized")
+        return
+
     if apply_base_schema:
         run_schema_sql(include_basic_data=include_basic_data)
     apply_versioned_migrations()

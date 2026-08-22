@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -56,6 +56,36 @@ class SyncServiceTests(unittest.TestCase):
         messages = self._rows(bundle, "user_chat_messages")
         self.assertTrue(sessions[0]["sync_id"])
         self.assertEqual(messages[0]["__fk_sync_ids"]["user_session_id"], sessions[0]["sync_id"])
+
+    def test_export_includes_protocol_metadata(self) -> None:
+        bundle = SyncService(self.db, device_id="device-a").export_bundle()
+
+        self.assertEqual(bundle["format"], "dr-transition-sync-v1")
+        self.assertEqual(bundle["sync_protocol_version"], 1)
+        self.assertEqual(bundle["client_schema_version"], 1)
+
+    def test_sync_schema_creates_internal_foundation_tables(self) -> None:
+        service = SyncService(self.db, device_id="device-a")
+
+        service.ensure_schema()
+
+        table_names = set(inspect(self.engine).get_table_names())
+        self.assertIn("sync_outbox", table_names)
+        self.assertIn("sync_changes", table_names)
+        self.assertIn("sync_operations", table_names)
+        self.assertNotIn("sync_outbox", {table.name for table in service.sync_tables()})
+
+    def test_apply_bundle_rejects_unsupported_protocol_version(self) -> None:
+        with self.assertRaises(ValueError):
+            SyncService(self.db, device_id="device-a").apply_bundle(
+                {
+                    "format": "dr-transition-sync-v1",
+                    "sync_protocol_version": 999,
+                    "device_id": "other-device",
+                    "exported_at": "2026-07-20T00:00:00Z",
+                    "tables": [],
+                }
+            )
 
     def test_app_user_rows_are_encrypted_in_sync_payload(self) -> None:
         original_token = sync_routes.settings.sync_api_token

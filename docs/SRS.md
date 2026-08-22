@@ -246,19 +246,20 @@ Content quality is treated as a product requirement. A saved hazard, affected gr
 ### 5.10 Cloud Sync
 
 1. The tool supports Cloud Sync in disabled, client, and server modes.
-2. Sync endpoints require a valid sync token when Cloud Sync is enabled.
-3. Cloud Sync status reports enabled state, mode, device ID, client permissions, knowledge scopes, dirty indexes, and sync table names.
-4. Cloud Sync pull exports only the data allowed by the sync client's permissions.
-5. Cloud Sync push applies an allowed data bundle and reports inserted, updated, skipped, dirty knowledge scopes, and prompt dirty state.
-6. Cloud Sync exchange applies client data and returns a server bundle in one operation.
-7. Cloud Sync supports server-to-client synchronization for main, validated evidence, and sector-prompt knowledge scopes.
-8. Cloud Sync supports client-to-server synchronization for validated evidence where permitted.
-9. Admin Cloud Sync clients can synchronize main, validated evidence, and sector-prompt knowledge scopes where permitted.
-10. Temporary knowledge is excluded from normal sync bundles.
-11. User-data synchronization occurs only when the sync client has user-data permission.
-12. Prompt synchronization and prompt management occur only when the sync client has prompt-management permission.
-13. System inquiry telemetry can be queued and synchronized through Cloud Sync.
-14. In sync-only server mode, ordinary app APIs are blocked unless the deployment explicitly enables them.
+2. Server mode uses MySQL as the authoritative central database; client mode uses SQLite for local/offline data and must not connect directly to central MySQL.
+3. Sync endpoints require a valid sync token when Cloud Sync is enabled.
+4. Cloud Sync status reports enabled state, mode, device ID, client permissions, knowledge scopes, dirty indexes, and sync table names.
+5. Cloud Sync pull exports only the data allowed by the sync client's permissions.
+6. Cloud Sync push applies an allowed data bundle and reports inserted, updated, skipped, dirty knowledge scopes, and prompt dirty state.
+7. Cloud Sync exchange applies client data and returns a server bundle in one operation.
+8. Cloud Sync supports server-to-client synchronization for main, validated evidence, and sector-prompt knowledge scopes.
+9. Cloud Sync supports client-to-server synchronization for validated evidence where permitted.
+10. Admin Cloud Sync clients can synchronize main, validated evidence, and sector-prompt knowledge scopes where permitted.
+11. Temporary knowledge is excluded from normal sync bundles.
+12. User-data synchronization occurs only when the sync client has user-data permission.
+13. Prompt synchronization and prompt management occur only when the sync client has prompt-management permission.
+14. System inquiry telemetry can be queued and synchronized through Cloud Sync.
+15. In sync-only server mode, ordinary app APIs are blocked unless the deployment explicitly enables them.
 
 ## 6. Data Handled by the Tool
 

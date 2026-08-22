@@ -71,6 +71,23 @@ class RuntimeMigrationTests(unittest.TestCase):
 
         run_schema.assert_called_once_with(include_basic_data=True)
 
+    def test_sqlite_runtime_migrations_use_metadata_not_mysql_schema_sql(self) -> None:
+        with (
+            patch("app.db.migrations_runtime.engine") as fake_engine,
+            patch("app.db.migrations_runtime.Base.metadata.create_all") as create_all,
+            patch("app.db.migrations_runtime.run_schema_sql") as run_schema,
+            patch("app.db.migrations_runtime.apply_versioned_migrations") as apply_versioned,
+            patch("app.db.migrations_runtime.repair_partial_installer_schema") as repair_partial,
+        ):
+            fake_engine.dialect.name = "sqlite"
+
+            run_runtime_migrations(apply_base_schema=True)
+
+        create_all.assert_called_once_with(bind=fake_engine)
+        run_schema.assert_not_called()
+        apply_versioned.assert_not_called()
+        repair_partial.assert_not_called()
+
     def test_base_schema_skips_basic_data_when_disabled(self) -> None:
         executed = self._run_schema_sql(
             """

@@ -1901,10 +1901,18 @@ try {
         Write-SetupLog "Recommended Ollama model selected: $OllamaModel ($($recommendation.tier))"
     }
 
-    $databaseUrl = "mysql+pymysql://$(ConvertTo-DatabaseUrlComponent $AppDbUser):$(ConvertTo-DatabaseUrlComponent $AppDbPassword)@localhost:3306/$(ConvertTo-DatabaseUrlComponent $DbName)"
+    $useMySqlDatabase = $DisableSync -or $IncludeBasicData -or $SeedPromptsFromFiles -or $SeedMainKbFromFiles
+    $sqliteDatabasePath = Join-Path $runtimeDataDir "dr_transition.db"
+    $databaseUrl = if ($useMySqlDatabase) {
+        "mysql+pymysql://$(ConvertTo-DatabaseUrlComponent $AppDbUser):$(ConvertTo-DatabaseUrlComponent $AppDbPassword)@localhost:3306/$(ConvertTo-DatabaseUrlComponent $DbName)"
+    } else {
+        "sqlite:///$($sqliteDatabasePath.Replace('\', '/'))"
+    }
     $syncDeviceId = Get-OrCreate-SyncDeviceId
     $runtimeEnvUpdates = @{
+        APP_MODE = $(if ($useMySqlDatabase) { "server" } else { "client" })
         DATABASE_URL = $databaseUrl
+        SQLITE_DATABASE_PATH = $sqliteDatabasePath
         FAISS_INDEX_PATH = (Join-Path $runtimeDataDir "knowledge.faiss")
         LLM_LOG_PATH = (Join-Path $runtimeLogDir "llm_requests.jsonl")
         OLLAMA_BASE_URL = $OllamaBaseUrl
@@ -1922,14 +1930,23 @@ try {
     }
     Update-RuntimeEnv -Updates $runtimeEnvUpdates
 
-    $mysqlExe = Ensure-MySql
-    Ensure-Database -MySqlExe $mysqlExe
+    if ($useMySqlDatabase) {
+        $mysqlExe = Ensure-MySql
+        Ensure-Database -MySqlExe $mysqlExe
+    } else {
+        New-Item -ItemType Directory -Force -Path $runtimeDataDir | Out-Null
+        Write-SetupLog "Configured SQLite client database: $sqliteDatabasePath"
+    }
     Use-ConfiguredOllamaModelsPath
     $ollamaExe = Ensure-Ollama
     Ensure-OllamaModel -OllamaExe $ollamaExe -Model $OllamaModel
     Ensure-OllamaModel -OllamaExe $ollamaExe -Model $OllamaEmbeddingModel
-    Invoke-DatabaseSeed
-    Start-MainKnowledgeBaseSeed
+    if ($useMySqlDatabase) {
+        Invoke-DatabaseSeed
+        Start-MainKnowledgeBaseSeed
+    } else {
+        Write-SetupLog "Skipping MySQL database seed for normal SQLite sync client"
+    }
 
     Write-SetupLog "Dr Transition dependency setup completed"
 } catch {

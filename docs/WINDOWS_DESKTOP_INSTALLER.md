@@ -9,13 +9,18 @@ The target runtime is:
 - `drtransition-grounding.exe --service reranker`: grounding reranker service on `127.0.0.1:8081`
 - `drtransition-grounding.exe --service nli`: grounding NLI service on `127.0.0.1:8082`
 
+The normal desktop runtime is a sync client. It uses SQLite for local/offline
+application data, FAISS for local semantic search indexes, and authenticated
+HTTPS calls to a central FastAPI sync server when synchronization is enabled.
+It must not install MySQL, start MySQL, or store central MySQL credentials.
+
 The desktop launcher starts the backend services as hidden child processes, waits for their health endpoints, then opens the UI in a native desktop window. The user's external browser is not launched.
 
 If required local dependencies are missing, the launcher opens a setup diagnostics
 window instead of failing silently. That window reports:
 
 - Whether a runtime `.env` file was found
-- Whether MySQL is reachable on `127.0.0.1:3306`
+- Whether the configured SQLite database path is writable/initializable
 - Whether Ollama is reachable
 - Whether the configured chat and embedding models are downloaded in Ollama
 - The local log directory for bundled service errors
@@ -175,6 +180,10 @@ This produces:
 build/windows-dependencies-installer/DrTransitionDatabaseModelOnlineSetup-<version>.exe
 ```
 
+That standalone preparation installer is for server-style or offline-admin
+workflows that deliberately provision MySQL locally. It is not the normal
+desktop sync-client path.
+
 To include offline MySQL and Ollama installers in the payload, place the vendor
 installers under:
 
@@ -211,7 +220,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionOnlineSetup-0.1.10.exe
+build/windows-installer/DrTransitionOnlineSetup-0.1.11.exe
 ```
 
 If you only run `build-python-services.ps1`, you will get the service executables
@@ -279,16 +288,28 @@ If either service is already healthy on its configured port, the launcher reuses
 
 ## Dependency and Model Checks
 
-The installer now performs the first dependency setup pass:
+The normal sync-client installer should perform this dependency setup pass:
 
-- Checks for MySQL before installing it; if `mysql.exe` already exists, the installer skips installation and only starts/checks the service
+- Creates or verifies the local SQLite data directory and database file
 - Checks for Ollama before installing it; if `ollama.exe` already exists, the installer skips installation and only starts/checks the API
-- Asks for the database name and MySQL credentials
-- Creates the application database/user
+- Writes a client `.env` with `APP_MODE=client`, `SYNC_MODE=client`, a SQLite `DATABASE_URL`, and optional sync server settings
 - Updates `%ProgramData%\DrTransition\.env`
-- Applies schema/migrations only; reference, user, policy, and prompt-library data are pulled from the central sync server on app startup
+- Applies client SQLite schema/migrations only; reference, user, policy, and prompt-library data are pulled from the central sync server on app startup
 - Does not ingest bundled `kb/*.pdf` files locally; Main KB is pulled from the central server
 - Pulls the required Ollama chat and embedding models
+
+Example normal client runtime values:
+
+```env
+APP_MODE=client
+SYNC_MODE=client
+DATABASE_URL="sqlite:///data/dr_transition.db"
+SQLITE_DATABASE_PATH="data/dr_transition.db"
+SYNC_SERVER_URL="https://your-sync-host.example"
+SYNC_API_TOKEN="<server-issued-client-token>"
+SYNC_DEVICE_ID="<stable-client-uuid>"
+FAISS_INDEX_PATH="data/knowledge.faiss"
+```
 
 For machines that need only local database/model preparation, build the
 standalone installer:
@@ -307,7 +328,8 @@ This standalone installer installs/checks MySQL and Ollama, creates the
 application database/user, applies schema/migrations, seeds bundled base lookup
 rows and reference data, seeds database-backed prompts from packaged prompt
 files, and pulls the selected chat and embedding models. It does not install the
-desktop launcher, grounding services, or create a default app user.
+desktop launcher, grounding services, or create a default app user. Use it only
+when a local MySQL/offline-admin deployment is explicitly required.
 
 The default installer remains a sync-client build and does not create a local
 default user or seed reference data. To build the optional fully local installer
@@ -389,11 +411,20 @@ The desktop launcher still checks the external dependencies before starting the
 bundled services. If setup did not complete, it opens the diagnostics window
 instead of starting the backend.
 
-The client installer does not create a default app user, seed reference data, or
-seed the prompt library. When sync is configured, users, reference data, and
-database-backed prompts are pulled from the central server on app startup.
+The normal client installer does not create a default app user, seed reference
+data, seed the prompt library, or provision MySQL. When sync is configured,
+users, reference data, and database-backed prompts are pulled from the central
+server on app startup.
 
-Manual checks:
+Manual checks for a normal sync client:
+
+```powershell
+Test-Path "$env:ProgramData\DrTransition"
+Invoke-RestMethod http://127.0.0.1:11434/api/tags
+ollama list
+```
+
+Manual checks for legacy/offline-admin MySQL preparation only:
 
 ```powershell
 Test-NetConnection 127.0.0.1 -Port 3306
@@ -439,11 +470,14 @@ Included now:
 - Hardware/model helper scripts
 - Installer payload assembly
 - Config/log path conventions
-- First-run diagnostics for `.env`, MySQL, Ollama, and Ollama models
-- Installer-driven MySQL/Ollama detection, install, DB creation, seeding, and model pull
+- First-run diagnostics for `.env`, SQLite path, Ollama, and Ollama models
+- Installer-driven SQLite/Ollama setup and model pull for normal clients
+- Legacy/offline-admin MySQL preparation path where explicitly requested
 
 Next production hardening layer:
 
+- Remove remaining MySQL dependency checks from the normal sync-client installer
+  path where older scripts still reference them
 - Optional offline Hugging Face model bundle
 - Code signing
 - Upgrade migration rules

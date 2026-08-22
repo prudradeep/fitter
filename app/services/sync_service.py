@@ -34,6 +34,9 @@ INTERNAL_TABLES = {
     "schema_migrations",
     "sync_state",
     "sync_clients",
+    "sync_outbox",
+    "sync_changes",
+    "sync_operations",
     "system_inquiry_telemetry_events",
 }
 DEFAULT_EXCLUDED_TABLES = {"app_rate_limits"}
@@ -90,6 +93,8 @@ SYNC_CLIENT_COLUMNS = (
     "created_at",
     "updated_at",
 )
+SYNC_PROTOCOL_VERSION = 1
+CLIENT_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -170,6 +175,51 @@ class SyncService:
                 """
             )
         )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS sync_outbox (
+                  id INTEGER PRIMARY KEY,
+                  operation_id VARCHAR(64) NOT NULL UNIQUE,
+                  entity_type VARCHAR(100) NOT NULL,
+                  entity_sync_id VARCHAR(64) NOT NULL,
+                  operation VARCHAR(20) NOT NULL,
+                  payload_json TEXT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  attempts INT NOT NULL DEFAULT 0,
+                  last_attempt_at DATETIME NULL,
+                  last_error TEXT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS sync_changes (
+                  change_id INTEGER PRIMARY KEY,
+                  entity_type VARCHAR(100) NOT NULL,
+                  entity_sync_id VARCHAR(64) NOT NULL,
+                  operation VARCHAR(20) NOT NULL,
+                  server_version INT NOT NULL DEFAULT 1,
+                  changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS sync_operations (
+                  operation_id VARCHAR(64) PRIMARY KEY,
+                  client_id VARCHAR(64) NULL,
+                  status VARCHAR(40) NOT NULL,
+                  result_json TEXT NULL,
+                  processed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
         inspector = inspect(connection)
         sync_client_columns = {column["name"] for column in inspector.get_columns("sync_clients")}
         if "can_manage_prompts" not in sync_client_columns:
@@ -194,6 +244,8 @@ class SyncService:
         exported_at = utc_now()
         return {
             "format": "dr-transition-sync-v1",
+            "sync_protocol_version": SYNC_PROTOCOL_VERSION,
+            "client_schema_version": CLIENT_SCHEMA_VERSION,
             "device_id": self.device_id,
             "exported_at": exported_at.isoformat().replace("+00:00", "Z"),
             "admin_knowledge_sync": bool(include_admin_knowledge),
@@ -226,6 +278,9 @@ class SyncService:
         self.ensure_schema()
         if payload.get("format") != "dr-transition-sync-v1":
             raise ValueError("Unsupported sync bundle format.")
+        protocol_version = _coerce_int(payload.get("sync_protocol_version") or SYNC_PROTOCOL_VERSION)
+        if protocol_version != SYNC_PROTOCOL_VERSION:
+            raise ValueError("Unsupported sync protocol version.")
         admin_knowledge_scopes = self._admin_knowledge_sync_scopes(payload, sync_client=sync_client)
         admin_knowledge_sync = bool(admin_knowledge_scopes)
         inbound_user_data_allowed = self._inbound_user_data_allowed(sync_client=sync_client)
@@ -442,8 +497,6 @@ class SyncService:
         self.db.commit()
 
     def knowledge_index_dirty_scopes(self) -> list[str]:
-        if not bool(self.settings.sync_enabled):
-            return []
         self.ensure_schema()
         rows = self.db.execute(
             text(
@@ -463,8 +516,6 @@ class SyncService:
         ]
 
     def user_data_sync_status(self) -> dict[str, Any]:
-        if not bool(self.settings.sync_enabled):
-            return {"enabled": False, "enabled_at": None}
         self.ensure_schema()
         enabled_at = self.user_data_sync_enabled_at()
         return {
@@ -473,8 +524,6 @@ class SyncService:
         }
 
     def user_data_sync_enabled_at(self) -> datetime | None:
-        if not bool(self.settings.sync_enabled):
-            return None
         self.ensure_schema()
         enabled = self._sync_state_value(USER_DATA_SYNC_ENABLED_SCOPE) != "0"
         if not enabled:
@@ -482,8 +531,6 @@ class SyncService:
         return coerce_datetime(self._sync_state_value(USER_DATA_SYNC_ENABLED_AT_SCOPE)) or utc_now()
 
     def set_user_data_sync_enabled(self, enabled: bool) -> dict[str, Any]:
-        if not bool(self.settings.sync_enabled):
-            return {"enabled": False, "enabled_at": None}
         self.ensure_schema()
         enabled_at = self.user_data_sync_enabled_at()
         now = utc_now()

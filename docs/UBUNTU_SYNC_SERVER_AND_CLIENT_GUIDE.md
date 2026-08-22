@@ -4,19 +4,23 @@ This guide explains how to host the Dr Transition central sync service and
 database on an Ubuntu server, then configure local client installations to sync
 with it.
 
-The central service is the same FastAPI app running in server mode. Local client
-installations keep their local database IDs, and sync with the server through
-global `sync_id` values.
+The central service is the same FastAPI app running in server mode with MySQL.
+Local client installations run in client mode with SQLite, keep their local
+database IDs, and sync with the server through global `sync_id` values.
 
 ## Architecture
 
 ```text
 Local Dr Transition client
+  -> local SQLite + FAISS
   -> HTTPS
   -> Nginx reverse proxy on Ubuntu
   -> FastAPI app on 127.0.0.1:8000
   -> MySQL database on Ubuntu
 ```
+
+Clients must never connect directly to MySQL. The only network path from a
+client to central data is HTTPS to the FastAPI sync API.
 
 Server-to-client knowledge-base scopes:
 
@@ -182,13 +186,13 @@ git clone <your-repo-url> .
 Install dependencies:
 
 ```bash
-uv sync
+uv sync --extra server
 ```
 
 Before deploying or upgrading, run the backend checks:
 
 ```bash
-uv sync --extra test
+uv sync --extra test --extra server
 uv run pytest
 uv run ruff check .
 ```
@@ -224,6 +228,8 @@ APP_ENV=production
 APP_DEBUG=false
 SECRET_KEY="long-random-secret-key"
 
+APP_MODE=server
+SYNC_MODE=server
 DATABASE_URL="mysql+pymysql://drtransition:strong-db-password@localhost:3306/drtransition"
 DATABASE_AUTO_MIGRATE=false
 DATABASE_POOL_SIZE=5
@@ -546,14 +552,22 @@ Client example:
 
 ```env
 SYNC_ENABLED=true
+APP_MODE=client
 SYNC_MODE=client
+DATABASE_URL="sqlite:///data/dr_transition.db"
+SQLITE_DATABASE_PATH="data/dr_transition.db"
 SYNC_SERVER_URL="https://your-domain.example"
 SYNC_API_TOKEN="client-raw-sync-token"
 SYNC_DEVICE_ID="client-specific-stable-uuid"
 SYNC_INCLUDE_LOGS=false
 SYNC_AUTO_ON_STARTUP=true
 SYNC_INTERVAL_SECONDS=3600
+FAISS_INDEX_PATH="data/knowledge.faiss"
 ```
+
+Do not add central MySQL values to a normal client `.env`. A client should not
+have `mysql+pymysql://...`, MySQL host/port, MySQL usernames, or MySQL passwords
+for the central database.
 
 Generate a client device UUID:
 
@@ -752,13 +766,13 @@ Pull new code:
 
 ```bash
 git pull
-uv sync
+uv sync --extra server
 ```
 
 Run pre-upgrade checks:
 
 ```bash
-uv sync --extra test
+uv sync --extra test --extra server
 uv run pytest
 uv run ruff check .
 ```
@@ -841,12 +855,17 @@ Common issues:
 - `401`: wrong or missing sync token.
 - `/health/ready` fails: database URL, credentials, MySQL service, or schema is wrong.
 - Client sync fails with HTTPS error: DNS, certificate, proxy, or firewall issue.
+- Client tries to reach MySQL or port `3306`: the client is misconfigured; set
+  `DATABASE_URL` to a SQLite URL and use `SYNC_SERVER_URL` for central sync.
 
 ## 19. Security Checklist
 
 - Use HTTPS for all central sync traffic.
 - Keep `/etc/dr-transition.env` readable only by root and the deploy user.
 - Use different strong values for `SECRET_KEY`, DB password, and every client `SYNC_API_TOKEN`.
+- Keep MySQL credentials only on the central server.
+- Configure clients with SQLite plus `SYNC_SERVER_URL`; do not distribute MySQL
+  credentials to clients.
 - Keep `DATABASE_AUTO_MIGRATE=false` in production.
 - Keep `SYNC_SERVER_EXPOSE_APP_APIS=false` on central sync-only servers.
 - Do not install or start Ollama, reranker, or NLI on sync-only central servers.
