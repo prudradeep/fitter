@@ -303,11 +303,13 @@ source = { virtual = "." }
 dependencies = [
     { name = "bleach" },
     { name = "cryptography" },
+    { name = "faiss-cpu" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "itsdangerous" },
     { name = "jinja2" },
     { name = "markdown" },
+    { name = "numpy" },
     { name = "openpyxl" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -321,10 +323,6 @@ dependencies = [
 [package.optional-dependencies]
 browser = [
     { name = "playwright" },
-]
-client = [
-    { name = "faiss-cpu" },
-    { name = "numpy" },
 ]
 dev = [
     { name = "faiss-cpu" },
@@ -351,7 +349,7 @@ test = [
 requires-dist = [
     { name = "bleach", specifier = ">=6.2.0" },
     { name = "cryptography", specifier = ">=42.0.0" },
-    { name = "faiss-cpu", marker = "extra == 'client'", specifier = ">=1.8.0" },
+    { name = "faiss-cpu", specifier = ">=1.8.0" },
     { name = "faiss-cpu", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "fastapi", specifier = ">=0.115.12" },
     { name = "httpx", specifier = ">=0.28.1" },
@@ -359,7 +357,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "markdown", specifier = ">=3.8.2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13.0" },
-    { name = "numpy", marker = "extra == 'client'", specifier = ">=1.26.0" },
+    { name = "numpy", specifier = ">=1.26.0" },
     { name = "numpy", marker = "extra == 'dev'", specifier = ">=1.26.0" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.49.0" },

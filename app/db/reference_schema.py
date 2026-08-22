@@ -9,12 +9,19 @@ from app.db.session import engine
 logger = logging.getLogger(__name__)
 
 
+def _require_mysql() -> None:
+    if engine.dialect.name != "mysql":
+        raise RuntimeError("reference_schema.py contains MySQL-only DDL and is server-only")
+
+
 def ensure_reference_data_schema() -> None:
+    _require_mysql()
     ensure_additional_hazard_schema()
     ensure_mitigation_measure_schema()
 
 
 def ensure_additional_hazard_schema() -> None:
+    _require_mysql()
     with engine.begin() as connection:
         question_option_id_type = mysql_question_option_id_type(connection)
         connection.execute(
@@ -89,6 +96,7 @@ def ensure_additional_hazard_schema() -> None:
 
 
 def ensure_mitigation_measure_schema() -> None:
+    _require_mysql()
     inspector = inspect(engine)
     if "mitigation_measure_target_groups" in inspector.get_table_names():
         target_group_columns = {

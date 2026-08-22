@@ -20,16 +20,18 @@ dependencies = [
     "python-multipart>=0.0.20",
     "pypdf>=5.5.0",
     "openpyxl>=3.1.5",
+    # Knowledge-base indexing is part of the packaged desktop/offline backend
+    # and is used during OfflineAdmin seeding. Keep these as core runtime
+    # dependencies so PyInstaller builds cannot omit them.
+    "numpy>=1.26.0",
+    "faiss-cpu>=1.8.0",
 ]
 
 [project.optional-dependencies]
 server = [
     "pymysql>=1.1.1",
 ]
-client = [
-    "faiss-cpu>=1.8.0",
-    "numpy>=1.26.0",
-]
+client = []
 grounding = [
     "sentence-transformers>=3.4.0",
 ]

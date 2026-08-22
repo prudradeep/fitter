@@ -9,7 +9,9 @@ MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 
 
 def apply_versioned_migrations() -> list[str]:
-    """Apply idempotent SQL migration files and record their versions."""
+    """Apply MySQL server migration files and record their versions."""
+    if engine.dialect.name != "mysql":
+        raise RuntimeError("db/migrations contains MySQL server migrations; SQLite uses sqlite_migrations.py")
     if not MIGRATIONS_PATH.exists():
         return []
 

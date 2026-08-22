@@ -230,11 +230,27 @@ def main() -> None:
     )
     validate_database_connection()
     seed_reference_data = not args.skip_reference_data and not args.legacy_schema_repair
+    is_sqlite = get_settings().database_url.strip().casefold().startswith("sqlite")
+
+    # SQLite reference data (system hazards, additional hazards, mitigation data)
+    # depends on the bootstrap rows such as sectors/countries. Whenever a local
+    # SQLite reference seed is requested, ensure those basic rows exist first.
+    # This also makes `--skip-schema` safe after a separate migration command.
+    include_basic_data = args.include_basic_data or (is_sqlite and seed_reference_data)
+
     run_runtime_migrations(
         apply_base_schema=not args.skip_schema,
-        include_basic_data=args.include_basic_data if not args.skip_schema else None,
+        include_basic_data=include_basic_data,
         seed_reference_data=seed_reference_data,
     )
+    if is_sqlite and include_basic_data:
+        from app.seed.sqlite_basic_data import validate_sqlite_offline_seed
+
+        counts = validate_sqlite_offline_seed(require_reference_data=seed_reference_data)
+        print(
+            "SQLite offline seed validated: "
+            + ", ".join(f"{table}={count}" for table, count in sorted(counts.items()))
+        )
     if args.seed_prompts_from_files:
         prompt_count = seed_prompts_from_files()
         print(f"Prompt library seeded from files: {prompt_count} prompt(s).")

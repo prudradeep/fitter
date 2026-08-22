@@ -29,6 +29,8 @@ a = Analysis(
     hiddenimports=[
         *collect_submodules("app"),
         "pymysql",
+        "numpy",
+        "faiss",
         "uvicorn.logging",
         "uvicorn.loops.auto",
         "uvicorn.protocols.http.auto",

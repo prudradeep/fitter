@@ -140,6 +140,28 @@ class KnowledgeBaseService:
         if not allow_lexical_only:
             self._require_faiss()
         scope_level = self._scope_level()
+        # Generate embeddings before starting any SQLite write transaction.
+        # Previously the document/chunks were flushed first, which held SQLite's
+        # single-writer lock while Ollama embedding HTTP calls were running.
+        # Those calls are themselves logged to llm_exchange_logs through a second
+        # SQLAlchemy session, causing "database is locked" after busy_timeout.
+        embeddings: list[list[float]] | None = None
+        vector_indexed = False
+        vector_error = ""
+        if faiss is not None and np is not None:
+            try:
+                embeddings = await self._embed_many([chunk.content for chunk in chunks])
+            except Exception as exc:
+                if not allow_lexical_only:
+                    raise
+                vector_error = str(exc)
+        elif not allow_lexical_only:
+            self._require_faiss()
+        else:
+            vector_error = "FAISS or NumPy is unavailable; using DB lexical retrieval."
+
+        # Keep the SQLite write transaction short: only persist the document/chunks
+        # and update the local vector index after all slow embedding calls finish.
         document = KnowledgeDocument(
             user_id=self.user_id,
             title=title[:255] or "Knowledge document",
@@ -178,25 +200,14 @@ class KnowledgeBaseService:
             chunk_rows.append(row)
         self.db.flush()
 
-        vector_indexed = False
-        vector_error = ""
-        if faiss is not None and np is not None:
-            try:
-                embeddings = await self._embed_many([row.content for row in chunk_rows])
+        try:
+            if embeddings is not None:
                 self._add_vectors([row.id for row in chunk_rows], embeddings)
                 vector_indexed = True
-            except Exception as exc:
-                if not allow_lexical_only:
-                    self.db.rollback()
-                    raise
-                vector_error = str(exc)
-        elif not allow_lexical_only:
+            self.db.commit()
+        except Exception:
             self.db.rollback()
-            self._require_faiss()
-        else:
-            vector_error = "FAISS or NumPy is unavailable; using DB lexical retrieval."
-
-        self.db.commit()
+            raise
         self.db.refresh(document)
         return {
             "error": False,

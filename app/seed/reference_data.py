@@ -421,6 +421,7 @@ def _seed_additional_hazards(connection) -> None:
             text(
                 """
                 INSERT INTO additional_hazards (
+                    id,
                     country_id,
                     sector_id,
                     name,
@@ -428,6 +429,7 @@ def _seed_additional_hazards(connection) -> None:
                     csv_row_number
                 )
                 VALUES (
+                    :id,
                     :country_id,
                     :sector_id,
                     :name,
@@ -437,6 +439,7 @@ def _seed_additional_hazards(connection) -> None:
                 """
             ),
             {
+                "id": str(uuid.uuid4()),
                 "country_id": country_id,
                 "sector_id": sector_id,
                 "name": hazard_name,
@@ -510,6 +513,7 @@ def _seed_additional_hazard_profiles(connection) -> None:
             text(
                 """
                 INSERT INTO additional_hazard_profiles (
+                    id,
                     additional_hazard_id,
                     profile,
                     evidence,
@@ -518,6 +522,7 @@ def _seed_additional_hazard_profiles(connection) -> None:
                     csv_row_number
                 )
                 VALUES (
+                    :id,
                     :additional_hazard_id,
                     :profile,
                     :evidence,
@@ -528,6 +533,7 @@ def _seed_additional_hazard_profiles(connection) -> None:
                 """
             ),
             {
+                "id": str(uuid.uuid4()),
                 "additional_hazard_id": additional_hazard_id,
                 "profile": profile,
                 "evidence": (row.get("evidence") or "").strip() or None,
@@ -587,13 +593,14 @@ def _seed_additional_hazard_profile_target_populations(connection) -> None:
                 text(
                     """
                     INSERT INTO additional_hazard_profile_target_populations (
+                        id,
                         additional_hazard_profile_id,
                         question_option_id
                     )
-                    VALUES (:profile_id, :option_id)
+                    VALUES (:id, :profile_id, :option_id)
                     """
                 ),
-                {"profile_id": str(row["id"]), "option_id": option_id},
+                {"id": str(uuid.uuid4()), "profile_id": str(row["id"]), "option_id": option_id},
             )
             inserted += 1
 
@@ -775,6 +782,7 @@ def _seed_mm_csv_mitigation_measure_examples(connection) -> None:
             text(
                 """
                 INSERT INTO mitigation_measure_examples (
+                    id,
                     sector_id,
                     system_hazard_id,
                     system_hazard_socio_demographic_id,
@@ -789,6 +797,7 @@ def _seed_mm_csv_mitigation_measure_examples(connection) -> None:
                     csv_row_number
                 )
                 VALUES (
+                    :id,
                     :sector_id,
                     :system_hazard_id,
                     :profile_id,
@@ -805,6 +814,7 @@ def _seed_mm_csv_mitigation_measure_examples(connection) -> None:
                 """
             ),
             {
+                "id": str(uuid.uuid4()),
                 "sector_id": sector_id,
                 "system_hazard_id": system_hazard_id,
                 "profile_id": profile_id,
@@ -952,6 +962,7 @@ def _seed_mm_target_group_xlsx(connection) -> None:
                 text(
                     """
                     INSERT INTO mitigation_measure_target_groups (
+                        id,
                         mitigation_measure_policy_id,
                         question_option_id,
                         match_value,
@@ -959,6 +970,7 @@ def _seed_mm_target_group_xlsx(connection) -> None:
                         excel_column_number
                     )
                     VALUES (
+                        :id,
                         :policy_id,
                         :question_option_id,
                         :match_value,
@@ -968,6 +980,7 @@ def _seed_mm_target_group_xlsx(connection) -> None:
                     """
                 ),
                 {
+                    "id": str(uuid.uuid4()),
                     "policy_id": policy_id,
                     "question_option_id": question_option_id,
                     "match_value": match_value or None,
@@ -1049,6 +1062,7 @@ def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
                     text(
                         """
                         INSERT INTO mitigation_measure_policy_additional_hazards (
+                            id,
                             mitigation_measure_policy_id,
                             additional_hazard_id,
                             match_value,
@@ -1057,6 +1071,7 @@ def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
                             excel_column_number
                         )
                         VALUES (
+                            :id,
                             :policy_id,
                             :additional_hazard_id,
                             :match_value,
@@ -1067,6 +1082,7 @@ def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
                         """
                     ),
                     {
+                        "id": str(uuid.uuid4()),
                         "policy_id": policy_id,
                         "additional_hazard_id": additional_hazard_id,
                         "match_value": match_value or None,
@@ -1154,6 +1170,7 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
                 text(
                     """
                     INSERT INTO mitigation_measure_policy_system_hazards (
+                        id,
                         mitigation_measure_policy_id,
                         system_hazard_id,
                         mitigation_effect,
@@ -1162,6 +1179,7 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
                         excel_column_number
                     )
                     VALUES (
+                        :id,
                         :policy_id,
                         :system_hazard_id,
                         :mitigation_effect,
@@ -1169,13 +1187,10 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
                         :excel_row_number,
                         :excel_column_number
                     )
-                    ON DUPLICATE KEY UPDATE
-                        mitigation_effect = VALUES(mitigation_effect),
-                        excel_row_number = VALUES(excel_row_number),
-                        excel_column_number = VALUES(excel_column_number)
                     """
                 ),
                 {
+                    "id": str(uuid.uuid4()),
                     "policy_id": policy_id,
                     "system_hazard_id": system_hazard_id,
                     "mitigation_effect": mitigation_effect,
@@ -1281,11 +1296,11 @@ def _ensure_mm_target_group_question_options(connection) -> None:
         connection.execute(
             text(
                 """
-                INSERT INTO question_options (questionId, `option`)
-                VALUES (:question_id, '18-25')
+                INSERT INTO question_options (id, questionId, `option`)
+                VALUES (:id, :question_id, '18-25')
                 """
             ),
-            {"question_id": str(age_question_id)},
+            {"id": str(uuid.uuid4()), "question_id": str(age_question_id)},
         )
 
 

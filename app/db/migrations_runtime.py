@@ -11,6 +11,7 @@ from app.db.reference_schema import ensure_reference_data_schema
 from app.db.schema_type_helpers import mysql_question_option_id_type
 from app.db.session import Base, engine  # noqa: F401
 from app.db.versioned_migrations import apply_versioned_migrations
+from app.db.sqlite_migrations import apply_sqlite_migrations
 from app.seed.reference_data import (
     ensure_additional_hazards,
     ensure_mitigation_measure_examples,
@@ -30,6 +31,8 @@ def default_seed_user_role() -> str:
 
 
 def run_schema_sql(*, include_basic_data: bool | None = None) -> None:
+    if engine.dialect.name != "mysql":
+        raise RuntimeError("schema.sql is the MySQL server schema and must not run against SQLite")
     if not SCHEMA_PATH.exists():
         raise FileNotFoundError(f"Schema file not found: {SCHEMA_PATH}")
 
@@ -115,6 +118,8 @@ def _adapt_question_option_fk_type(connection, statement: str) -> str:
     )
 
 def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
+    if engine.dialect.name != "mysql":
+        raise RuntimeError("ensure_runtime_schema() contains MySQL-only DDL; use run_runtime_migrations() for SQLite")
     try:
         with engine.begin() as connection:
             question_option_id_type = mysql_question_option_id_type(connection)
@@ -768,25 +773,26 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD INDEX ix_user_mitigation_measures_user_session_id (user_session_id)"
                         )
                     )
-            if "system_inquiry_telemetry_events" not in table_names:
-                connection.execute(
-                    text(
-                        """
-                        CREATE TABLE system_inquiry_telemetry_events (
-                          id CHAR(36) PRIMARY KEY,
-                          event_key VARCHAR(64) NOT NULL UNIQUE,
-                          payload_json TEXT NOT NULL,
-                          status VARCHAR(20) NOT NULL DEFAULT 'queued',
-                          attempts INT NOT NULL DEFAULT 0,
-                          last_error TEXT NULL,
-                          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                          synced_at DATETIME NULL,
-                          INDEX ix_system_inquiry_telemetry_event_key (event_key),
-                          INDEX ix_system_inquiry_telemetry_status (status)
+            with engine.begin() as connection:
+                if "system_inquiry_telemetry_events" not in table_names:
+                    connection.execute(
+                        text(
+                            """
+                            CREATE TABLE system_inquiry_telemetry_events (
+                              id CHAR(36) PRIMARY KEY,
+                              event_key VARCHAR(64) NOT NULL UNIQUE,
+                              payload_json TEXT NOT NULL,
+                              status VARCHAR(20) NOT NULL DEFAULT 'queued',
+                              attempts INT NOT NULL DEFAULT 0,
+                              last_error TEXT NULL,
+                              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                              synced_at DATETIME NULL,
+                              INDEX ix_system_inquiry_telemetry_event_key (event_key),
+                              INDEX ix_system_inquiry_telemetry_status (status)
+                            )
+                            """
                         )
-                        """
                     )
-                )
                 if "ix_user_mitigation_measures_visibility" not in mitigation_indexes:
                     connection.execute(
                         text(
@@ -1602,8 +1608,28 @@ def run_runtime_migrations(
     objects. Production deploys should use this versioned path only.
     """
     if engine.dialect.name == "sqlite":
+        # create_all() creates tables for a fresh client, while the explicit
+        # SQLite migration runner upgrades databases from previous releases.
         Base.metadata.create_all(bind=engine)
-        logger.info("SQLite client database schema initialized")
+        applied = apply_sqlite_migrations()
+
+        # OfflineAdmin uses the same canonical seed_data.py orchestration as
+        # the MySQL server. The SQLite branch must therefore honor the same
+        # include_basic_data/seed_reference_data switches instead of returning
+        # immediately after schema creation.
+        if include_basic_data:
+            from app.seed.sqlite_basic_data import seed_sqlite_basic_data
+
+            seed_sqlite_basic_data()
+        if seed_reference_data:
+            ensure_additional_hazards()
+            ensure_system_hazards_from_sector_prompts()
+            ensure_mitigation_measure_examples()
+
+        logger.info(
+            "SQLite client database schema initialized%s",
+            f"; applied migrations: {', '.join(applied)}" if applied else "",
+        )
         return
 
     if apply_base_schema:

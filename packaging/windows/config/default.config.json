@@ -14,14 +14,20 @@
       "port": 8081,
       "healthUrl": "http://127.0.0.1:8081/health",
       "executable": "backend\\drtransition-grounding\\drtransition-grounding.exe",
-      "arguments": ["--service", "reranker"]
+      "arguments": [
+        "--service",
+        "reranker"
+      ]
     },
     "nli": {
       "host": "127.0.0.1",
       "port": 8082,
       "healthUrl": "http://127.0.0.1:8082/health",
       "executable": "backend\\drtransition-grounding\\drtransition-grounding.exe",
-      "arguments": ["--service", "nli"]
+      "arguments": [
+        "--service",
+        "nli"
+      ]
     }
   },
   "ollama": {
@@ -34,5 +40,9 @@
     "logDirectory": "%LOCALAPPDATA%\\DrTransition\\logs",
     "uploadDirectory": "%ProgramData%\\DrTransition\\uploads",
     "faissIndexPath": "%ProgramData%\\DrTransition\\knowledge.faiss"
+  },
+  "database": {
+    "type": "sqlite",
+    "path": "%ProgramData%\\DrTransition\\data\\dr_transition.db"
   }
 }

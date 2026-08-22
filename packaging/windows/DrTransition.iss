@@ -1,4 +1,4 @@
-#define MyAppName "Dr Transition"
+﻿#define MyAppName "Dr Transition"
 #define MyAppVersion "0.1.11"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
@@ -318,7 +318,7 @@ begin
     '- 8 GB RAM minimum, 16 GB+ recommended' + #13#10 +
     '- 10 GB free disk space before optional model downloads' + #13#10#13#10 +
 #ifdef OfflineAdminInstaller
-    'Ollama, MySQL, and model setup are handled by the packaging helper scripts for this offline/admin installer.';
+    'Ollama, SQLite, and model setup are handled by the packaging helper scripts for this offline/client installer.';
 #else
     'Ollama, SQLite, and model setup are handled by the packaging helper scripts for this sync-client installer.';
 #endif
@@ -650,7 +650,7 @@ begin
   Result := True;
 
 #ifdef OfflineAdminInstaller
-  if CurPageID = DatabasePage.ID then
+  if False and (CurPageID = DatabasePage.ID) then
   begin
     if Trim(DatabasePage.Values[0]) = '' then
     begin
@@ -757,11 +757,7 @@ end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := False;
-#ifndef OfflineAdminInstaller
-  if PageID = DatabasePage.ID then
-    Result := True;
-#endif
+  Result := (PageID = DatabasePage.ID);
 end;
 
 procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
@@ -782,11 +778,7 @@ begin
     '  "OllamaModel": "' + JsonEscape(ModelPage.Values[0]) + '",' + #13#10 +
     '  "OllamaEmbeddingModel": "' + JsonEscape(ModelPage.Values[1]) + '",' + #13#10 +
     '  "OllamaBaseUrl": "http://127.0.0.1:11434",' + #13#10 +
-#ifdef OfflineAdminInstaller
-    '  "InstallMySql": true,' + #13#10 +
-#else
     '  "InstallMySql": false,' + #13#10 +
-#endif
     '  "InstallOllama": true,' + #13#10 +
     '  "PullModels": true,' + #13#10 +
 #ifdef OfflineAdminInstaller
@@ -805,10 +797,19 @@ begin
     '  "SkipDefaultAppUser": false,' + #13#10 +
     '  "SkipReferenceData": false,' + #13#10 +
 #else
+    '  "DisableSync": false,' + #13#10 +
+    '  "IncludeBasicData": false,' + #13#10 +
+    '  "SeedPromptsFromFiles": false,' + #13#10 +
+    '  "ReindexSectorPrompts": false,' + #13#10 +
+    '  "SeedMainKbFromFiles": false,' + #13#10 +
     '  "SkipDefaultAppUser": true,' + #13#10 +
     '  "SkipReferenceData": true,' + #13#10 +
 #endif
+#ifdef OfflineAdminInstaller
     '  "SkipDatabaseSeed": false' + #13#10 +
+#else
+    '  "SkipDatabaseSeed": true' + #13#10 +
+#endif
     '}';
 end;
 
@@ -833,7 +834,7 @@ begin
     '-InstallDir "' + ExpandConstant('{app}') + '" ' +
     '-ConfigPath "' + ConfigPath + '"';
 
-  WizardForm.StatusLabel.Caption := 'Installing and configuring MySQL, Ollama, database, and models. A live setup log window is open...';
+  WizardForm.StatusLabel.Caption := 'Installing and configuring SQLite, Ollama, database, and models. A live setup log window is open...';
   if not Exec(PowerShell, Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
   begin
     DependencySetupFailed := True;

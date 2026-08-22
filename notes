@@ -335,6 +335,7 @@ uv run python tests/run_open_conversation_selection_cases.py --input .\open_conv
 
 $env:ENV_FILE=".env.server.dev"
 $env:DRTRANSITION_APP_PORT="8001"
+uv sync --extra server
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload --reload-dir app
 
 
@@ -347,12 +348,16 @@ DrTransition-psKAKEDHRPVNRjXTwUvDsaHn!1aA
 
 
 $env:ENV_FILE=".env.server.dev"
+uv sync --extra server
 uv run python scripts/apply_migrations.py --apply-base-schema
 uv run python -m app.seed_data --skip-schema
 .\scripts\seed_database.ps1 -SkipSchema
 
 $env:ENV_FILE=".env.client.dev"
 uv run python scripts/apply_migrations.py --apply-base-schema
+
+//Sqlite version
+uv run python -m app.seed_data --include-basic-data --seed-prompts-from-files
 
 uv run python -c "from app.db.migrations_runtime import run_runtime_migrations; from app.services.prompt_store import seed_prompts_from_files; run_runtime_migrations(seed_reference_data=False); print(f'Seeded/updated {seed_prompts_from_files(overwrite=True)} prompt rows')"
 

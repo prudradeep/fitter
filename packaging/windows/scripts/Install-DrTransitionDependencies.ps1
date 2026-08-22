@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$InstallDir,
 
     [string]$ConfigPath = "",
@@ -451,6 +451,27 @@ function Get-EnvAssignmentValue {
         }
     }
     return ""
+}
+
+function Get-OrCreate-SecretKey {
+    Ensure-RuntimeEnvFile
+    $lines = Get-Content -LiteralPath $envPath
+    $existing = Get-EnvAssignmentValue -Lines $lines -Key "SECRET_KEY"
+    if (-not [string]::IsNullOrWhiteSpace($existing) -and $existing.Length -ge 64) {
+        Write-SetupLog "Preserving existing SECRET_KEY"
+        return $existing
+    }
+
+    $bytes = New-Object byte[] 64
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    } finally {
+        $rng.Dispose()
+    }
+    $secret = -join ($bytes | ForEach-Object { $_.ToString("x2") })
+    Write-SetupLog "Generated a unique SECRET_KEY for this installation"
+    return $secret
 }
 
 function Get-OrCreate-SyncDeviceId {
@@ -1713,7 +1734,9 @@ function Invoke-DatabaseSeed {
 
     $seedOut = Join-Path $logDir "seed-database.out.log"
     $seedErr = Join-Path $logDir "seed-database.err.log"
-    Write-SetupLog "Seeding database through bundled backend"
+    Write-SetupLog "Seeding SQLite database through bundled backend"
+    Write-SetupLog "Foreground seed options: IncludeBasicData=$IncludeBasicData, SeedPromptsFromFiles=$SeedPromptsFromFiles, SkipReferenceData=$SkipReferenceData, SkipDefaultAppUser=$SkipDefaultAppUser"
+    Write-SetupLog "Background KB options: ReindexSectorPrompts=$ReindexSectorPrompts, SeedMainKbFromFiles=$SeedMainKbFromFiles"
     $seedArgs = @(
         "--seed-database"
     )
@@ -1722,9 +1745,6 @@ function Invoke-DatabaseSeed {
     }
     if ($SeedPromptsFromFiles) {
         $seedArgs += "--seed-prompts-from-files"
-    }
-    if ($ReindexSectorPrompts) {
-        $seedArgs += "--reindex-sector-prompts"
     }
     if ($SkipDefaultAppUser) {
         $seedArgs += "--skip-default-user"
@@ -1739,6 +1759,9 @@ function Invoke-DatabaseSeed {
             "--default-user-role", $DefaultAppUserRole
         )
     }
+    # OfflineAdmin now uses the canonical app.seed_data reference-data path for
+    # SQLite as well as MySQL. Sync clients skip local reference seeding and
+    # receive reference data from the server.
     if ($SkipReferenceData) {
         $seedArgs += "--skip-reference-data"
     }
@@ -1746,7 +1769,12 @@ function Invoke-DatabaseSeed {
     $exitCode = Wait-SetupProcess -Process $process -Activity "Database seed" -HeartbeatSeconds 15
     $seedSucceeded = $false
     if (Test-Path -LiteralPath $seedOut) {
-        $seedSucceeded = [bool](Select-String -LiteralPath $seedOut -Pattern "Database reference data seeded successfully.|Database schema prepared successfully." -Quiet)
+        $successPattern = if ($SkipReferenceData) {
+            "Database schema prepared successfully."
+        } else {
+            "Database reference data seeded successfully."
+        }
+        $seedSucceeded = [bool](Select-String -LiteralPath $seedOut -Pattern $successPattern -Quiet)
     }
     if (($null -eq $exitCode -and -not $seedSucceeded) -or ($null -ne $exitCode -and $exitCode -ne 0)) {
         if (Test-Path -LiteralPath $seedOut) {
@@ -1816,31 +1844,64 @@ function Write-DefaultAppUserCredentialsSummary {
     Write-SetupLog "Default app user summary written to $DefaultAppUserCredentialsPath"
 }
 
-function Start-MainKnowledgeBaseSeed {
-    if (-not $SeedMainKbFromFiles) {
+function Start-BackgroundKnowledgeBaseSeed {
+    # Basic/reference data, prompt rows, hazards and mitigation data are seeded
+    # synchronously by Invoke-DatabaseSeed. Only KB/indexing/embedding work runs here.
+    if (-not $ReindexSectorPrompts -and -not $SeedMainKbFromFiles) {
+        Write-SetupLog "Background KB seed skipped; no KB/indexing work is enabled"
         return
     }
     if (-not (Test-Path -LiteralPath $backendExe)) {
-        Write-SetupLog "Main KB seed skipped; bundled backend executable was not found: $backendExe"
+        Write-SetupLog "Background KB seed skipped; bundled backend executable was not found: $backendExe"
         return
     }
 
-    $kbSeedOut = Join-Path $logDir "seed-main-kb.out.log"
-    $kbSeedErr = Join-Path $logDir "seed-main-kb.err.log"
+    $kbSeedOut = Join-Path $logDir "seed-kb-background.out.log"
+    $kbSeedErr = Join-Path $logDir "seed-kb-background.err.log"
     $kbSeedArgs = @(
         "--seed-database",
         "--skip-schema",
         "--skip-reference-data",
-        "--skip-default-user",
-        "--seed-main-kb-from-files"
+        "--skip-default-user"
     )
 
+    if ($ReindexSectorPrompts) {
+        # Sector prompt RAG indexing creates KB chunks/embeddings, so do not block setup.
+        $kbSeedArgs += "--reindex-sector-prompts"
+    }
+    if ($SeedMainKbFromFiles) {
+        # Bundled PDF ingestion/chunking/embedding is also background-only.
+        $kbSeedArgs += "--seed-main-kb-from-files"
+    }
+
+    # Embedding calls made by this background worker do not need to write an
+    # llm_exchange_logs row for every chunk. Disabling DB LLM logging only for
+    # the child process avoids unnecessary SQLite writer contention while the
+    # normal application keeps its own configured logging behaviour.
+    $previousLlmLogToDb = $env:LLM_LOG_TO_DB
     try {
-        $process = Start-Process -FilePath $backendExe -ArgumentList (Join-ProcessArguments $kbSeedArgs) -WorkingDirectory $InstallDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $kbSeedOut -RedirectStandardError $kbSeedErr
-        Write-SetupLog "Main KB PDF seed started in the background with process id $($process.Id)"
-        Write-SetupLog "Main KB seed logs: $kbSeedOut and $kbSeedErr"
+        $env:LLM_LOG_TO_DB = "false"
+
+        $process = Start-Process `
+            -FilePath $backendExe `
+            -ArgumentList (Join-ProcessArguments $kbSeedArgs) `
+            -WorkingDirectory $InstallDir `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $kbSeedOut `
+            -RedirectStandardError $kbSeedErr
+
+        Write-SetupLog "KB/indexing seed started in the background with process id $($process.Id)"
+        Write-SetupLog "Background KB seed logs: $kbSeedOut and $kbSeedErr"
     } catch {
-        Write-SetupLog "Main KB PDF seed could not be started; installer will continue. $($_.Exception.Message)"
+        # KB generation must not block/fail the installer after the relational seed succeeds.
+        Write-SetupLog "Background KB seed could not be started; installer will continue. $($_.Exception.Message)"
+    } finally {
+        if ($null -eq $previousLlmLogToDb) {
+            Remove-Item Env:LLM_LOG_TO_DB -ErrorAction SilentlyContinue
+        } else {
+            $env:LLM_LOG_TO_DB = $previousLlmLogToDb
+        }
     }
 }
 
@@ -1882,10 +1943,9 @@ try {
     Write-SetupLog "Starting Dr Transition dependency setup"
 
     if ($DependenciesOnly) {
-        Write-SetupLog "Dependencies-only mode enabled; installing/checking MySQL and Ollama only"
-        Ensure-MySql | Out-Null
+        Write-SetupLog "Dependencies-only mode enabled; installing/checking Ollama only"
         Ensure-Ollama | Out-Null
-        Write-SetupLog "Dr Transition MySQL and Ollama dependency setup completed"
+        Write-SetupLog "Dr Transition Ollama dependency setup completed"
         return
     }
 
@@ -1901,16 +1961,16 @@ try {
         Write-SetupLog "Recommended Ollama model selected: $OllamaModel ($($recommendation.tier))"
     }
 
-    $useMySqlDatabase = $DisableSync -or $IncludeBasicData -or $SeedPromptsFromFiles -or $SeedMainKbFromFiles
+    # Windows offline/client packages are SQLite-only. MySQL is not an installer dependency.
+    $useMySqlDatabase = $false
     $sqliteDatabasePath = Join-Path $runtimeDataDir "dr_transition.db"
-    $databaseUrl = if ($useMySqlDatabase) {
-        "mysql+pymysql://$(ConvertTo-DatabaseUrlComponent $AppDbUser):$(ConvertTo-DatabaseUrlComponent $AppDbPassword)@localhost:3306/$(ConvertTo-DatabaseUrlComponent $DbName)"
-    } else {
-        "sqlite:///$($sqliteDatabasePath.Replace('\', '/'))"
-    }
+    New-Item -ItemType Directory -Force -Path $runtimeDataDir | Out-Null
+    $databaseUrl = "sqlite:///$($sqliteDatabasePath.Replace('\', '/'))"
     $syncDeviceId = Get-OrCreate-SyncDeviceId
+    $secretKey = Get-OrCreate-SecretKey
     $runtimeEnvUpdates = @{
-        APP_MODE = $(if ($useMySqlDatabase) { "server" } else { "client" })
+        APP_MODE = "client"
+        SECRET_KEY = $secretKey
         DATABASE_URL = $databaseUrl
         SQLITE_DATABASE_PATH = $sqliteDatabasePath
         FAISS_INDEX_PATH = (Join-Path $runtimeDataDir "knowledge.faiss")
@@ -1930,23 +1990,14 @@ try {
     }
     Update-RuntimeEnv -Updates $runtimeEnvUpdates
 
-    if ($useMySqlDatabase) {
-        $mysqlExe = Ensure-MySql
-        Ensure-Database -MySqlExe $mysqlExe
-    } else {
-        New-Item -ItemType Directory -Force -Path $runtimeDataDir | Out-Null
-        Write-SetupLog "Configured SQLite client database: $sqliteDatabasePath"
-    }
+    Write-SetupLog "Configured SQLite client database: $sqliteDatabasePath"
     Use-ConfiguredOllamaModelsPath
     $ollamaExe = Ensure-Ollama
     Ensure-OllamaModel -OllamaExe $ollamaExe -Model $OllamaModel
     Ensure-OllamaModel -OllamaExe $ollamaExe -Model $OllamaEmbeddingModel
-    if ($useMySqlDatabase) {
-        Invoke-DatabaseSeed
-        Start-MainKnowledgeBaseSeed
-    } else {
-        Write-SetupLog "Skipping MySQL database seed for normal SQLite sync client"
-    }
+    # Database seeding is backend-driven and uses DATABASE_URL, so it now targets SQLite.
+    Invoke-DatabaseSeed
+    Start-BackgroundKnowledgeBaseSeed
 
     Write-SetupLog "Dr Transition dependency setup completed"
 } catch {

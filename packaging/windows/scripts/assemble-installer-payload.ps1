@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$PrepackageDependencies
 )
 
@@ -46,23 +46,8 @@ Copy-Item -LiteralPath (Join-Path $root "schema.sql") -Destination $payload -For
 
 if ($PrepackageDependencies) {
     $offlineRoot = Join-Path $root "packaging\windows\offline"
-    $mysqlOffline = Join-Path $offlineRoot "mysql"
     $ollamaOffline = Join-Path $offlineRoot "ollama"
-    $mysqlPayload = Join-Path $installersPayload "mysql"
     $ollamaPayload = Join-Path $installersPayload "ollama"
-
-    $preferredMySqlInstaller = Join-Path $mysqlOffline "mysql-8.4.11-winx64.msi"
-    $mysqlInstaller = if (Test-Path -LiteralPath $preferredMySqlInstaller -PathType Leaf) {
-        Get-Item -LiteralPath $preferredMySqlInstaller
-    } else {
-        Get-ChildItem -LiteralPath $mysqlOffline -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -in @(".msi", ".exe") } |
-            Sort-Object Name |
-            Select-Object -First 1
-    }
-    if (-not $mysqlInstaller) {
-        throw "Missing offline MySQL installer. Place a MySQL Server .msi/.exe in $mysqlOffline."
-    }
 
     $ollamaInstaller = Get-ChildItem -LiteralPath $ollamaOffline -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -ieq "OllamaSetup.exe" -or $_.Extension -eq ".exe" } |
@@ -71,13 +56,11 @@ if ($PrepackageDependencies) {
         throw "Missing offline Ollama installer. Place OllamaSetup.exe in $ollamaOffline."
     }
 
-    New-Item -ItemType Directory -Force -Path $mysqlPayload | Out-Null
     New-Item -ItemType Directory -Force -Path $ollamaPayload | Out-Null
-    Copy-Item -LiteralPath $mysqlInstaller.FullName -Destination $mysqlPayload -Force
     Copy-Item -LiteralPath $ollamaInstaller.FullName -Destination $ollamaPayload -Force
-    Write-Host "Prepackaged dependency installers:"
-    Write-Host "  MySQL: $($mysqlInstaller.Name)"
+    Write-Host "Prepackaged dependency installer:"
     Write-Host "  Ollama: $($ollamaInstaller.Name)"
 }
+
 
 Write-Host "Installer payload assembled at $payload"

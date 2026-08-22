@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$OfflineAdmin,
     [switch]$PrepackageDependencies
 )
@@ -8,8 +8,8 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
 $iss = Join-Path $root "packaging\windows\DrTransition.iss"
 $requiredServiceBuilds = @(
-    Join-Path $root "dist\drtransition-backend",
-    Join-Path $root "dist\drtransition-grounding"
+    (Join-Path $root "dist\drtransition-backend")
+    (Join-Path $root "dist\drtransition-grounding")
 )
 
 foreach ($requiredServiceBuild in $requiredServiceBuilds) {
