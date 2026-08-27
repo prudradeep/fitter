@@ -1125,7 +1125,7 @@ class ChatService(
                 f"You have built momentum across {previous_sessions} prior session"
                 f"{'' if previous_sessions == 1 else 's'}, and we can continue shaping "
                 "a thoughtful Twin-Transition analysis together.\n\n"
-                "**Let's start with your country.** Our research currently covers:"
+                "*Which country would you like to analyse?** Our research currently covers:"
             )
         else:
             message = render_message("welcome.md")
