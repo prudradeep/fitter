@@ -144,7 +144,7 @@ async def validate_custom_hazard_dimensions(
         known_hazards,
         result.get("duplicate_candidates", []),
     )
-    result["affected_groups"] = _dedupe_groups(
+    explicitly_identified_groups = _dedupe_groups(
         [
             *_extract_affected_groups(hazard_text),
             *[
@@ -153,6 +153,11 @@ async def validate_custom_hazard_dimensions(
                 if isinstance(clarification, dict)
                 for group in _extract_affected_groups(str(clarification.get("answer") or ""))
             ],
+        ]
+    )
+    result["affected_groups"] = _dedupe_groups(
+        [
+            *explicitly_identified_groups,
             *[group for group in result.get("affected_groups", []) if isinstance(group, dict)],
         ]
     )
@@ -161,14 +166,16 @@ async def validate_custom_hazard_dimensions(
     # extracted/coerced after LLM output is sanitized.
     if result["affected_groups"]:
         group_dimension = result.setdefault("dimension_scores", {}).get("affected_groups_fit")
-        if isinstance(group_dimension, dict) and _clamp_score(group_dimension.get("score")) < 5:
+        if isinstance(group_dimension, dict):
             group_dimension.update(
                 _score_payload(
-                    SCORE_PARTIAL,
+                    max(SCORE_PARTIAL, _clamp_score(group_dimension.get("score"))),
                     "Qualified affected population groups were identified after normalization.",
                     "",
                 )
             )
+        if explicitly_identified_groups:
+            result["confirmed_affected_groups"] = result["affected_groups"]
 
     result["overall_score"] = _overall_score(result.get("dimension_scores", {}))
     result["confidence"] = _overall_confidence(result).value

@@ -697,14 +697,19 @@ class ChatValidationServiceMixin:
                 error=True,
             )
         if context_review["status"] == "clarification":
-            session.pending_hazard_reason = reason
-            session.pending_hazard_evidence = evidence or ""
-            return self._hazard_clarification_step(
-                session_id,
+            if not self._custom_hazard_context_clarification_is_satisfied(
                 session,
-                hazard,
                 str(context_review["question"]),
-            )
+            ):
+                session.pending_hazard_reason = reason
+                session.pending_hazard_evidence = evidence or ""
+                return self._hazard_clarification_step(
+                    session_id,
+                    session,
+                    hazard,
+                    str(context_review["question"]),
+                )
+            context_review = {"status": "accept", "valid": True}
         if not context_review["valid"]:
             self._discard_temporary_evidence(session, evidence)
             if isinstance(session.custom_hazard, dict):
@@ -771,6 +776,22 @@ class ChatValidationServiceMixin:
         if evidence and evidence.strip():
             fields["Evidence URL or file content"] = evidence
         return fields
+
+    @staticmethod
+    def _custom_hazard_context_clarification_is_satisfied(
+        session: ChatSession,
+        question: str,
+    ) -> bool:
+        """Do not re-ask for groups already identified in custom-hazard state."""
+        custom_hazard = session.custom_hazard
+        groups = custom_hazard.get("affected_groups") if isinstance(custom_hazard, dict) else None
+        if not any(
+            isinstance(group, dict) and str(group.get("group") or group.get("name") or "").strip()
+            for group in groups or []
+        ):
+            return False
+        question_text = str(question or "").casefold()
+        return any(term in question_text for term in ("affected", "population", "group", "people", "household"))
 
     async def _validate_hazard_against_stats(
         self,

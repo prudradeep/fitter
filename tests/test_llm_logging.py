@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 from app.config import Settings
 from app.services.llm_logging import _dated_log_path, log_llm_exchange
@@ -138,6 +139,7 @@ class LlmLoggingTests(unittest.TestCase):
 
         self.assertTrue(session.committed)
         self.assertTrue(session.closed)
+        UUID(session.parameters["id"])
         self.assertEqual(session.parameters["request_id"], "request-2")
         self.assertEqual(session.parameters["request_payload"], '{"prompt": "Hello"}')
         self.assertEqual(session.parameters["response_payload"], '{"answer": "Hi"}')

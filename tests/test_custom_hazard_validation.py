@@ -670,6 +670,104 @@ class CustomHazardValidationTests(unittest.TestCase):
             "Reason: Coal phase-out policy can cause job losses.",
         )
 
+    def test_evidence_revalidation_preserves_existing_affected_groups(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            custom_hazard={
+                "affected_groups": [
+                    {
+                        "group": "Low-income households",
+                        "reason": "Higher retrofit costs.",
+                    }
+                ]
+            }
+        )
+
+        service._store_custom_hazard_validation_result(
+            session,
+            "Households face unaffordable clean heating upgrades",
+            {
+                "dimension_scores": {},
+                "affected_groups": [],
+                "duplicate_candidates": [],
+                "next_action": "validate",
+                "status": "ready",
+            },
+        )
+
+        self.assertEqual(
+            session.custom_hazard["affected_groups"][0]["group"],
+            "Low-income households",
+        )
+
+    def test_context_review_does_not_repeat_existing_affected_group_question(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            custom_hazard={
+                "affected_groups": [{"group": "Women and low-income households"}]
+            }
+        )
+
+        self.assertTrue(
+            service._custom_hazard_context_clarification_is_satisfied(
+                session,
+                "Which specific affected population groups are impacted?",
+            )
+        )
+
+    def test_evidence_failure_fallback_omits_an_existing_affected_group(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            custom_hazard={
+                "affected_groups": [{"group": "Women and low-income households"}]
+            },
+        )
+
+        question = service._custom_hazard_validation_clarification_question(
+            session,
+            "User evidence could not be validated against the core knowledge base.",
+        )
+
+        self.assertNotIn("affected group", question.casefold())
+        self.assertIn("negative impact", question.casefold())
+
+    def test_explicitly_named_groups_are_confirmed_after_evidence_revalidation(self):
+        state = {
+            "reason": "Low-income households face higher energy costs.",
+            "clarifications": [],
+        }
+        llm_result = {
+            "dimension_scores": {
+                "hazard_definition_fit": {"score": 8},
+                "twin_transition_policy_fit": {"score": 8},
+                "selected_sector_fit": {"score": 8},
+                "country_region_fit": {"score": 8},
+                "affected_groups_fit": {
+                    "score": 7,
+                    "needs_clarification": True,
+                    "clarification_question": "Which groups are affected?",
+                },
+            },
+            "affected_groups": [{"group": "Women and low-income households"}],
+            "duplicate_candidates": [],
+        }
+
+        with patch.object(validator, "_llm_dimension_validation", AsyncMock(return_value=llm_result)):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    "Hazard\nReason: Low-income households face higher energy costs.",
+                    "Energy",
+                    "Germany",
+                    "Baden-Württemberg",
+                    [],
+                    state,
+                )
+            )
+
+        self.assertTrue(result["confirmed_affected_groups"])
+        self.assertFalse(result["dimension_scores"]["affected_groups_fit"]["needs_clarification"])
+
     def test_hazard_evidence_decision_no_validates_with_stored_reason(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(

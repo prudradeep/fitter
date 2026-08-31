@@ -1537,6 +1537,7 @@ def repair_partial_installer_schema() -> bool:
             "user_sessions",
             "knowledge_documents",
             "knowledge_chunks",
+            "llm_exchange_logs",
         }
         if required_tables - table_names:
             logger.info("Initializing SQLite client database schema")

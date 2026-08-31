@@ -112,10 +112,13 @@ class ChatHazardStepsMixin:
         return ChatResponse(
             session_id=session_id,
             step="hazards",
-            bot_message=self.invalid_message,
+            bot_message=(
+                "Your country, region, and sector are already selected. "
+                "Please choose one of the available actions."
+            ),
             options=POST_SECTOR_OPTIONS,
             session=session.summary(),
-            error=True,
+            error=False,
         )
 
     def _custom_hazard_input_step(
@@ -386,6 +389,8 @@ class ChatHazardStepsMixin:
         value = str(message or "").strip()
         if not value:
             return None
+        if not self._looks_like_post_sector_action_request(value):
+            return None
 
         prompt = (
             "Classify a user message shown after the app has listed hazards for a "
@@ -434,6 +439,32 @@ class ChatHazardStepsMixin:
             "refresh_hazards": "Refresh hazards and DGs",
             "dive_deeper": "Dive deeper into statistical findings",
         }.get(action)
+
+    @staticmethod
+    def _looks_like_post_sector_action_request(message: str) -> bool:
+        """Require an action signal before delegating post-sector intent to an LLM."""
+        normalized = normalize_for_match(message)
+        if not normalized:
+            return False
+        action_terms = (
+            "hazard",
+            "mitigation",
+            "refresh",
+            "reload",
+            "regenerate",
+            "update",
+            "dive",
+            "statistical",
+            "findings",
+            "analysis",
+            "next step",
+        )
+        if any(term in normalized for term in action_terms):
+            return True
+        return "fit" in normalized and any(
+            phrase in normalized
+            for phrase in ("none fit", "not fit", "do not fit", "dont fit")
+        )
 
     def _post_sector_selection_from_open_text(
         self,

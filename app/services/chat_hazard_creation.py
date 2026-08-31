@@ -269,7 +269,18 @@ class ChatHazardCreationMixin:
         scores.append(state["overall_score"])
         state["scores"] = scores[-4:]
         state["dimension_scores"] = result.get("dimension_scores") or {}
-        state["affected_groups"] = result.get("affected_groups") or []
+        # Evidence validation is a second pass over the same hazard. Some LLM
+        # responses omit affected groups when focusing on the supplied URL;
+        # do not discard groups already identified during the title/grounding
+        # pass, or the flow will ask the user for them again.
+        result_groups = result.get("affected_groups")
+        if isinstance(result_groups, list) and result_groups:
+            state["affected_groups"] = result_groups
+        elif not isinstance(state.get("affected_groups"), list):
+            state["affected_groups"] = []
+        confirmed_groups = result.get("confirmed_affected_groups")
+        if isinstance(confirmed_groups, list) and confirmed_groups:
+            state["confirmed_affected_groups"] = confirmed_groups
         state["duplicate_candidates"] = result.get("duplicate_candidates") or []
         state["next_action"] = CustomHazardAction.coerce(
             result.get("next_action"),
@@ -615,15 +626,21 @@ class ChatHazardCreationMixin:
             )
         )
 
-    @staticmethod
     def _custom_hazard_validation_clarification_question(
+        self,
         session: ChatSession,
         reason: str,
     ) -> str:
-        base = (
-            "Can you clarify the affected group, the negative impact, and how the "
-            f"selected {session.sector or 'sector'} transition policy causes or worsens it?"
-        )
+        if self._custom_hazard_context_clarification_is_satisfied(session, "affected group"):
+            base = (
+                "Can you clarify the negative impact and how the "
+                f"selected {session.sector or 'sector'} transition policy causes or worsens it?"
+            )
+        else:
+            base = (
+                "Can you clarify the affected group, the negative impact, and how the "
+                f"selected {session.sector or 'sector'} transition policy causes or worsens it?"
+            )
         if reason.strip():
             return f"{base} Validation note: {reason.strip()}"
         return base
@@ -1703,12 +1720,17 @@ class ChatHazardCreationMixin:
                     error=True,
                 )
             if context_review["status"] == "clarification":
-                return self._hazard_clarification_step(
-                    session_id,
+                if not self._custom_hazard_context_clarification_is_satisfied(
                     session,
-                    hazard,
                     str(context_review["question"]),
-                )
+                ):
+                    return self._hazard_clarification_step(
+                        session_id,
+                        session,
+                        hazard,
+                        str(context_review["question"]),
+                    )
+                context_review = {"status": "accept", "valid": True}
             if not context_review["valid"]:
                 session.pending_hazard_reason = None
                 session.pending_hazard_evidence = None

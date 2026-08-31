@@ -18,6 +18,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from app.config import get_settings
+from app.db.migrations_runtime import run_runtime_migrations
 from app.schemas import ChatResponse, Option
 from app.services.chat_options import best_fuzzy_label, normalize, option_list
 from app.services.chat_hazard_steps import ChatHazardStepsMixin
@@ -1113,6 +1114,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    # This script exercises the service layer directly, so FastAPI startup
+    # hooks do not run. Initialize the configured database before LLM calls
+    # attempt to write exchange logs.
+    run_runtime_migrations()
     models = args.models or [get_settings().ollama_model]
     for model in models:
         print(f"Running open conversation selection cases on Ollama model: {model}")

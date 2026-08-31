@@ -329,9 +329,12 @@ qwen3.5:27b
 
 Dynamic prompting for each model:
 
-uv run python tests/run_open_conversation_selection_cases.py --models qwen3.5:2b qwen3.5:4b ministral-3:8b qwen3.5:9b ministral-3:14b
+uv run python tests/run_open_conversation_selection_cases.py --models qwen3.5:2b qwen3.5:4b qwen3.5:9b mistral-nemo
 
 uv run python tests/run_open_conversation_selection_cases.py --input .\open_conversation_selection_test_cases.xlsx --models qwen3.5:2b qwen3.5:4b
+
+
+uv run python tests/run_hazard_creation_regression.py --models qwen3.5:2b mistral-nemo
 
 $env:ENV_FILE=".env.server.dev"
 $env:DRTRANSITION_APP_PORT="8001"

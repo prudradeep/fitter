@@ -133,6 +133,21 @@ class SyncServiceTests(unittest.TestCase):
         session_keys = {row["session_key"] for row in self._rows(bundle, "user_sessions")}
         self.assertEqual(session_keys, {"new-session"})
 
+    def test_user_data_export_includes_existing_app_users(self) -> None:
+        service = SyncService(self.db, device_id="device-a")
+        self._add_user("existing-before-sync@example.com")
+        enabled_at = datetime.now() + timedelta(seconds=1)
+
+        bundle = service.export_bundle(
+            include_app_users=True,
+            include_user_data=True,
+            user_data_enabled_at=enabled_at,
+        )
+
+        users = self._rows(bundle, "app_users")
+        self.assertEqual(len(users), 1)
+        self.assertIn("__encrypted_row", users[0])
+
     def test_user_data_sync_defaults_enabled(self) -> None:
         status = SyncService(self.db, device_id="device-a").user_data_sync_status()
 

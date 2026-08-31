@@ -71,7 +71,20 @@ class ChatMitigationStepsMixin:
                 return self._fuzzy_confirmation_step(session_id, session, exact_label)
         action = normalize(exact_label or message)
         open_action = self._reason_confirmation_action_from_open_text(message)
-        if open_action is None:
+        if exact_label is None and open_action is None:
+            # Navigation and a complete typed mitigation are deterministic
+            # inputs. Handle them before asking the LLM to infer a Yes/No or
+            # adoption action, otherwise those inputs can be misclassified.
+            selection_response = await self._open_selection_response_from_any_step(
+                session_id,
+                session,
+                message,
+                current_phase="sector",
+            )
+            if selection_response is not None:
+                return selection_response
+            if self._looks_like_typed_mitigation_measure(message):
+                return await self._capture_mitigation_measure(session_id, session, message)
             open_action = await self._reason_confirmation_action_from_llm(session, message)
         if exact_label is None and open_action is not None:
             action = open_action
@@ -111,18 +124,6 @@ class ChatMitigationStepsMixin:
                 session=session.summary(),
                 error=False,
             )
-
-        selection_response = await self._open_selection_response_from_any_step(
-            session_id,
-            session,
-            message,
-            current_phase="sector",
-        )
-        if selection_response is not None:
-            return selection_response
-
-        if self._looks_like_typed_mitigation_measure(message):
-            return await self._capture_mitigation_measure(session_id, session, message)
 
         return ChatResponse(
             session_id=session_id,

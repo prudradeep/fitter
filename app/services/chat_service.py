@@ -365,14 +365,10 @@ class ChatService(
             return open_selection_response
 
         if session.phase in {"add_hazard", "custom_hazard_input"}:
-            if not self._matches_current_step_option(session, clean_message):
-                question_response = await self._handle_anytime_grounded_question(
-                    current_session_id,
-                    session,
-                    clean_message,
-                )
-                if question_response is not None:
-                    return question_response
+            # This phase accepts free-form hazard text. Do not run the
+            # anytime grounding-question classifier first: a valid hazard
+            # statement can look like a natural-language question or contain
+            # terms that overlap with the knowledge-base question flow.
             return await self._capture_custom_hazard(
                 current_session_id, session, clean_message
             )

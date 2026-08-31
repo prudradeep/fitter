@@ -791,7 +791,16 @@ class SyncService:
                     )
                 )
             )
-        if table.name in USER_DATA_TABLES and user_data_enabled_at is not None and "created_at" in table.c:
+        # The opt-in cutoff applies to user-owned activity/data, but not to
+        # app_users themselves. Existing accounts must be discoverable by the
+        # server when user-data sync is enabled, regardless of when they were
+        # created.
+        if (
+            table.name in USER_DATA_TABLES
+            and table.name != "app_users"
+            and user_data_enabled_at is not None
+            and "created_at" in table.c
+        ):
             query = query.where(table.c.created_at >= user_data_enabled_at)
         if (
             table.name == "app_users"

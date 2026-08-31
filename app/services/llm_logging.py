@@ -154,6 +154,7 @@ def _write_db_log(
                 text(
                     """
                     INSERT INTO llm_exchange_logs (
+                      id,
                       request_id,
                       provider,
                       endpoint,
@@ -164,6 +165,7 @@ def _write_db_log(
                       response_payload,
                       error
                     ) VALUES (
+                      :id,
                       :request_id,
                       :provider,
                       :endpoint,
@@ -177,6 +179,7 @@ def _write_db_log(
                     """
                 ),
                 {
+                    "id": str(uuid4()),
                     "request_id": request_id,
                     "provider": provider,
                     "endpoint": endpoint,
