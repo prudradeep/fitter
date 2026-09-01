@@ -682,13 +682,19 @@ class ChatService(
             return False
         if not all([session.country, session.region, session.sector]):
             return False
-        if session.phase in {
+        if session.phase.startswith("mitigation_") or session.phase in {
             "custom_hazard_input",
             "custom_hazard_clarification",
             "custom_hazard_title_clarification",
             "custom_hazard_group_review",
             "custom_hazard_reason",
             "custom_hazard_evidence",
+            "add_hazard_evidence_input",
+            "add_hazard_evidence",
+            "custom_hazard_validation",
+            "mitigation_measure",
+            "mitigation_reason",
+            "mitigation_clarity",
         }:
             # These phases have their own hazard-aware validation and must
             # receive the complete user response, including long descriptions.

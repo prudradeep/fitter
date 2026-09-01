@@ -657,6 +657,14 @@ class ChatMitigationStepsMixin:
 
         local_quality_reason = self._local_mitigation_measure_error(mitigation_measure)
         if local_quality_reason:
+            if "too short" in local_quality_reason.casefold():
+                session.pending_mitigation_measure = mitigation_measure
+                return await self._start_mitigation_clarification_step(
+                    session_id,
+                    session,
+                    mitigation_measure,
+                    initial_reason or "",
+                )
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_measure",
@@ -686,15 +694,13 @@ class ChatMitigationStepsMixin:
             )
         review_status = str(input_review.get("status") or "").upper()
         if review_status == "NEEDS_CLARIFICATION":
-            checks = input_review.get("checks") if isinstance(input_review.get("checks"), dict) else {}
-            if bool(checks.get("policy_quality", True)):
-                session.pending_mitigation_measure = mitigation_measure
-                return await self._start_mitigation_clarification_step(
-                    session_id,
-                    session,
-                    mitigation_measure,
-                    initial_reason or "",
-                )
+            session.pending_mitigation_measure = mitigation_measure
+            return await self._start_mitigation_clarification_step(
+                session_id,
+                session,
+                mitigation_measure,
+                initial_reason or "",
+            )
         if review_status != "VALID":
             reason = self._mitigation_measure_validation_message(input_review)
             return ChatResponse(

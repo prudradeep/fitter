@@ -948,8 +948,10 @@ class ChatValidationServiceMixin:
         session: ChatSession,
         hazard: str,
         clarification_context: dict[str, object] | None = None,
+        *,
+        use_llm_for_title: bool = False,
     ) -> dict[str, object] | None:
-        if clarification_context is None:
+        if clarification_context is None and not use_llm_for_title:
             deterministic_review = deterministic_custom_hazard_input_review(
                 selected_sector=session.sector,
                 hazard=hazard,
