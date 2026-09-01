@@ -2,7 +2,7 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import selectinload
 
 from app.db.session import SessionLocal
-from app.models import Country, CountrySector, SystemHazard, UserSession
+from app.models import Country, CountrySector, Region, SystemHazard, UserSession
 from app.services.hazard_salience import top_hazard_salience_by_country
 
 COUNTRY_DISPLAY_ORDER = ["Germany", "Hungary", "Ireland", "Italy", "Spain", "Portugal"]
@@ -33,6 +33,17 @@ def get_coverage_rows() -> list[dict[str, object]]:
                 .group_by(UserSession.country_id)
             ).all()
         )
+        region_analysis_counts = dict(
+            db.execute(
+                select(UserSession.region_id, func.count(distinct(UserSession.id)))
+                .where(
+                    UserSession.region_id.is_not(None),
+                    UserSession.sector_id.is_not(None),
+                )
+                .group_by(UserSession.region_id)
+            ).all()
+        )
+        region_names_by_id = dict(db.execute(select(Region.id, Region.name)).all())
 
     sorted_countries = sorted(
         countries,
@@ -46,6 +57,12 @@ def get_coverage_rows() -> list[dict[str, object]]:
             "map_path": country.map_path or "",
             "hazards": int(hazard_counts.get(country.id, 0)),
             "analyses": int(analysis_counts.get(country.id, 0)),
+            "region_analyses": {
+                region_names_by_id[region_id]: int(count)
+                for region_id, count in region_analysis_counts.items()
+                if region_id in region_names_by_id
+                and any(region.id == region_id for region in country.regions)
+            },
             "sectors": ", ".join(
                 sector.name for sector in sorted(country.sectors, key=lambda item: item.name)
             )

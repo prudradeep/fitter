@@ -61,6 +61,80 @@
   stroke-width: 2.4;
 }
 
+.policy-objectives-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.policy-objectives-info {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.policy-objectives-info-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: #6d28d9;
+  font-size: 1rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.policy-objectives-info:focus-visible {
+  outline: 2px solid #6d28d9;
+  outline-offset: 2px;
+}
+
+.policy-objectives-info-bubble {
+  position: absolute;
+  z-index: 3;
+  top: 28px;
+  right: 0;
+  width: min(340px, 70vw);
+  padding: 12px 14px;
+  border: 1px solid #d9dee7;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  color: #374151;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease, visibility 140ms ease;
+}
+
+.policy-objectives-info:hover .policy-objectives-info-bubble,
+.policy-objectives-info:focus-within .policy-objectives-info-bubble {
+  visibility: visible;
+  opacity: 1;
+}
+
+.policy-objectives-table {
+  width: 100%;
+  margin-top: 14px;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.policy-objectives-table th,
+.policy-objectives-table td {
+  padding: 8px 10px;
+  border: 1px solid #d9dee7;
+  text-align: left;
+}
+
+.policy-objectives-table th {
+  background: #f5f0ff;
+  color: #4c1d95;
+  font-weight: 800;
+}
+
 .chat-log {
   height: 100%;
   min-height: 0;
@@ -1207,6 +1281,23 @@
   padding: 18px 18px 12px;
   border-top: 1px solid var(--line);
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.policy-objectives-card {
+  flex: 1 0 100%;
+  padding: 14px;
+  border: 1px solid #d9dee7;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.policy-objectives-message {
+  align-items: flex-start;
+}
+
+.policy-objectives-bubble {
+  max-width: min(100%, 980px);
+  padding: 0;
 }
 
 .target-option-group {

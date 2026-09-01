@@ -62,6 +62,7 @@ ALLOWED_ATTRIBUTES = {
     "h2": ["class"],
     "h3": ["class"],
     "span": ["class", "aria-hidden", "aria-label", "title", "tabindex"],
+    "table": ["class"],
     "th": ["scope"],
 }
 

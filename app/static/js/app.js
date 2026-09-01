@@ -270,6 +270,7 @@ const coverageCountries = stageCoverageRows
     sectors: row.sectors || "Not configured",
     hazards: Number(row.hazards) || 0,
     analyses: Number(row.analyses) || 0,
+    regionAnalyses: row.region_analyses || {},
   }));
 const countryMapData = new Map(
   coverageCountries.filter((country) => country.mapPath).map((country) => [country.name, country.mapPath]),
@@ -786,6 +787,7 @@ async function renderCountrySelectionMap() {
 
 async function renderRegionMap(country, region, { keepCards = false } = {}) {
   const countryMapPath = countryMapData.get(country);
+  const countryMeta = coverageByCountryName.get(country);
   const visualKey = `region-map-${country}-${region || ""}`;
   const expectedStageKey = stageKeyForStep(appState.currentStep, appState.inputMode);
   if (!stageMap || !window.Highcharts || !countryMapPath) {
@@ -808,11 +810,15 @@ async function renderRegionMap(country, region, { keepCards = false } = {}) {
     const data = topology.features.map((feature) => {
       const name = feature.properties.name || feature.properties.NAME_1 || "";
       const selected = selectedRegion && normalizeRegionForMapMatch(name) === selectedRegion;
+      const regionAnalyses = Object.entries(countryMeta?.regionAnalyses || {}).find(
+        ([regionName]) => normalizeRegionForMapMatch(regionName) === normalizeRegionForMapMatch(name),
+      )?.[1] ?? 0;
       return {
         "hc-key": feature.properties["hc-key"],
         value: selected ? 1 : 0,
         color: selected ? "#6d22c7" : "#c7ccd3",
         name,
+        analyses: Number(regionAnalyses) || 0,
       };
     });
 
@@ -822,7 +828,29 @@ async function renderRegionMap(country, region, { keepCards = false } = {}) {
       credits: { enabled: false },
       legend: { enabled: false },
       mapNavigation: mapNavigationOptions(),
-      tooltip: { pointFormat: "{point.name}" },
+      tooltip: {
+        useHTML: true,
+        borderWidth: 0,
+        padding: 0,
+        shadow: false,
+        backgroundColor: "transparent",
+        formatter() {
+          const regionName = escapeHtml(this.point.name);
+          const tooltipWidth = stageCountryTooltipWidth();
+          return `
+            <div class="stage-country-tooltip" style="width: ${tooltipWidth}px; max-width: ${tooltipWidth}px;">
+              <div class="stage-country-tooltip-main">
+                <span aria-hidden="true"></span>
+                <div><strong>${regionName}</strong></div>
+              </div>
+              <div class="stage-country-tooltip-count">
+                <small>Analyses</small>
+                <strong>${this.point.analyses}</strong>
+              </div>
+            </div>
+          `;
+        },
+      },
       plotOptions: {
         map: {
           borderColor: "#7a8493",

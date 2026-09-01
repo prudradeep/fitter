@@ -1,3 +1,3 @@
-Great — you've selected **{{ country }}**.
+You have selected **{{ country }}**.
 
-Now, which region of {{ country }} are you from or working in? This helps us contextualise your analysis. Please choose from the list below:
+Please select the relevant region. You will then select a sector to begin your transition analysis.

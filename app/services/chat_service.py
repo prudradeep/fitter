@@ -1141,6 +1141,13 @@ class ChatService(
         event: str,
         fallback: str,
     ) -> str:
+        if event == "region_selected":
+            sectors = [sector.name for sector in self._sectors_for_country(session.country_id)]
+            return render_message(
+                "policy_objectives_bubble.md",
+                region=session.region or "the selected region",
+                sectors=sectors,
+            )
         context = load_nested_prompt_file("llm/selection_message.txt")
         next_step = "region selection" if event == "country_selected" else "sector selection"
         if event == "national_scope":

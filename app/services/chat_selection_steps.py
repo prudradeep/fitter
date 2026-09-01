@@ -199,7 +199,11 @@ class ChatSelectionStepsMixin:
         bot_message = await self._selection_message_from_llm(
             session,
             event="region_selected",
-            fallback=render_message("region_selected.md", region=region.name),
+            fallback=render_message(
+                "policy_objectives_bubble.md",
+                region=region.name,
+                sectors=[sector.name for sector in sectors],
+            ),
         )
         return ChatResponse(
             session_id=session_id,
@@ -1953,8 +1957,9 @@ class ChatSelectionStepsMixin:
                 session_id=session_id,
                 step="sector",
                 bot_message=render_message(
-                    "region_selected.md",
+                    "policy_objectives_bubble.md",
                     region=session.region or session.country or "your selected country",
+                    sectors=[sector.name for sector in self._sectors_for_country(session.country_id)],
                 ),
                 options=option_list(self._sectors_for_country(session.country_id)),
                 session=session.summary(),

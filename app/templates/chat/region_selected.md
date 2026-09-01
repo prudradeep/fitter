@@ -1,3 +1,3 @@
-Great — we'll focus on **{{ region }}**.
+You have selected **{{ region }}**.
 
-Now choose the sector you want to analyse:
+We’ll proceed with this region for your transition analysis.

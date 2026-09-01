@@ -218,8 +218,9 @@ class ChatNavigationStepsMixin:
                 session_id=session_id,
                 step="sector",
                 bot_message=render_message(
-                    "region_selected.md",
+                    "policy_objectives_bubble.md",
                     region=session.region or session.country or "your selected country",
+                    sectors=[sector.name for sector in self._sectors_for_country(session.country_id)],
                 ),
                 options=option_list(self._sectors_for_country(session.country_id)),
                 session=session.summary(),
