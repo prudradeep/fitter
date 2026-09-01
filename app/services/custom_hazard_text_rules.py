@@ -289,6 +289,27 @@ def plain_custom_hazard_rejection_reason(
             "retrofit, electrification, or energy-efficiency policy."
         )
 
+    structural_housing_signals = (
+        "structural housing hazard",
+        "structural housing hazards",
+        "missing smoke detector",
+        "missing smoke detectors",
+        "smoke detector",
+        "smoke detectors",
+        "missing window guard",
+        "missing window guards",
+        "window guard",
+        "window guards",
+    )
+    if any(signal in normalized for signal in structural_housing_signals):
+        sector_text = f" in the {selected_sector} sector" if selected_sector else ""
+        return (
+            "Missing smoke detectors, window guards, and similar structural housing "
+            f"conditions are general housing-safety hazards{sector_text}, not transition-related hazards. "
+            "Please describe a specific green or digital transition policy, retrofit, "
+            "or infrastructure change that creates or worsens the risk."
+        )
+
     return None
 
 

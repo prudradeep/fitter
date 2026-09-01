@@ -148,6 +148,7 @@ class ChatHazardCreationMixin:
                 step="custom_hazard_input",
                 bot_message=render_message("add_hazard.md", sector=session.sector),
                 options=HAZARD_ENTRY_OPTIONS,
+                input_mode="textarea",
                 error=True,
             )
         result = await validate_custom_hazard_dimensions(
@@ -309,12 +310,17 @@ class ChatHazardCreationMixin:
                 str(candidate.get("existing_hazard") or "the suggested existing hazard"),
                 str(candidate.get("reason") or "The proposed hazard appears similar to an existing hazard."),
             )
-        if self._custom_hazard_has_pending_core_dimension_clarification(session):
+        if self._custom_hazard_has_pending_dimension_clarification(session):
             return self._custom_hazard_clarification_step(session_id, session)
         if action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE} and not str(
             state.get("reason") or session.accepted_custom_hazard_reason or ""
         ).strip():
-            return self._hazard_reason_step(session_id, session, hazard)
+            session.pending_hazard = hazard
+            session.pending_hazard_reason = ""
+            if not bool(state.get("evidence_decision_asked")) and not str(
+                state.get("evidence") or session.pending_hazard_evidence or ""
+            ).strip():
+                return self._hazard_evidence_decision_step(session_id, session)
         if (
             action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE}
             and not bool(state.get("evidence_decision_asked"))
@@ -370,27 +376,22 @@ class ChatHazardCreationMixin:
         if action == CustomHazardAction.VALIDATE:
             return await self._finalize_custom_hazard_from_grounding(session_id, session)
         if action == CustomHazardAction.REJECT:
-            session.phase = ChatPhase.CUSTOM_HAZARD_VALIDATION.value
-            state["status"] = CustomHazardStatus.REJECTED.value
-            return self._custom_hazard_response(
-                session_id=session_id,
-                session=session,
-                step="custom_hazard_validation",
-                bot_message=(
-                    "This custom hazard is insufficiently supported after the available "
-                    "clarification rounds. Please edit the custom hazard or use an existing hazard."
-                ),
-                options=HAZARD_DUPLICATE_OPTIONS,
-                input_mode="text",
-                error=True,
+            return self._custom_hazard_clarification_step(
+                session_id,
+                session,
+                rejected=True,
             )
         return self._custom_hazard_clarification_step(session_id, session)
 
     def _custom_hazard_clarification_step(
-        self, session_id: str, session: ChatSession
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        rejected: bool = False,
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
-        questions = self._custom_hazard_pending_dimension_questions(state)
+        questions = self._custom_hazard_missing_dimension_questions(state)
         if not questions:
             questions = ["Can you clarify how this hazard fits the selected sector, place, and twin-transition policy context?"]
         session.phase = ChatPhase.CUSTOM_HAZARD_CLARIFICATION.value
@@ -401,13 +402,60 @@ class ChatHazardCreationMixin:
             session=session,
             step="custom_hazard_clarification",
             bot_message=markdown_to_html(
-                "I need a little more detail before validating this custom hazard:\n\n"
+                (
+                    "This custom hazard cannot yet be accepted because the following "
+                    "information is missing:\n\n"
+                    if rejected
+                    else "I need a little more detail before validating this custom hazard:\n\n"
+                )
                 + "\n".join(f"- {question}" for question in questions)
+                + "\n\nPlease answer the questions above in one response."
             ),
             options=HAZARD_ENTRY_OPTIONS,
             input_mode="textarea",
             error=False,
         )
+
+    @staticmethod
+    def _custom_hazard_missing_dimension_questions(
+        state: dict[str, object],
+    ) -> list[str]:
+        dimensions = state.get("dimension_scores")
+        if not isinstance(dimensions, dict):
+            return []
+        prompts = {
+            "hazard_definition": (
+                "What specific negative harm or risk occurs, and who is affected?"
+            ),
+            "twin_transition_policy_fit": (
+                "Which green, digital, or twin-transition policy or measure causes or worsens the harm?"
+            ),
+            "sector_fit": (
+                "How does this hazard relate specifically to the selected sector?"
+            ),
+            "country_region_fit": (
+                "Why is this hazard relevant to the selected country or region?"
+            ),
+            "affected_groups_fit": (
+                "Which specific population groups are affected, and what impact do they experience?"
+            ),
+        }
+        questions: list[str] = []
+        for key, prompt in prompts.items():
+            item = dimensions.get(key)
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "").strip().upper()
+            score = int(item.get("score") or 0)
+            if not item.get("needs_clarification") and status not in {
+                "REJECTED",
+                "INSUFFICIENT INFO",
+            } and score >= 5:
+                continue
+            question = str(item.get("clarification_question") or "").strip() or prompt
+            if question not in questions:
+                questions.append(question)
+        return questions
 
     def _custom_hazard_repeated_clarification_error_response(
         self,
@@ -415,7 +463,7 @@ class ChatHazardCreationMixin:
         session: ChatSession,
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
-        questions = self._custom_hazard_pending_dimension_questions(state)
+        questions = self._custom_hazard_missing_dimension_questions(state)
         if not questions:
             questions = [
                 "Can you clarify how this hazard fits the selected sector, place, and twin-transition policy context?"
@@ -431,7 +479,7 @@ class ChatHazardCreationMixin:
             step="custom_hazard_clarification",
             bot_message=markdown_to_html(
                 "That answer still does not resolve the clarification needed for this custom hazard. "
-                "Please answer the remaining question with new, specific detail:\n\n"
+                "Please answer the questions below with new, specific detail:\n\n"
                 + "\n".join(f"- {question}" for question in questions)
             ),
             options=HAZARD_ENTRY_OPTIONS,
@@ -460,7 +508,7 @@ class ChatHazardCreationMixin:
             return False
         current_questions = {
             normalize(question)
-            for question in self._custom_hazard_pending_dimension_questions(state)
+            for question in self._custom_hazard_missing_dimension_questions(state)
         }
         return bool(last_questions & current_questions)
 
@@ -1098,8 +1146,8 @@ class ChatHazardCreationMixin:
         dimension: str | None = None,
     ) -> ChatResponse:
         reason = str(review.get("reason") or "Please rewrite this as a concrete transition-related hazard.").strip()
-        session.pending_hazard = None
-        session.phase = "custom_hazard_input"
+        session.pending_hazard = hazard
+        session.phase = ChatPhase.CUSTOM_HAZARD_CLARIFICATION.value
         self._store_custom_hazard_title_review(session, review, fallback_hazard=hazard)
         self._mark_custom_hazard_dimension(
             session,
@@ -1109,20 +1157,10 @@ class ChatHazardCreationMixin:
             reason=reason,
         )
         self._refresh_custom_hazard_duplicate_candidates(session, hazard)
-        return self._custom_hazard_response(
-            session_id=session_id,
-            session=session,
-            step="hazards",
-            bot_message=render_message(
-                "hazard_rewrite_required.md",
-                hazard=hazard,
-                reason=reason,
-                rewrite_suggestion=self._custom_hazard_title_rewrite_suggestion(review),
-                suggestions="",
-                has_suggestions=False,
-            ),
-            options=HAZARD_ENTRY_OPTIONS,
-            error=True,
+        return self._custom_hazard_clarification_step(
+            session_id,
+            session,
+            rejected=True,
         )
 
     def _custom_hazard_title_clarification_step(
@@ -1164,7 +1202,7 @@ class ChatHazardCreationMixin:
                 question=question,
             ),
             options=HAZARD_ENTRY_OPTIONS,
-            input_mode="text",
+            input_mode="textarea",
             error=False,
         )
 
@@ -1280,7 +1318,7 @@ class ChatHazardCreationMixin:
                 )
             ),
             options=HAZARD_ENTRY_OPTIONS,
-            input_mode="text",
+            input_mode="textarea",
             error=True,
         )
 
@@ -1569,7 +1607,7 @@ class ChatHazardCreationMixin:
                     "model is unavailable. Please try again."
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
-                input_mode="text",
+                input_mode="textarea",
                 error=True,
             )
         title_status = self._custom_hazard_title_status(review)
@@ -1874,6 +1912,7 @@ class ChatHazardCreationMixin:
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
+                input_mode="textarea",
                 error=True,
             )
 
@@ -2137,6 +2176,12 @@ class ChatHazardCreationMixin:
         self, session_id: str, session: ChatSession, evidence: str
     ) -> ChatResponse:
         reason = str(session.pending_hazard_reason or "").strip()
+        if isinstance(session.custom_hazard, dict):
+            state = self._custom_hazard_state(session)
+            state["reason"] = reason
+            state["evidence"] = evidence
+            session.pending_hazard_evidence = evidence
+            return await self._run_custom_hazard_dimension_check(session_id, session)
         if not reason:
             return self._hazard_reason_step(
                 session_id,

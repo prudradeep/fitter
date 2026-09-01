@@ -9,6 +9,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.models import UserActivity, UserChatMessage, UserHazard, UserMitigationMeasure, UserSession
 from app.schemas import ChatResponse
 from app.services.chat_session import ChatSession, session_store
+from app.services.custom_hazard_validation import (
+    build_custom_hazard_grounding_status,
+    custom_hazard_validation_details,
+    frontend_custom_hazard_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +71,17 @@ class ChatPersistenceMixin:
     def _finalize_chat_response(
         self, session_id: str, session: ChatSession, response: ChatResponse
     ) -> None:
+        if isinstance(session.custom_hazard, dict):
+            response.validation_details = response.validation_details or custom_hazard_validation_details(
+                session.custom_hazard
+            )
+            response.custom_hazard = response.custom_hazard or frontend_custom_hazard_payload(
+                session.custom_hazard
+            )
+            response.custom_hazard_grounding_status = (
+                response.custom_hazard_grounding_status
+                or build_custom_hazard_grounding_status(session.custom_hazard)
+            )
         session.current_step = response.step
         session.current_input_mode = response.input_mode
         session.current_options = [option.model_dump() for option in response.options]

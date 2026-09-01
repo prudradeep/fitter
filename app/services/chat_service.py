@@ -389,6 +389,24 @@ class ChatService(
                 clean_message,
             )
 
+        if session.phase in {
+            "custom_hazard_population_review",
+            "custom_hazard_group_review",
+            "custom_hazard_profile_reason",
+        }:
+            return await self._handle_custom_hazard_population_review(
+                current_session_id,
+                session,
+                clean_message,
+            )
+
+        if session.phase in {"hazard_duplicate_suggestion", "custom_hazard_duplicate_confirmation"}:
+            return await self._handle_hazard_duplicate_suggestion(
+                current_session_id,
+                session,
+                clean_message,
+            )
+
         quality_response = await self._common_user_input_quality_response(
             current_session_id,
             session,
@@ -435,18 +453,8 @@ class ChatService(
         if session.phase in {"add_hazard_evidence", "custom_hazard_validation"}:
             return await self._validate_custom_hazard(current_session_id, session, clean_message)
 
-        if session.phase in {"hazard_duplicate_suggestion", "custom_hazard_duplicate_confirmation"}:
-            return await self._handle_hazard_duplicate_suggestion(
-                current_session_id, session, clean_message
-            )
-
         if session.phase == "target_population_question":
             return await self._handle_target_population_answer(
-                current_session_id, session, clean_message
-            )
-
-        if session.phase in {"custom_hazard_population_review", "custom_hazard_group_review", "custom_hazard_profile_reason"}:
-            return await self._handle_custom_hazard_population_review(
                 current_session_id, session, clean_message
             )
 
@@ -673,6 +681,17 @@ class ChatService(
         if clean_message.startswith("/"):
             return False
         if not all([session.country, session.region, session.sector]):
+            return False
+        if session.phase in {
+            "custom_hazard_input",
+            "custom_hazard_clarification",
+            "custom_hazard_title_clarification",
+            "custom_hazard_group_review",
+            "custom_hazard_reason",
+            "custom_hazard_evidence",
+        }:
+            # These phases have their own hazard-aware validation and must
+            # receive the complete user response, including long descriptions.
             return False
         if self._matches_current_step_option(session, clean_message):
             return False

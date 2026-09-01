@@ -34,6 +34,7 @@ GENERIC_GROUPS = {
 }
 
 POLICY_GROUPS = {
+    "women",
     "energy communities",
     "renewable energy communities",
     "older adults",
@@ -187,12 +188,34 @@ def dedupe_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[str] = set()
     deduped: list[dict[str, Any]] = []
     for group in groups:
-        item = coerce_group(group)
-        key = normalize_for_match(str(item.get("group") or ""))
-        if key and key not in seen and group_is_allowed(str(item.get("group") or "")):
-            seen.add(key)
-            deduped.append(item)
+        for item in split_group_entry(group):
+            key = normalize_for_match(str(item.get("group") or ""))
+            if key and key not in seen and group_is_allowed(str(item.get("group") or "")):
+                seen.add(key)
+                deduped.append(item)
     return deduped
+
+
+def split_group_entry(group: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return separate records when one extracted label contains multiple groups."""
+    item = coerce_group(group)
+    label = str(item.get("group") or "").strip()
+    parts = [
+        part.strip(" ,;:")
+        for part in re.split(r"\s+(?:and|&)\s+", label, flags=re.IGNORECASE)
+        if part.strip(" ,;:")
+    ]
+    if len(parts) <= 1:
+        return [item]
+
+    return [
+        {
+            **item,
+            "group": part[:120],
+            "source_text": str(item.get("source_text") or label).strip()[:240],
+        }
+        for part in parts
+    ]
 
 
 def coerce_group(group: dict[str, Any]) -> dict[str, Any]:

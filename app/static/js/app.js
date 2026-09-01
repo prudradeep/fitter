@@ -2881,7 +2881,15 @@ function setLoading(value) {
 }
 
 function setInputMode(mode = "text", step = "", options = [], session = appState.currentSession) {
-  const effectiveMode = hasPendingCustomProfileReason(session) ? "textarea" : mode;
+  const isNewHazardEntry = Boolean(
+    step === "hazards"
+    && session?.custom_hazard
+    && !String(session.custom_hazard.text || "").trim()
+    && !session.selected_hazard,
+  );
+  const effectiveMode = hasPendingCustomProfileReason(session) || isNewHazardEntry
+    ? "textarea"
+    : mode;
   appState.inputMode = effectiveMode;
   appState.currentOptions = options || [];
   syncTargetPopulationQuestion(step, appState.currentOptions);

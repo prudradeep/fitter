@@ -133,6 +133,7 @@ class ChatHazardStepsMixin:
             bot_message=render_message("add_hazard.md", sector=session.sector),
             options=HAZARD_ENTRY_OPTIONS,
             session=session.summary(),
+            input_mode="textarea",
             error=False,
         )
 

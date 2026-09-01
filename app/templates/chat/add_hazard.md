@@ -4,4 +4,4 @@ Type the hazard you want to add for **{{ sector }}**.
 
 Keep it concise. For example: `Households lose access to affordable clean heating`.
 
-After that, I’ll ask you for the reason and evidence so we can validate it against the sector statistics.
+The description will be reviewed against the sector statistics. Clarification will be requested only if needed.
