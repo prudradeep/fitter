@@ -161,6 +161,14 @@ const closePlatformUsersButton = document.querySelector("#closePlatformUsersButt
 const platformUsersZoomIn = document.querySelector("#platformUsersZoomIn");
 const platformUsersZoomOut = document.querySelector("#platformUsersZoomOut");
 const platformUsersZoomReset = document.querySelector("#platformUsersZoomReset");
+const uiTour = document.querySelector("#uiTour");
+const uiTourCard = document.querySelector(".ui-tour-card");
+const uiTourStep = document.querySelector("#uiTourStep");
+const uiTourTitle = document.querySelector("#uiTourTitle");
+const uiTourText = document.querySelector("#uiTourText");
+const uiTourSkip = document.querySelector("#uiTourSkip");
+const uiTourBack = document.querySelector("#uiTourBack");
+const uiTourNext = document.querySelector("#uiTourNext");
 const sessionEmpty = document.querySelector("#sessionEmpty");
 const selectedHazardContext = document.querySelector("#selectedHazardContext");
 const selectedContextLabel = document.querySelector("#selectedContextLabel");
@@ -180,6 +188,9 @@ const mitigationLastNote = document.querySelector("#mitigationLastNote");
 const stageVisualTitle = document.querySelector("#stageVisualTitle");
 const stageVisualText = document.querySelector("#stageVisualText");
 const stageProgressFill = document.querySelector("#stageProgressFill");
+const stageProgress = document.querySelector(".stage-progress");
+const stageProgressToggle = document.querySelector("#stageProgressToggle");
+const stageProgressCurrent = document.querySelector("#stageProgressCurrent");
 const stageSteps = Array.from(document.querySelectorAll("[data-stage-key]"));
 const stageMap = document.querySelector("#stageMap");
 const stageIconGrid = document.querySelector("#stageIconGrid");
@@ -449,7 +460,10 @@ function updateStageVisual(step = "", session = {}, options = appState.currentOp
     const percent = (visual.index / Math.max(1, stageSteps.length - 1)) * 100;
     stageProgressFill.style.width = `${percent}%`;
   }
-  stageSteps.forEach((item, index) => {
+  if (stageProgressCurrent) {
+    stageProgressCurrent.textContent = key.charAt(0).toUpperCase() + key.slice(1);
+  }
+stageSteps.forEach((item, index) => {
     item.classList.toggle("active", index <= visual.index);
     item.classList.toggle("current", item.dataset.stageKey === key);
   });
@@ -457,6 +471,16 @@ function updateStageVisual(step = "", session = {}, options = appState.currentOp
   renderDynamicStageVisual(key, appState.currentSession, appState.currentOptions);
   updateFloatingStatsButton();
 }
+
+stageProgressToggle?.addEventListener("click", () => {
+  if (!stageProgress || !stageProgressToggle) return;
+  const isCollapsed = stageProgress.classList.toggle("is-collapsed");
+  stageProgressToggle.setAttribute("aria-expanded", String(!isCollapsed));
+  stageProgressToggle.setAttribute(
+    "aria-label",
+    isCollapsed ? "Show analysis stages" : "Hide analysis stages",
+  );
+});
 
 function sectorStageText(session = {}, options = appState.currentOptions) {
   const sectors = sectorItemsForSession(session, options)
@@ -5798,6 +5822,77 @@ document.addEventListener("DOMContentLoaded", () => {
   } else {
     sendMessage("", false);
   }
+  window.setTimeout(startUiTourIfNeeded, 350);
+});
+
+const uiTourSteps = [
+  { target: ".stage-visual-panel", title: "Follow your analysis roadmap", text: "This left panel shows your selected context, visual progress, and the journey from country selection through evaluation." },
+  { target: ".chat-card", title: "Work with the guided chat", text: "Use this workspace to answer questions, review evidence, and move through each stage of the policy analysis." },
+  { target: "#resetButton", title: "Start a new session", text: "Begin a fresh analysis at any time. Your existing sessions remain available in Manage Sessions." },
+  { target: "#sessionsButton", title: "Manage your sessions", text: "Save, rename, and return to previous analysis sessions whenever you need to continue your work." },
+  { target: "#settingsButton", title: "Personalize the workspace", text: "Settings contains voice, typing, validation, data, and other workspace preferences." },
+  { target: "#profileButton", title: "Manage your profile", text: "Open your profile to review account details or change your password." },
+];
+let uiTourIndex = 0;
+let uiTourTarget = null;
+
+function uiTourStorageKey() {
+  return `dr_transition_ui_tour_v2_completed_${document.body.dataset.tourUserId || "unknown"}`;
+}
+
+function closeUiTour(markCompleted = true) {
+  uiTourTarget?.classList.remove("ui-tour-target");
+  uiTourTarget = null;
+  if (markCompleted) localStorage.setItem(uiTourStorageKey(), "true");
+  if (uiTour) {
+    uiTour.hidden = true;
+    uiTour.setAttribute("aria-hidden", "true");
+  }
+}
+
+function renderUiTourStep() {
+  const step = uiTourSteps[uiTourIndex];
+  uiTourTarget?.classList.remove("ui-tour-target");
+  uiTourTarget = document.querySelector(step.target);
+  if (!uiTourTarget) return;
+  uiTourTarget.classList.add("ui-tour-target");
+  uiTourStep.textContent = `Step ${uiTourIndex + 1} of ${uiTourSteps.length}`;
+  uiTourTitle.textContent = step.title;
+  uiTourText.textContent = step.text;
+  uiTourBack.hidden = uiTourIndex === 0;
+  uiTourNext.textContent = uiTourIndex === uiTourSteps.length - 1 ? "Finish" : "Next";
+  const targetRect = uiTourTarget.getBoundingClientRect();
+  const cardRect = uiTourCard.getBoundingClientRect();
+  const left = Math.min(Math.max(16, targetRect.left), window.innerWidth - cardRect.width - 16);
+  const above = targetRect.bottom + cardRect.height + 20 > window.innerHeight;
+  const top = above ? targetRect.top - cardRect.height - 16 : targetRect.bottom + 16;
+  uiTourCard.style.left = `${left}px`;
+  uiTourCard.style.top = `${Math.max(16, top)}px`;
+}
+
+function startUiTourIfNeeded() {
+  if (!uiTour || localStorage.getItem(uiTourStorageKey()) === "true") return;
+  uiTour.hidden = false;
+  uiTour.setAttribute("aria-hidden", "false");
+  uiTourIndex = 0;
+  renderUiTourStep();
+  uiTourNext.focus();
+}
+
+uiTourNext?.addEventListener("click", () => {
+  if (uiTourIndex === uiTourSteps.length - 1) return closeUiTour();
+  uiTourIndex += 1;
+  renderUiTourStep();
+});
+uiTourBack?.addEventListener("click", () => {
+  if (uiTourIndex > 0) {
+    uiTourIndex -= 1;
+    renderUiTourStep();
+  }
+});
+uiTourSkip?.addEventListener("click", () => closeUiTour());
+window.addEventListener("resize", () => {
+  if (uiTour && !uiTour.hidden) renderUiTourStep();
 });
 
 

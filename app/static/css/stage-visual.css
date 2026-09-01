@@ -874,6 +874,61 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   gap: 8px;
 }
 
+.stage-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.stage-current-phase {
+  margin-left: auto;
+  color: #475569;
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.stage-progress.is-collapsed .stage-current-phase {
+  color: #6d28d9;
+}
+
+.stage-progress-toggle {
+  display: grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 2px solid #1f2937;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  font: inherit;
+  transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.stage-progress-toggle:hover {
+  background: #f5f0ff;
+  border-color: #5b1db2;
+  color: #5b1db2;
+}
+
+.stage-progress-toggle span {
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 180ms ease;
+}
+
+.stage-progress:not(.is-collapsed) .stage-progress-toggle span {
+  transform: rotate(225deg) translate(-2px, -2px);
+}
+
+.stage-progress.is-collapsed .stage-steps {
+  display: none;
+}
+
 .stage-progress-bar {
   height: 8px;
   overflow: hidden;

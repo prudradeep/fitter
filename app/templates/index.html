@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260708-session-export" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260901-collapsible-stage-phase" />
   </head>
-  <body>
+  <body data-tour-user-id="{{ current_user.id }}">
     <header class="topbar">
       <div class="topbar-inner">
         <div class="brand">
@@ -434,12 +434,25 @@
         >
           Deep dive into statistical findings
         </button>
-        <div class="stage-progress" aria-label="Analysis step progress">
-          <p class="stage-eyebrow">Analysis Stage</p>
+        <div class="stage-progress is-collapsed" aria-label="Analysis step progress">
+          <div class="stage-progress-header">
+            <p class="stage-eyebrow">Analysis Stage</p>
+            <span id="stageProgressCurrent" class="stage-current-phase">Country</span>
+            <button
+              id="stageProgressToggle"
+              class="stage-progress-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="stageProgressSteps"
+              aria-label="Show analysis stages"
+            >
+              <span aria-hidden="true"></span>
+            </button>
+          </div>
           <div class="stage-progress-bar">
             <span id="stageProgressFill"></span>
           </div>
-          <ol class="stage-steps">
+          <ol id="stageProgressSteps" class="stage-steps">
             <li data-stage-key="country">Country</li>
             <li data-stage-key="region">Region</li>
             <li data-stage-key="sector">Sector</li>
@@ -1108,6 +1121,20 @@
       </form>
     </dialog>
 
+    <div id="uiTour" class="ui-tour" hidden aria-hidden="true">
+      <div class="ui-tour-card" role="dialog" aria-modal="false" aria-labelledby="uiTourTitle" aria-describedby="uiTourText">
+        <p id="uiTourStep" class="ui-tour-step"></p>
+        <h2 id="uiTourTitle"></h2>
+        <p id="uiTourText"></p>
+        <div class="ui-tour-actions">
+          <button id="uiTourSkip" class="secondary-button" type="button">Skip tour</button>
+          <span class="ui-tour-spacer"></span>
+          <button id="uiTourBack" class="secondary-button" type="button">Back</button>
+          <button id="uiTourNext" type="button">Next</button>
+        </div>
+      </div>
+    </div>
+
     <script src="{{ url_for('static', path='/vendor/highcharts/highmaps.js') }}"></script>
     <script src="{{ url_for('static', path='/vendor/highcharts/highcharts-more.js') }}"></script>
     <script src="{{ url_for('static', path='/vendor/highcharts/modules/venn.js') }}"></script>
@@ -1115,6 +1142,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260709-settings"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260728-prompt-source-switch"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260901-collapsible-stage-phase"></script>
   </body>
 </html>
