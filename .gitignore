@@ -32,3 +32,4 @@ packaging/windows/offline
 # OS
 .DS_Store
 Thumbs.db
+*.db*
