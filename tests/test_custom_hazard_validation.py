@@ -1066,6 +1066,9 @@ class CustomHazardValidationTests(unittest.TestCase):
 
     def test_ask_clarification_with_supported_core_dimensions_reviews_groups(self):
         service = ChatService.__new__(ChatService)
+        service._generate_custom_hazard_title = AsyncMock(
+            return_value="Coal phase-out employment shock"
+        )
         service._custom_hazard_population_review_step = MagicMock(
             return_value=ChatResponse(
                 session_id="session-1",
@@ -1114,6 +1117,102 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         self.assertEqual(response.bot_message, "review groups")
         service._custom_hazard_population_review_step.assert_called_once()
+        self.assertEqual(
+            session.custom_hazard["generated_title"],
+            "Coal phase-out employment shock",
+        )
+
+    def test_generated_title_is_saved_only_after_hazard_is_finalized(self):
+        service = ChatService.__new__(ChatService)
+        original_name = "Regional employment shock"
+        generated_name = "Coal phase-out employment shock"
+        saved_names = []
+
+        def prepare_added_hazard(_session_id, current_session):
+            saved_names.append(current_session.accepted_custom_hazard)
+            return current_session.accepted_custom_hazard
+
+        service._prepare_custom_hazard_added_profiles = MagicMock(
+            side_effect=prepare_added_hazard
+        )
+        service._stored_hazard_profiles = MagicMock(return_value=[])
+        service._additional_profiles_with_population_context = AsyncMock(return_value=[])
+        service._generate_custom_hazard_title = AsyncMock(
+            return_value=generated_name
+        )
+        service._crowd_sourcing_visibility_notice = MagicMock(return_value="")
+        service._run_custom_hazard_dimension_check = AsyncMock()
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            accepted_custom_hazard=original_name,
+            accepted_custom_hazard_reason="Coal phase-out can cause regional job losses.",
+            accepted_custom_hazard_evidence="Not provided",
+            hazard_profiles={
+                original_name: [
+                    {
+                        "name": "Workers in fossil-fuel-dependent regions",
+                        "profile": "Workers in fossil-fuel-dependent regions",
+                    }
+                ]
+            },
+            custom_hazard={
+                "raw_text": original_name,
+                "status": "ready",
+            },
+        )
+
+        response = _run(service._custom_hazard_added_step("session-1", session))
+
+        self.assertIn("Hazard to be co-created", response.bot_message)
+        self.assertIn(original_name, response.bot_message)
+        self.assertIn("Generated title", response.bot_message)
+        self.assertIn(generated_name, response.bot_message)
+        self.assertEqual(session.accepted_custom_hazard, generated_name)
+        self.assertEqual(saved_names, [generated_name])
+        self.assertNotIn(original_name, session.hazard_profiles)
+        self.assertIn(generated_name, session.hazard_profiles)
+        service._generate_custom_hazard_title.assert_awaited_once_with(
+            session,
+            original_name,
+        )
+        service._run_custom_hazard_dimension_check.assert_not_awaited()
+
+    def test_title_generation_alone_does_not_mutate_validated_hazard(self):
+        service = ChatService.__new__(ChatService)
+        original_name = "Regional employment shock"
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            accepted_custom_hazard=original_name,
+            accepted_custom_hazard_reason="Coal phase-out can cause regional job losses.",
+            accepted_custom_hazard_evidence="Not provided",
+            custom_hazard={
+                "raw_text": original_name,
+                "status": "ready",
+                "confirmed_affected_groups": [
+                    {
+                        "group": "Workers in fossil-fuel-dependent regions",
+                        "reason": "They are exposed to job losses.",
+                    }
+                ],
+            },
+        )
+
+        with patch(
+            "app.services.chat_hazard_creation.ask_llm_chat",
+            AsyncMock(
+                return_value='{"title":"Coal phase-out employment shock"}'
+            ),
+        ):
+            title = _run(service._generate_custom_hazard_title(session, original_name))
+
+        self.assertEqual(title, "Coal phase-out employment shock")
+        self.assertEqual(session.accepted_custom_hazard, original_name)
+        self.assertEqual(session.custom_hazard["raw_text"], original_name)
+        self.assertNotIn("display_title", session.custom_hazard)
 
     def test_hazard_evidence_decision_open_text_yes_asks_for_evidence(self):
         service = ChatService.__new__(ChatService)
@@ -2806,6 +2905,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             validation_mode="strict",
             crowd_sourcing_enabled=True,
             accepted_custom_hazard="Coal phase-out job shock",
+            generated_custom_hazard_title="Regional coal transition employment shock",
             custom_hazard={
                 "raw_text": "Coal phase-out job shock",
                 "affected_groups": [
@@ -2820,12 +2920,47 @@ class CustomHazardValidationTests(unittest.TestCase):
         response = service._custom_hazard_population_review_step("session-1", session)
 
         self.assertIn("Hazard to be co-created:", response.bot_message)
+        self.assertIn("Generated title", response.bot_message)
+        self.assertIn("Regional coal transition employment shock", response.bot_message)
         self.assertNotIn("New hazard:", response.bot_message)
         self.assertIn(
             "Once saved, this hazard will be visible to other platform users",
             response.bot_message,
         )
         self.assertIn("Bavaria, Germany", response.bot_message)
+
+    def test_generated_title_is_injected_when_db_template_is_stale(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            accepted_custom_hazard="Original hazard wording",
+            generated_custom_hazard_title="Generated concise hazard title",
+            custom_hazard={
+                "raw_text": "Original hazard wording",
+                "affected_groups": [],
+            },
+        )
+        stale_template_html = (
+            "<h2>Review Affected Population Groups</h2>"
+            "<p>Hazard to be co-created:</p>"
+            "<ul><li><strong>Original hazard wording</strong></li></ul>"
+            "<p>Affected population groups identified:</p>"
+        )
+
+        with patch(
+            "app.services.chat_custom_hazard_population_steps.render_message",
+            return_value=stale_template_html,
+        ):
+            response = service._custom_hazard_population_review_step(
+                "session-1",
+                session,
+            )
+
+        original_position = response.bot_message.index("Original hazard wording")
+        title_position = response.bot_message.index("Generated title")
+        groups_position = response.bot_message.index("Affected population groups")
+        self.assertLess(original_position, title_position)
+        self.assertLess(title_position, groups_position)
+        self.assertIn("Generated concise hazard title", response.bot_message)
 
     def test_custom_hazard_added_shows_strict_crowd_sourcing_notice(self):
         service = ChatService.__new__(ChatService)

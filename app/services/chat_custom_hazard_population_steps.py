@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 
@@ -42,8 +43,12 @@ class ChatCustomHazardPopulationStepsMixin:
         error_reason: str | None = None,
     ) -> ChatResponse:
         hazard = session.accepted_custom_hazard or "the new hazard"
+        generated_title = str(session.generated_custom_hazard_title or "").strip()
         if isinstance(session.custom_hazard, dict):
             state = self._custom_hazard_state(session)
+            generated_title = generated_title or str(
+                state.get("generated_title") or ""
+            ).strip()
             groups = state.get("affected_groups") or []
             profiles = [
                 {
@@ -67,6 +72,7 @@ class ChatCustomHazardPopulationStepsMixin:
         message = render_message(
             "hazard_population_review.md",
             hazard=hazard,
+            generated_title=generated_title,
             profiles=self._format_population_profiles_for_review(profiles),
             error_reason=error_reason or "",
             visibility_notice=self._crowd_sourcing_visibility_notice(
@@ -74,6 +80,23 @@ class ChatCustomHazardPopulationStepsMixin:
                 "hazard",
             ),
         )
+        if generated_title and "Generated title" not in message:
+            generated_line = (
+                "<p><strong>Generated title:</strong> "
+                f"{html.escape(generated_title)}</p>"
+            )
+            updated_message = re.sub(
+                r"(Hazard to be co-created:</p>\s*<ul>.*?</ul>)",
+                rf"\1{generated_line}",
+                message,
+                count=1,
+                flags=re.DOTALL,
+            )
+            message = (
+                updated_message
+                if updated_message != message
+                else f"{message}{generated_line}"
+            )
         if isinstance(session.custom_hazard, dict):
             return self._custom_hazard_response(
                 session_id=session_id,
@@ -665,6 +688,7 @@ class ChatCustomHazardPopulationStepsMixin:
             bot_message=render_message(
                 "hazard_added.md",
                 hazard=accepted_hazard,
+                original_hazard=accepted_hazard,
                 reason=session.accepted_custom_hazard_reason or "Not provided",
                 evidence=session.accepted_custom_hazard_evidence or "Not provided",
                 affected_population_groups=self._format_population_profiles_for_review(
@@ -683,6 +707,17 @@ class ChatCustomHazardPopulationStepsMixin:
     async def _custom_hazard_added_step(
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
+        original_hazard = session.accepted_custom_hazard or "New hazard"
+        generated_hazard = await self._ensure_custom_hazard_generated_title(
+            session,
+            original_hazard,
+        )
+        if generated_hazard and generated_hazard != original_hazard:
+            if session.hazard_profiles and original_hazard in session.hazard_profiles:
+                session.hazard_profiles[generated_hazard] = session.hazard_profiles.pop(
+                    original_hazard
+                )
+            session.accepted_custom_hazard = generated_hazard
         accepted_hazard = self._prepare_custom_hazard_added_profiles(session_id, session)
         profiles = self._stored_hazard_profiles(session, accepted_hazard)
         enriched_profiles = await self._additional_profiles_with_population_context(
@@ -700,6 +735,7 @@ class ChatCustomHazardPopulationStepsMixin:
             bot_message=render_message(
                 "hazard_added.md",
                 hazard=accepted_hazard,
+                original_hazard=original_hazard,
                 reason=session.accepted_custom_hazard_reason or "Not provided",
                 evidence=session.accepted_custom_hazard_evidence or "Not provided",
                 affected_population_groups=self._format_population_profiles_for_review(

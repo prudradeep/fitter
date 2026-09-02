@@ -1,6 +1,13 @@
 You have successfully co-created a hazard.
 
-- **{{ hazard }}**
+Hazard to be co-created:
+
+- **{{ original_hazard or hazard }}**
+
+{% if original_hazard and original_hazard != hazard %}
+**Generated title:** {{ hazard }}
+
+{% endif %}
 
 {% if visibility_notice %}
 > {{ visibility_notice }}

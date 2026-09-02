@@ -101,7 +101,7 @@ from app.services.sector_prompt_rag import (
 logger = logging.getLogger(__name__)
 
 MAX_HAZARD_TITLE_CLARIFICATION_ROUNDS = 3
-MAX_CUSTOM_HAZARD_TITLE_LENGTH = 99
+MAX_CUSTOM_HAZARD_GENERATED_TITLE_LENGTH = 99
 
 class ChatHazardCreationMixin:
     def _custom_hazard_state(self, session: ChatSession) -> dict[str, object]:
@@ -188,6 +188,17 @@ class ChatHazardCreationMixin:
         )
         self._store_custom_hazard_validation_result(session, hazard, result)
         if self._custom_hazard_repeated_clarification_questions_after_answer(session):
+            # Affected groups are intentionally confirmed in the dedicated
+            # review step. Do not treat that review as a repeated unanswered
+            # clarification when all core dimensions are already supported.
+            state = self._custom_hazard_state(session)
+            if (
+                self._custom_hazard_core_dimensions_are_supported(session)
+                and state.get("affected_groups")
+                and not self._custom_hazard_has_pending_core_dimension_clarification(session)
+            ):
+                state["next_action"] = CustomHazardAction.REVIEW_GROUPS.value
+                return await self._route_custom_hazard_next_action(session_id, session)
             return self._custom_hazard_repeated_clarification_error_response(
                 session_id,
                 session,
@@ -220,6 +231,12 @@ class ChatHazardCreationMixin:
             parts.append(f"Reason: {reason}")
         if evidence:
             parts.append(f"Evidence: {evidence}")
+        for clarification in state.get("clarifications") or []:
+            if not isinstance(clarification, dict):
+                continue
+            answer = str(clarification.get("answer") or "").strip()
+            if answer:
+                parts.append(f"Clarification: {answer}")
         return "\n".join(parts)
 
     def _custom_hazard_context_reason(
@@ -331,14 +348,30 @@ class ChatHazardCreationMixin:
                 str(candidate.get("existing_hazard") or "the suggested existing hazard"),
                 str(candidate.get("reason") or "The proposed hazard appears similar to an existing hazard."),
             )
+        evidence_handled = bool(state.get("evidence_decision_asked")) or bool(
+            str(state.get("evidence") or session.accepted_custom_hazard_evidence or "").strip()
+        )
+        if (
+            action == CustomHazardAction.ASK_CLARIFICATION
+            and evidence_handled
+            and self._custom_hazard_core_dimensions_are_supported(session)
+            and state.get("affected_groups")
+        ):
+            # Once evidence has been accepted or declined, identified groups
+            # belong in the dedicated user review, even when the validator
+            # reports NEEDS CLARIFICATION without a question for that field.
+            action = CustomHazardAction.REVIEW_GROUPS
         if self._custom_hazard_has_pending_dimension_clarification(session):
-            return self._custom_hazard_clarification_step(session_id, session)
-        if action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE}:
-            await self._ensure_custom_hazard_generated_title(session)
-            state = self._custom_hazard_state(session)
-            hazard = str(
-                state.get("resolved_hazard_text") or state.get("raw_text") or session.pending_hazard or "this hazard"
-            ).strip()
+            # Affected-group grounding is intentionally reviewed by the user
+            # in the next step. If the core hazard dimensions are supported
+            # and groups were identified, do not send the user back through
+            # generic additional-information clarification.
+            if not (
+                self._custom_hazard_core_dimensions_are_supported(session)
+                and state.get("affected_groups")
+            ):
+                return self._custom_hazard_clarification_step(session_id, session)
+            action = CustomHazardAction.REVIEW_GROUPS
         if action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE} and not str(
             state.get("reason") or session.accepted_custom_hazard_reason or ""
         ).strip():
@@ -376,6 +409,7 @@ class ChatHazardCreationMixin:
             session.accepted_custom_hazard_evidence = (
                 str(state.get("evidence") or "").strip() or "Not provided"
             )
+            await self._ensure_custom_hazard_generated_title(session, hazard)
             return self._custom_hazard_population_review_step(session_id, session)
         if (
             action == CustomHazardAction.ASK_CLARIFICATION
@@ -399,6 +433,7 @@ class ChatHazardCreationMixin:
             session.accepted_custom_hazard_evidence = (
                 str(state.get("evidence") or "").strip() or "Not provided"
             )
+            await self._ensure_custom_hazard_generated_title(session, hazard)
             return self._custom_hazard_population_review_step(session_id, session)
         if action == CustomHazardAction.VALIDATE:
             return await self._finalize_custom_hazard_from_grounding(session_id, session)
@@ -410,64 +445,93 @@ class ChatHazardCreationMixin:
             )
         return self._custom_hazard_clarification_step(session_id, session)
 
-    async def _ensure_custom_hazard_generated_title(self, session: ChatSession) -> None:
-        state = self._custom_hazard_state(session)
-        if state.get("review_title_generated"):
-            return
-        hazard = str(
-            state.get("resolved_hazard_text") or state.get("raw_text") or session.pending_hazard or ""
-        ).strip()
-        if not hazard:
-            return
+    async def _generate_custom_hazard_title(
+        self,
+        session: ChatSession,
+        hazard: str,
+    ) -> str:
+        """Generate a canonical title after grounding, without grounding the title."""
+        state = session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
         affected_groups = [
             {
                 "group": str(group.get("group") or group.get("name") or "").strip(),
                 "reason": str(group.get("reason") or "").strip(),
             }
-            for group in (state.get("affected_groups") or [])
+            for group in (
+                state.get("confirmed_affected_groups")
+                or state.get("affected_groups")
+                or []
+            )
             if isinstance(group, dict)
             and str(group.get("group") or group.get("name") or "").strip()
         ]
-        review = await self._review_custom_hazard_input(
-            session,
-            hazard,
-            clarification_context={
-                "raw_hazard": str(state.get("raw_text") or hazard).strip(),
-                "validated_reason": str(
-                    state.get("reason") or session.accepted_custom_hazard_reason or session.pending_hazard_reason or ""
-                ).strip(),
-                "validated_evidence": str(
-                    state.get("evidence") or session.accepted_custom_hazard_evidence or session.pending_hazard_evidence or ""
-                ).strip(),
-                "affected_groups": affected_groups,
-                "negative_consequence": str(state.get("negative_consequence") or "").strip(),
-                "clarifications": list(state.get("clarifications") or []),
-                "validation_status": str(state.get("status") or "").strip(),
-            },
-            use_llm_for_title=True,
+        context = load_nested_prompt_file("llm/custom_hazard_title_generation.txt")
+        response = await ask_llm_chat(
+            context=context,
+            messages=[
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "country": session.country or "Not selected",
+                            "region": session.region or "Not selected",
+                            "sector": session.sector or "Not selected",
+                            "original_hazard": hazard,
+                            "validated_reason": str(
+                                state.get("reason")
+                                or session.accepted_custom_hazard_reason
+                                or ""
+                            ).strip(),
+                            "validated_evidence": str(
+                                state.get("evidence")
+                                or session.accepted_custom_hazard_evidence
+                                or ""
+                            ).strip(),
+                            "affected_groups": affected_groups,
+                            "negative_consequence": str(
+                                state.get("negative_consequence") or ""
+                            ).strip(),
+                            "clarifications": list(state.get("clarifications") or []),
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            ],
+            temperature=0.0,
+            max_tokens=120,
         )
         generated_title = ""
-        if isinstance(review, dict):
-            generated_title = self._limit_custom_hazard_title(
-                self._custom_hazard_resolved_title(review, "")
-            )
-        if generated_title:
-            state["title"] = generated_title
-            state["resolved_hazard_text"] = generated_title
-            session.pending_hazard = generated_title
-        # Do not call the title model repeatedly while the user edits groups.
-        # The generated title is the value that will be used by the persistence
-        # step after the review is confirmed.
-        state["review_title_generated"] = True
+        if not is_llm_unavailable_response(response):
+            parsed = parse_json_object(response) or {}
+            if isinstance(parsed, dict):
+                generated_title = str(parsed.get("title") or "").strip()
+        return self._limit_custom_hazard_generated_title(generated_title) or hazard
+
+    async def _ensure_custom_hazard_generated_title(
+        self,
+        session: ChatSession,
+        hazard: str,
+    ) -> str:
+        state = session.custom_hazard if isinstance(session.custom_hazard, dict) else None
+        generated_title = str(
+            session.generated_custom_hazard_title
+            or (state or {}).get("generated_title")
+            or ""
+        ).strip()
+        if not generated_title:
+            generated_title = await self._generate_custom_hazard_title(session, hazard)
+        session.generated_custom_hazard_title = generated_title
+        if state is not None:
+            state["generated_title"] = generated_title
+        return generated_title
 
     @staticmethod
-    def _limit_custom_hazard_title(title: str) -> str:
-        """Keep persisted custom hazard titles below the 100-character limit."""
+    def _limit_custom_hazard_generated_title(title: str) -> str:
         title = re.sub(r"\s+", " ", str(title or "")).strip()
-        if len(title) <= MAX_CUSTOM_HAZARD_TITLE_LENGTH:
+        if len(title) <= MAX_CUSTOM_HAZARD_GENERATED_TITLE_LENGTH:
             return title
-        shortened = title[:MAX_CUSTOM_HAZARD_TITLE_LENGTH].rsplit(" ", 1)[0].rstrip(" ,;:-")
-        return shortened or title[:MAX_CUSTOM_HAZARD_TITLE_LENGTH].rstrip()
+        shortened = title[:MAX_CUSTOM_HAZARD_GENERATED_TITLE_LENGTH].rsplit(" ", 1)[0]
+        return shortened.rstrip(" ,;:-") or title[:MAX_CUSTOM_HAZARD_GENERATED_TITLE_LENGTH].rstrip()
 
     def _custom_hazard_clarification_step(
         self,
@@ -1176,6 +1240,7 @@ class ChatHazardCreationMixin:
         hazard: str,
     ) -> dict[str, object]:
         session.custom_hazard = default_custom_hazard_state()
+        session.generated_custom_hazard_title = None
         state = self._custom_hazard_state(session)
         normalized_hazard = normalize_for_match(hazard)
         state.update(
@@ -1779,6 +1844,7 @@ class ChatHazardCreationMixin:
         if not hazard:
             session.phase = "custom_hazard_input"
             session.custom_hazard = default_custom_hazard_state()
+            session.custom_hazard_input_history = []
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
@@ -1927,6 +1993,11 @@ class ChatHazardCreationMixin:
                 }
             )
             state["clarifications"] = clarifications
+            # Carry the user's clarification into the next evidence/grounding
+            # pass when no standalone reason has been stored yet.
+            if not str(state.get("reason") or "").strip():
+                state["reason"] = answer
+                session.pending_hazard_reason = answer
             state["message"] = "Scores were recalculated after clarification."
             session.phase = "custom_hazard_dimension_check"
             return await self._run_custom_hazard_dimension_check(session_id, session)
@@ -2563,6 +2634,7 @@ class ChatHazardCreationMixin:
             session.pending_hazard_title_clarification_answers = []
             session.phase = "custom_hazard_input"
             session.custom_hazard = default_custom_hazard_state()
+            session.custom_hazard_input_history = []
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
@@ -2602,6 +2674,8 @@ class ChatHazardCreationMixin:
         session.accepted_custom_hazard_evidence = evidence or "Not provided"
         session.accepted_custom_hazard_record_id = None
         session.selected_hazard_record_id = None
+
+        await self._ensure_custom_hazard_generated_title(session, hazard)
 
         profiles = await self._extract_custom_hazard_affected_population_profiles(
             session,

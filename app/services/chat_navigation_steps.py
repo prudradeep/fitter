@@ -126,6 +126,7 @@ class ChatNavigationStepsMixin:
             self._clear_selected_hazard_context(session)
             session.phase = "custom_hazard_input"
             session.custom_hazard = default_custom_hazard_state()
+            session.custom_hazard_input_history = []
             session.pending_hazard_title_clarification_question = None
             session.pending_hazard_title_clarification_answers = []
             return ChatResponse(
@@ -150,6 +151,7 @@ class ChatNavigationStepsMixin:
             self._clear_selected_hazard_context(session)
             session.phase = "custom_hazard_input"
             session.custom_hazard = default_custom_hazard_state()
+            session.custom_hazard_input_history = []
             session.pending_hazard_title_clarification_question = None
             session.pending_hazard_title_clarification_answers = []
             return ChatResponse(
@@ -285,6 +287,7 @@ class ChatNavigationStepsMixin:
         session.accepted_custom_hazard = None
         session.accepted_custom_hazard_reason = None
         session.accepted_custom_hazard_evidence = None
+        session.generated_custom_hazard_title = None
         session.accepted_custom_hazard_id = None
         session.accepted_custom_hazard_record_id = None
         session.pending_hazard_reason = None

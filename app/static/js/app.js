@@ -1817,7 +1817,9 @@ function configureMic() {
     for (let index = event.resultIndex; index < event.results.length; index += 1) {
       transcript += event.results[index][0].transcript;
     }
-    messageInput.value = transcript.trim();
+    const targetInput = appState.inputMode === "textarea" ? textareaInput : messageInput;
+    targetInput.value = transcript.trim();
+    targetInput.dispatchEvent(new Event("input", { bubbles: true }));
     updateOptionHighlight();
   };
 }
@@ -2907,7 +2909,7 @@ function setLoading(value) {
   evaluationEvidenceInput.disabled = value;
   evaluationEvidenceFileInput.disabled = value;
   sendButton.disabled = value;
-  micButton.disabled = value || !micSupported || appState.inputMode !== "text";
+  micButton.disabled = value || !micSupported || !["text", "textarea"].includes(appState.inputMode);
   optionTray.querySelectorAll("button").forEach((button) => {
     button.disabled = value || button.dataset.used === "true";
   });
@@ -2930,7 +2932,7 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
   const reasonEvidenceMode = ["reason_evidence", "reason_only", "evidence_only", "mitigation_measure"].includes(effectiveMode);
   const evaluationMode = effectiveMode === "evaluation_question";
   const textareaMode = effectiveMode === "textarea";
-  micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode || textareaMode;
+  micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode;
   const placeholder = placeholderForStep(step, options, session);
   messageInput.placeholder = placeholder;
   textareaInput.placeholder = placeholder;
@@ -5488,12 +5490,13 @@ floatingStatsButton?.addEventListener("click", () => {
 });
 
 micButton?.addEventListener("click", () => {
-  if (!recognition || appState.inputMode !== "text") return;
+  if (!recognition || !["text", "textarea"].includes(appState.inputMode)) return;
   if (listening) {
     recognition.stop();
     return;
   }
-  messageInput.focus();
+  const targetInput = appState.inputMode === "textarea" ? textareaInput : messageInput;
+  targetInput.focus();
   try {
     recognition.start();
   } catch (error) {

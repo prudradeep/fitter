@@ -127,6 +127,8 @@ class ChatHazardStepsMixin:
         self._clear_selected_hazard_context(session)
         session.phase = "custom_hazard_input"
         session.custom_hazard = default_custom_hazard_state()
+        session.custom_hazard_input_history = []
+        session.generated_custom_hazard_title = None
         return ChatResponse(
             session_id=session_id,
             step="hazards",
