@@ -638,6 +638,21 @@ class ChatMitigationStepsMixin:
                 error=True,
             )
 
+        meaning_check = await self._validate_text_meaning(mitigation_measure)
+        if meaning_check.classification in {"GIBBERISH", "UNCERTAIN"}:
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_measure",
+                bot_message=render_message(
+                    "mitigation_validation_failed.md",
+                    reason="Please enter a clear, meaningful response.",
+                ),
+                options=[],
+                session=session.summary(),
+                input_mode="mitigation_measure",
+                error=True,
+            )
+
         if self._is_invalid_user_text(mitigation_measure):
             return ChatResponse(
                 session_id=session_id,

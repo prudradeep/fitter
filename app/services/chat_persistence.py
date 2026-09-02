@@ -76,7 +76,13 @@ class ChatPersistenceMixin:
             # custom-hazard validation rejection or clarification. Keep the
             # validation state in the session for later processing, but do not
             # attach this panel to every subsequent hazard-flow response.
-            show_grounding_status = response.step == "custom_hazard_clarification"
+            show_grounding_status = response.step in {
+                "custom_hazard_clarification",
+                "custom_hazard_evidence_decision",
+                "custom_hazard_evidence",
+                "hazard_evidence_decision",
+                "hazard_evidence",
+            }
             if show_grounding_status:
                 response.validation_details = response.validation_details or custom_hazard_validation_details(
                     session.custom_hazard

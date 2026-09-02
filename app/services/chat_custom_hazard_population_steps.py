@@ -27,6 +27,7 @@ from app.services.custom_hazard_validation import (
     normalize_custom_group,
 )
 from app.services.enums import CustomHazardAction, CustomHazardStatus
+from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE
 from app.services.message_renderer import render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 
@@ -582,7 +583,9 @@ class ChatCustomHazardPopulationStepsMixin:
             f"{question['question']} -> {answer_text}",
         )
 
-    def _prepare_custom_hazard_added_profiles(self, session: ChatSession) -> str:
+    def _prepare_custom_hazard_added_profiles(
+        self, session_id: str, session: ChatSession
+    ) -> str:
         session.phase = "hazards"
         accepted_hazard = session.accepted_custom_hazard or "New hazard"
         if not self._stored_hazard_profiles(session, accepted_hazard):
@@ -616,6 +619,20 @@ class ChatCustomHazardPopulationStepsMixin:
             )
             custom_hazard_id = shared_hazard.id if shared_hazard else None
         session.accepted_custom_hazard_id = custom_hazard_id
+        if accepted_hazard and not any(
+            normalize(item) == normalize(accepted_hazard)
+            for item in (session.custom_hazards or [])
+        ):
+            if session.custom_hazards is None:
+                session.custom_hazards = []
+            session.custom_hazards.append(accepted_hazard)
+        self._record_activity(session_id, session, "custom_hazard_added", accepted_hazard)
+        if session.accepted_custom_hazard_evidence not in {None, "", "Not provided"}:
+            self._promote_temporary_evidence(
+                session,
+                target_scope=VALIDATED_EVIDENCE_SCOPE,
+                provenance="validated_user_evidence",
+            )
         if hazard_record_id is not None:
             self._clear_target_population_profiles(hazard_record_id)
         for profile in profile_items:
@@ -641,7 +658,7 @@ class ChatCustomHazardPopulationStepsMixin:
         return accepted_hazard
 
     def _custom_hazard_added_step_sync(self, session_id: str, session: ChatSession) -> ChatResponse:
-        accepted_hazard = self._prepare_custom_hazard_added_profiles(session)
+        accepted_hazard = self._prepare_custom_hazard_added_profiles(session_id, session)
         return ChatResponse(
             session_id=session_id,
             step="hazards",
@@ -666,7 +683,7 @@ class ChatCustomHazardPopulationStepsMixin:
     async def _custom_hazard_added_step(
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
-        accepted_hazard = self._prepare_custom_hazard_added_profiles(session)
+        accepted_hazard = self._prepare_custom_hazard_added_profiles(session_id, session)
         profiles = self._stored_hazard_profiles(session, accepted_hazard)
         enriched_profiles = await self._additional_profiles_with_population_context(
             session,

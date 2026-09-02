@@ -86,6 +86,7 @@ class ChatSession:
     pending_hazard_clarification_answer: str | None = None
     pending_hazard_title_clarification_question: str | None = None
     pending_hazard_title_clarification_answers: list[str] | None = None
+    custom_hazard_input_history: list[str] | None = None
     suggested_duplicate_hazard: str | None = None
     suggested_duplicate_hazard_record_id: str | None = None
     pending_affected_population_profiles: list[dict[str, str]] | None = None

@@ -48,6 +48,7 @@ from app.services.custom_hazard_text_rules import (
     sector_signal_scores,
 )
 from app.services.evidence_contradiction_service import EvidenceContradictionService
+from app.services.gibberish_detector import check_gibberish
 from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
 from app.services.mitigation_text_rules import (
     local_mitigation_clarification_error,
@@ -303,45 +304,60 @@ class ChatValidationServiceMixin:
 
     @staticmethod
     def _is_invalid_user_text(message: str) -> bool:
-        value = message.strip()
+        # Keep this synchronous compatibility helper for existing mixins. The
+        # async entry point performs the uncertain-case LLM fallback.
+        value = str(message or "").strip()
         if not value:
             return False
-        if value.startswith(("TARGET_POPULATION_BATCH:", "http://", "https://")):
+        if value.startswith(("TARGET_POPULATION_BATCH:", "http://", "https://")) or value.isdigit():
             return False
-        if value.isdigit():
-            return False
+        return check_gibberish(value).classification == "GIBBERISH"
 
-        normalized = normalize_for_match(value)
-        compact = compact_for_match(value)
-        if len(compact) < 2:
-            return True
-        if not re.search(r"[a-z0-9]", compact):
-            return True
+    async def _validate_text_meaning(self, message: str):
+        from app.services.gibberish_detector import validate_text_meaning
 
-        total_chars = len(value)
-        alnum_chars = sum(1 for char in value if char.isalnum())
-        if total_chars >= 5 and alnum_chars / total_chars < 0.45:
-            return True
-        if re.search(r"(.)\1{5,}", compact):
-            return True
+        return await validate_text_meaning(message)
 
-        tokens = normalized.split()
-        if not tokens:
-            return True
-        keyboard_rows = ("qwertyuiop", "asdfghjkl", "zxcvbnm", "1234567890")
-        for token in tokens:
-            if len(token) >= 4 and any(token in row or token[::-1] in row for row in keyboard_rows):
-                return True
+    @staticmethod
+    def _text_quality_rejection_reason(
+        value: str,
+        field_label: str,
+        *,
+        minimum_length: int = 8,
+        result=None,
+    ) -> str | None:
+        """Return a user-facing reason for unusable hazard-creation text."""
+        text = str(value or "").strip()
+        if not text:
+            return f"Please provide a {field_label}."
 
-        long_tokens = [token for token in tokens if len(token) >= 4]
-        if long_tokens and all(not re.search(r"[aeiou]", token) for token in long_tokens):
-            return True
+        check = result or check_gibberish(text)
+        if check.classification == "GIBBERISH":
+            reason_labels = {
+                "keyboard_smash": "keyboard mashing",
+                "excessive_character_repetition": "repeated characters",
+                "excessive_symbols": "too many symbols",
+                "random_token_sequence": "a random word sequence",
+                "high_random_token_ratio": "mostly random-looking text",
+                "low_vowel_ratio": "an unusually low vowel ratio",
+                "no_alphabetic_text": "no meaningful alphabetic text",
+            }
+            details = next(
+                (reason_labels.get(reason) for reason in check.reasons if reason in reason_labels),
+                "text that is not meaningful",
+            )
+            return (
+                f"The {field_label} appears to contain {details}. "
+                f"Please enter a clear, meaningful {field_label}."
+            )
 
-        unique_chars = set(compact)
-        if len(compact) >= 8 and len(unique_chars) <= 2:
-            return True
-
-        return False
+        compact_length = len(compact_for_match(text))
+        if compact_length < minimum_length:
+            return (
+                f"The {field_label} is too short ({compact_length} meaningful characters). "
+                f"Please provide at least {minimum_length} meaningful characters."
+            )
+        return None
 
     async def _validate_custom_affected_group_reason(
         self,
@@ -973,7 +989,12 @@ class ChatValidationServiceMixin:
                 "\nClarification context:\n"
                 f"{json.dumps(clarification_context, ensure_ascii=False, indent=2)}\n"
                 "Use the title and clarification together. If they are sufficient, "
-                "return status valid with normalized_hazard rewritten as a concrete hazard title.\n"
+                "return status valid with normalized_hazard rewritten as a concise, "
+                "meaningful hazard title derived from the raw hazard, reason, evidence, "
+                "affected groups, and clarification context. Do not merely copy the raw "
+                "hazard when the supplied context supports a clearer title. Keep the title "
+                "faithful to the provided facts, do not invent details, and keep it under "
+                "100 characters.\n"
             )
         messages = [
             {

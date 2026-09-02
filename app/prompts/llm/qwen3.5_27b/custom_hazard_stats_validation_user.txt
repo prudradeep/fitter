@@ -30,4 +30,4 @@ Rules:
 - valid must be false only when the reason or supplied evidence clearly contradicts the statistics, confuses predictors with hazards, invents unsupported numbers as facts, is unrelated to the sector, is unrelated to the selected country, is unrelated to twin-transition policies, or is too vague/generic to evaluate.
 - General household safety risks, such as carbon monoxide poisoning from domestic heating or cooking, are not valid unless the hazard/reason clearly explains which green or digital transition policy creates or increases that risk.
 - Treat the selected sector as a hard boundary. If the hazard or reason mainly belongs to Transport while the selected sector is Energy or Housing, return valid false. If it mainly belongs to Energy or Housing while the selected sector is Transport, return valid false. If Energy and Housing are separate selected sectors in the data, do not approve a hazard for one when its mechanism mainly belongs to the other.
-- The reason field must be useful to the user and under 60 words.
+- The reason field must be useful to the user. Do not reject a submission based on its word or character count.

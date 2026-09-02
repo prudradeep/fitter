@@ -334,11 +334,18 @@ class ChatService(
                 await self._intro_message_from_llm(current_session_id),
             )
 
-        if (
-            clean_message
-            and self._is_invalid_user_text(clean_message)
-            and not self._could_be_fuzzy_selection(session, clean_message)
-        ):
+        if clean_message and not self._could_be_fuzzy_selection(session, clean_message):
+            meaning_check = await self._validate_text_meaning(clean_message)
+        else:
+            meaning_check = None
+        if meaning_check is not None and meaning_check.classification == "GIBBERISH":
+            return self._repeat_current_options(
+                current_session_id,
+                session,
+                self._invalid_text_message(),
+                True,
+            )
+        if meaning_check is not None and meaning_check.classification == "UNCERTAIN":
             return self._repeat_current_options(
                 current_session_id,
                 session,

@@ -29,4 +29,4 @@ Rules:
 - valid must be false if the reason is only a broad label, such as 'poverty', 'transport', or 'policy', without a clear mechanism or outcome.
 - valid must be false if provided evidence is only a filename/URL with no readable evidence content, or extracted content says it could not be read.
 - valid may be true for concise text when the mechanism, expected benefit, or affected outcome is understandable.
-- The reason field must tell the user what to rewrite, stay under 60 words, and mention the specific weak field.
+- The reason field must tell the user what to rewrite and mention the specific weak field. Do not reject a submission based on its word or character count.

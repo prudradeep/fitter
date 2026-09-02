@@ -406,6 +406,95 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(session.phase, "add_hazard_evidence_decision")
         self.assertIn("Coal phase-out policy", session.pending_hazard_reason)
 
+    def test_gibberish_hazard_reason_is_rejected_with_detector_reason(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_reason",
+            pending_hazard="Regional employment shock",
+            custom_hazard={"raw_text": "Regional employment shock"},
+        )
+
+        response = service._capture_hazard_reason("session-1", session, "asdfghjkl")
+
+        self.assertTrue(response.error)
+        self.assertIn("keyboard mashing", response.bot_message)
+        self.assertIsNone(session.pending_hazard_reason)
+
+    def test_short_hazard_name_is_rejected_with_length_reason(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_input",
+        )
+
+        response = _run(service._capture_custom_hazard("session-1", session, "Risk"))
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "custom_hazard_input")
+        self.assertIn("hazard name is too short", response.bot_message)
+
+    def test_repeated_custom_hazard_input_notifies_user(self):
+        service = ChatService.__new__(ChatService)
+        service._validate_text_meaning = AsyncMock()
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_input",
+            custom_hazard_input_history=[
+                "Low-income households face higher energy bills from clean heating policy."
+            ],
+        )
+
+        response = _run(
+            service._capture_custom_hazard(
+                "session-1",
+                session,
+                "  Low-income households face higher energy bills from clean heating policy.  ",
+            )
+        )
+
+        self.assertTrue(response.error)
+        self.assertEqual(response.step, "custom_hazard_input")
+        self.assertIn("already entered this same hazard", response.bot_message)
+        service._validate_text_meaning.assert_not_awaited()
+
+    def test_gibberish_hazard_name_is_rejected_with_detector_reason(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_input",
+        )
+
+        response = _run(service._capture_custom_hazard("session-1", session, "asdfghjkl"))
+
+        self.assertTrue(response.error)
+        self.assertIn("hazard name appears to contain keyboard mashing", response.bot_message)
+
+    def test_short_hazard_reason_is_rejected_with_length_reason(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_reason",
+            pending_hazard="Regional employment shock",
+            custom_hazard={"raw_text": "Regional employment shock"},
+        )
+
+        response = service._capture_hazard_reason("session-1", session, "Bad")
+
+        self.assertTrue(response.error)
+        self.assertIn("short description is too short", response.bot_message)
+        self.assertIsNone(session.pending_hazard_reason)
+
     def test_unclear_hazard_definition_asks_clarification_before_reason(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -1772,6 +1861,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
 
         self.assertTrue(response.error)
+        self.assertIn("Rejected", response.bot_message)
         self.assertNotEqual(response.input_mode, "reason_evidence")
         self.assertIn("personal preference", response.bot_message)
         self.assertIn("not a policy hazard", response.bot_message)

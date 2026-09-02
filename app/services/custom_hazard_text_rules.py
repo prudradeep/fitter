@@ -86,6 +86,14 @@ def deterministic_custom_hazard_input_review(
             validation_code="question_not_hazard",
         )
 
+    if normalized.startswith(
+        ("i like ", "i love ", "i prefer ", "i think ", "we like ", "we love ", "we prefer ", "we think ")
+    ):
+        return _reject_input(
+            _missing_negative_hazard_reason(normalized),
+            validation_code="personal_preference",
+        )
+
     if len(normalized.split()) <= 2:
         return _reject_input(
             "This is only a keyword or broad topic, so it is too short to validate as a hazard. Please state who is affected, what negative consequence occurs, and which transition measure causes it.",

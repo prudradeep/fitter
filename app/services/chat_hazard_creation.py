@@ -101,6 +101,7 @@ from app.services.sector_prompt_rag import (
 logger = logging.getLogger(__name__)
 
 MAX_HAZARD_TITLE_CLARIFICATION_ROUNDS = 3
+MAX_CUSTOM_HAZARD_TITLE_LENGTH = 99
 
 class ChatHazardCreationMixin:
     def _custom_hazard_state(self, session: ChatSession) -> dict[str, object]:
@@ -147,6 +148,26 @@ class ChatHazardCreationMixin:
                 session=session,
                 step="custom_hazard_input",
                 bot_message=render_message("add_hazard.md", sector=session.sector),
+                options=HAZARD_ENTRY_OPTIONS,
+                input_mode="textarea",
+                error=True,
+            )
+        quality_reason = self._text_quality_rejection_reason(hazard, "hazard name")
+        if quality_reason:
+            session.pending_hazard = None
+            session.phase = "custom_hazard_input"
+            state["status"] = CustomHazardStatus.REJECTED.value
+            state["title_validation_status"] = "invalid"
+            state["title_validation_code"] = "too_short_input"
+            state["title_validation_reason"] = quality_reason
+            return self._custom_hazard_response(
+                session_id=session_id,
+                session=session,
+                step="custom_hazard_input",
+                bot_message=markdown_to_html(
+                    f"## Rejected\n\n**Reason:** {quality_reason}\n\n"
+                    "Please enter a clear, meaningful hazard name."
+                ),
                 options=HAZARD_ENTRY_OPTIONS,
                 input_mode="textarea",
                 error=True,
@@ -391,31 +412,62 @@ class ChatHazardCreationMixin:
 
     async def _ensure_custom_hazard_generated_title(self, session: ChatSession) -> None:
         state = self._custom_hazard_state(session)
-        if state.get("title_generated"):
+        if state.get("review_title_generated"):
             return
         hazard = str(
             state.get("resolved_hazard_text") or state.get("raw_text") or session.pending_hazard or ""
         ).strip()
         if not hazard:
             return
+        affected_groups = [
+            {
+                "group": str(group.get("group") or group.get("name") or "").strip(),
+                "reason": str(group.get("reason") or "").strip(),
+            }
+            for group in (state.get("affected_groups") or [])
+            if isinstance(group, dict)
+            and str(group.get("group") or group.get("name") or "").strip()
+        ]
         review = await self._review_custom_hazard_input(
             session,
             hazard,
             clarification_context={
-                "validated_reason": str(state.get("reason") or "").strip(),
-                "validated_evidence": str(state.get("evidence") or "").strip(),
+                "raw_hazard": str(state.get("raw_text") or hazard).strip(),
+                "validated_reason": str(
+                    state.get("reason") or session.accepted_custom_hazard_reason or session.pending_hazard_reason or ""
+                ).strip(),
+                "validated_evidence": str(
+                    state.get("evidence") or session.accepted_custom_hazard_evidence or session.pending_hazard_evidence or ""
+                ).strip(),
+                "affected_groups": affected_groups,
+                "negative_consequence": str(state.get("negative_consequence") or "").strip(),
+                "clarifications": list(state.get("clarifications") or []),
                 "validation_status": str(state.get("status") or "").strip(),
             },
             use_llm_for_title=True,
         )
         generated_title = ""
         if isinstance(review, dict):
-            generated_title = self._custom_hazard_resolved_title(review, "")
+            generated_title = self._limit_custom_hazard_title(
+                self._custom_hazard_resolved_title(review, "")
+            )
         if generated_title:
             state["title"] = generated_title
             state["resolved_hazard_text"] = generated_title
             session.pending_hazard = generated_title
-        state["title_generated"] = True
+        # Do not call the title model repeatedly while the user edits groups.
+        # The generated title is the value that will be used by the persistence
+        # step after the review is confirmed.
+        state["review_title_generated"] = True
+
+    @staticmethod
+    def _limit_custom_hazard_title(title: str) -> str:
+        """Keep persisted custom hazard titles below the 100-character limit."""
+        title = re.sub(r"\s+", " ", str(title or "")).strip()
+        if len(title) <= MAX_CUSTOM_HAZARD_TITLE_LENGTH:
+            return title
+        shortened = title[:MAX_CUSTOM_HAZARD_TITLE_LENGTH].rsplit(" ", 1)[0].rstrip(" ,;:-")
+        return shortened or title[:MAX_CUSTOM_HAZARD_TITLE_LENGTH].rstrip()
 
     def _custom_hazard_clarification_step(
         self,
@@ -1258,6 +1310,30 @@ class ChatHazardCreationMixin:
             rejected=True,
         )
 
+    def _custom_hazard_input_quality_rejection_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        reason: str,
+    ) -> ChatResponse:
+        session.pending_hazard = None
+        if not isinstance(session.custom_hazard, dict):
+            session.custom_hazard = default_custom_hazard_state()
+        session.phase = "custom_hazard_input"
+        return self._custom_hazard_response(
+            session_id=session_id,
+            session=session,
+            step="custom_hazard_input",
+            bot_message=markdown_to_html(
+                f"## Rejected\n\n**Reason:** {reason}\n\n"
+                "Please enter a clear, meaningful hazard name."
+            ),
+            options=HAZARD_ENTRY_OPTIONS,
+            input_mode="textarea",
+            error=True,
+        )
+
     def _custom_hazard_title_clarification_step(
         self,
         session_id: str,
@@ -1448,10 +1524,6 @@ class ChatHazardCreationMixin:
             session.hazard_profiles[hazard] = profiles
             session.socio_demographic_profiles = [str(profile["name"]) for profile in profiles]
         state["status"] = CustomHazardStatus.READY.value
-        if session.custom_hazards is None:
-            session.custom_hazards = []
-        if hazard and not any(normalize(item) == normalize(hazard) for item in session.custom_hazards):
-            session.custom_hazards.append(hazard)
         session.accepted_custom_hazard = hazard
         session.accepted_custom_hazard_reason = (
             str(state.get("reason") or "").strip()
@@ -1460,24 +1532,11 @@ class ChatHazardCreationMixin:
         session.accepted_custom_hazard_evidence = (
             str(state.get("evidence") or "").strip() or "Not provided"
         )
-        shared_hazard = self._ensure_custom_hazard(
-            session,
-            hazard,
-            reason=session.accepted_custom_hazard_reason,
-            evidence=None
-            if session.accepted_custom_hazard_evidence == "Not provided"
-            else session.accepted_custom_hazard_evidence,
-        )
-        session.accepted_custom_hazard_id = shared_hazard.id if shared_hazard else None
         session.accepted_custom_hazard_record_id = None
         session.selected_hazard_record_id = None
-        self._record_activity(session_id, session, "custom_hazard_added", hazard)
-        if session.accepted_custom_hazard_evidence != "Not provided":
-            self._promote_temporary_evidence(
-                session,
-                target_scope=VALIDATED_EVIDENCE_SCOPE,
-                provenance="validated_user_evidence",
-            )
+        # The affected-group review has already been confirmed before the
+        # grounding validator reaches this branch. Persist only now, after
+        # that review has been shown to the user.
         return await self._custom_hazard_added_step(session_id, session)
 
     async def _capture_custom_hazard(
@@ -1505,6 +1564,54 @@ class ChatHazardCreationMixin:
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
                 error=True,
+            )
+
+        normalized_hazard = normalize_for_match(hazard)
+        input_history = session.custom_hazard_input_history or []
+        if normalized_hazard in {
+            normalize_for_match(previous)
+            for previous in input_history
+            if str(previous or '').strip()
+        }:
+            session.phase = ChatPhase.CUSTOM_HAZARD_INPUT.value
+            return self._custom_hazard_response(
+                session_id=session_id,
+                session=session,
+                step='custom_hazard_input',
+                bot_message=markdown_to_html(
+                    'You have already entered this same hazard. Please provide a different '
+                    'hazard or choose an existing hazard from the list.'
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                input_mode='textarea',
+                error=True,
+            )
+        session.custom_hazard_input_history = [*input_history, hazard]
+
+        meaning_check = await self._validate_text_meaning(hazard)
+        quality_reason = self._text_quality_rejection_reason(
+            hazard,
+            "hazard name",
+            result=meaning_check,
+        )
+        if quality_reason:
+            return self._custom_hazard_input_quality_rejection_response(
+                session_id,
+                session,
+                reason=quality_reason,
+            )
+        if meaning_check.classification in {"GIBBERISH", "UNCERTAIN"}:
+            return self._custom_hazard_title_rejection_response(
+                session_id,
+                session,
+                hazard=hazard,
+                review={
+                    "status": "invalid",
+                    "valid": False,
+                    "validation_code": "gibberish_input",
+                    "reason": quality_reason or "Please enter a clear, meaningful hazard name.",
+                    "confidence": 1.0 if meaning_check.classification == "GIBBERISH" else 0.5,
+                },
             )
 
         self._initialize_custom_hazard_title_state(session, hazard)
@@ -1545,6 +1652,20 @@ class ChatHazardCreationMixin:
             )
 
         if deterministic_review is not None and not bool(deterministic_review.get("valid")):
+            if str(deterministic_review.get("validation_code") or "") == "personal_preference":
+                reason = str(deterministic_review.get("reason") or "This reads as a personal preference or opinion, not a policy hazard.")
+                self._mark_custom_hazard_dimension(
+                    session,
+                    self._custom_hazard_rejection_dimension(reason),
+                    status="REJECTED",
+                    score=0,
+                    reason=reason,
+                )
+                return self._custom_hazard_input_quality_rejection_response(
+                    session_id,
+                    session,
+                    reason=reason,
+                )
             return self._custom_hazard_title_rejection_response(
                 session_id,
                 session,
@@ -2151,15 +2272,15 @@ class ChatHazardCreationMixin:
 
         parsed_reason, _ = parse_reason_evidence(message)
         reason = (parsed_reason or message or "").strip()
-        if not reason:
+        reason_error = self._text_quality_rejection_reason(reason, "short description")
+        if reason_error:
             return self._hazard_reason_step(
                 session_id,
                 session,
                 hazard,
                 error=True,
                 message=markdown_to_html(
-                    "Please answer the clarification question and include the reason "
-                    "or justification before continuing."
+                    reason_error
                 ),
             )
 
@@ -2185,11 +2306,18 @@ class ChatHazardCreationMixin:
             "such as a report, article, dataset, policy document, or URL?\n\n"
             "Choose **Yes** to add evidence, or **No** to continue without it."
         )
+        if isinstance(session.custom_hazard, dict):
+            return self._custom_hazard_response(
+                session_id=session_id,
+                session=session,
+                step="custom_hazard_evidence_decision",
+                bot_message=bot_message,
+                options=HAZARD_EVIDENCE_DECISION_OPTIONS,
+                error=error,
+            )
         return ChatResponse(
             session_id=session_id,
-            step="custom_hazard_evidence_decision"
-            if isinstance(session.custom_hazard, dict)
-            else "hazard_evidence_decision",
+            step="hazard_evidence_decision",
             bot_message=bot_message,
             options=HAZARD_EVIDENCE_DECISION_OPTIONS,
             session=session.summary(),
@@ -2236,11 +2364,19 @@ class ChatHazardCreationMixin:
             "Great. Paste a URL here or attach a supported file: PDF, DOCX, MD, "
             "or TXT. If you do not have it ready, choose **Skip** and continue."
         )
+        if isinstance(session.custom_hazard, dict):
+            return self._custom_hazard_response(
+                session_id=session_id,
+                session=session,
+                step="custom_hazard_evidence",
+                bot_message=bot_message,
+                options=HAZARD_EVIDENCE_INPUT_OPTIONS,
+                input_mode="evidence_only",
+                error=error,
+            )
         return ChatResponse(
             session_id=session_id,
-            step="custom_hazard_evidence"
-            if isinstance(session.custom_hazard, dict)
-            else "hazard_evidence",
+            step="hazard_evidence",
             bot_message=bot_message,
             options=HAZARD_EVIDENCE_INPUT_OPTIONS,
             session=session.summary(),
@@ -2456,11 +2592,6 @@ class ChatHazardCreationMixin:
         *,
         clarification: str | None = None,
     ) -> ChatResponse:
-        if session.custom_hazards is None:
-            session.custom_hazards = []
-        if hazard and not any(normalize(item) == normalize(hazard) for item in session.custom_hazards):
-            session.custom_hazards.append(hazard)
-
         session.pending_hazard = None
         session.pending_hazard_reason = None
         session.pending_hazard_evidence = None
@@ -2469,22 +2600,8 @@ class ChatHazardCreationMixin:
         session.accepted_custom_hazard = hazard
         session.accepted_custom_hazard_reason = reason
         session.accepted_custom_hazard_evidence = evidence or "Not provided"
-        shared_hazard = self._ensure_custom_hazard(
-            session,
-            hazard,
-            reason=reason,
-            evidence=evidence or None,
-        )
-        session.accepted_custom_hazard_id = shared_hazard.id if shared_hazard else None
         session.accepted_custom_hazard_record_id = None
         session.selected_hazard_record_id = None
-        self._record_activity(session_id, session, "custom_hazard_added", hazard)
-        if evidence:
-            self._promote_temporary_evidence(
-                session,
-                target_scope=VALIDATED_EVIDENCE_SCOPE,
-                provenance="validated_user_evidence",
-            )
 
         profiles = await self._extract_custom_hazard_affected_population_profiles(
             session,
