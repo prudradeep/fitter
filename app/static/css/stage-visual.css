@@ -867,6 +867,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   color: #475569;
   font-size: 0.82rem;
   line-height: 1.4;
+  white-space: pre-line;
 }
 
 .stage-progress {

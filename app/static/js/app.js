@@ -484,16 +484,11 @@ stageProgressToggle?.addEventListener("click", () => {
 
 function sectorStageText(session = {}, options = appState.currentOptions) {
   const sectors = sectorItemsForSession(session, options)
-    .map((item) => item.title)
-    .filter(Boolean);
+    .filter((item) => item.title);
   if (!sectors.length) return stageVisuals.sector.text;
-  return `${formatReadableList(sectors)} ${sectors.length === 1 ? "pathway changes" : "pathways change"} which hazards and profiles matter most.`;
-}
-
-function formatReadableList(items = []) {
-  if (items.length <= 1) return items[0] || "";
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+  return sectors
+    .map((item) => `${item.title}: ${String(item.text || "").replace(/^Policy objective:\s*/i, "")}`)
+    .join("\n");
 }
 
 function updateFloatingStatsButton() {
@@ -929,9 +924,19 @@ function sectorItemsForSession(session = {}, options = []) {
   const sectorIcons = new Map(stageIconSets.sector.map((item) => [normalizeForMatch(item.title), item.icon]));
   return labels.map((label) => ({
     title: label,
-    text: ``,
+    text: sectorPolicyObjective(label),
     icon: sectorIcons.get(normalizeForMatch(label)) || "M4 7h16M4 12h16M4 17h16",
   }));
+}
+
+function sectorPolicyObjective(sector = "") {
+  const objectives = {
+    energy: "Policy objective: Transition towards renewable energy",
+    housing: "Policy objective: Adaptation of housing to climate change",
+    "housing built environment": "Policy objective: Adaptation of housing to climate change",
+    transport: "Policy objective: Transition to electric vehicles",
+  };
+  return objectives[normalizeForMatch(sector)] || "Policy objective: Not available";
 }
 
 function hazardSummaryItems(session = {}) {
@@ -1978,6 +1983,21 @@ chatLog?.addEventListener("scroll", updateChatScrollBottomButton, { passive: tru
 chatScrollBottomButton?.addEventListener("click", () => {
   chatLog?.scrollTo({ top: chatLog.scrollHeight, behavior: "smooth" });
 });
+chatLog?.addEventListener("click", (event) => {
+  const button = event.target.closest(".policy-sector-cta");
+  if (!button || !chatLog.contains(button) || button.disabled) return;
+  const label = (
+    button.dataset.sectorOption
+    || button.textContent.replace(/^\s*Select\s+/i, "")
+  ).trim();
+  if (!label) return;
+  pauseSpeech();
+  collapseExpandedMessages();
+  button.disabled = true;
+  syncPolicySectorActions({ sector: label });
+  disableOldOptions();
+  sendMessage(label, true);
+});
 
 chatLog?.addEventListener("click", (event) => {
   const platformUsersButton = event.target.closest("[data-open-platform-users], .platform-users-source-button");
@@ -2973,6 +2993,7 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
 
 function updateSessionCard(session) {
   appState.currentSession = session || {};
+  syncPolicySectorActions(appState.currentSession);
   targetPopulationQuestions = Array.isArray(session?.target_population_questions)
     ? session.target_population_questions
     : [];
@@ -2994,6 +3015,16 @@ function updateSessionCard(session) {
   updateNewSessionButton();
   renderSelectedHazardContext(session);
   updateStageVisual(appState.currentStep, appState.currentSession, appState.currentOptions);
+}
+
+function syncPolicySectorActions(session = {}) {
+  const selected = Boolean(String(session?.sector || "").trim());
+  chatLog?.querySelectorAll(".policy-objectives-table").forEach((table) => {
+    table.classList.toggle("policy-objectives-actions-hidden", selected);
+    table.querySelectorAll(".policy-sector-cta").forEach((button) => {
+      button.hidden = selected;
+    });
+  });
 }
 
 function applyInputValues(values = {}) {

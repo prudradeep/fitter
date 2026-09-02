@@ -28,15 +28,32 @@
           <img src="{{ url_for('static', path='/img/logo.png') }}" alt="Dr Transition logo" />
           <span>Dr Transition helps you identify:</span></h2>
         <ol class="roadmap-list">
-          <li>Hazards and Negative Impacts of various policy objectives</li>
-          <li>The Profiles affected by the Twin-Transition policies in your region</li>
+          <li>Twin transition policy objectives</li>
+          <li>The Socio demographic profiles affected by the policies in your region</li>
           <li>Mitigation Plans to counter the Hazards and corresponding Negative Impacts</li>
         </ol>
         <button id="startAnalysisButton" class="start-analysis-button" type="button">
           Start Analysis
         </button>
+        <button id="aboutProjectButton" class="about-project-button" type="button">
+          About the Project
+        </button>
       </section>
     </main>
+
+    <dialog id="aboutProjectModal" class="about-project-modal" aria-labelledby="aboutProjectTitle">
+      <div class="about-project-modal-panel">
+        <div class="about-project-modal-header">
+          <h2 id="aboutProjectTitle">About the Project</h2>
+          <button class="about-project-modal-close" type="button" aria-label="Close about the project dialog">×</button>
+        </div>
+        <iframe
+          class="about-project-frame"
+          src="{{ url_for('static', path='/about.html') }}"
+          title="About the Project"
+        ></iframe>
+      </div>
+    </dialog>
 
     <dialog
       id="authModal"

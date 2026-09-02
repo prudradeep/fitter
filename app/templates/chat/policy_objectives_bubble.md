@@ -8,13 +8,13 @@
 
 <table class="policy-objectives-table">
   <thead>
-    <tr><th scope="col">Sector</th><th scope="col">Policy objective</th></tr>
+    <tr><th scope="col">Sector</th><th scope="col">Policy objective</th><th scope="col">Action</th></tr>
   </thead>
   <tbody>
     {% for sector in sectors %}
-    {% if sector == "Energy" %}<tr><td>Energy</td><td>Transition towards renewable energy</td></tr>{% endif %}
-    {% if sector == "Housing" %}<tr><td>Housing &amp; Built Environment</td><td>Adaptation of housing to climate change</td></tr>{% endif %}
-    {% if sector == "Transport" %}<tr><td>Transport &amp; Mobility</td><td>Transition to electric vehicles</td></tr>{% endif %}
+    {% if sector == "Energy" %}<tr><td>Energy</td><td>Transition towards renewable energy</td><td><button type="button" class="policy-sector-cta" data-sector-option="Energy">Select Energy</button></td></tr>{% endif %}
+    {% if sector == "Housing" %}<tr><td>Housing &amp; Built Environment</td><td>Adaptation of housing to climate change</td><td><button type="button" class="policy-sector-cta" data-sector-option="Housing">Select Housing</button></td></tr>{% endif %}
+    {% if sector == "Transport" %}<tr><td>Transport &amp; Mobility</td><td>Transition to electric vehicles</td><td><button type="button" class="policy-sector-cta" data-sector-option="Transport">Select Transport</button></td></tr>{% endif %}
     {% endfor %}
   </tbody>
 </table>

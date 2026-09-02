@@ -271,11 +271,17 @@
     font-size: 1.05rem;
   }
 
-  .start-analysis-button {
+  .start-analysis-button,
+  .about-project-button {
     width: 100%;
     min-height: 54px;
     margin-top: 32px;
     font-size: 1.08rem;
+  }
+
+  .about-project-modal {
+    width: calc(100vw - 18px);
+    height: calc(100vh - 18px);
   }
 
   .auth-modal-panel {

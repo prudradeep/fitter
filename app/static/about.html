@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About FITTER-EU — Dr Transition</title>
+<style>
+:root{
+  --ink:#17222C; --paper:#F4F5F1; --paper2:#E9ECE5;
+  --green:#3D6B4C; --blue:#2A6A8A; --ochre:#9E6A16; --rust:#8C3A2E;
+  --rule:rgba(23,34,44,.15); --rule-l:rgba(244,245,241,.22); --muted:#5C6873;
+  --serif:"Instrument Serif",Georgia,serif;
+  --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--sans);font-size:17px;line-height:1.65}
+.wrap{max-width:1060px;margin:0 auto;padding:0 26px}
+h1,h2{font-family:var(--serif);font-weight:400;letter-spacing:-.01em;line-height:1.12;margin:0}
+h1{font-size:clamp(2.5rem,6vw,4.2rem)}
+h2{font-size:clamp(1.85rem,3.5vw,2.6rem)}
+h3{font-size:1.1rem;font-weight:600;line-height:1.3;margin:0 0 6px}
+p{margin:0 0 1.05em}
+a{color:inherit}
+a:focus-visible{outline:2.5px solid var(--blue);outline-offset:3px}
+.lede{font-size:1.2rem;line-height:1.55;max-width:62ch;margin-top:18px}
+section{padding:70px 0;border-top:1px solid var(--rule)}
+.cap{font-size:.85rem;color:var(--muted);margin-top:14px;max-width:70ch}
+
+figure{margin:34px 0 0}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px}
+svg{display:block;width:100%;height:auto}
+.st{font-family:Inter,sans-serif;font-size:14px;fill:#17222C}
+.sb{font-family:Inter,sans-serif;font-size:14px;font-weight:600;fill:#17222C}
+.ss{font-family:Inter,sans-serif;font-size:12px;fill:#5C6873}
+.sw{font-family:Inter,sans-serif;font-size:14px;font-weight:600;fill:#F4F5F1}
+.swm{font-family:Inter,sans-serif;font-size:12px;fill:rgba(244,245,241,.68)}
+
+.masthead{background:var(--ink);color:var(--paper)}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:18px;
+  padding:18px 0;border-bottom:1px solid var(--rule-l);flex-wrap:wrap}
+.mark{display:flex;align-items:center;gap:10px;font-size:.95rem}
+.mark b{font-weight:600}.mark span{color:rgba(244,245,241,.6)}
+.eu{font-size:.78rem;color:rgba(244,245,241,.6);max-width:32ch;text-align:right;line-height:1.4}
+.hero{padding:58px 0 24px}
+.hero h1{max-width:15ch}.hero h1 em{font-style:italic}
+.hero .stand{max-width:54ch;margin-top:22px;font-size:1.14rem;color:rgba(244,245,241,.82)}
+.hero figure{margin:44px 0 0;padding-bottom:40px}
+.hero .cap{color:rgba(244,245,241,.55)}
+
+.stats{background:var(--paper2);border-top:1px solid var(--rule)}
+.statgrid{display:grid;grid-template-columns:1fr 1fr}
+.stat{padding:34px 26px;border-right:1px solid var(--rule);
+  display:flex;align-items:center;gap:20px}
+.stat:last-child{border-right:0}
+.stat svg{width:30px;height:30px;flex:0 0 30px}
+.stat b{display:block;font-family:var(--serif);font-weight:400;
+  font-size:clamp(2rem,7vw,3.2rem);line-height:.95}
+.stat span{font-size:clamp(.72rem,2.4vw,.92rem);color:var(--muted);
+  line-height:1.35;display:block;max-width:22ch;margin-top:6px}
+@media(max-width:620px){
+  .stat{padding:22px 14px;gap:12px}
+  .stat svg{width:22px;height:22px;flex:0 0 22px}}
+
+.two{display:grid;grid-template-columns:1.5fr 1fr;gap:52px;align-items:start;margin-top:30px}
+@media(max-width:860px){.two{grid-template-columns:1fr;gap:30px}}
+.facts{border-top:2px solid var(--ink);margin-top:26px}
+.facts > div{display:flex;justify-content:space-between;gap:14px;
+  padding:15px 0;border-bottom:1px solid var(--rule)}
+.facts dt{font-size:.92rem;color:var(--muted);margin:0}
+.facts dd{margin:0;font-size:.95rem;font-weight:500;text-align:right}
+
+.stage{display:grid;grid-template-columns:78px 1fr;gap:26px;
+  padding:26px 0;border-top:1px solid var(--rule)}
+.stage:last-of-type{border-bottom:1px solid var(--rule)}
+.med{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;
+  border:1.5px solid var(--rule)}
+.med svg{width:28px;height:28px}
+.stage p{font-size:.98rem;margin-bottom:.7em}
+.stage p:last-child{margin-bottom:0}
+.tag{display:inline-block;font-size:.78rem;color:var(--muted);
+  border-left:2px solid var(--ochre);padding-left:11px;margin-top:10px;line-height:1.5}
+@media(max-width:640px){.stage{grid-template-columns:1fr;gap:14px}}
+
+.callout{margin-top:36px;padding:26px 30px;background:var(--ink);color:var(--paper)}
+.callout p{margin:0;font-size:1.01rem}
+.callout strong{font-weight:600}
+
+.docs{margin-top:30px;border-top:2px solid var(--ink)}
+.doc{display:grid;grid-template-columns:82px 1fr auto;gap:20px;align-items:baseline;
+  padding:15px 0;border-bottom:1px solid var(--rule);text-decoration:none}
+.doc .id{font-size:.83rem;color:var(--muted);font-weight:500}
+.doc .t{font-size:.97rem;line-height:1.4}
+.doc .go{font-size:.8rem;color:var(--blue);white-space:nowrap}
+.doc:hover .t{text-decoration:underline;text-underline-offset:3px}
+@media(max-width:600px){.doc{grid-template-columns:1fr;gap:3px}.doc .go{display:none}}
+
+footer{background:var(--ink);color:rgba(244,245,241,.72);padding:48px 0;font-size:.87rem}
+footer .fg{display:grid;grid-template-columns:1.4fr 1fr;gap:40px}
+footer p{margin:0 0 .85em;max-width:60ch}
+footer a{color:var(--paper)}
+@media(max-width:760px){footer .fg{grid-template-columns:1fr;gap:24px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+<div class="wrap">
+  <div class="bar">
+    <div class="mark"><b>Dr&nbsp;Transition</b><span>a FITTER-EU tool</span></div>
+    <div class="eu">Funded by the European Union · Horizon Europe · GA 101132546</div>
+  </div>
+
+  <div class="hero">
+    <h1>Europe is changing twice at once. <em>Not everyone is carried along.</em></h1>
+    <p class="stand">FITTER-EU traces who gets left behind by the green and digital transition. Dr Transition is the last link in that chain — and the link you are standing in.</p>
+
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 1000 210" style="min-width:840px" role="img" aria-labelledby="chT chD">
+        <title id="chT">The FITTER-EU evidence chain</title>
+        <desc id="chD">Five stages: transition policies, hazards, disadvantaged groups, mitigation measures, and the Dr Transition platform where you are.</desc>
+
+        <g fill="#22313F" stroke="rgba(244,245,241,.30)" stroke-width="1">
+          <path d="M6 32 H170 L192 92 L170 152 H6 Z"/>
+          <path d="M202 32 H366 L388 92 L366 152 H202 L224 92 Z"/>
+          <path d="M398 32 H562 L584 92 L562 152 H398 L420 92 Z"/>
+          <path d="M594 32 H758 L780 92 L758 152 H594 L616 92 Z"/>
+        </g>
+        <path d="M790 32 H976 V152 H790 L812 92 Z" fill="#F4F5F1"/>
+        <path d="M790 34 H976" stroke="#9E6A16" stroke-width="4" fill="none"/>
+
+        <g fill="none" stroke="rgba(244,245,241,.82)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M91 58 h22 v26 h-22 z M96 65 h12 M96 71 h12 M96 77 h8"/>
+          <path d="M300 84 l-13 -26 l-13 26 z"/>
+          <path d="M287 68 v7"/>
+          <path d="M488 66 a6 6 0 1 0 -.1 0 M474 84 a14 14 0 0 1 28 0"/>
+          <path d="M686 78 a7 7 0 1 0 -.1 0 M686 57 v-6 M686 99 v-6 M669 63 l-4 -4 M703 63 l4 -4 M669 87 l-4 4 M703 87 l4 4"/>
+        </g>
+        <g fill="none" stroke="#9E6A16" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M874 56 h30 v24 h-20 l-10 9 z M881 63 h16 M881 71 h10"/>
+        </g>
+
+        <g text-anchor="middle">
+          <text class="sw" x="102" y="114">Transition policies</text>
+          <text class="swm" x="102" y="133">Six national systems</text>
+          <text class="sw" x="300" y="114">Hazards</text>
+          <text class="swm" x="300" y="133">Negative effects by sector</text>
+          <text class="sw" x="495" y="114">Disadvantaged groups</text>
+          <text class="swm" x="495" y="133">Who carries the cost</text>
+          <text class="sw" x="692" y="114">Mitigation measures</text>
+          <text class="swm" x="692" y="133">Built with those affected</text>
+          <text class="sb" x="890" y="114">Dr Transition</text>
+          <text class="ss" x="890" y="133">Propose. Test. Contribute.</text>
+        </g>
+
+        <path d="M890 178 V160" stroke="#9E6A16" stroke-width="1.6" fill="none"/>
+        <path d="M884 166 l6 -6 l6 6" fill="none" stroke="#9E6A16" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="890" y="198" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="#9E6A16">You are here</text>
+      </svg>
+      </div>
+      <figcaption class="cap">Every hazard you are asked to mitigate reaches the platform through these four research stages.</figcaption>
+    </figure>
+  </div>
+</div>
+</header>
+
+<div class="stats">
+<div class="wrap">
+  <div class="statgrid">
+    <div class="stat">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#3D6B4C" stroke-width="1.4" stroke-linecap="round"><path d="M12 21.5s7-6.4 7-11.3a7 7 0 1 0-14 0c0 4.9 7 11.3 7 11.3Z"/><circle cx="12" cy="10" r="2.6"/></svg>
+      <div><b>6</b><span>countries studied in depth</span></div>
+    </div>
+    <div class="stat">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#3D6B4C" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 3 8.1l9 4.9 9-4.9-9-4.9Z"/><path d="M3 12.8 12 17.7l9-4.9"/></svg>
+      <div><b>3</b><span>sectors of the economy</span></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<main>
+
+<section>
+<div class="wrap">
+  <h2>What FITTER-EU is</h2>
+  <div style="margin-top:22px;max-width:66ch">
+    <div>
+      <p class="lede">A Horizon Europe research project asking a question policy rarely asks in advance: if we push this transition measure, who is worse off afterwards — and what would we do about it?</p>
+      <p>Its full title is <em>Fair and inclusive twin transitions for a stronger social Europe</em>, coordinated by Technological University Dublin across ten partner organisations.</p>
+      <p>The distinctive contribution is <strong>anticipatory governance</strong> — moving the analysis of harm from after the fact to before the decision. Rather than measuring who was hurt in hindsight, the project builds an evidence base and a working tool that show the likely distribution of harm while a policy is still a draft.</p>
+      <p>It treats vulnerability as intersectional. People are rarely disadvantaged along one axis alone, and a measure that helps low-income households in general can still miss low-income rural households without a car, or older tenants who cannot act on a retrofit grant.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>The twin transition, and why it needs two words</h2>
+  <p class="lede">Europe is decarbonising and digitalising at the same time. The two are usually studied separately. FITTER-EU treats them as one interacting system — because they reinforce and undercut each other, and the overlap is where damage concentrates.</p>
+
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 760 470" style="min-width:620px" role="img" aria-labelledby="vnT vnD">
+      <title id="vnT">How the green and digital transitions compound</title>
+      <desc id="vnD">Two overlapping circles for the green and digital transitions; the overlap is labelled compounding effects, with three worked examples beneath.</desc>
+
+      <circle cx="320" cy="150" r="118" fill="#DAE5DA" fill-opacity=".85" stroke="#3D6B4C" stroke-width="1.5"/>
+      <circle cx="440" cy="150" r="118" fill="#D7E4EB" fill-opacity=".62" stroke="#2A6A8A" stroke-width="1.5"/>
+
+      <g text-anchor="middle">
+        <text x="248" y="132" font-family="Inter,sans-serif" font-size="15" font-weight="600" fill="#2C4F38">Green</text>
+        <text x="248" y="152" font-family="Inter,sans-serif" font-size="15" font-weight="600" fill="#2C4F38">transition</text>
+        <text x="248" y="176" class="ss" fill="#3D6B4C">Retrofits, renewables,</text>
+        <text x="248" y="192" class="ss" fill="#3D6B4C">electric mobility</text>
+
+        <text x="512" y="132" font-family="Inter,sans-serif" font-size="15" font-weight="600" fill="#1E4E66">Digital</text>
+        <text x="512" y="152" font-family="Inter,sans-serif" font-size="15" font-weight="600" fill="#1E4E66">transition</text>
+        <text x="512" y="176" class="ss" fill="#2A6A8A">Smart meters, online-</text>
+        <text x="512" y="192" class="ss" fill="#2A6A8A">only public services</text>
+
+        <text x="380" y="144" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="#17222C">Compounding</text>
+        <text x="380" y="161" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="#17222C">effects</text>
+      </g>
+
+      <path d="M380 268 V298" stroke="#17222C" stroke-width="1.3" fill="none"/>
+      <path d="M374 292 l6 6 l6 -6" fill="none" stroke="#17222C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+      <g fill="#F4F5F1" stroke="#17222C" stroke-width="1">
+        <rect x="20" y="312" width="230" height="134"/>
+        <rect x="265" y="312" width="230" height="134"/>
+        <rect x="510" y="312" width="230" height="134"/>
+      </g>
+      <g fill="#9E6A16">
+        <rect x="20" y="312" width="230" height="4"/>
+        <rect x="265" y="312" width="230" height="4"/>
+        <rect x="510" y="312" width="230" height="4"/>
+      </g>
+
+      <text x="40" y="348" class="sb">Digitally gated subsidy</text>
+      <text x="40" y="376" class="ss">A retrofit grant delivered through</text>
+      <text x="40" y="394" class="ss">an online-only application. The</text>
+      <text x="40" y="412" class="ss">household most in need is the</text>
+      <text x="40" y="430" class="ss">least able to claim it.</text>
+
+      <text x="285" y="348" class="sb">Invisible in the data</text>
+      <text x="285" y="376" class="ss">Smart-meter rollouts measure</text>
+      <text x="285" y="394" class="ss">connected homes. Households</text>
+      <text x="285" y="412" class="ss">outside the system drop out of</text>
+      <text x="285" y="430" class="ss">the evidence entirely.</text>
+
+      <text x="530" y="348" class="sb">Mobility priced twice</text>
+      <text x="530" y="376" class="ss">A low-emission zone plus app-</text>
+      <text x="530" y="394" class="ss">based access charges the same</text>
+      <text x="530" y="412" class="ss">person for a car they cannot</text>
+      <text x="530" y="430" class="ss">replace and an app they lack.</text>
+    </svg>
+    </div>
+    <figcaption class="cap">Each of these is invisible to an analysis that looks at one transition at a time. The overlap is the project's core object of study.</figcaption>
+  </figure>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>How the evidence was built</h2>
+  <p class="lede">Nothing in Dr Transition's knowledge base is there by assertion. Each layer was produced by a defined method and published as an open deliverable.</p>
+
+  <div style="margin-top:34px">
+
+    <div class="stage">
+      <div class="med" style="border-color:#3D6B4C">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#3D6B4C" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M6 10.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-5.5"/></svg>
+      </div>
+      <div>
+        <h3>01 · Defining a just transition, precisely enough to test</h3>
+        <p>A systematic mapping of existing theory, approaches and indicators of eco-social justice, followed by a critical reworking of how the economy, the labour market and inequality itself are defined in EU policy language.</p>
+        <p>This produced the operational definitions everything downstream depends on: what counts as a disadvantaged group, what counts as a harm, and what makes a measure just rather than merely effective.</p>
+        <span class="tag">Systematic literature mapping · critical concept analysis · intersectional framing</span>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="med" style="border-color:#2A6A8A">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#2A6A8A" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5.5" r="2.6"/><circle cx="5.5" cy="18.5" r="2.6"/><circle cx="18.5" cy="18.5" r="2.6"/><path d="M12 8.1v3.9m0 0-5.3 4.1M12 12l5.3 4.1"/></svg>
+      </div>
+      <div>
+        <h3>02 · Mapping who actually decides, in each country</h3>
+        <p>A normative model of what a just transition governance system should contain, tested against the real policies, institutions, actors and decision processes of six member states.</p>
+        <p>The comparison exposes gaps and bottlenecks, and shows which enablers of eco-social policy exist in one country and not another. This is why a measure that works in Ireland is not automatically portable to Hungary.</p>
+        <span class="tag">Governance framework review · policy and actor mapping across six national systems</span>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="med" style="border-color:#9E6A16">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#9E6A16" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 2.5 20.5h19L12 3.5Z"/><path d="M12 10v4.2"/><path d="M12 17.4h.01"/></svg>
+      </div>
+      <div>
+        <h3>03 · Establishing the baseline, then the hazards</h3>
+        <p>National baseline scenarios were derived from each country's long-term strategies and action plans for meeting EU energy targets and Paris commitments — the trajectory already in motion. Vulnerabilities were mapped against that baseline in four sectors, using indicators and profiles of structurally vulnerable cohorts.</p>
+        <p>From the baseline, participatory future scenarios were built and assessed for hazards: the specific negative effects a transition policy can produce, the drivers behind them, and the groups exposed to them.</p>
+        <span class="tag">MLP-PESTLE analytical framework · stakeholder interviews · iterative Delphi surveys with experts</span>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="med" style="border-color:#2A6A8A">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#2A6A8A" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.5h18"/><path d="M6 20.5V12m4.5 8.5V6M15 20.5v-5.5m4.5 5.5V9"/></svg>
+      </div>
+      <div>
+        <h3>04 · Testing whether exposed people see the same hazards</h3>
+        <p>A dedicated survey took the hazards identified in the hazards deliverable and put them to the public across the six countries in energy, housing and transport, asking how serious each one is considered to be.</p>
+        <p>Ordinal regression with national macro-level indicators identifies which socio-demographic and behavioural characteristics predict high perceived seriousness. Expert-identified risk and lived experience of risk are not always the same thing, and the gap between them is itself a finding.</p>
+        <span class="tag">Sector-stratified survey · ordinal regression · regularised predictor selection</span>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="med" style="border-color:#3D6B4C">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#3D6B4C" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="7" r="2.4"/><circle cx="17.5" cy="7" r="2.4"/><circle cx="12" cy="17.5" r="2.4"/><path d="M8.2 8.8 10.5 15.4M15.8 8.8 13.5 15.4M8.9 7h6.2"/></svg>
+      </div>
+      <div>
+        <h3>05 · Writing measures with the people who carry the risk</h3>
+        <p>Between September and December 2025, national laboratories ran in all six countries — in-person and online sessions with intermediary organisations representing disadvantaged groups, policymakers, policy experts and civil society actors.</p>
+        <p>Sessions used system mapping to trace how a transition harm actually propagates, then moved from that map to concrete policy proposals. Each country produced a portfolio of measures, some adapting existing policy and some entirely new.</p>
+        <span class="tag">Structured facilitation · systemic mapping · six national case studies</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>How measures were classified</h2>
+  <p class="lede">Every measure produced in the labs was assessed on two axes and placed accordingly. This classification is what turns a portfolio into something usable rather than a wish list — and it is the same judgement Dr Transition asks you to think through.</p>
+
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 700 470" style="min-width:580px" role="img" aria-labelledby="qdT qdD">
+      <title id="qdT">Measure classification quadrant</title>
+      <desc id="qdD">Transformative potential plotted against feasibility, producing four categories: long-horizon ambition, systemic shift, marginal fix and quick win.</desc>
+
+      <rect x="120" y="40" width="260" height="170" fill="#F1E5CA" fill-opacity=".5" stroke="#17222C" stroke-width="1"/>
+      <rect x="380" y="40" width="260" height="170" fill="#DAE5DA" stroke="#17222C" stroke-width="1"/>
+      <rect x="120" y="210" width="260" height="170" fill="#F4F5F1" stroke="#17222C" stroke-width="1"/>
+      <rect x="380" y="210" width="260" height="170" fill="#D7E4EB" fill-opacity=".65" stroke="#17222C" stroke-width="1"/>
+
+      <g text-anchor="middle">
+        <text x="250" y="112" class="sb">Long-horizon ambition</text>
+        <text x="250" y="140" class="ss">Would change the system,</text>
+        <text x="250" y="158" class="ss">but nothing can deliver it yet</text>
+
+        <text x="510" y="112" class="sb">Systemic shift</text>
+        <text x="510" y="140" class="ss">High impact and deliverable —</text>
+        <text x="510" y="158" class="ss">the measures worth fighting for</text>
+
+        <text x="250" y="282" class="sb">Marginal fix</text>
+        <text x="250" y="310" class="ss">Neither reaches far nor</text>
+        <text x="250" y="328" class="ss">lands easily. Deprioritise</text>
+
+        <text x="510" y="282" class="sb">Quick win</text>
+        <text x="510" y="310" class="ss">Easy to implement, limited</text>
+        <text x="510" y="328" class="ss">reach. Useful as a first step</text>
+      </g>
+
+      <line x1="120" y1="34" x2="120" y2="400" stroke="#17222C" stroke-width="1.5"/>
+      <line x1="100" y1="380" x2="666" y2="380" stroke="#17222C" stroke-width="1.5"/>
+      <path d="M120 28 l-6 12 h12 z" fill="#17222C"/>
+      <path d="M672 380 l-12 -6 v12 z" fill="#17222C"/>
+
+      <text x="80" y="215" class="sb" text-anchor="middle" transform="rotate(-90 80 215)">Transformative potential</text>
+      <text x="393" y="418" class="sb" text-anchor="middle">Feasibility</text>
+      <text x="112" y="398" class="ss" text-anchor="end">low</text>
+      <text x="112" y="50" class="ss" text-anchor="end">high</text>
+      <text x="652" y="400" class="ss" text-anchor="end">high</text>
+
+      <text x="380" y="452" class="ss" text-anchor="middle">Each national portfolio contained both adaptations of existing policy and entirely new proposals.</text>
+    </svg>
+    </div>
+  </figure>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Where the evidence applies</h2>
+  <p class="lede">Four sectors were analysed for baseline vulnerabilities and hazards. Three carried through into the survey and the co-creation labs — and those three are where the knowledge base runs deepest.</p>
+
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 700 250" style="min-width:580px" role="img" aria-labelledby="mxT mxD">
+      <title id="mxT">Sector coverage matrix</title>
+      <desc id="mxD">Energy, housing and transport are covered by hazard analysis, the perception survey and the co-creation labs.</desc>
+
+      <g class="ss" text-anchor="middle">
+        <text x="400" y="46">Hazard analysis</text>
+        <text x="520" y="46">Perception survey</text>
+        <text x="640" y="46">Co-creation labs</text>
+      </g>
+      <line x1="20" y1="60" x2="680" y2="60" stroke="#17222C" stroke-width="1.5"/>
+
+      <g fill="none" stroke="#3D6B4C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M32 90 l10 -18 v11 h9 l-10 18 v-11 z"/>
+        <path d="M30 148 l12 -11 l12 11 M34 148 v12 h16 v-12"/>
+        <path d="M29 202 h18 v11 h-18 z M47 205 h5 l4 5 v3 h-9 M33 218 a2.5 2.5 0 1 0 .01 0 M50 218 a2.5 2.5 0 1 0 .01 0"/>
+      </g>
+
+      <g class="st">
+        <text x="70" y="88">Energy</text>
+        <text x="70" y="147">Housing and built environment</text>
+        <text x="70" y="206">Transport and mobility</text>
+      </g>
+
+      <g fill="#3D6B4C">
+        <rect x="388" y="70" width="24" height="24"/><rect x="508" y="70" width="24" height="24"/><rect x="628" y="70" width="24" height="24"/>
+        <rect x="388" y="129" width="24" height="24"/><rect x="508" y="129" width="24" height="24"/><rect x="628" y="129" width="24" height="24"/>
+        <rect x="388" y="188" width="24" height="24"/><rect x="508" y="188" width="24" height="24"/><rect x="628" y="188" width="24" height="24"/>
+      </g>
+    </svg>
+    </div>
+    <figcaption class="cap">Solid squares mark coverage; dashed squares mark activities that sector was not part of.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 700 122" style="min-width:580px" role="img" aria-labelledby="ctT ctD">
+      <title id="ctT">Countries studied</title>
+      <desc id="ctD">Germany, Hungary, Ireland, Italy, Portugal and Spain.</desc>
+      <g fill="#E9ECE5" stroke="#3D6B4C" stroke-width="1.3">
+        <circle cx="70" cy="48" r="32"/><circle cx="182" cy="48" r="32"/><circle cx="294" cy="48" r="32"/>
+        <circle cx="406" cy="48" r="32"/><circle cx="518" cy="48" r="32"/><circle cx="630" cy="48" r="32"/>
+      </g>
+      <g text-anchor="middle" font-family="Inter,sans-serif" font-size="17" font-weight="600" fill="#2C4F38">
+        <text x="70" y="54">DE</text><text x="182" y="54">HU</text><text x="294" y="54">IE</text>
+        <text x="406" y="54">IT</text><text x="518" y="54">PT</text><text x="630" y="54">ES</text>
+      </g>
+      <g class="ss" text-anchor="middle">
+        <text x="70" y="104">Germany</text><text x="182" y="104">Hungary</text><text x="294" y="104">Ireland</text>
+        <text x="406" y="104">Italy</text><text x="518" y="104">Portugal</text><text x="630" y="104">Spain</text>
+      </g>
+    </svg>
+    </div>
+  </figure>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Where your input goes</h2>
+  <p class="lede">The co-creation labs did not end when the sessions closed — their outputs were structured to feed this platform. Dr Transition continues the same process with a wider set of contributors, and holds every proposal to the same evidential standard.</p>
+
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 700 610" style="min-width:600px" role="img" aria-labelledby="flT flD">
+      <title id="flT">How Dr Transition handles your proposal</title>
+      <desc id="flD">A proposal passes a clarity check, branches on whether a published source was supplied, and resolves to supported, cannot conclude, or contradicted.</desc>
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <rect x="205" y="14" width="290" height="62" fill="#17222C"/>
+      <text x="350" y="42" class="sw" text-anchor="middle">A hazard from the research</text>
+      <text x="350" y="62" class="swm" text-anchor="middle">plus your measure, reason and source</text>
+      <line x1="350" y1="76" x2="350" y2="114" stroke="#17222C" stroke-width="1.5" marker-end="url(#ar)"/>
+
+      <rect x="205" y="120" width="290" height="62" fill="#F4F5F1" stroke="#17222C" stroke-width="1.2"/>
+      <text x="350" y="148" class="sb" text-anchor="middle">Clarity check</text>
+      <text x="350" y="168" class="ss" text-anchor="middle">Is the proposal understandable as written?</text>
+      <path d="M495 138 h60 a18 18 0 0 1 0 36 H500" fill="none" stroke="#9E6A16" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+      <text x="578" y="150" class="ss" fill="#9E6A16">it asks you,</text>
+      <text x="578" y="168" class="ss" fill="#9E6A16">never guesses</text>
+
+      <line x1="350" y1="182" x2="350" y2="234" stroke="#17222C" stroke-width="1.5" marker-end="url(#ar)"/>
+
+      <rect x="195" y="240" width="310" height="48" fill="#E9ECE5" stroke="#17222C" stroke-width="1.2"/>
+      <text x="350" y="269" class="sb" text-anchor="middle">Did you supply a published source?</text>
+
+      <path d="M350 288 V312 H150 V334" fill="none" stroke="#17222C" stroke-width="1.4" marker-end="url(#ar)"/>
+      <path d="M350 288 V312 H550 V334" fill="none" stroke="#17222C" stroke-width="1.4" marker-end="url(#ar)"/>
+      <text x="250" y="306" class="ss" text-anchor="middle">yes</text>
+      <text x="452" y="306" class="ss" text-anchor="middle">no</text>
+
+      <rect x="30" y="340" width="240" height="64" fill="#D7E4EB" fill-opacity=".7" stroke="#2A6A8A" stroke-width="1.2"/>
+      <text x="150" y="368" class="sb" text-anchor="middle">Checked against your source</text>
+      <text x="150" y="388" class="ss" text-anchor="middle">once the source itself is verified</text>
+
+      <rect x="430" y="340" width="240" height="64" fill="#DAE5DA" stroke="#3D6B4C" stroke-width="1.2"/>
+      <text x="550" y="368" class="sb" text-anchor="middle">Checked against the</text>
+      <text x="550" y="388" class="sb" text-anchor="middle">project knowledge base</text>
+
+      <path d="M150 404 V432" fill="none" stroke="#17222C" stroke-width="1.4"/>
+      <path d="M550 404 V432" fill="none" stroke="#17222C" stroke-width="1.4"/>
+      <line x1="110" y1="432" x2="590" y2="432" stroke="#17222C" stroke-width="1.4"/>
+      <line x1="110" y1="432" x2="110" y2="462" stroke="#17222C" stroke-width="1.4" marker-end="url(#ar)"/>
+      <line x1="350" y1="432" x2="350" y2="462" stroke="#17222C" stroke-width="1.4" marker-end="url(#ar)"/>
+      <line x1="590" y1="432" x2="590" y2="462" stroke="#17222C" stroke-width="1.4" marker-end="url(#ar)"/>
+
+      <rect x="30" y="468" width="160" height="48" fill="#3D6B4C"/>
+      <rect x="270" y="468" width="160" height="48" fill="#9E6A16"/>
+      <rect x="510" y="468" width="160" height="48" fill="#8C3A2E"/>
+      <g class="sw" text-anchor="middle" font-size="15">
+        <text x="110" y="498">Supported</text>
+        <text x="350" y="498">Cannot conclude</text>
+        <text x="590" y="498">Contradicted</text>
+      </g>
+
+      <g class="ss" text-anchor="middle">
+        <text x="110" y="540">The evidence backs the</text>
+        <text x="110" y="558">measure. A verified source</text>
+        <text x="110" y="576">joins the knowledge base.</text>
+
+        <text x="350" y="540">The evidence is silent on</text>
+        <text x="350" y="558">something critical. Add a</text>
+        <text x="350" y="576">source, or it is out of scope.</text>
+
+        <text x="590" y="540">The evidence actively</text>
+        <text x="590" y="558">conflicts with the measure.</text>
+        <text x="590" y="576">The conflict is shown to you.</text>
+      </g>
+    </svg>
+    </div>
+    <figcaption class="cap">Clarity and evidential support are assessed separately, so a well-explained measure is never mistaken for a well-supported one.</figcaption>
+  </figure>
+
+  <div class="callout">
+    <p><strong>What the platform will not do:</strong> tell you a measure is sound because it sounds plausible. Every conclusion traces back either to the project's evidence base or to what you supplied and confirmed. When neither covers the question, the honest answer is that it cannot conclude — and that is the answer you get.</p>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Read the underlying research</h2>
+  <p class="lede">All FITTER-EU deliverables are published open access under CC BY 4.0.</p>
+  <div class="docs">
+    <a class="doc" href="https://zenodo.org/communities/fitter-eu/records" target="_blank" rel="noopener noreferrer"><span class="id">All</span><span class="t">FITTER-EU deliverable collection on Zenodo</span><span class="go">Open collection</span></a>
+    <a class="doc" href="https://doi.org/10.5281/zenodo.18714770" target="_blank" rel="noopener noreferrer"><span class="id">D4.2</span><span class="t">Methodology of the co-creation process and report on mitigation measures</span><span class="go">DOI</span></a>
+    <a class="doc" href="https://fitter-eu.com/en/outputs/report-outcomes-hazards-and-negative-impacts" target="_blank" rel="noopener noreferrer"><span class="id">D3.3</span><span class="t">Report on the outcomes of hazards and negative impacts</span><span class="go">Project site</span></a>
+    <a class="doc" href="https://fitter-eu.com/en/outputs/report-identification-dgs" target="_blank" rel="noopener noreferrer"><span class="id">D3.2</span><span class="t">Report on the identification of disadvantaged groups</span><span class="go">Project site</span></a>
+    <a class="doc" href="https://fitter-eu.com/en/outputs/deliverable-31-report-vulnerabilities-mapping-under-baseline-scenario" target="_blank" rel="noopener noreferrer"><span class="id">D3.1</span><span class="t">Report on vulnerabilities mapping under the baseline scenario</span><span class="go">Project site</span></a>
+    <a class="doc" href="https://fitter-eu.com/en/outputs/deliverable-d22-embedding-social-justice-twin-transition-research-concepts-definitions-and" target="_blank" rel="noopener noreferrer"><span class="id">D2.2</span><span class="t">Embedding social justice in twin transition research: concepts, definitions and methodological approach</span><span class="go">Project site</span></a>
+    <a class="doc" href="https://fitter-eu.com/en/outputs/t22-mapping-governance-twin-transition" target="_blank" rel="noopener noreferrer"><span class="id">T2.2</span><span class="t">Mapping the governance of the twin transition across six countries</span><span class="go">Project site</span></a>
+    <a class="doc" href="https://fitter-eu.com/en/outputs/deliverable-78-policy-brief" target="_blank" rel="noopener noreferrer"><span class="id">D7.8</span><span class="t">Policy brief — twin transition and just transition: policy insights from FITTER-EU</span><span class="go">Project site</span></a>
+    <a class="doc" href="https://cordis.europa.eu/project/id/101132546" target="_blank" rel="noopener noreferrer"><span class="id">CORDIS</span><span class="t">Official project record and periodic reporting</span><span class="go">European Commission</span></a>
+  </div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+  <h2>Project details</h2>
+  <div class="facts">
+    <div><dt>Programme</dt><dd>Horizon Europe RIA</dd></div>
+    <div><dt>Grant agreement</dt><dd>101132546</dd></div>
+    <div><dt>EU contribution</dt><dd>€2,999,875</dd></div>
+    <div><dt>Coordinator</dt><dd>TU Dublin</dd></div>
+    <div><dt>Final conference</dt><dd>Nov 2026, Seville</dd></div>
+  </div>
+
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 1000 178" style="min-width:820px" role="img" aria-labelledby="tlT tlD">
+      <title id="tlT">Project timeline</title>
+      <desc id="tlD">February 2024 to January 2027, marking the co-creation labs in late 2025, the D4.2 publication in February 2026, and the final conference in November 2026.</desc>
+      <rect x="524" y="80" width="74" height="24" fill="#DAE5DA" stroke="#3D6B4C" stroke-width="1"/>
+      <line x1="60" y1="92" x2="940" y2="92" stroke="#17222C" stroke-width="1.5"/>
+      <g stroke="#17222C" stroke-width="1.5">
+        <line x1="60" y1="84" x2="60" y2="100"/><line x1="353" y1="86" x2="353" y2="98"/>
+        <line x1="647" y1="84" x2="647" y2="100"/><line x1="940" y1="84" x2="940" y2="100"/>
+      </g>
+      <circle cx="867" cy="92" r="7" fill="#9E6A16"/>
+      <circle cx="647" cy="92" r="5" fill="#2A6A8A"/>
+      <g stroke="#5C6873" stroke-width="1" stroke-dasharray="2 3">
+        <line x1="561" y1="66" x2="561" y2="78"/><line x1="867" y1="66" x2="867" y2="84"/>
+        <line x1="561" y1="106" x2="561" y2="132"/><line x1="867" y1="100" x2="867" y2="132"/>
+        <line x1="647" y1="100" x2="647" y2="132"/>
+      </g>
+      <g class="sb" text-anchor="middle">
+        <text x="90" y="60">Project start</text>
+        <text x="561" y="60">National co-creation labs</text>
+        <text x="867" y="60">Final conference</text>
+      </g>
+      <g class="ss" text-anchor="middle">
+        <text x="60" y="122">Feb 2024</text><text x="353" y="122">Feb 2025</text>
+        <text x="647" y="122">Feb 2026</text><text x="940" y="122">Jan 2027</text>
+        <text x="561" y="135">Sep – Dec 2025 · six countries</text>
+        <text x="867" y="148">Seville · 26 Nov 2026</text>
+        <text x="647" y="150" fill="#2A6A8A">D4.2 published</text>
+      </g>
+    </svg>
+    </div>
+  </figure>
+</div>
+</section>
+
+</main>
+
+<footer>
+<div class="wrap fg">
+  <div>
+    <p>Dr Transition is developed within FITTER-EU — <em>Fair and inclusive twin transitions for a stronger social Europe</em> — a Horizon Europe research and innovation action running from February 2024 to January 2027, coordinated by Technological University Dublin.</p>
+    <p><a href="https://fitter-eu.com" target="_blank" rel="noopener noreferrer">fitter-eu.com</a></p>
+  </div>
+  <div>
+    <p>Funded by the European Union under grant agreement 101132546, call HORIZON-CL2-2023-TRANSFORMATIONS-01-10.</p>
+    <p>Views and opinions expressed are those of the authors only and do not necessarily reflect those of the European Union or the European Commission. Neither the European Union nor the granting authority can be held responsible for them.</p>
+  </div>
+</div>
+</footer>
+
+</body>
+</html>

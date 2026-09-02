@@ -1,6 +1,9 @@
 const authModal = document.querySelector("#authModal");
 const startAnalysisButton = document.querySelector("#startAnalysisButton");
+const aboutProjectModal = document.querySelector("#aboutProjectModal");
+const aboutProjectButton = document.querySelector("#aboutProjectButton");
 const closeAuthModalButton = document.querySelector(".auth-modal-close");
+const closeAboutProjectModalButton = document.querySelector(".about-project-modal-close");
 const authTabs = Array.from(document.querySelectorAll("[data-auth-tab]"));
 const authPanels = Array.from(document.querySelectorAll(".auth-tab-panel"));
 const signupForm = document.querySelector("#signupForm");
@@ -42,6 +45,14 @@ function openAuthModal(mode = authModal?.dataset.authMode || "login") {
   }
 }
 
+function openAboutProjectModal() {
+  if (typeof aboutProjectModal?.showModal === "function") {
+    aboutProjectModal.showModal();
+  } else {
+    aboutProjectModal?.setAttribute("open", "");
+  }
+}
+
 function showStep(stepNumber) {
   steps.forEach((step) => {
     step.hidden = step.dataset.step !== String(stepNumber);
@@ -80,9 +91,14 @@ function validatePasswordRules() {
 }
 
 startAnalysisButton?.addEventListener("click", () => openAuthModal("login"));
+aboutProjectButton?.addEventListener("click", openAboutProjectModal);
 closeAuthModalButton?.addEventListener("click", () => authModal?.close());
+closeAboutProjectModalButton?.addEventListener("click", () => aboutProjectModal?.close());
 authModal?.addEventListener("click", (event) => {
   if (event.target === authModal) authModal.close();
+});
+aboutProjectModal?.addEventListener("click", (event) => {
+  if (event.target === aboutProjectModal) aboutProjectModal.close();
 });
 authTabs.forEach((tab) => {
   tab.addEventListener("click", () => setAuthMode(tab.dataset.authTab));
