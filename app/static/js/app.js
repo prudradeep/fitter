@@ -162,6 +162,11 @@ const platformUsersZoomIn = document.querySelector("#platformUsersZoomIn");
 const platformUsersZoomOut = document.querySelector("#platformUsersZoomOut");
 const platformUsersZoomReset = document.querySelector("#platformUsersZoomReset");
 const uiTour = document.querySelector("#uiTour");
+const uiTourOverlay = document.querySelector(".ui-tour-overlay");
+const uiTourOverlayTop = document.querySelector(".ui-tour-overlay-top");
+const uiTourOverlayLeft = document.querySelector(".ui-tour-overlay-left");
+const uiTourOverlayRight = document.querySelector(".ui-tour-overlay-right");
+const uiTourOverlayBottom = document.querySelector(".ui-tour-overlay-bottom");
 const uiTourCard = document.querySelector(".ui-tour-card");
 const uiTourStep = document.querySelector("#uiTourStep");
 const uiTourTitle = document.querySelector("#uiTourTitle");
@@ -755,7 +760,7 @@ async function renderCountrySelectionMap() {
                 </div>
               </div>
               <div class="stage-country-tooltip-count">
-                <small>Analyses</small>
+                <small>Sessions</small>
                 <strong>${this.point.analyses}</strong>
               </div>
             </div>
@@ -863,7 +868,7 @@ async function renderRegionMap(country, region, { keepCards = false } = {}) {
                 <div><strong>${regionName}</strong></div>
               </div>
               <div class="stage-country-tooltip-count">
-                <small>Analyses</small>
+                <small>Sessions</small>
                 <strong>${this.point.analyses}</strong>
               </div>
             </div>
@@ -1984,22 +1989,6 @@ chatScrollBottomButton?.addEventListener("click", () => {
   chatLog?.scrollTo({ top: chatLog.scrollHeight, behavior: "smooth" });
 });
 chatLog?.addEventListener("click", (event) => {
-  const button = event.target.closest(".policy-sector-cta");
-  if (!button || !chatLog.contains(button) || button.disabled) return;
-  const label = (
-    button.dataset.sectorOption
-    || button.textContent.replace(/^\s*Select\s+/i, "")
-  ).trim();
-  if (!label) return;
-  pauseSpeech();
-  collapseExpandedMessages();
-  button.disabled = true;
-  syncPolicySectorActions({ sector: label });
-  disableOldOptions();
-  sendMessage(label, true);
-});
-
-chatLog?.addEventListener("click", (event) => {
   const platformUsersButton = event.target.closest("[data-open-platform-users], .platform-users-source-button");
   if (platformUsersButton) {
     event.preventDefault();
@@ -2993,7 +2982,6 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
 
 function updateSessionCard(session) {
   appState.currentSession = session || {};
-  syncPolicySectorActions(appState.currentSession);
   targetPopulationQuestions = Array.isArray(session?.target_population_questions)
     ? session.target_population_questions
     : [];
@@ -3015,16 +3003,6 @@ function updateSessionCard(session) {
   updateNewSessionButton();
   renderSelectedHazardContext(session);
   updateStageVisual(appState.currentStep, appState.currentSession, appState.currentOptions);
-}
-
-function syncPolicySectorActions(session = {}) {
-  const selected = Boolean(String(session?.sector || "").trim());
-  chatLog?.querySelectorAll(".policy-objectives-table").forEach((table) => {
-    table.classList.toggle("policy-objectives-actions-hidden", selected);
-    table.querySelectorAll(".policy-sector-cta").forEach((button) => {
-      button.hidden = selected;
-    });
-  });
 }
 
 function applyInputValues(values = {}) {
@@ -5857,8 +5835,8 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 const uiTourSteps = [
-  { target: ".stage-visual-panel", title: "Follow your analysis roadmap", text: "This left panel shows your selected context, visual progress, and the journey from country selection through evaluation." },
-  { target: ".chat-card", title: "Work with the guided chat", text: "Use this workspace to answer questions, review evidence, and move through each stage of the policy analysis." },
+  { target: ".stage-visual-panel", title: "Follow your analysis roadmap in real-time", text: "This left panel shows your selected context, visual progress, and the journey from country selection through evaluation and final report." },
+  { target: ".chat-card", title: "Work with the Dr. Transition your guided chat", text: "Use the conversation window to ask questions, provide responses for co-create hazard & mitigation measures as through each stage of the analysis." },
   { target: "#resetButton", title: "Start a new session", text: "Begin a fresh analysis at any time. Your existing sessions remain available in Manage Sessions." },
   { target: "#sessionsButton", title: "Manage your sessions", text: "Save, rename, and return to previous analysis sessions whenever you need to continue your work." },
   { target: "#settingsButton", title: "Personalize the workspace", text: "Settings contains voice, typing, validation, data, and other workspace preferences." },
@@ -5874,6 +5852,8 @@ function uiTourStorageKey() {
 function closeUiTour(markCompleted = true) {
   uiTourTarget?.classList.remove("ui-tour-target");
   uiTourTarget = null;
+  uiTourOverlay?.removeAttribute("style");
+  document.body.classList.remove("ui-tour-active", "ui-tour-panel-step");
   if (markCompleted) localStorage.setItem(uiTourStorageKey(), "true");
   if (uiTour) {
     uiTour.hidden = true;
@@ -5887,12 +5867,24 @@ function renderUiTourStep() {
   uiTourTarget = document.querySelector(step.target);
   if (!uiTourTarget) return;
   uiTourTarget.classList.add("ui-tour-target");
+  document.body.classList.add("ui-tour-active");
+  document.body.classList.toggle("ui-tour-panel-step", uiTourIndex < 2);
   uiTourStep.textContent = `Step ${uiTourIndex + 1} of ${uiTourSteps.length}`;
   uiTourTitle.textContent = step.title;
   uiTourText.textContent = step.text;
   uiTourBack.hidden = uiTourIndex === 0;
   uiTourNext.textContent = uiTourIndex === uiTourSteps.length - 1 ? "Finish" : "Next";
   const targetRect = uiTourTarget.getBoundingClientRect();
+  const targetLeft = Math.max(0, Math.min(window.innerWidth, targetRect.left));
+  const targetTop = Math.max(0, Math.min(window.innerHeight, targetRect.top));
+  const targetRight = Math.max(targetLeft, Math.min(window.innerWidth, targetRect.right));
+  const targetBottom = Math.max(targetTop, Math.min(window.innerHeight, targetRect.bottom));
+  if (uiTourOverlayTop && uiTourOverlayLeft && uiTourOverlayRight && uiTourOverlayBottom) {
+    uiTourOverlayTop.style.cssText = `left: 0; top: 0; width: 100vw; height: ${targetTop}px;`;
+    uiTourOverlayLeft.style.cssText = `left: 0; top: ${targetTop}px; width: ${targetLeft}px; height: ${targetBottom - targetTop}px;`;
+    uiTourOverlayRight.style.cssText = `left: ${targetRight}px; top: ${targetTop}px; width: ${window.innerWidth - targetRight}px; height: ${targetBottom - targetTop}px;`;
+    uiTourOverlayBottom.style.cssText = `left: 0; top: ${targetBottom}px; width: 100vw; height: ${window.innerHeight - targetBottom}px;`;
+  }
   const cardRect = uiTourCard.getBoundingClientRect();
   const left = Math.min(Math.max(16, targetRect.left), window.innerWidth - cardRect.width - 16);
   const above = targetRect.bottom + cardRect.height + 20 > window.innerHeight;
@@ -5905,6 +5897,7 @@ function startUiTourIfNeeded() {
   if (!uiTour || localStorage.getItem(uiTourStorageKey()) === "true") return;
   uiTour.hidden = false;
   uiTour.setAttribute("aria-hidden", "false");
+  document.body.classList.add("ui-tour-active");
   uiTourIndex = 0;
   renderUiTourStep();
   uiTourNext.focus();

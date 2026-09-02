@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260901-collapsible-stage-phase" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260902-tour-panel-highlight" />
   </head>
   <body data-tour-user-id="{{ current_user.id }}">
     <header class="topbar">
@@ -1122,6 +1122,12 @@
     </dialog>
 
     <div id="uiTour" class="ui-tour" hidden aria-hidden="true">
+      <div class="ui-tour-overlay" aria-hidden="true">
+        <span class="ui-tour-overlay-top"></span>
+        <span class="ui-tour-overlay-left"></span>
+        <span class="ui-tour-overlay-right"></span>
+        <span class="ui-tour-overlay-bottom"></span>
+      </div>
       <div class="ui-tour-card" role="dialog" aria-modal="false" aria-labelledby="uiTourTitle" aria-describedby="uiTourText">
         <p id="uiTourStep" class="ui-tour-step"></p>
         <h2 id="uiTourTitle"></h2>
@@ -1142,6 +1148,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260709-settings"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260902-policy-sector-cta-column"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260902-tour-panel-highlight"></script>
   </body>
 </html>

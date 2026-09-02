@@ -105,7 +105,7 @@ document.querySelectorAll("[data-coverage-map]").forEach(async (container) => {
               </dl>
               <div class="map-tooltip-accent"></div>
               <div class="map-tooltip-total">
-                <em>Analyses so far</em>
+                <em>Sessions so far</em>
                 <strong>${this.point.analyses}</strong>
               </div>
             </div>

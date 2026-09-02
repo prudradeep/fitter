@@ -135,34 +135,6 @@
   font-weight: 800;
 }
 
-.policy-sector-cta {
-  border: 1px solid #6d28d9;
-  border-radius: 999px;
-  background: #ffffff;
-  padding: 6px 10px;
-  color: #4c1d95;
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 800;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.policy-sector-cta:hover,
-.policy-sector-cta:focus-visible {
-  background: #f5f0ff;
-}
-
-.policy-sector-cta:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-
-.policy-objectives-table.policy-objectives-actions-hidden th:last-child,
-.policy-objectives-table.policy-objectives-actions-hidden td:last-child {
-  display: none;
-}
-
 .chat-log {
   height: 100%;
   min-height: 0;
