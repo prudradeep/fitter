@@ -101,7 +101,7 @@ from app.services.sector_prompt_rag import (
 logger = logging.getLogger(__name__)
 
 MAX_HAZARD_TITLE_CLARIFICATION_ROUNDS = 3
-MAX_CUSTOM_HAZARD_GENERATED_TITLE_LENGTH = 99
+MAX_CUSTOM_HAZARD_GENERATED_TITLE_LENGTH = 100
 
 class ChatHazardCreationMixin:
     def _custom_hazard_state(self, session: ChatSession) -> dict[str, object]:

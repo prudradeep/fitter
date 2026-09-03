@@ -451,3 +451,65 @@ D7 — "May" is not a requirement. §4.3.4: hazard ranking "may use salience, ef
 Report readiness threshold undefined. /report/status returns whether there's "enough data." Enough is not specified anywhere.
 
 https://whimsical.com/dr-transition-flow-chart-GzjDjMcYujZGMjBFo1qbVC
+
+
+
+
+The custom hazard creation flow works as follows:
+
+1. **Start creation**
+   - From the hazard overview, the user selects **“Add a new Hazard.”**
+   - The system clears the previous hazard selection and initializes a draft custom-hazard state.
+   - Entry point: [chat_hazard_steps.py](</F:/Dr Transition/app/services/chat_hazard_steps.py:52>)
+
+2. **Validate the hazard title**
+   - Rejects empty, repeated, gibberish, low-quality, positive-benefit, mitigation-action, personal-preference, unrelated, or wrong-sector inputs.
+   - Deterministic rules run first; the LLM classifier handles less obvious cases.
+   - The title can be accepted, rejected with a rewrite suggestion, or sent through clarification.
+   - Main handler: [chat_hazard_creation.py](</F:/Dr Transition/app/services/chat_hazard_creation.py:1581>)
+   - Rules: [custom_hazard_text_rules.py](</F:/Dr Transition/app/services/custom_hazard_text_rules.py:71>)
+
+3. **Check for duplicates**
+   - Compares against system, additional, and relevant custom hazards in the selected sector/scope.
+   - Uses exact/fuzzy matching followed by a semantic LLM check.
+   - The user can use the existing hazard, edit the proposal, or explicitly continue with the custom hazard.
+   - Logic: [chat_hazard_creation.py](</F:/Dr Transition/app/services/chat_hazard_creation.py:2146>)
+
+4. **Run multidimensional grounding**
+   - Scores five dimensions:
+     - Hazard definition
+     - Twin-transition policy relationship
+     - Selected-sector fit
+     - Country/region fit
+     - Affected-population fit
+   - Deterministic heuristics are combined with LLM validation.
+   - Strict mode requires an overall score of 75 and a minimum score of 5 in each required dimension.
+   - Validation engine: [custom_hazard_validation.py](</F:/Dr Transition/app/services/custom_hazard_validation.py:103>)
+
+5. **Collect clarification, reason, and evidence**
+   - Missing or weak dimensions generate targeted clarification questions and are rescored after each answer.
+   - A reason explaining why the proposal is a hazard is required.
+   - Evidence is optional. A URL or uploaded document can be temporarily ingested and used during validation.
+   - If clarification stops improving the score, the proposal may be rejected.
+   - Flow: [chat_hazard_creation.py](</F:/Dr Transition/app/services/chat_hazard_creation.py:1939>)
+
+6. **Review affected groups**
+   - Population groups are extracted from the hazard and clarification text.
+   - The user must review them and may add, remove, or edit groups and their reasons.
+   - At least one affected group is required before confirmation.
+   - Review handler: [chat_custom_hazard_population_steps.py](</F:/Dr Transition/app/services/chat_custom_hazard_population_steps.py:38>)
+
+7. **Persist the hazard**
+   - Only after affected-group confirmation is the hazard marked ready and saved.
+   - The system stores:
+     - The custom hazard and its reason/evidence
+     - Its country, region, and sector scope
+     - Validation/crowdsourcing metadata
+     - Confirmed population profiles and target-population matches
+   - Valid evidence is promoted from temporary to validated storage.
+   - Persistence: [chat_custom_hazard_population_steps.py](</F:/Dr Transition/app/services/chat_custom_hazard_population_steps.py:586>)
+   - Data model: [models.py](</F:/Dr Transition/app/models.py:260>)
+
+In short:
+
+`Enter hazard → title checks → duplicate check → multidimensional grounding → clarification/reason/evidence → affected-group review → save`
