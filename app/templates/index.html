@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260902-tour-panel-highlight" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260904-prompt-source-preference" />
   </head>
   <body data-tour-user-id="{{ current_user.id }}">
     <header class="topbar">
@@ -190,7 +190,21 @@
                         <path d="m19 17 .8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8L19 17Z" />
                       </svg>
                     </span>
-                    <span>Prompt Library</span>
+                    <span class="settings-action-copy">
+                      <strong>Prompt Library</strong>
+                      <small>Manage reusable AI instructions</small>
+                    </span>
+                    <span
+                      id="promptSourcePreferenceBadge"
+                      class="settings-preference-badge"
+                      data-source="auto"
+                      aria-label="Preferred prompt source: Auto"
+                      aria-live="polite"
+                      title="Preferred prompt source: Auto"
+                    >
+                      <span class="settings-preference-dot" aria-hidden="true"></span>
+                      <span id="promptSourcePreferenceLabel">Auto</span>
+                    </span>
                     <span class="settings-action-arrow" aria-hidden="true">
                       <svg viewBox="0 0 24 24" role="img" focusable="false"><path d="m9 18 6-6-6-6" /></svg>
                     </span>
@@ -1145,9 +1159,9 @@
     <script src="{{ url_for('static', path='/vendor/highcharts/highcharts-more.js') }}"></script>
     <script src="{{ url_for('static', path='/vendor/highcharts/modules/venn.js') }}"></script>
     <script src="{{ url_for('static', path='/js/app-utils.js') }}?v=20260703-voice-summary"></script>
-    <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260709-settings"></script>
+    <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260904-prompt-source-preference"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260902-tour-panel-highlight"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260904-prompt-source-preference"></script>
   </body>
 </html>

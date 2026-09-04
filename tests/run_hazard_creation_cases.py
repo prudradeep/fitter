@@ -108,7 +108,7 @@ class _HazardCreationEngine:
             reason = str(item.get("Clarification Answer 1") or item.get("User Hazard") or "").strip()
             grounding_result = self._grounding_clarification_result(item)
             with patch(
-                "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+                "app.services.chat_custom_hazard_grounding.validate_custom_hazard_dimensions",
                 AsyncMock(return_value=grounding_result),
             ):
                 response = await service._validate_custom_hazard(

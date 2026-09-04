@@ -5,6 +5,7 @@ from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
     HAZARD_ENTRY_OPTIONS,
     POST_SECTOR_OPTIONS,
+    REGIONAL_POPULATION_COMPARISON_LABEL,
     SOCIO_DEMOGRAPHIC_OPTIONS,
     STATS_DEEP_DIVE_OPTIONS,
     exact_option_label,
@@ -15,6 +16,8 @@ from app.services.chat_options import (
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.chat_session import ChatSession
 from app.services.custom_hazard_validation import default_custom_hazard_state
+from app.services.custom_hazard_state_machine import transition_custom_hazard
+from app.services.enums import ChatPhase
 from app.services.message_renderer import render_message
 
 
@@ -52,6 +55,14 @@ class ChatHazardStepsMixin:
     async def _handle_hazards_action(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
+        if (
+            normalize(message) == normalize(REGIONAL_POPULATION_COMPARISON_LABEL)
+            and session.accepted_custom_hazard
+        ):
+            return self._custom_hazard_population_region_comparison_step(
+                session_id,
+                session,
+            )
         open_selection_handler = getattr(self, "_open_selection_response_from_any_step", None)
         if open_selection_handler is not None:
             open_selection_response = await open_selection_handler(
@@ -125,7 +136,7 @@ class ChatHazardStepsMixin:
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         self._clear_selected_hazard_context(session)
-        session.phase = "custom_hazard_input"
+        transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_INPUT)
         session.custom_hazard = default_custom_hazard_state()
         session.custom_hazard_input_history = []
         session.generated_custom_hazard_title = None

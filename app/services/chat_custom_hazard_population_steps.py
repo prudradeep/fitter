@@ -5,15 +5,20 @@ import re
 from sqlalchemy import delete, select
 
 from app.llm import ask_llm_chat
-from app.models import QuestionOption, UserHazardSocioDemographic, UserQuestionResponse
+from app.models import QuestionOption, Region, UserHazardSocioDemographic, UserQuestionResponse
 from app.schemas import ChatResponse
-from app.services.chat_formatters import normalize_markdown_text
+from app.services.chat_formatters import (
+    evidence_for_display,
+    evidence_is_provided,
+    normalize_markdown_text,
+)
 from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
+    CUSTOM_HAZARD_FINAL_OPTIONS,
     HAZARD_POPULATION_REVIEW_OPTIONS,
-    POST_SECTOR_OPTIONS,
     exact_option_label,
     normalize,
+    option_list,
 )
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.chat_population_edits import (
@@ -27,7 +32,8 @@ from app.services.custom_hazard_validation import (
     frontend_custom_hazard_payload,
     normalize_custom_group,
 )
-from app.services.enums import CustomHazardAction, CustomHazardStatus
+from app.services.custom_hazard_state_machine import transition_custom_hazard
+from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE
 from app.services.message_renderer import render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
@@ -64,10 +70,11 @@ class ChatCustomHazardPopulationStepsMixin:
         else:
             profiles = self._stored_hazard_profiles(session, hazard)
         session.pending_affected_population_profiles = [dict(profile) for profile in profiles]
-        session.phase = (
-            "custom_hazard_group_review"
+        transition_custom_hazard(
+            session,
+            ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW
             if isinstance(session.custom_hazard, dict)
-            else "custom_hazard_population_review"
+            else ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
         )
         message = render_message(
             "hazard_population_review.md",
@@ -181,7 +188,7 @@ class ChatCustomHazardPopulationStepsMixin:
                     )
                 state["pending_profile_reason_group"] = ""
                 state["pending_profile_reason_queue"] = []
-                session.phase = "custom_hazard_group_review"
+                transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW)
                 return self._custom_hazard_population_review_step(session_id, session)
 
             if action in {
@@ -229,7 +236,7 @@ class ChatCustomHazardPopulationStepsMixin:
                     state["pending_profile_reason_group"] = add_items[0]
                     state["pending_profile_reason_queue"] = add_items[1:]
                     state["awaiting_group_add"] = False
-                    session.phase = "custom_hazard_profile_reason"
+                    transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_PROFILE_REASON)
                     return self._custom_hazard_response(
                         session_id=session_id,
                         session=session,
@@ -274,7 +281,7 @@ class ChatCustomHazardPopulationStepsMixin:
                     )
                 state["pending_profile_reason_group"] = group
                 state["awaiting_group_add"] = False
-                session.phase = "custom_hazard_profile_reason"
+                transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_PROFILE_REASON)
                 return self._custom_hazard_response(
                     session_id=session_id,
                     session=session,
@@ -361,7 +368,7 @@ class ChatCustomHazardPopulationStepsMixin:
                         )
                     state["pending_profile_reason_group"] = group
                     state["awaiting_group_add"] = False
-                    session.phase = "custom_hazard_profile_reason"
+                    transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_PROFILE_REASON)
                     return self._custom_hazard_response(
                         session_id=session_id,
                         session=session,
@@ -540,6 +547,186 @@ class ChatCustomHazardPopulationStepsMixin:
             lines.append(line)
         return "\n".join(lines) or "- No affected population groups identified yet."
 
+    def _format_population_profiles_for_final(
+        self,
+        profiles: list[dict[str, str]],
+    ) -> str:
+        rows = self._hazard_profile_table_rows(profiles)
+        if not rows:
+            return self._format_population_profiles_for_review(profiles)
+        return self._hazard_profile_table_html(
+            rows,
+            show_admin_details=self._show_profile_admin_details(),
+        )
+
+    def _population_comparison_regions(self, session: ChatSession) -> list[Region]:
+        if session.country_id is None:
+            return []
+        regions = self.db.scalars(
+            select(Region)
+            .where(Region.country_id == session.country_id)
+            .order_by(Region.name)
+        ).all()
+        return [
+            region
+            for region in regions
+            if str(region.id) != str(session.region_id)
+            and normalize(str(region.name)) != normalize(str(session.region or ""))
+        ]
+
+    def _custom_hazard_population_region_comparison_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error_reason: str = "",
+    ) -> ChatResponse:
+        regions = self._population_comparison_regions(session)
+        if not regions:
+            session.phase = ChatPhase.HAZARDS.value
+            return ChatResponse(
+                session_id=session_id,
+                step=ChatPhase.HAZARDS.value,
+                bot_message=(
+                    "No other regions are available for comparison within "
+                    f"**{session.country or 'the selected country'}**."
+                ),
+                options=CUSTOM_HAZARD_FINAL_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+        session.phase = ChatPhase.HAZARD_POPULATION_REGION_COMPARISON.value
+        message = (
+            f"## Compare regional affected population\n\n"
+            f"Current region: **{session.region or 'Selected region'}**\n\n"
+            f"Select another region in **{session.country or 'the selected country'}** "
+            "to compare affected population percentages."
+        )
+        if error_reason:
+            message = f"**{error_reason}**\n\n{message}"
+        return ChatResponse(
+            session_id=session_id,
+            step=ChatPhase.HAZARD_POPULATION_REGION_COMPARISON.value,
+            bot_message=message,
+            options=option_list(regions),
+            session=session.summary(),
+            error=bool(error_reason),
+        )
+
+    async def _profiles_for_population_region_comparison(
+        self,
+        session: ChatSession,
+        hazard: str,
+        profiles: list[dict[str, str]],
+        region: Region,
+    ) -> list[dict[str, str]]:
+        compared_profiles: list[dict[str, str]] = []
+        for profile in profiles:
+            updated = dict(profile)
+            lookup_labels = [
+                str(label).strip()
+                for label in self._list_from_profile_or_metadata(
+                    profile,
+                    "population_lookup_labels",
+                )
+                if str(label).strip()
+            ]
+            if not lookup_labels:
+                lookup_labels = self._additional_profile_population_lookup_labels(profile)
+            population_values: list[dict[str, object]] = []
+            for label in lookup_labels:
+                try:
+                    prevalence = await self.eurostat.get_prevalence(
+                        label,
+                        country_code=str(session.country or ""),
+                        nuts_code=str(region.name),
+                        sector=str(session.sector or ""),
+                        hazard=hazard,
+                        confirmed_predictor_category=label,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to fetch affected population for comparison region"
+                    )
+                    continue
+                if prevalence is not None:
+                    population_values.append(
+                        {
+                            "population_pct": prevalence.get("population_pct"),
+                            "national_population_pct": prevalence.get(
+                                "national_population_pct"
+                            ),
+                        }
+                    )
+            percentages = (
+                self._population_context_percentages(population_values)
+                if population_values
+                else None
+            )
+            updated["regional_population_pct"] = (
+                percentages[0] if percentages is not None else None
+            )
+            if updated.get("national_population_pct") is None and percentages is not None:
+                updated["national_population_pct"] = percentages[1]
+            compared_profiles.append(updated)
+        return compared_profiles
+
+    async def _handle_custom_hazard_population_region_comparison(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+    ) -> ChatResponse:
+        regions = self._population_comparison_regions(session)
+        selected_region = next(
+            (
+                region
+                for region in regions
+                if str(region.id) == str(message).strip()
+                or normalize(str(region.name)) == normalize(message)
+            ),
+            None,
+        )
+        if selected_region is None:
+            fuzzy_region = self._fuzzy_row_by_name(regions, message)
+            if fuzzy_region is not None:
+                selected_region = fuzzy_region
+        if selected_region is None:
+            return self._custom_hazard_population_region_comparison_step(
+                session_id,
+                session,
+                error_reason="Please select one of the available comparison regions.",
+            )
+
+        hazard = str(session.accepted_custom_hazard or "").strip()
+        profiles = self._stored_hazard_profiles(session, hazard)
+        compared_profiles = await self._profiles_for_population_region_comparison(
+            session,
+            hazard,
+            profiles,
+            selected_region,
+        )
+        table = self._hazard_profile_region_comparison_table_html(
+            profiles,
+            compared_profiles,
+            current_region=str(session.region or "Current region"),
+            selected_region=str(selected_region.name),
+            show_admin_details=self._show_profile_admin_details(),
+        )
+        session.phase = ChatPhase.HAZARDS.value
+        return ChatResponse(
+            session_id=session_id,
+            step="hazard_population_region_comparison_result",
+            bot_message=(
+                "## Regional affected population comparison\n\n"
+                f"{table}\n\n"
+                "Choose **Compare regional population** to compare another region."
+            ),
+            options=CUSTOM_HAZARD_FINAL_OPTIONS,
+            session=session.summary(),
+            error=False,
+        )
+
     def _record_target_population_answer(
         self,
         session_id: str,
@@ -609,7 +796,7 @@ class ChatCustomHazardPopulationStepsMixin:
     def _prepare_custom_hazard_added_profiles(
         self, session_id: str, session: ChatSession
     ) -> str:
-        session.phase = "hazards"
+        transition_custom_hazard(session, ChatPhase.HAZARDS)
         accepted_hazard = session.accepted_custom_hazard or "New hazard"
         if not self._stored_hazard_profiles(session, accepted_hazard):
             self._set_custom_hazard_profiles_from_target_population(session)
@@ -629,18 +816,21 @@ class ChatCustomHazardPopulationStepsMixin:
         hazard_record_id = (
             session.accepted_custom_hazard_record_id or session.selected_hazard_record_id
         )
-        custom_hazard_id = session.accepted_custom_hazard_id or self._custom_hazard_id_for_context(
+        custom_hazard_id = session.accepted_custom_hazard_id
+        shared_hazard = self._ensure_custom_hazard(
             session,
             accepted_hazard,
+            reason=session.accepted_custom_hazard_reason,
+            evidence=session.accepted_custom_hazard_evidence,
+            summary=session.accepted_custom_hazard_summary,
         )
-        if custom_hazard_id is None:
-            shared_hazard = self._ensure_custom_hazard(
+        if shared_hazard is not None:
+            custom_hazard_id = shared_hazard.id
+        elif custom_hazard_id is None:
+            custom_hazard_id = self._custom_hazard_id_for_context(
                 session,
                 accepted_hazard,
-                reason=session.accepted_custom_hazard_reason,
-                evidence=session.accepted_custom_hazard_evidence,
             )
-            custom_hazard_id = shared_hazard.id if shared_hazard else None
         session.accepted_custom_hazard_id = custom_hazard_id
         if accepted_hazard and not any(
             normalize(item) == normalize(accepted_hazard)
@@ -649,6 +839,11 @@ class ChatCustomHazardPopulationStepsMixin:
             if session.custom_hazards is None:
                 session.custom_hazards = []
             session.custom_hazards.append(accepted_hazard)
+        if session.custom_hazard_evidence_statuses is None:
+            session.custom_hazard_evidence_statuses = {}
+        session.custom_hazard_evidence_statuses[normalize(accepted_hazard)] = (
+            evidence_is_provided(session.accepted_custom_hazard_evidence)
+        )
         self._record_activity(session_id, session, "custom_hazard_added", accepted_hazard)
         if session.accepted_custom_hazard_evidence not in {None, "", "Not provided"}:
             self._promote_temporary_evidence(
@@ -680,26 +875,83 @@ class ChatCustomHazardPopulationStepsMixin:
                 )
         return accepted_hazard
 
+    @staticmethod
+    def _ensure_custom_hazard_summary_visible(message: str, summary: str) -> str:
+        """Keep required output visible when a DB prompt predates this field."""
+        summary = str(summary or "").strip()
+        if not summary or re.search(
+            r"<strong>\s*Summary\s*:</strong>", message, flags=re.IGNORECASE
+        ):
+            return message
+
+        summary_html = (
+            '<p><strong>Summary:</strong> '
+            f"{html.escape(summary)}</p>"
+        )
+        for marker in (
+            r"(?=<p><strong>\s*Reason\s*:</strong>)",
+            r"(?=<h[1-6][^>]*>\s*Affected Population Groups\s*</h[1-6]>)",
+        ):
+            updated = re.sub(
+                marker,
+                summary_html,
+                message,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            if updated != message:
+                return updated
+        return f"{message}{summary_html}"
+
     def _custom_hazard_added_step_sync(self, session_id: str, session: ChatSession) -> ChatResponse:
+        if not str(session.accepted_custom_hazard_summary or "").strip():
+            hazard = session.accepted_custom_hazard or "New hazard"
+            state = session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
+            clarifications = [
+                item
+                for item in state.get("clarifications") or []
+                if isinstance(item, dict)
+            ]
+            groups = [
+                {
+                    "group": str(profile.get("name") or profile.get("profile") or "").strip(),
+                    "reason": str(profile.get("explanation") or "").strip(),
+                }
+                for profile in self._stored_hazard_profiles(session, hazard)
+                if isinstance(profile, dict)
+            ]
+            session.accepted_custom_hazard_summary = self._custom_hazard_summary_fallback(
+                session,
+                hazard,
+                session.generated_custom_hazard_title or hazard,
+                clarifications,
+                groups,
+            )
         accepted_hazard = self._prepare_custom_hazard_added_profiles(session_id, session)
+        added_message = render_message(
+            "hazard_added.md",
+            hazard=accepted_hazard,
+            original_hazard=accepted_hazard,
+            summary=session.accepted_custom_hazard_summary or "",
+            reason=session.accepted_custom_hazard_reason or "Not provided",
+            evidence=evidence_for_display(session.accepted_custom_hazard_evidence),
+            affected_population_groups=self._format_population_profiles_for_final(
+                self._stored_hazard_profiles(session, accepted_hazard)
+            ),
+            visibility_notice=self._crowd_sourcing_visibility_notice(
+                session,
+                "saved_hazard",
+            ),
+        )
+        added_message = self._ensure_custom_hazard_summary_visible(
+            added_message,
+            session.accepted_custom_hazard_summary or "",
+        )
         return ChatResponse(
             session_id=session_id,
             step="hazards",
-            bot_message=render_message(
-                "hazard_added.md",
-                hazard=accepted_hazard,
-                original_hazard=accepted_hazard,
-                reason=session.accepted_custom_hazard_reason or "Not provided",
-                evidence=session.accepted_custom_hazard_evidence or "Not provided",
-                affected_population_groups=self._format_population_profiles_for_review(
-                    self._stored_hazard_profiles(session, accepted_hazard)
-                ),
-                visibility_notice=self._crowd_sourcing_visibility_notice(
-                    session,
-                    "saved_hazard",
-                ),
-            ),
-            options=POST_SECTOR_OPTIONS,
+            bot_message=added_message,
+            options=CUSTOM_HAZARD_FINAL_OPTIONS,
             session=session.summary(),
             error=False,
         )
@@ -711,6 +963,11 @@ class ChatCustomHazardPopulationStepsMixin:
         generated_hazard = await self._ensure_custom_hazard_generated_title(
             session,
             original_hazard,
+        )
+        await self._ensure_custom_hazard_summary(
+            session,
+            original_hazard,
+            generated_hazard,
         )
         if generated_hazard and generated_hazard != original_hazard:
             if session.hazard_profiles and original_hazard in session.hazard_profiles:
@@ -729,24 +986,30 @@ class ChatCustomHazardPopulationStepsMixin:
             if session.hazard_profiles is None:
                 session.hazard_profiles = {}
             session.hazard_profiles[accepted_hazard] = enriched_profiles
+        added_message = render_message(
+            "hazard_added.md",
+            hazard=accepted_hazard,
+            original_hazard=original_hazard,
+            summary=session.accepted_custom_hazard_summary or "",
+            reason=session.accepted_custom_hazard_reason or "Not provided",
+            evidence=evidence_for_display(session.accepted_custom_hazard_evidence),
+            affected_population_groups=self._format_population_profiles_for_final(
+                self._stored_hazard_profiles(session, accepted_hazard)
+            ),
+            visibility_notice=self._crowd_sourcing_visibility_notice(
+                session,
+                "saved_hazard",
+            ),
+        )
+        added_message = self._ensure_custom_hazard_summary_visible(
+            added_message,
+            session.accepted_custom_hazard_summary or "",
+        )
         response = ChatResponse(
             session_id=session_id,
             step="hazards",
-            bot_message=render_message(
-                "hazard_added.md",
-                hazard=accepted_hazard,
-                original_hazard=original_hazard,
-                reason=session.accepted_custom_hazard_reason or "Not provided",
-                evidence=session.accepted_custom_hazard_evidence or "Not provided",
-                affected_population_groups=self._format_population_profiles_for_review(
-                    self._stored_hazard_profiles(session, accepted_hazard)
-                ),
-                visibility_notice=self._crowd_sourcing_visibility_notice(
-                    session,
-                    "saved_hazard",
-                ),
-            ),
-            options=POST_SECTOR_OPTIONS,
+            bot_message=added_message,
+            options=CUSTOM_HAZARD_FINAL_OPTIONS,
             session=session.summary(),
             error=False,
         )

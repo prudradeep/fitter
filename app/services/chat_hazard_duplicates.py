@@ -4,7 +4,6 @@ from typing import Any
 from sqlalchemy import and_, or_, select
 
 from app.models import AdditionalHazard, CustomHazard, SystemHazard, UserHazard, UserSession
-from app.services.chat_formatters import hazard_names
 from app.services.chat_options import compact_for_match, fuzzy_score, normalize_for_match
 from app.services.chat_session import ChatSession
 
@@ -13,19 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 def same_sector_hazard_names(db: Any, session: ChatSession) -> list[str]:
-    session_names: list[object] = [
-        *(session.hazards or []),
-        *(session.custom_hazards or []),
-        *(session.additional_hazards or []),
-        *hazard_names(session),
-    ]
+    """Return system hazards in the selected sector, independent of geography."""
+    session_names: list[object] = [*(session.hazards or [])]
     current_draft_keys = _current_draft_hazard_keys(session)
     names: list[object] = [
         name
         for name in session_names
         if normalize_for_match(str(name or "")) not in current_draft_keys
     ]
-    if session.sector_id is not None:
+    if session.sector_id is not None and db is not None:
         try:
             names.extend(
                 db.scalars(
@@ -34,29 +29,8 @@ def same_sector_hazard_names(db: Any, session: ChatSession) -> list[str]:
                     )
                 ).all()
             )
-            names.extend(
-                db.scalars(
-                    select(AdditionalHazard.name).where(
-                        AdditionalHazard.sector_id == session.sector_id
-                    )
-                ).all()
-            )
-            names.extend(
-                db.scalars(
-                    select(CustomHazard.name).where(
-                        CustomHazard.sector_id == session.sector_id
-                    )
-                ).all()
-            )
-            names.extend(
-                db.scalars(
-                    select(UserHazard.name).where(
-                        UserHazard.sector_id == session.sector_id
-                    )
-                ).all()
-            )
         except Exception:
-            logger.exception("Failed to load same-sector hazards for duplicate check")
+            logger.exception("Failed to load same-sector system hazards for duplicate check")
 
     return dedupe_hazard_names(names)
 
@@ -82,9 +56,17 @@ def same_scope_custom_hazard_names(
     session: ChatSession,
     user_id: str | None,
 ) -> list[str]:
-    names: list[object] = []
+    names: list[object] = [*(session.custom_hazards or [])]
+    current_draft_keys = _current_draft_hazard_keys(session)
+    names = [
+        name
+        for name in names
+        if normalize_for_match(str(name or "")) not in current_draft_keys
+    ]
     if session.country_id is None or session.sector_id is None:
         return []
+    if db is None:
+        return dedupe_hazard_names(names)
 
     region_scope_key = session.region_id or ""
     try:
@@ -131,6 +113,77 @@ def same_scope_custom_hazard_names(
         )
     except Exception:
         logger.exception("Failed to load same-scope custom hazards for duplicate check")
+
+    return dedupe_hazard_names(names)
+
+
+def same_scope_custom_hazard_summary(
+    db: Any,
+    session: ChatSession,
+    user_id: str | None,
+    hazard_name: str,
+) -> str:
+    """Return a visible custom hazard's summary from the selected scope."""
+    hazard_name = str(hazard_name or "").strip()
+    if (
+        not hazard_name
+        or session.country_id is None
+        or session.sector_id is None
+        or db is None
+    ):
+        return ""
+
+    region_scope_key = session.region_id or ""
+    try:
+        summary = db.scalar(
+            select(CustomHazard.summary).where(
+                CustomHazard.country_id == session.country_id,
+                CustomHazard.sector_id == session.sector_id,
+                CustomHazard.region_scope_key == region_scope_key,
+                CustomHazard.name == hazard_name,
+                or_(
+                    CustomHazard.created_by_user_id == user_id,
+                    and_(
+                        CustomHazard.validation_mode == "strict",
+                        CustomHazard.is_crowd_sourced.is_(True),
+                    ),
+                ),
+            )
+        )
+    except Exception:
+        logger.exception("Failed to load same-scope custom hazard summary")
+        return ""
+    return str(summary or "").strip()
+
+
+def same_country_sector_additional_hazard_names(
+    db: Any,
+    session: ChatSession,
+) -> list[str]:
+    """Return additional hazards in the selected country and sector."""
+    names: list[object] = [*(session.additional_hazards or [])]
+    current_draft_keys = _current_draft_hazard_keys(session)
+    names = [
+        name
+        for name in names
+        if normalize_for_match(str(name or "")) not in current_draft_keys
+    ]
+    if session.country_id is None or session.sector_id is None:
+        return []
+    if db is None:
+        return dedupe_hazard_names(names)
+
+    try:
+        names.extend(
+            db.scalars(
+                select(AdditionalHazard.name).where(
+                    AdditionalHazard.country_id == session.country_id,
+                    AdditionalHazard.sector_id == session.sector_id,
+                )
+            ).all()
+        )
+    except Exception:
+        logger.exception("Failed to load country-sector additional hazards for duplicate check")
 
     return dedupe_hazard_names(names)
 

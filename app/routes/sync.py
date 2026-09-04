@@ -64,10 +64,11 @@ async def sync_status(
 
 @router.post("/pull")
 async def sync_pull(
+    request_user_data_sync: bool = True,
     sync_client: dict[str, object] = Depends(require_sync_token),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    can_sync_user_data = bool(sync_client.get("can_sync_user_data"))
+    can_sync_user_data = bool(sync_client.get("can_sync_user_data")) and request_user_data_sync
     return SyncService(db, sync_token=str(sync_client.get("_token") or "")).export_bundle(
         include_app_users=can_sync_user_data,
         include_user_data=can_sync_user_data,

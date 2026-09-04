@@ -1,7 +1,8 @@
+import asyncio
 import unittest
 from datetime import datetime, timedelta
 from typing import Iterator
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,7 +14,7 @@ from app.auth import hash_password
 from app.db.session import Base
 from app.models import AppUser, Country, KnowledgeChunk, KnowledgeDocument, Prompt, UserActivity, UserChatMessage, UserSession
 from app.routes import sync as sync_routes
-from app.services.sync_service import SyncService
+from app.services.sync_service import SyncApplyResult, SyncService
 
 
 class SyncServiceTests(unittest.TestCase):
@@ -63,6 +64,175 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(bundle["format"], "dr-transition-sync-v1")
         self.assertEqual(bundle["sync_protocol_version"], 1)
         self.assertEqual(bundle["client_schema_version"], 1)
+
+    def test_outbound_sync_uses_configured_row_batches(self) -> None:
+        service = SyncService(self.db, device_id="device-a")
+        original_batch_size = service.settings.sync_batch_size
+        original_max_json_bytes = service.settings.max_json_bytes
+        service.settings.sync_batch_size = 2
+        service.settings.max_json_bytes = 1024 * 1024
+        try:
+            batches = service._outbound_sync_batches(
+                {
+                    "format": "dr-transition-sync-v1",
+                    "sync_protocol_version": 1,
+                    "client_schema_version": 1,
+                    "device_id": "device-a",
+                    "request_user_data_sync": True,
+                    "tables": [
+                        {
+                            "name": "countries",
+                            "rows": [{"id": index} for index in range(5)],
+                        }
+                    ],
+                }
+            )
+        finally:
+            service.settings.sync_batch_size = original_batch_size
+            service.settings.max_json_bytes = original_max_json_bytes
+
+        self.assertEqual(len(batches), 3)
+        self.assertTrue(
+            all(
+                sum(len(table["rows"]) for table in batch["tables"]) <= 2
+                for batch in batches
+            )
+        )
+        self.assertEqual(
+            [
+                row["id"]
+                for batch in batches
+                for table in batch["tables"]
+                for row in table["rows"]
+            ],
+            list(range(5)),
+        )
+
+    def test_outbound_sync_batches_preserve_protocol_metadata(self) -> None:
+        service = SyncService(self.db, device_id="device-a")
+        bundle = {
+            "format": "dr-transition-sync-v1",
+            "sync_protocol_version": 1,
+            "client_schema_version": 1,
+            "device_id": "device-a",
+            "admin_knowledge_sync": True,
+            "request_user_data_sync": False,
+            "tables": [{"name": "countries", "rows": [{"id": "one"}]}],
+        }
+
+        batches = service._outbound_sync_batches(bundle)
+
+        self.assertEqual(len(batches), 1)
+        self.assertTrue(batches[0]["admin_knowledge_sync"])
+        self.assertFalse(batches[0]["request_user_data_sync"])
+        self.assertEqual(batches[0]["device_id"], "device-a")
+
+    def test_exchange_pushes_batches_before_pulling_server_bundle(self) -> None:
+        service = SyncService(self.db, device_id="device-a")
+        original_server_url = service.settings.sync_server_url
+        original_api_token = service.settings.sync_api_token
+        original_batch_size = service.settings.sync_batch_size
+        self.addCleanup(setattr, service.settings, "sync_server_url", original_server_url)
+        self.addCleanup(setattr, service.settings, "sync_api_token", original_api_token)
+        self.addCleanup(setattr, service.settings, "sync_batch_size", original_batch_size)
+        service.settings.sync_server_url = "https://sync.example.test"
+        service.settings.sync_api_token = "secret"
+        service.settings.sync_batch_size = 2
+        service.export_bundle = MagicMock(
+            return_value={
+                "format": "dr-transition-sync-v1",
+                "sync_protocol_version": 1,
+                "client_schema_version": 1,
+                "device_id": "device-a",
+                "request_user_data_sync": False,
+                "tables": [
+                    {
+                        "name": "countries",
+                        "rows": [{"id": index} for index in range(5)],
+                    }
+                ],
+            }
+        )
+        service.user_data_sync_enabled_at = MagicMock(return_value=None)
+        service.apply_bundle = MagicMock(
+            return_value=SyncApplyResult(
+                tables=0,
+                inserted=0,
+                updated=0,
+                skipped=0,
+                knowledge_scopes_dirty=(),
+                prompts_dirty=False,
+            )
+        )
+
+        class FakeResponse:
+            def __init__(self, payload: dict[str, object]) -> None:
+                self.payload = payload
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, object]:
+                return self.payload
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def post(self, url: str, **kwargs):
+                self.calls.append((url, kwargs))
+                if url.endswith("/pull"):
+                    return FakeResponse(
+                        {
+                            "format": "dr-transition-sync-v1",
+                            "sync_protocol_version": 1,
+                            "client_schema_version": 1,
+                            "device_id": "server",
+                            "tables": [],
+                        }
+                    )
+                return FakeResponse(
+                    {
+                        "error": False,
+                        "tables": 1,
+                        "inserted": len(kwargs["json"]["tables"][0]["rows"]),
+                        "updated": 0,
+                        "skipped": 0,
+                        "knowledge_scopes_dirty": [],
+                        "prompts_dirty": False,
+                    }
+                )
+
+        fake_client = FakeClient()
+        with (
+            patch(
+                "app.services.sync_service.httpx.AsyncClient",
+                return_value=fake_client,
+            ),
+            patch(
+                "app.services.system_inquiry_telemetry.push_queued_system_inquiry_telemetry",
+                AsyncMock(return_value={"error": False, "pushed": 0}),
+            ),
+        ):
+            result = asyncio.run(service.exchange_with_server())
+
+        self.assertEqual(
+            [url.rsplit("/", 1)[-1] for url, _kwargs in fake_client.calls],
+            ["push", "push", "push", "pull"],
+        )
+        self.assertEqual(result["pushed"]["batches"], 3)
+        self.assertEqual(result["pushed"]["rows"], 5)
+        self.assertEqual(result["server_applied"]["inserted"], 5)
+        self.assertEqual(
+            fake_client.calls[-1][1]["params"],
+            {"request_user_data_sync": "false"},
+        )
 
     def test_sync_schema_creates_internal_foundation_tables(self) -> None:
         service = SyncService(self.db, device_id="device-a")

@@ -180,6 +180,10 @@ def _008_system_inquiry_telemetry_events(connection: Connection) -> None:
     _create_index(connection, "system_inquiry_telemetry_events", "ix_system_inquiry_telemetry_status", "status")
 
 
+def _009_custom_hazard_summary(connection: Connection) -> None:
+    _add_column(connection, "custom_hazards", "summary", "summary TEXT NULL")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -189,6 +193,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("006_prompts", _006_prompts),
     ("007_user_mitigation_system_inquiry", _007_user_mitigation_system_inquiry),
     ("008_system_inquiry_telemetry_events", _008_system_inquiry_telemetry_events),
+    ("009_custom_hazard_summary", _009_custom_hazard_summary),
 )
 
 

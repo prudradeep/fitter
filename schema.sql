@@ -216,6 +216,7 @@ CREATE TABLE IF NOT EXISTS custom_hazards (
   name_key VARCHAR(255) NOT NULL,
   reason TEXT NULL,
   evidence TEXT NULL,
+  summary TEXT NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'user',
   validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
   is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,

@@ -2,11 +2,12 @@ import asyncio
 import unittest
 from pathlib import Path
 
+from app.services.chat_session import ChatSession
+from app.services.chat_service import ChatService
 from tests.run_open_conversation_selection_cases import (
     _OpenConversationSelectionEngine,
     infer_actual_action,
 )
-from app.services.chat_service import ChatService
 
 
 def _run(coro):
@@ -14,6 +15,68 @@ def _run(coro):
 
 
 class OpenConversationFlowActionTests(unittest.TestCase):
+    @staticmethod
+    def _active_custom_hazard_session(phase: str) -> ChatSession:
+        return ChatSession(
+            phase=phase,
+            sector="Energy",
+            selected_hazard="Previous hazard",
+            custom_hazards=["Previous hazard"],
+            accepted_custom_hazard="Previous hazard",
+            accepted_custom_hazard_reason="Previous reason",
+            accepted_custom_hazard_evidence="Previous evidence",
+            custom_hazard={
+                "raw_text": "Previous hazard",
+                "affected_groups": [{"group": "Previous group"}],
+            },
+            custom_hazard_input_history=["Previous hazard"],
+            suggested_duplicate_hazard="Existing hazard",
+            suggested_duplicate_hazard_record_id=42,
+            pending_affected_population_profiles=[{"name": "Previous group"}],
+        )
+
+    def test_add_new_hazard_restarts_an_active_group_review(self):
+        service = ChatService.__new__(ChatService)
+        session = self._active_custom_hazard_session("custom_hazard_group_review")
+
+        response = _run(
+            service._handle_other_nav_action(
+                "test-session",
+                session,
+                "Add a new hazard",
+            )
+        )
+
+        self.assertIsNotNone(response)
+        self.assertFalse(response.error)
+        self.assertEqual(session.phase, "custom_hazard_input")
+        self.assertEqual(session.custom_hazard.get("raw_text"), "")
+        self.assertEqual(session.custom_hazard_input_history, [])
+        self.assertIsNone(session.accepted_custom_hazard)
+        self.assertIsNone(session.pending_affected_population_profiles)
+        self.assertEqual(session.custom_hazards, ["Previous hazard"])
+
+    def test_write_hazard_again_replaces_an_active_population_review(self):
+        service = ChatService.__new__(ChatService)
+        session = self._active_custom_hazard_session("custom_hazard_profile_reason")
+
+        response = _run(
+            service._handle_other_nav_action(
+                "test-session",
+                session,
+                "Write hazard again",
+            )
+        )
+
+        self.assertIsNotNone(response)
+        self.assertFalse(response.error)
+        self.assertEqual(session.phase, "custom_hazard_input")
+        self.assertEqual(session.custom_hazard.get("raw_text"), "")
+        self.assertEqual(session.custom_hazard_input_history, [])
+        self.assertIsNone(session.suggested_duplicate_hazard)
+        self.assertIsNone(session.pending_affected_population_profiles)
+        self.assertEqual(session.custom_hazards, [])
+
     def test_post_sector_add_hazard_text_enters_hazard_creation_flow(self):
         engine = _OpenConversationSelectionEngine()
 

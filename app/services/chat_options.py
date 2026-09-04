@@ -7,6 +7,13 @@ POST_SECTOR_OPTIONS = [
     Option(id=3, label="Refresh hazards and DGs"),
 ]
 
+REGIONAL_POPULATION_COMPARISON_LABEL = "Compare regional population"
+
+CUSTOM_HAZARD_FINAL_OPTIONS = [
+    *POST_SECTOR_OPTIONS,
+    Option(id=4, label=REGIONAL_POPULATION_COMPARISON_LABEL),
+]
+
 STATS_DEEP_DIVE_OPTIONS = [
     Option(id=1, label="Start Mitigation Planning"),
     Option(id=2, label="Add a new Hazard"),

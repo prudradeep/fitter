@@ -82,6 +82,7 @@ def default_custom_hazard_state() -> dict[str, Any]:
         "title_clarification_questions": [],
         "title_clarification_answers": [],
         "generated_title": "",
+        "generated_summary": "",
         "transition_link": None,
         "detected_sector": None,
         "negative_consequence": None,
@@ -175,8 +176,8 @@ async def validate_custom_hazard_dimensions(
                     "",
                 )
             )
-        if explicitly_identified_groups:
-            result["confirmed_affected_groups"] = result["affected_groups"]
+        # Extraction establishes candidate groups, not user approval. Only the
+        # affected-groups review handler may populate confirmed_affected_groups.
 
     result["overall_score"] = _overall_score(result.get("dimension_scores", {}))
     result["confidence"] = _overall_confidence(result).value

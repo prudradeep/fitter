@@ -346,6 +346,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload --reload-dir a
 $env:ENV_FILE=".env.client.dev"
 $env:SYNC_SERVER_URL="http://127.0.0.1:8001"
 $env:DRTRANSITION_APP_PORT="8000"
+./scripts/start_grounding_services.ps1
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app
 DrTransition-psKAKEDHRPVNRjXTwUvDsaHn!1aA
 
@@ -513,3 +514,11 @@ The custom hazard creation flow works as follows:
 In short:
 
 `Enter hazard → title checks → duplicate check → multidimensional grounding → clarification/reason/evidence → affected-group review → save`
+
+
+Summary step need to be seperate, ask user to confirm
+Yes => Then show and save in DB after submitting
+
+User can alter the summary by providing context, then LLM will regenerate the summary based on the provided context and again confirm. It's a loop.
+
+

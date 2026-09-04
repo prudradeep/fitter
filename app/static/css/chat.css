@@ -603,8 +603,15 @@
   line-height: 1.45;
 }
 
-.bubble .hazard-visibility-label {
+.bubble .hazard-card-labels {
+  display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.bubble .hazard-visibility-label {
   border: 1px solid #bfdbfe;
   border-radius: 999px;
   background: #eff6ff;
@@ -614,6 +621,28 @@
   font-weight: 850;
   line-height: 1;
   white-space: nowrap;
+}
+
+.bubble .hazard-evidence-label {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.64rem;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.bubble .hazard-evidence-label--provided {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.bubble .hazard-evidence-label--not-provided {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
 }
 
 .bubble .hazard-metrics {

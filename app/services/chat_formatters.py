@@ -87,6 +87,32 @@ def _custom_hazard_visibility_label(session: ChatSession) -> str:
     return "Private Visibility"
 
 
+def evidence_is_provided(value: object) -> bool:
+    evidence = str(value or "").strip()
+    return bool(evidence) and evidence.casefold() != "not provided"
+
+
+def evidence_for_display(value: object) -> str:
+    """Remove workflow-only evidence metadata from user-facing text."""
+    evidence = normalize_markdown_text(str(value or ""))
+    evidence = re.sub(
+        r"(?im)^\s*Temporary evidence document ID:\s*[A-Za-z0-9-]+\s*$",
+        "",
+        evidence,
+    ).strip()
+    return evidence or "Not provided"
+
+
+def _custom_hazard_has_evidence(session: ChatSession, hazard: str) -> bool:
+    key = _normalize_key(hazard)
+    statuses = session.custom_hazard_evidence_statuses or {}
+    if key in statuses:
+        return bool(statuses[key])
+    if key == _normalize_key(session.accepted_custom_hazard):
+        return evidence_is_provided(session.accepted_custom_hazard_evidence)
+    return False
+
+
 def format_hazards(session: ChatSession, *, show_admin_details: bool = False) -> str:
     survey_hazards = [
         hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
@@ -191,12 +217,19 @@ def format_custom_hazards(
         return ""
     lines: list[str] = []
     for hazard in hazards:
+        has_evidence = _custom_hazard_has_evidence(session, str(hazard))
+        evidence_label = "Evidence provided" if has_evidence else "Evidence not provided"
+        evidence_class = "provided" if has_evidence else "not-provided"
         lines.append(
             '<article class="hazard-card">'
             '<div class="hazard-card-heading">'
             '<span class="hazard-alert-icon" aria-hidden="true">!</span>'
             f"<strong>{escape(str(hazard))}</strong>"
+            '<span class="hazard-card-labels">'
             f'<span class="hazard-visibility-label">{escape(_custom_hazard_visibility_label(session))}</span>'
+            f'<span class="hazard-evidence-label hazard-evidence-label--{evidence_class}">'
+            f"{evidence_label}</span>"
+            "</span>"
             "</div>"
         )
         _append_hazard_profiles(

@@ -270,6 +270,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                       name_key VARCHAR(255) NOT NULL,
                       reason TEXT NULL,
                       evidence TEXT NULL,
+                      summary TEXT NULL,
                       source VARCHAR(40) NOT NULL DEFAULT 'user',
                       validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
                       is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,
@@ -332,6 +333,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ALTER TABLE custom_hazards "
                             "ADD COLUMN validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict' "
                             "AFTER source"
+                        )
+                    )
+                if "summary" not in custom_hazard_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE custom_hazards "
+                            "ADD COLUMN summary TEXT NULL AFTER evidence"
                         )
                     )
                 if "is_crowd_sourced" not in custom_hazard_columns:

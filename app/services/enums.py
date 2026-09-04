@@ -98,6 +98,7 @@ class ChatPhase(AppStrEnum):
     ADD_HAZARD_EVIDENCE_INPUT = "add_hazard_evidence_input"
     ADD_HAZARD_EVIDENCE = "add_hazard_evidence"
     ADD_HAZARD_CLARIFICATION = "add_hazard_clarification"
+    HAZARD_DUPLICATE_SUGGESTION = "hazard_duplicate_suggestion"
     CUSTOM_HAZARD_INPUT = "custom_hazard_input"
     CUSTOM_HAZARD_TITLE_CLARIFICATION = "custom_hazard_title_clarification"
     CUSTOM_HAZARD_VALIDATION = "custom_hazard_validation"
@@ -107,3 +108,4 @@ class ChatPhase(AppStrEnum):
     CUSTOM_HAZARD_GROUP_REVIEW = "custom_hazard_group_review"
     CUSTOM_HAZARD_POPULATION_REVIEW = "custom_hazard_population_review"
     CUSTOM_HAZARD_PROFILE_REASON = "custom_hazard_profile_reason"
+    HAZARD_POPULATION_REGION_COMPARISON = "hazard_population_region_comparison"

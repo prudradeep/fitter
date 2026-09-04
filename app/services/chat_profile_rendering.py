@@ -370,6 +370,85 @@ class ChatProfileRenderingMixin:
             "</div>"
         )
 
+    @classmethod
+    def _hazard_profile_region_comparison_table_html(
+        cls,
+        current_profiles: list[dict[str, str]],
+        compared_profiles: list[dict[str, str]],
+        *,
+        current_region: str,
+        selected_region: str,
+        show_admin_details: bool = False,
+    ) -> str:
+        current_rows = cls._hazard_profile_table_rows(current_profiles)
+        compared_rows = {
+            normalize_for_match(str(row.get("name") or "")): row
+            for row in cls._hazard_profile_table_rows(compared_profiles)
+        }
+        body_rows: list[str] = []
+        for row in current_rows:
+            name = str(row.get("name") or "")
+            compared = compared_rows.get(normalize_for_match(name), {})
+            description_parts: list[str] = []
+            explanation = str(row.get("explanation") or "").strip()
+            if explanation and not show_admin_details:
+                explanation = cls._strip_profile_admin_detail_lines(explanation)
+            if explanation:
+                description_parts.append(explanation)
+            if show_admin_details and row.get("statistical_basis"):
+                description_parts.append(
+                    "Reference: " + str(row.get("statistical_basis") or "")
+                )
+            if show_admin_details:
+                labels = row.get("target_population_labels")
+                if not isinstance(labels, list) or not labels:
+                    labels = row.get("population_lookup_labels")
+                if isinstance(labels, list) and labels:
+                    description_parts.append(
+                        "Population lookup: "
+                        + "; ".join(
+                            str(label).strip()
+                            for label in labels
+                            if str(label).strip()
+                        )
+                    )
+            description_html = "<br>".join(
+                escape(part.strip()) for part in description_parts if part.strip()
+            )
+            national = row.get("national")
+            if national is None:
+                national = compared.get("national")
+            body_rows.append(
+                "<tr>"
+                '<th scope="row">'
+                f"<strong>{escape(name)}</strong>"
+                f'{f"<small>{description_html}</small>" if description_html else ""}'
+                "</th>"
+                '<td><span class="population-value">'
+                f'{cls._format_profile_population(row.get("regional"))}</span></td>'
+                '<td><span class="population-value">'
+                f'{cls._format_profile_population(compared.get("regional"))}</span></td>'
+                '<td><span class="population-value">'
+                f'{cls._format_profile_population(national)}</span></td>'
+                "</tr>"
+            )
+        if not body_rows:
+            body_rows.append(
+                '<tr><th scope="row">No affected population profiles available</th>'
+                "<td>-</td><td>-</td><td>-</td></tr>"
+            )
+        return (
+            '<div class="hazard-population-table hazard-population-table--selected">'
+            "<table><thead><tr>"
+            '<th scope="col">Affected population profile</th>'
+            f'<th scope="col">{escape(current_region)}</th>'
+            f'<th scope="col">{escape(selected_region)}</th>'
+            '<th scope="col">National</th>'
+            "</tr></thead>"
+            f"<tbody>{''.join(body_rows)}</tbody>"
+            "</table></div>"
+        )
+
     @staticmethod
     def _clean_profile_explanation(explanation: str) -> str:
         cleaned = re.sub(

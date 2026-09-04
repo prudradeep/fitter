@@ -11,6 +11,7 @@ const typingEffectKey = storageKeys.typingEffect || "dr_transition_typing_effect
 const autoConversationKey = storageKeys.autoConversation || "dr_transition_auto_conversation_enabled";
 const validationModeKey = storageKeys.validationMode || "dr_transition_validation_mode";
 const crowdSourcingKey = storageKeys.crowdSourcing || "dr_transition_crowd_sourcing_enabled";
+const promptSourceKeyPrefix = storageKeys.promptSource || "dr_transition_prompt_source";
 const teacherAvatarPath = appSettings.assets?.teacherAvatarPath || "/static/img/teacher.png";
 const collapsibleMessageWordLimit = appSettings.chat?.collapsibleMessageWordLimit || 100;
 
@@ -116,6 +117,8 @@ const newPromptButton = document.querySelector("#newPromptButton");
 const refreshPromptsButton = document.querySelector("#refreshPromptsButton");
 const promptSourceSelect = document.querySelector("#promptSourceSelect");
 const promptSourceMessage = document.querySelector("#promptSourceMessage");
+const promptSourcePreferenceBadge = document.querySelector("#promptSourcePreferenceBadge");
+const promptSourcePreferenceLabel = document.querySelector("#promptSourcePreferenceLabel");
 const promptSearchInput = document.querySelector("#promptSearchInput");
 const promptCatalogueCount = document.querySelector("#promptCatalogueCount");
 const promptList = document.querySelector("#promptList");
@@ -4648,6 +4651,50 @@ function showPromptSourceMessage(message, isError = true) {
   promptSourceMessage.classList.toggle("success", !isError);
 }
 
+const promptSourceLabels = {
+  auto: "Auto",
+  db: "Database",
+  file: "Files",
+};
+
+function promptSourcePreferenceKey() {
+  const userId = document.body?.dataset.tourUserId || "unknown";
+  return `${promptSourceKeyPrefix}_${userId}`;
+}
+
+function normalizedPromptSource(source) {
+  return Object.hasOwn(promptSourceLabels, source) ? source : "auto";
+}
+
+function savedPromptSourcePreference() {
+  const savedSource = localStorage.getItem(promptSourcePreferenceKey());
+  return savedSource && Object.hasOwn(promptSourceLabels, savedSource)
+    ? savedSource
+    : null;
+}
+
+function displayPromptSourcePreference(source) {
+  const normalizedSource = normalizedPromptSource(source);
+  const label = promptSourceLabels[normalizedSource];
+  if (promptSourceSelect) promptSourceSelect.value = normalizedSource;
+  if (promptSourcePreferenceLabel) promptSourcePreferenceLabel.textContent = label;
+  if (promptSourcePreferenceBadge) {
+    promptSourcePreferenceBadge.dataset.source = normalizedSource;
+    promptSourcePreferenceBadge.setAttribute("aria-label", `Preferred prompt source: ${label}`);
+    promptSourcePreferenceBadge.title = `Preferred prompt source: ${label}`;
+  }
+}
+
+function savePromptSourcePreference(source) {
+  const normalizedSource = normalizedPromptSource(source);
+  localStorage.setItem(promptSourcePreferenceKey(), normalizedSource);
+  displayPromptSourcePreference(normalizedSource);
+}
+
+function configurePromptSourcePreference() {
+  displayPromptSourcePreference(savedPromptSourcePreference() || "auto");
+}
+
 async function loadPromptSourceSetting() {
   if (!promptSourceSelect) return;
   promptSourceSelect.disabled = true;
@@ -4660,7 +4707,7 @@ async function loadPromptSourceSetting() {
     if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
     const data = await response.json();
     if (data.error) throw new Error(data.detail || "Could not load prompt source.");
-    promptSourceSelect.value = data.prompt_source || "auto";
+    savePromptSourcePreference(data.prompt_source || "auto");
     if (promptSourceMessage) promptSourceMessage.hidden = true;
   } catch (error) {
     console.error("Prompt source load failed", error);
@@ -4689,7 +4736,7 @@ async function updatePromptSourceSetting() {
     if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
     const data = await response.json();
     if (data.error) throw new Error(data.detail || "Could not update prompt source.");
-    promptSourceSelect.value = data.prompt_source || promptSource;
+    savePromptSourcePreference(data.prompt_source || promptSource);
     showPromptSourceMessage(data.detail || "Prompt source updated.", false);
     await loadPrompts();
   } catch (error) {
@@ -5824,6 +5871,7 @@ document.addEventListener("DOMContentLoaded", () => {
   configureTypingEffectControl();
   configureValidationModeControl();
   configureCrowdSourcingControl();
+  configurePromptSourcePreference();
   configureMic();
   configureWorkspaceResizer();
   clearCurrentInputState();

@@ -371,26 +371,48 @@ class SyncService:
         from app.services.system_inquiry_telemetry import push_queued_system_inquiry_telemetry
 
         telemetry_push = await push_queued_system_inquiry_telemetry(self.db)
+        outbound_batches = self._outbound_sync_batches(outbound)
+        applied_totals: dict[str, Any] = {
+            "tables": 0,
+            "inserted": 0,
+            "updated": 0,
+            "skipped": 0,
+            "knowledge_scopes_dirty": [],
+            "prompts_dirty": False,
+        }
         async with httpx.AsyncClient(timeout=120.0) as client:
+            headers = {"Authorization": f"Bearer {token}"}
+            for batch in outbound_batches:
+                response = await client.post(
+                    f"{server_url}/api/sync/push",
+                    json=batch,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                self._merge_sync_apply_result(applied_totals, response.json())
             response = await client.post(
-                f"{server_url}/api/sync/exchange",
-                json=outbound,
-                headers={"Authorization": f"Bearer {token}"},
+                f"{server_url}/api/sync/pull",
+                headers=headers,
+                params={
+                    "request_user_data_sync": str(
+                        user_data_enabled_at is not None
+                    ).lower()
+                },
             )
             response.raise_for_status()
-            data = response.json()
-        bundle = data.get("bundle") if isinstance(data, dict) else None
-        if not isinstance(bundle, dict):
-            raise ValueError("Sync server response did not include a bundle.")
+            bundle = response.json()
+        if not isinstance(bundle, dict) or not isinstance(bundle.get("tables"), list):
+            raise ValueError("Sync server response did not include a valid bundle.")
         applied = self.apply_bundle(bundle, current_user_email=current_user_email)
         return {
             "error": False,
             "pushed": {
                 "tables": len(outbound.get("tables") or []),
                 "rows": sum(len(table.get("rows") or []) for table in outbound.get("tables") or []),
+                "batches": len(outbound_batches),
                 "system_inquiry_telemetry": telemetry_push.get("pushed", 0),
             },
-            "server_applied": data.get("applied"),
+            "server_applied": applied_totals,
             "pulled": {
                 "tables": applied.tables,
                 "inserted": applied.inserted,
@@ -400,6 +422,68 @@ class SyncService:
                 "prompts_dirty": applied.prompts_dirty,
             },
         }
+
+    def _outbound_sync_batches(self, bundle: dict[str, Any]) -> list[dict[str, Any]]:
+        metadata = {key: value for key, value in bundle.items() if key != "tables"}
+        max_rows = max(1, int(self.settings.sync_batch_size or 1))
+        max_bytes = max(1, int(self.settings.max_json_bytes or 1)) * 10
+        batches: list[dict[str, Any]] = []
+        batch_tables: list[dict[str, Any]] = []
+        batch_rows = 0
+        batch_bytes = len(json.dumps(metadata, default=str).encode("utf-8")) + 256
+
+        def flush() -> None:
+            nonlocal batch_tables, batch_rows, batch_bytes
+            if not batch_tables:
+                return
+            batches.append({**metadata, "tables": batch_tables})
+            batch_tables = []
+            batch_rows = 0
+            batch_bytes = len(json.dumps(metadata, default=str).encode("utf-8")) + 256
+
+        for table_payload in bundle.get("tables") or []:
+            if not isinstance(table_payload, dict):
+                continue
+            table_name = str(table_payload.get("name") or "").strip()
+            if not table_name:
+                continue
+            for row in table_payload.get("rows") or []:
+                if not isinstance(row, dict):
+                    continue
+                row_bytes = len(json.dumps(row, default=str).encode("utf-8")) + 32
+                if batch_tables and (
+                    batch_rows >= max_rows or batch_bytes + row_bytes > max_bytes
+                ):
+                    flush()
+                if not batch_tables or batch_tables[-1]["name"] != table_name:
+                    batch_tables.append({"name": table_name, "rows": []})
+                    batch_bytes += len(table_name.encode("utf-8")) + 32
+                batch_tables[-1]["rows"].append(row)
+                batch_rows += 1
+                batch_bytes += row_bytes
+        flush()
+        return batches
+
+    @staticmethod
+    def _merge_sync_apply_result(total: dict[str, Any], result: object) -> None:
+        if not isinstance(result, dict):
+            return
+        for key in ("tables", "inserted", "updated", "skipped"):
+            total[key] = int(total.get(key) or 0) + int(result.get(key) or 0)
+        scopes = {
+            str(scope)
+            for scope in total.get("knowledge_scopes_dirty") or []
+            if str(scope).strip()
+        }
+        scopes.update(
+            str(scope)
+            for scope in result.get("knowledge_scopes_dirty") or []
+            if str(scope).strip()
+        )
+        total["knowledge_scopes_dirty"] = sorted(scopes)
+        total["prompts_dirty"] = bool(total.get("prompts_dirty")) or bool(
+            result.get("prompts_dirty")
+        )
 
     def sync_tables(self) -> list[Table]:
         include_logs = bool(self.settings.sync_include_logs)

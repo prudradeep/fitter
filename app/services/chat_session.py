@@ -20,6 +20,7 @@ class ChatSession:
     hazard_profiles: dict[str, list[dict[str, str] | str] | str] | None = None
     hazard_rankings: dict[str, dict[str, object]] | None = None
     custom_hazards: list[str] | None = None
+    custom_hazard_evidence_statuses: dict[str, bool] | None = None
     additional_hazards: list[str] | None = None
     pending_hazard: str | None = None
     selected_hazard: str | None = None
@@ -78,6 +79,7 @@ class ChatSession:
     accepted_custom_hazard: str | None = None
     accepted_custom_hazard_reason: str | None = None
     accepted_custom_hazard_evidence: str | None = None
+    accepted_custom_hazard_summary: str | None = None
     generated_custom_hazard_title: str | None = None
     accepted_custom_hazard_id: str | None = None
     accepted_custom_hazard_record_id: str | None = None

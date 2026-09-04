@@ -32,6 +32,8 @@ from app.services.chat_options import (
 )
 from app.services.chat_session import ChatSession
 from app.services.custom_hazard_validation import default_custom_hazard_state
+from app.services.custom_hazard_state_machine import transition_custom_hazard
+from app.services.enums import ChatPhase
 from app.services.message_renderer import render_message
 
 
@@ -124,7 +126,7 @@ class ChatNavigationStepsMixin:
             if session.sector is None:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
             self._clear_selected_hazard_context(session)
-            session.phase = "custom_hazard_input"
+            transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_INPUT)
             session.custom_hazard = default_custom_hazard_state()
             session.custom_hazard_input_history = []
             session.pending_hazard_title_clarification_question = None
@@ -149,7 +151,7 @@ class ChatNavigationStepsMixin:
                     if normalize(hazard) != normalize(hazard_to_rewrite)
                 ]
             self._clear_selected_hazard_context(session)
-            session.phase = "custom_hazard_input"
+            transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_INPUT)
             session.custom_hazard = default_custom_hazard_state()
             session.custom_hazard_input_history = []
             session.pending_hazard_title_clarification_question = None
@@ -246,6 +248,7 @@ class ChatNavigationStepsMixin:
         session.hazards = None
         session.hazard_profiles = None
         session.custom_hazards = None
+        session.custom_hazard_evidence_statuses = None
         session.additional_hazards = None
         cls._clear_selected_hazard_context(session)
 
@@ -287,6 +290,7 @@ class ChatNavigationStepsMixin:
         session.accepted_custom_hazard = None
         session.accepted_custom_hazard_reason = None
         session.accepted_custom_hazard_evidence = None
+        session.accepted_custom_hazard_summary = None
         session.generated_custom_hazard_title = None
         session.accepted_custom_hazard_id = None
         session.accepted_custom_hazard_record_id = None
@@ -296,6 +300,11 @@ class ChatNavigationStepsMixin:
         session.pending_hazard_clarification_answer = None
         session.pending_hazard_title_clarification_question = None
         session.pending_hazard_title_clarification_answers = []
+        session.custom_hazard_input_history = []
+        session.suggested_duplicate_hazard = None
+        session.suggested_duplicate_hazard_record_id = None
+        session.pending_affected_population_profiles = None
+        session.custom_hazard = None
         session.pending_fuzzy_option = None
         session.pending_selection = None
         session.pending_selection_confirmation = None

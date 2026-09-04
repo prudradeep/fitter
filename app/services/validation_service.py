@@ -47,6 +47,8 @@ from app.services.custom_hazard_text_rules import (
     plain_custom_hazard_rejection_reason,
     sector_signal_scores,
 )
+from app.services.custom_hazard_state_machine import transition_custom_hazard
+from app.services.enums import ChatPhase
 from app.services.evidence_contradiction_service import EvidenceContradictionService
 from app.services.gibberish_detector import check_gibberish
 from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
@@ -502,7 +504,7 @@ class ChatValidationServiceMixin:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
         if normalize(exact_label or message) == normalize("Go back to list of hazards"):
             session.pending_hazard = None
-            session.phase = "hazards"
+            transition_custom_hazard(session, ChatPhase.HAZARDS)
             return self._hazards_step(session_id, session)
 
         reason, evidence = parse_reason_evidence(message)
@@ -773,7 +775,7 @@ class ChatValidationServiceMixin:
             state["message"] = "Reason and optional evidence were accepted for grounding validation."
             session.accepted_custom_hazard_reason = reason
             session.accepted_custom_hazard_evidence = evidence or "Not provided"
-            session.phase = "custom_hazard_dimension_check"
+            transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
             return await self._run_custom_hazard_dimension_check(session_id, session)
 
         return await self._finalize_valid_custom_hazard(
@@ -877,7 +879,7 @@ class ChatValidationServiceMixin:
     async def _semantic_hazard_duplicate_check(
         self, session: ChatSession, hazard: str
     ) -> dict[str, object] | None:
-        existing_hazards = self._same_sector_hazard_names_for_duplicate_check(session)
+        existing_hazards = self._duplicate_hazard_names_for_check(session)
         if not existing_hazards:
             return {"duplicate": False, "match": "", "reason": "", "duplicates": []}
 
@@ -1022,18 +1024,15 @@ class ChatValidationServiceMixin:
 
     def _custom_hazard_classifier_existing_hazards(self, session: ChatSession) -> str:
         """Return duplicate-scope hazards for the hazard-name classifier prompt."""
-        names: list[str] = []
-        for method_name in (
-            "_same_sector_hazard_names_for_duplicate_check",
-            "_same_scope_custom_hazard_names_for_duplicate_check",
-        ):
-            method = getattr(self, method_name, None)
-            if not callable(method):
-                continue
-            try:
-                names.extend(str(item).strip() for item in method(session) if str(item).strip())
-            except Exception:
-                logger.exception("Failed to collect custom hazard classifier duplicate scope")
+        try:
+            names = [
+                str(item).strip()
+                for item in self._duplicate_hazard_names_for_check(session)
+                if str(item).strip()
+            ]
+        except Exception:
+            logger.exception("Failed to collect custom hazard classifier duplicate scope")
+            names = []
         if not names:
             return "- No existing hazards supplied."
         dedupe = getattr(self, "_dedupe_hazard_names", None)

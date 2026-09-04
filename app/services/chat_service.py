@@ -33,6 +33,7 @@ from app.services.chat_mitigation_creation import ChatMitigationCreationMixin
 from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_navigation_steps import ChatNavigationStepsMixin
 from app.services.chat_options import (
+    CUSTOM_HAZARD_FINAL_OPTIONS,
     DG_REASON_EVIDENCE_OPTIONS,
     HAZARD_EVIDENCE_DECISION_OPTIONS,
     IMPLEMENTATION_READINESS_OPTIONS,
@@ -63,6 +64,10 @@ from app.services.chat_session import ChatSession, session_store
 from app.services.validation_service import ChatValidationServiceMixin
 from app.services.chat_profile_rendering import ChatProfileRenderingMixin
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
+from app.services.custom_hazard_state_machine import (
+    CustomHazardHandlers,
+    custom_hazard_state_machine,
+)
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.eurostat_service import EurostatService
 from app.services.grounding_models import GroundingModelService
@@ -362,6 +367,13 @@ class ChatService(
         if session.sector is None:
             return await self._select_sector(current_session_id, session, clean_message)
 
+        if session.phase == "hazard_population_region_comparison":
+            return await self._handle_custom_hazard_population_region_comparison(
+                current_session_id,
+                session,
+                clean_message,
+            )
+
         open_selection_response = await self._open_selection_response_from_any_step(
             current_session_id,
             session,
@@ -370,15 +382,6 @@ class ChatService(
         )
         if open_selection_response is not None:
             return open_selection_response
-
-        if session.phase in {"add_hazard", "custom_hazard_input"}:
-            # This phase accepts free-form hazard text. Do not run the
-            # anytime grounding-question classifier first: a valid hazard
-            # statement can look like a natural-language question or contain
-            # terms that overlap with the knowledge-base question flow.
-            return await self._capture_custom_hazard(
-                current_session_id, session, clean_message
-            )
 
         if session.phase == "hazards":
             return await self._handle_hazards_action(current_session_id, session, clean_message)
@@ -396,23 +399,15 @@ class ChatService(
                 clean_message,
             )
 
-        if session.phase in {
-            "custom_hazard_population_review",
-            "custom_hazard_group_review",
-            "custom_hazard_profile_reason",
-        }:
-            return await self._handle_custom_hazard_population_review(
-                current_session_id,
-                session,
-                clean_message,
-            )
-
-        if session.phase in {"hazard_duplicate_suggestion", "custom_hazard_duplicate_confirmation"}:
-            return await self._handle_hazard_duplicate_suggestion(
-                current_session_id,
-                session,
-                clean_message,
-            )
+        custom_hazard_transition = await custom_hazard_state_machine.dispatch(
+            current_session_id,
+            session,
+            clean_message,
+            handlers=self._custom_hazard_state_handlers(),
+            quality_handler=self._common_user_input_quality_response,
+        )
+        if custom_hazard_transition is not None:
+            return custom_hazard_transition.response
 
         quality_response = await self._common_user_input_quality_response(
             current_session_id,
@@ -424,41 +419,6 @@ class ChatService(
 
         if session.phase == "stats_deep_dive":
             return await self._handle_stats_deep_dive(current_session_id, session, clean_message)
-
-        if session.phase == "custom_hazard_title_clarification":
-            return await self._handle_custom_hazard_title_clarification(
-                current_session_id, session, clean_message
-            )
-
-        if session.phase in {"add_hazard_clarification", "custom_hazard_clarification"}:
-            return await self._handle_custom_hazard_clarification(
-                current_session_id, session, clean_message
-            )
-
-        if session.phase == "custom_hazard_dimension_check":
-            return await self._run_custom_hazard_dimension_check(
-                current_session_id, session
-            )
-
-        if session.phase == "add_hazard_reason":
-            return self._capture_hazard_reason(current_session_id, session, clean_message)
-
-        if session.phase == "add_hazard_evidence_decision":
-            return await self._handle_hazard_evidence_decision(
-                current_session_id,
-                session,
-                clean_message,
-            )
-
-        if session.phase == "add_hazard_evidence_input":
-            return await self._capture_hazard_evidence(
-                current_session_id,
-                session,
-                clean_message,
-            )
-
-        if session.phase in {"add_hazard_evidence", "custom_hazard_validation"}:
-            return await self._validate_custom_hazard(current_session_id, session, clean_message)
 
         if session.phase == "target_population_question":
             return await self._handle_target_population_answer(
@@ -634,6 +594,20 @@ class ChatService(
             )
 
         return await self._deep_dive(current_session_id, session, clean_message)
+
+    def _custom_hazard_state_handlers(self) -> CustomHazardHandlers:
+        return CustomHazardHandlers(
+            capture_hazard=self._capture_custom_hazard,
+            clarify_title=self._handle_custom_hazard_title_clarification,
+            clarify_hazard=self._handle_custom_hazard_clarification,
+            check_dimensions=self._run_custom_hazard_dimension_check,
+            capture_reason=self._capture_hazard_reason,
+            decide_evidence=self._handle_hazard_evidence_decision,
+            capture_evidence=self._capture_hazard_evidence,
+            validate_hazard=self._validate_custom_hazard,
+            review_population=self._handle_custom_hazard_population_review,
+            resolve_duplicate=self._handle_hazard_duplicate_suggestion,
+        )
 
     def _system_inquiry_question_prompt_step(
         self,
@@ -1821,7 +1795,14 @@ class ChatService(
         elif session.sector is None:
             labels = [sector.name for sector in self._sectors_for_country(session.country_id)]
         elif session.phase == "hazards":
-            labels = [option.label for option in POST_SECTOR_OPTIONS]
+            options = (
+                CUSTOM_HAZARD_FINAL_OPTIONS
+                if session.accepted_custom_hazard
+                else POST_SECTOR_OPTIONS
+            )
+            labels = [option.label for option in options]
+        elif session.phase == "hazard_population_region_comparison":
+            labels = [region.name for region in self._population_comparison_regions(session)]
         elif session.phase == "stats_deep_dive":
             labels = [option.label for option in STATS_DEEP_DIVE_OPTIONS]
         elif session.phase == "hazard_profile_selection":
@@ -1864,7 +1845,14 @@ class ChatService(
 
     def _current_step_option_labels(self, session: ChatSession) -> list[str]:
         if session.phase == "hazards":
-            return [option.label for option in POST_SECTOR_OPTIONS]
+            options = (
+                CUSTOM_HAZARD_FINAL_OPTIONS
+                if session.accepted_custom_hazard
+                else POST_SECTOR_OPTIONS
+            )
+            return [option.label for option in options]
+        if session.phase == "hazard_population_region_comparison":
+            return [region.name for region in self._population_comparison_regions(session)]
         if session.phase == "add_hazard_evidence_decision":
             return [option.label for option in HAZARD_EVIDENCE_DECISION_OPTIONS]
         if session.phase == "stats_deep_dive":

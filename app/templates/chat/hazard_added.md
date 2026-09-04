@@ -13,6 +13,10 @@ Hazard to be co-created:
 > {{ visibility_notice }}
 
 {% endif %}
+{% if summary %}
+**Summary:** {{ summary }}
+
+{% endif %}
 **Reason:** {{ reason }}
 
 **Evidence:** {{ evidence }}

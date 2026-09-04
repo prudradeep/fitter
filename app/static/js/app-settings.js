@@ -11,6 +11,7 @@ window.DrTransitionSettings = {
     autoConversation: "dr_transition_auto_conversation_enabled",
     validationMode: "dr_transition_validation_mode",
     crowdSourcing: "dr_transition_crowd_sourcing_enabled",
+    promptSource: "dr_transition_prompt_source",
     panelWidth: "dr_transition_visual_panel_width",
   },
   assets: {

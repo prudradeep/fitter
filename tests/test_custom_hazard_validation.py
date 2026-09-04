@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.services import custom_hazard_validation as validator
 from app.schemas import ChatResponse
 from app.services.chat_formatters import format_hazards
-from app.services.chat_options import HAZARD_POPULATION_REVIEW_OPTIONS
+from app.services.chat_options import (
+    HAZARD_POPULATION_REVIEW_OPTIONS,
+    REGIONAL_POPULATION_COMPARISON_LABEL,
+)
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
 from app.services.message_renderer import render_message
@@ -238,16 +241,11 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertFalse(strict["valid"])
         self.assertTrue(easy["valid"])
 
-    def test_same_sector_duplicate_universe_includes_system_additional_custom_and_user_hazards(self):
+    def test_same_sector_duplicate_lookup_includes_only_system_hazards(self):
         service = ChatService.__new__(ChatService)
         service.db = SimpleNamespace(
             scalars=MagicMock(
-                side_effect=[
-                    SimpleNamespace(all=lambda: ["System employment shock"]),
-                    SimpleNamespace(all=lambda: ["Additional tariff shock"]),
-                    SimpleNamespace(all=lambda: ["Shared custom affordability shock"]),
-                    SimpleNamespace(all=lambda: ["User energy poverty shock"]),
-                ]
+                return_value=SimpleNamespace(all=lambda: ["System employment shock"])
             )
         )
         session = ChatSession(
@@ -260,10 +258,10 @@ class CustomHazardValidationTests(unittest.TestCase):
         names = service._same_sector_hazard_names_for_duplicate_check(session)
 
         self.assertIn("System employment shock", names)
-        self.assertIn("Additional tariff shock", names)
-        self.assertIn("Shared custom affordability shock", names)
-        self.assertIn("User energy poverty shock", names)
         self.assertIn("In-session system hazard", names)
+        self.assertNotIn("In-session custom hazard", names)
+        self.assertNotIn("In-session additional hazard", names)
+        self.assertEqual(service.db.scalars.call_count, 1)
 
     def test_custom_hazard_duplicate_status_updates_from_same_sector_system_hazard(self):
         service = ChatService.__new__(ChatService)
@@ -314,12 +312,12 @@ class CustomHazardValidationTests(unittest.TestCase):
                 side_effect=[
                     SimpleNamespace(all=lambda: []),
                     SimpleNamespace(all=lambda: []),
-                    SimpleNamespace(all=lambda: []),
                     SimpleNamespace(
                         all=lambda: [
                             'Regional employment shock and "left-behind" energy regions'
                         ]
                     ),
+                    SimpleNamespace(all=lambda: []),
                 ]
             )
         )
@@ -327,6 +325,8 @@ class CustomHazardValidationTests(unittest.TestCase):
             return_value={"valid": True, "reason": "The hazard is meaningful."}
         )
         session = ChatSession(
+            country_id=1,
+            region_id=2,
             sector_id=1,
             sector="Energy",
             country="Germany",
@@ -550,7 +550,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         }
 
         with patch(
-            "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+            "app.services.chat_custom_hazard_grounding.validate_custom_hazard_dimensions",
             AsyncMock(return_value=grounding_result),
         ):
             response = _run(
@@ -622,7 +622,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         }
 
         with patch(
-            "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+            "app.services.chat_custom_hazard_grounding.validate_custom_hazard_dimensions",
             AsyncMock(return_value=grounding_result),
         ):
             response = _run(
@@ -695,7 +695,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         }
 
         with patch(
-            "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+            "app.services.chat_custom_hazard_grounding.validate_custom_hazard_dimensions",
             AsyncMock(return_value=grounding_result),
         ):
             response = _run(service._run_custom_hazard_dimension_check("session-1", session))
@@ -821,9 +821,10 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertNotIn("affected group", question.casefold())
         self.assertIn("negative impact", question.casefold())
 
-    def test_explicitly_named_groups_are_confirmed_after_evidence_revalidation(self):
+    def test_explicitly_named_groups_require_review_after_evidence_revalidation(self):
         state = {
             "reason": "Low-income households face higher energy costs.",
+            "evidence": "Evidence URL: https://example.com/report.pdf",
             "clarifications": [],
         }
         llm_result = {
@@ -842,7 +843,11 @@ class CustomHazardValidationTests(unittest.TestCase):
             "duplicate_candidates": [],
         }
 
-        with patch.object(validator, "_llm_dimension_validation", AsyncMock(return_value=llm_result)):
+        with patch.object(
+            validator,
+            "_llm_dimension_validation",
+            AsyncMock(return_value=llm_result),
+        ):
             result = _run(
                 validator.validate_custom_hazard_dimensions(
                     "Hazard\nReason: Low-income households face higher energy costs.",
@@ -854,8 +859,74 @@ class CustomHazardValidationTests(unittest.TestCase):
                 )
             )
 
-        self.assertTrue(result["confirmed_affected_groups"])
+        self.assertFalse(result.get("confirmed_affected_groups"))
+        self.assertEqual(result["next_action"], "review_groups")
         self.assertFalse(result["dimension_scores"]["affected_groups_fit"]["needs_clarification"])
+
+    def test_evidence_revalidation_routes_to_affected_group_review_before_creation(self):
+        service = ChatService.__new__(ChatService)
+        service._same_sector_hazard_names_for_duplicate_check = MagicMock(return_value=[])
+        service._same_scope_custom_hazard_names_for_duplicate_check = MagicMock(return_value=[])
+        service._ensure_custom_hazard_generated_title = AsyncMock(
+            return_value="Energy poverty impact"
+        )
+        service._finalize_custom_hazard_from_grounding = AsyncMock()
+        hazard = "Women face disproportionate energy poverty from green transition costs."
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Berlin",
+            phase="custom_hazard_dimension_check",
+            pending_hazard=hazard,
+            pending_hazard_reason="Women are overrepresented in lower-income households.",
+            pending_hazard_evidence="Evidence URL: https://example.com/report.pdf",
+            custom_hazard={
+                "raw_text": hazard,
+                "reason": "Women are overrepresented in lower-income households.",
+                "evidence": "Evidence URL: https://example.com/report.pdf",
+                "evidence_decision_asked": True,
+                "affected_groups": [
+                    {
+                        "group": "Women",
+                        "reason": "They are disproportionately exposed to energy poverty.",
+                    }
+                ],
+                "confirmed_affected_groups": [],
+            },
+        )
+        llm_result = {
+            "dimension_scores": {
+                key: {"score": 8, "needs_clarification": False}
+                for key in [
+                    "hazard_definition_fit",
+                    "twin_transition_policy_fit",
+                    "selected_sector_fit",
+                    "country_region_fit",
+                    "affected_groups_fit",
+                ]
+            },
+            "affected_groups": [
+                {
+                    "group": "Women",
+                    "reason": "They are disproportionately exposed to energy poverty.",
+                }
+            ],
+            "duplicate_candidates": [],
+        }
+
+        with patch.object(
+            validator,
+            "_llm_dimension_validation",
+            AsyncMock(return_value=llm_result),
+        ):
+            response = _run(
+                service._run_custom_hazard_dimension_check("session-1", session)
+            )
+
+        self.assertEqual(response.step, "custom_hazard_group_review")
+        self.assertEqual(session.phase, "custom_hazard_group_review")
+        self.assertFalse(session.custom_hazard["confirmed_affected_groups"])
+        service._finalize_custom_hazard_from_grounding.assert_not_awaited()
 
     def test_hazard_evidence_decision_no_validates_with_stored_reason(self):
         service = ChatService.__new__(ChatService)
@@ -1140,6 +1211,12 @@ class CustomHazardValidationTests(unittest.TestCase):
         service._generate_custom_hazard_title = AsyncMock(
             return_value=generated_name
         )
+        service._generate_custom_hazard_summary = AsyncMock(
+            return_value=(
+                "Coal phase-out may concentrate job losses among workers in "
+                "fossil-fuel-dependent regions."
+            )
+        )
         service._crowd_sourcing_visibility_notice = MagicMock(return_value="")
         service._run_custom_hazard_dimension_check = AsyncMock()
         session = ChatSession(
@@ -1169,6 +1246,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertIn(original_name, response.bot_message)
         self.assertIn("Generated title", response.bot_message)
         self.assertIn(generated_name, response.bot_message)
+        self.assertIn("Coal phase-out may concentrate job losses", response.bot_message)
         self.assertEqual(session.accepted_custom_hazard, generated_name)
         self.assertEqual(saved_names, [generated_name])
         self.assertNotIn(original_name, session.hazard_profiles)
@@ -1176,6 +1254,11 @@ class CustomHazardValidationTests(unittest.TestCase):
         service._generate_custom_hazard_title.assert_awaited_once_with(
             session,
             original_name,
+        )
+        service._generate_custom_hazard_summary.assert_awaited_once_with(
+            session,
+            original_name,
+            generated_name,
         )
         service._run_custom_hazard_dimension_check.assert_not_awaited()
 
@@ -1202,7 +1285,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.chat_hazard_creation.ask_llm_chat",
+            "app.services.chat_custom_hazard_grounding.ask_llm_chat",
             AsyncMock(
                 return_value='{"title":"Coal phase-out employment shock"}'
             ),
@@ -2200,7 +2283,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
 
         with patch(
-            "app.services.chat_hazard_creation.deterministic_custom_hazard_input_review",
+            "app.services.chat_custom_hazard_input.deterministic_custom_hazard_input_review",
             return_value=None,
         ):
             response = _run(
@@ -2350,7 +2433,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         }
 
         with patch(
-            "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+            "app.services.chat_custom_hazard_grounding.validate_custom_hazard_dimensions",
             AsyncMock(return_value=dimension_result),
         ):
             response = _run(service._run_custom_hazard_dimension_check("session-1", session))
@@ -2416,7 +2499,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         }
 
         with patch(
-            "app.services.chat_hazard_creation.validate_custom_hazard_dimensions",
+            "app.services.chat_custom_hazard_grounding.validate_custom_hazard_dimensions",
             AsyncMock(return_value=dimension_result),
         ):
             response = _run(
@@ -2684,12 +2767,16 @@ class CustomHazardValidationTests(unittest.TestCase):
         message = render_message(
             "hazard_added.md",
             hazard="Regional employment shock",
+            original_hazard="Regional employment shock",
+            summary="Coal phase-out may concentrate employment losses among coal workers.",
             reason="Coal phase-out causes job losses.",
             evidence="Not provided",
             affected_population_groups="- **Coal workers**",
+            visibility_notice="",
         )
 
-        self.assertIn("Custom hazard added successfully", message)
+        self.assertIn("You have successfully co-created a hazard", message)
+        self.assertIn("Coal phase-out may concentrate employment losses", message)
         self.assertIn("Regional employment shock", message)
         self.assertIn("Coal workers", message)
         self.assertNotIn("Updated Hazard List", message)
@@ -2988,8 +3075,11 @@ class CustomHazardValidationTests(unittest.TestCase):
         service._stored_hazard_profiles = MagicMock(
             return_value=[
                 {
-                    "group": "Low-income workers",
-                    "reason": "Job loss risk.",
+                    "name": "Low-income workers",
+                    "profile": "Low-income workers",
+                    "explanation": "Job loss risk.",
+                    "regional_population_pct": 21.5,
+                    "national_population_pct": 25.5,
                 }
             ]
         )
@@ -3002,6 +3092,186 @@ class CustomHazardValidationTests(unittest.TestCase):
             response.bot_message,
         )
         self.assertIn("Bavaria, Germany", response.bot_message)
+        self.assertIn("Affected population profile", response.bot_message)
+        self.assertIn("Regional", response.bot_message)
+        self.assertIn("National", response.bot_message)
+        self.assertIn("21.5%", response.bot_message)
+        self.assertIn("25.5%", response.bot_message)
+        self.assertIn("lower than national", response.bot_message)
+        self.assertIn(
+            REGIONAL_POPULATION_COMPARISON_LABEL,
+            [option.label for option in response.options],
+        )
+
+    def test_custom_hazard_final_population_table_shows_missing_values(self):
+        service = ChatService.__new__(ChatService)
+
+        table = service._format_population_profiles_for_final(
+            [
+                {
+                    "name": "Newly identified affected group",
+                    "explanation": "No compatible population lookup was available.",
+                }
+            ]
+        )
+
+        self.assertIn("Affected population profile", table)
+        self.assertIn("Newly identified affected group", table)
+        self.assertEqual(table.count(">-</span>"), 2)
+
+    def test_population_comparison_lists_other_regions_in_the_country(self):
+        service = ChatService.__new__(ChatService)
+        service.db = SimpleNamespace(
+            scalars=MagicMock(
+                return_value=SimpleNamespace(
+                    all=lambda: [
+                        SimpleNamespace(id="bavaria", name="Bavaria"),
+                        SimpleNamespace(id="saxony", name="Saxony"),
+                    ]
+                )
+            )
+        )
+        session = ChatSession(
+            country_id="germany",
+            country="Germany",
+            region_id="bavaria",
+            region="Bavaria",
+            sector="Energy",
+            accepted_custom_hazard="Coal phase-out job shock",
+        )
+
+        response = service._custom_hazard_population_region_comparison_step(
+            "session-1",
+            session,
+        )
+
+        self.assertEqual(response.step, "hazard_population_region_comparison")
+        self.assertEqual([option.label for option in response.options], ["Saxony"])
+        self.assertEqual(session.region, "Bavaria")
+
+    def test_final_hazard_comparison_cta_opens_region_selection(self):
+        service = ChatService.__new__(ChatService)
+        expected = ChatResponse(
+            session_id="session-1",
+            step="hazard_population_region_comparison",
+            bot_message="Select a region",
+            options=[],
+            session=ChatSession().summary(),
+        )
+        service._custom_hazard_population_region_comparison_step = MagicMock(
+            return_value=expected
+        )
+        session = ChatSession(
+            phase="hazards",
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+            accepted_custom_hazard="Coal phase-out job shock",
+        )
+
+        response = _run(
+            service._handle_hazards_action(
+                "session-1",
+                session,
+                REGIONAL_POPULATION_COMPARISON_LABEL,
+            )
+        )
+
+        self.assertIs(response, expected)
+        service._custom_hazard_population_region_comparison_step.assert_called_once_with(
+            "session-1",
+            session,
+        )
+
+    def test_population_comparison_uses_region_names_as_table_headers(self):
+        service = ChatService.__new__(ChatService)
+        saxony = SimpleNamespace(id="saxony", name="Saxony")
+        service._population_comparison_regions = MagicMock(return_value=[saxony])
+        service._stored_hazard_profiles = MagicMock(
+            return_value=[
+                {
+                    "name": "Low-income workers",
+                    "regional_population_pct": 21.5,
+                    "national_population_pct": 25.5,
+                }
+            ]
+        )
+        service._profiles_for_population_region_comparison = AsyncMock(
+            return_value=[
+                {
+                    "name": "Low-income workers",
+                    "regional_population_pct": 18.0,
+                    "national_population_pct": 25.5,
+                }
+            ]
+        )
+        session = ChatSession(
+            country_id="germany",
+            country="Germany",
+            region_id="bavaria",
+            region="Bavaria",
+            sector="Energy",
+            accepted_custom_hazard="Coal phase-out job shock",
+        )
+
+        response = _run(
+            service._handle_custom_hazard_population_region_comparison(
+                "session-1",
+                session,
+                "Saxony",
+            )
+        )
+
+        self.assertIn("Affected population profile", response.bot_message)
+        self.assertIn(">Bavaria</th>", response.bot_message)
+        self.assertIn(">Saxony</th>", response.bot_message)
+        self.assertIn(">National</th>", response.bot_message)
+        self.assertIn("21.5%", response.bot_message)
+        self.assertIn("18.0%", response.bot_message)
+        self.assertIn("25.5%", response.bot_message)
+        self.assertEqual(session.region_id, "bavaria")
+        self.assertEqual(session.region, "Bavaria")
+
+    def test_population_comparison_looks_up_the_selected_region(self):
+        service = ChatService.__new__(ChatService)
+        service.eurostat = SimpleNamespace(
+            get_prevalence=AsyncMock(
+                return_value={
+                    "population_pct": 18.0,
+                    "national_population_pct": 25.5,
+                }
+            )
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Bavaria",
+            sector="Energy",
+        )
+        profile = {
+            "name": "Low-income workers",
+            "population_lookup_labels": ["Income: Low income"],
+            "regional_population_pct": 21.5,
+            "national_population_pct": 25.5,
+        }
+
+        compared = _run(
+            service._profiles_for_population_region_comparison(
+                session,
+                "Coal phase-out job shock",
+                [profile],
+                SimpleNamespace(id="saxony", name="Saxony"),
+            )
+        )
+
+        self.assertEqual(compared[0]["regional_population_pct"], 18.0)
+        service.eurostat.get_prevalence.assert_awaited_once_with(
+            "Income: Low income",
+            country_code="Germany",
+            nuts_code="Saxony",
+            sector="Energy",
+            hazard="Coal phase-out job shock",
+            confirmed_predictor_category="Income: Low income",
+        )
 
     def test_custom_affected_group_review_cleans_add_echo_from_label(self):
         service = ChatService.__new__(ChatService)

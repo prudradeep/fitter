@@ -278,6 +278,7 @@ class CustomHazard(Base):
     name_key: Mapped[str] = mapped_column(String(255), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
     evidence: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="user", server_default="user")
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict", server_default="strict")
     is_crowd_sourced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
