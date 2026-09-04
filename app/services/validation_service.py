@@ -469,6 +469,15 @@ class ChatValidationServiceMixin:
     @staticmethod
     def _custom_hazard_rejection_dimension(reason: str) -> str:
         lowered = reason.casefold()
+        objective_terms = (
+            "policy objective",
+            "sector objective",
+            "transition towards renewable energy",
+            "adaptation of housing to climate change",
+            "transition to electric vehicles",
+        )
+        if any(term in lowered for term in objective_terms):
+            return "policy_objective_fit"
         policy_terms = (
             "green and digital transition",
             "green transition",

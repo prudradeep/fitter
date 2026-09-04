@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     mitigation_contradiction_confirmation_fraction: float = 0.4
     mitigation_verdict_temperature: float = 0.25
     mitigation_support_score_floor: float = 0.15
+    custom_hazard_strict_ready_score: int = Field(default=75, ge=0, le=100)
+    custom_hazard_strict_dimension_floor: int = Field(default=7, ge=0, le=10)
+    custom_hazard_easy_ready_score: int = Field(default=45, ge=0, le=100)
+    custom_hazard_easy_dimension_floor: int = Field(default=3, ge=0, le=10)
     eurostat_base_url: str = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"
     eurostat_timeout_seconds: int = 20
     eurostat_cache_expiry_months: int = 3
@@ -267,6 +271,19 @@ class Settings(BaseSettings):
     @property
     def write_llm_log_to_db(self) -> bool:
         return self.is_development if self.llm_log_to_db is None else self.llm_log_to_db
+
+    @property
+    def custom_hazard_validation_thresholds(self) -> dict[str, dict[str, int]]:
+        return {
+            "strict": {
+                "ready_score": self.custom_hazard_strict_ready_score,
+                "dimension_floor": self.custom_hazard_strict_dimension_floor,
+            },
+            "easy": {
+                "ready_score": self.custom_hazard_easy_ready_score,
+                "dimension_floor": self.custom_hazard_easy_dimension_floor,
+            },
+        }
 
     @property
     def cors_origin_list(self) -> list[str]:

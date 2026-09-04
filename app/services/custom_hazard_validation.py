@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 from app.llm import ask_llm_chat
+from app.config import get_settings
 from app.services.chat_json import parse_json_object
 from app.services.chat_options import normalize_for_match
 from app.services.chat_parsers import is_llm_unavailable_response
@@ -26,9 +27,10 @@ from app.services.prompt_loader import load_nested_prompt_file, render_prompt_te
 DIMENSION_WEIGHTS = {
     # Hazard definition is the foundation. A policy/sector match is not enough
     # if the input is actually a benefit, mitigation, neutral fact, or question.
-    CustomHazardDimension.HAZARD_DEFINITION_FIT.value: 0.30,
-    CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value: 0.25,
-    CustomHazardDimension.SELECTED_SECTOR_FIT.value: 0.20,
+    CustomHazardDimension.HAZARD_DEFINITION_FIT.value: 0.25,
+    CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value: 0.20,
+    CustomHazardDimension.POLICY_OBJECTIVE_FIT.value: 0.15,
+    CustomHazardDimension.SELECTED_SECTOR_FIT.value: 0.15,
     CustomHazardDimension.COUNTRY_REGION_FIT.value: 0.10,
     CustomHazardDimension.AFFECTED_GROUPS_FIT.value: 0.15,
 }
@@ -36,27 +38,24 @@ DIMENSION_WEIGHTS = {
 CRITICAL_DIMENSIONS = (
     CustomHazardDimension.HAZARD_DEFINITION_FIT.value,
     CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value,
+    CustomHazardDimension.POLICY_OBJECTIVE_FIT.value,
     CustomHazardDimension.SELECTED_SECTOR_FIT.value,
     CustomHazardDimension.COUNTRY_REGION_FIT.value,
 )
 
-VALIDATION_THRESHOLDS = {
-    "strict": {
-        "ready_score": 75,
-        "dimension_floor": 5,
-    },
-    "easy": {
-        "ready_score": 45,
-        "dimension_floor": 3,
-    },
-}
-
 DIMENSION_TITLES = {
     CustomHazardDimension.HAZARD_DEFINITION_FIT.value: "Hazard definition",
     CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value: "Twin transition policy fit",
+    CustomHazardDimension.POLICY_OBJECTIVE_FIT.value: "Policy Objective Fit",
     CustomHazardDimension.SELECTED_SECTOR_FIT.value: "Sector fit",
     CustomHazardDimension.COUNTRY_REGION_FIT.value: "Country / region fit",
     CustomHazardDimension.AFFECTED_GROUPS_FIT.value: "Affected population groups",
+}
+
+SECTOR_POLICY_OBJECTIVES = {
+    "energy": "Transition towards renewable energy",
+    "housing": "Adaptation of housing to climate change",
+    "transport": "Transition to electric vehicles",
 }
 
 CLARIFICATION_IMPROVEMENT_THRESHOLD = 3
@@ -100,6 +99,7 @@ def default_custom_hazard_state() -> dict[str, Any]:
         "duplicate_override_confirmed": False,
         "confidence": ConfidenceLevel.LOW.value,
         "status": CustomHazardStatus.DRAFT.value,
+        "validation_mode": "strict",
     }
 
 
@@ -222,6 +222,7 @@ async def validate_custom_hazard_dimensions(
     result["confidence"] = _overall_confidence(result).value
     result["next_action"] = _recommended_action(result, state, validation_mode).value
     result["status"] = _status_for_action(result["next_action"]).value
+    result["validation_mode"] = str(validation_mode or "strict").strip().casefold()
     result["raw_text"] = hazard_text
     result["normalized_text"] = normalize_for_match(hazard_text)
     return result
@@ -230,13 +231,15 @@ async def validate_custom_hazard_dimensions(
 def build_custom_hazard_grounding_status(custom_hazard: dict[str, Any] | None) -> list[dict[str, Any]]:
     state = _merged_state(custom_hazard)
     dimension_scores = state.get("dimension_scores") if isinstance(state.get("dimension_scores"), dict) else {}
+    dimension_floor = custom_hazard_dimension_floor(state.get("validation_mode"))
     cards = [
-        _dimension_card("hazard_definition_fit", dimension_scores),
-        _dimension_card("twin_transition_policy_fit", dimension_scores),
-        _dimension_card("selected_sector_fit", dimension_scores),
-        _dimension_card("country_region_fit", dimension_scores),
+        _dimension_card("hazard_definition_fit", dimension_scores, dimension_floor),
+        _dimension_card("twin_transition_policy_fit", dimension_scores, dimension_floor),
+        _dimension_card("policy_objective_fit", dimension_scores, dimension_floor),
+        _dimension_card("selected_sector_fit", dimension_scores, dimension_floor),
+        _dimension_card("country_region_fit", dimension_scores, dimension_floor),
         _duplicate_card(state),
-        _affected_groups_card(state),
+        _affected_groups_card(state, dimension_floor),
         _clarification_progress_card(state),
         _validation_readiness_card(state),
     ]
@@ -292,6 +295,7 @@ async def _llm_dimension_validation(
     selected_sector = (selected_sector or "").strip()
     country = (country or "").strip()
     region = (region or "").strip()
+    policy_objective = policy_objective_for_sector(selected_sector)
 
     if not hazard_text:
         return None
@@ -300,10 +304,12 @@ async def _llm_dimension_validation(
     system += """
 
 Validation order and application-context rules:
-- Evaluate the four mandatory dimensions first: hazard definition, twin-transition policy fit, selected sector fit, and country/region fit.
+- Evaluate the five mandatory dimensions first: hazard definition, twin-transition policy fit, policy objective fit, selected sector fit, and country/region fit.
+- Policy objective fit is distinct from general twin-transition policy fit. Determine whether the hazard is a plausible adverse consequence of pursuing the supplied sector policy objective.
+- A hazard need not repeat the policy objective verbatim, but its causal mechanism must be compatible with that objective.
 - The selected country, region, and sector are application context. Do not ask the user to reconfirm them merely because their names are absent from the hazard text.
 - Use the hazard's meaning and the supplied application context to assess sector and location fit. Ask only when there is a substantive ambiguity or contradiction.
-- Only after all four mandatory dimensions are supported, evaluate and extract affected population groups.
+- Only after all five mandatory dimensions are supported, evaluate and extract affected population groups.
 - If the mandatory dimensions are supported and no specific affected group can be extracted, ask the user for one.
 """
 
@@ -311,6 +317,7 @@ Validation order and application-context rules:
         "selected_country": country,
         "selected_region": region,
         "selected_sector": selected_sector,
+        "selected_sector_policy_objective": policy_objective,
         "custom_hazard_text": hazard_text,
         "previous_clarifications": state.get("clarifications", []),
         "current_affected_groups": state.get("affected_groups", []),
@@ -331,6 +338,13 @@ Validation order and application-context rules:
                     "clarification_question": "",
                 },
                 "twin_transition_policy_fit": {
+                    "score": 0,
+                    "reason": "",
+                    "confidence": "low | medium | high",
+                    "needs_clarification": False,
+                    "clarification_question": "",
+                },
+                "policy_objective_fit": {
                     "score": 0,
                     "reason": "",
                     "confidence": "low | medium | high",
@@ -436,6 +450,10 @@ def _heuristic_dimension_validation(
     }
     policy_score = SCORE_STRONG if _contains_any_term(lower, transition_terms) else SCORE_WEAK
 
+    policy_objective = policy_objective_for_sector(selected_sector)
+    objective_terms = _sector_policy_objective_terms(selected_sector)
+    objective_score = SCORE_STRONG if _contains_any_term(lower, objective_terms) else SCORE_WEAK
+
     location_terms = {
         token
         for token in normalize_for_match(f"{country} {region}").split()
@@ -487,6 +505,13 @@ def _heuristic_dimension_validation(
                 if policy_score >= 5
                 else "The hazard does not clearly name a green, digital, or twin-transition policy mechanism.",
                 "Can you explain how this hazard is linked to green, digital, or twin-transition policy changes?",
+            ),
+            "policy_objective_fit": _score_payload(
+                objective_score,
+                f"The hazard is plausibly linked to the sector policy objective: {policy_objective}."
+                if objective_score >= 5
+                else f"The hazard is not clearly linked to the sector policy objective: {policy_objective}.",
+                f"How could pursuing the policy objective '{policy_objective}' cause or worsen this hazard?",
             ),
             "selected_sector_fit": _score_payload(
                 sector_score,
@@ -546,10 +571,16 @@ def _coerce_validation_result(value: dict[str, Any] | None) -> dict[str, Any] | 
     for key in DIMENSION_WEIGHTS:
         item = dimensions.get(key)
         if not isinstance(item, dict):
-            item = {
-                "score": fallback_score,
-                "reason": "Inferred from the available validation dimensions.",
-            }
+            if key == CustomHazardDimension.POLICY_OBJECTIVE_FIT.value:
+                item = {
+                    "score": 0,
+                    "reason": "The mandatory policy-objective dimension was not evaluated.",
+                }
+            else:
+                item = {
+                    "score": fallback_score,
+                    "reason": "Inferred from the available validation dimensions.",
+                }
         score = _clamp_score(item.get("score"))
         question = str(item.get("clarification_question") or "").strip()
         needs_clarification = score < 5 or (
@@ -624,7 +655,7 @@ def _recommended_action(
     if result.get("duplicate_candidates") and not state.get("duplicate_override_confirmed"):
         return CustomHazardAction.ASK_DUPLICATE_CONFIRMATION
 
-    # The core hazard, transition, sector, and location dimensions must resolve
+    # The core hazard, transition, objective, sector, and location dimensions must resolve
     # before the flow asks for reason/evidence or affected-group review.
     if critical_low or critical_needs_clarification:
         return CustomHazardAction.REJECT if flattened else CustomHazardAction.ASK_CLARIFICATION
@@ -646,10 +677,15 @@ def _recommended_action(
 
 
 def _validation_thresholds(validation_mode: str) -> dict[str, int]:
-    return VALIDATION_THRESHOLDS.get(
+    thresholds = get_settings().custom_hazard_validation_thresholds
+    return thresholds.get(
         str(validation_mode or "").strip().casefold(),
-        VALIDATION_THRESHOLDS["strict"],
+        thresholds["strict"],
     )
+
+
+def custom_hazard_dimension_floor(validation_mode: object) -> int:
+    return _validation_thresholds(str(validation_mode or "strict"))["dimension_floor"]
 
 
 def _dimension_needs_clarification(dimensions: dict[str, Any], key: str) -> bool:
@@ -676,6 +712,7 @@ def _ensure_dimension_reasons(result: dict[str, Any]) -> None:
     supported_reasons = {
         "hazard_definition_fit": "The submitted text describes a negative impact or risk.",
         "twin_transition_policy_fit": "The submitted text has a supported twin-transition policy link.",
+        "policy_objective_fit": "The hazard is compatible with the selected sector's policy objective.",
         "selected_sector_fit": "The hazard is compatible with the selected sector.",
         "country_region_fit": "The selected country and region provide the application context for this hazard.",
         "affected_groups_fit": "A specific affected population group was identified.",
@@ -683,6 +720,7 @@ def _ensure_dimension_reasons(result: dict[str, Any]) -> None:
     clarification_reasons = {
         "hazard_definition_fit": "The negative impact or risk is not yet explicit.",
         "twin_transition_policy_fit": "The link to a green, digital, or twin-transition policy is not yet clear.",
+        "policy_objective_fit": "The link to the selected sector's policy objective is not yet clear.",
         "selected_sector_fit": "The relationship to the selected sector is not yet clear.",
         "country_region_fit": "The applicability to the selected country or region is not yet clear.",
         "affected_groups_fit": "No specific affected population group was identified.",
@@ -714,13 +752,23 @@ def _status_for_action(action: str | CustomHazardAction) -> CustomHazardStatus:
     }.get(action_value, CustomHazardStatus.NEEDS_CLARIFICATION)
 
 
-def _dimension_card(key: str, dimensions: dict[str, Any]) -> dict[str, Any]:
+def _dimension_card(
+    key: str,
+    dimensions: dict[str, Any],
+    minimum_score: int,
+) -> dict[str, Any]:
     item = dimensions.get(key) if isinstance(dimensions, dict) else {}
     raw_score = _clamp_score(item.get("score") if isinstance(item, dict) else 0)
     score = raw_score * 10
     needs = bool(item.get("needs_clarification")) if isinstance(item, dict) else True
     explicit_status = str(item.get("status") or "").strip().upper() if isinstance(item, dict) else ""
-    status = explicit_status or ("NEEDS CLARIFICATION" if needs else "SUPPORTED")
+    below_floor = raw_score < minimum_score
+    if explicit_status in {"REJECTED", "INSUFFICIENT INFO"}:
+        status = explicit_status
+    elif needs or below_floor:
+        status = "NEEDS CLARIFICATION"
+    else:
+        status = explicit_status or "SUPPORTED"
     if raw_score == 0:
         status = explicit_status or "INSUFFICIENT INFO"
     return {
@@ -770,13 +818,37 @@ def _duplicate_card(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _affected_groups_card(state: dict[str, Any]) -> dict[str, Any]:
+def _affected_groups_card(state: dict[str, Any], minimum_score: int) -> dict[str, Any]:
     groups = state.get("confirmed_affected_groups") or state.get("affected_groups") or []
     dimensions = state.get("dimension_scores")
-    core_supported = isinstance(dimensions, dict) and _core_dimensions_supported(dimensions, 5)
+    core_supported = isinstance(dimensions, dict) and _core_dimensions_supported(
+        dimensions,
+        minimum_score,
+    )
+    group_dimension = (
+        dimensions.get("affected_groups_fit") if isinstance(dimensions, dict) else {}
+    )
+    group_status = (
+        str(group_dimension.get("status") or "").strip().upper()
+        if isinstance(group_dimension, dict)
+        else ""
+    )
+    group_supported = (
+        isinstance(group_dimension, dict)
+        and _dimension_score(dimensions, "affected_groups_fit") >= minimum_score
+        and not group_dimension.get("needs_clarification")
+        and group_status not in {"REJECTED", "INSUFFICIENT INFO", "DEFERRED"}
+    )
     if not core_supported:
         reason = "This check will run after all mandatory dimensions are supported."
         status = GroundingStatus.WARNING.value
+    elif not group_supported:
+        reason = (
+            str(group_dimension.get("reason") or "").strip()
+            if isinstance(group_dimension, dict)
+            else ""
+        ) or "The affected-population dimension needs more support."
+        status = GroundingStatus.NEEDS_CLARIFICATION.value
     elif groups:
         names = [str(group.get("group") or group.get("name") or "").strip() for group in groups if isinstance(group, dict)]
         reason = "Identified groups: " + ", ".join([name for name in names if name])
@@ -895,6 +967,39 @@ def _sector_terms(sector: str) -> set[str]:
     return set(lower.split())
 
 
+def policy_objective_for_sector(sector: str) -> str:
+    key = normalize_for_match(sector)
+    for sector_key, objective in SECTOR_POLICY_OBJECTIVES.items():
+        if sector_key in key:
+            return objective
+    return "the selected sector policy objective"
+
+
+def _sector_policy_objective_terms(sector: str) -> set[str]:
+    key = normalize_for_match(sector)
+    mapping = {
+        "energy": {
+            "renewable", "renewable energy", "solar", "wind", "clean energy",
+            "green transition", "energy transition", "grid modernization",
+            "grid modernisation", "smart grid", "energy community",
+        },
+        "housing": {
+            "adaptation", "climate adaptation", "climate change", "resilience",
+            "climate resilience", "flood", "flooding", "heat", "overheating",
+            "cooling", "retrofit", "renovation", "insulation", "climate proofing",
+        },
+        "transport": {
+            "electric vehicle", "electric vehicles", "ev", "evs", "charging",
+            "charging infrastructure", "vehicle electrification", "electrification",
+            "clean vehicle", "low emission zone", "zero emission vehicle",
+        },
+    }
+    for sector_key, terms in mapping.items():
+        if sector_key in key:
+            return terms
+    return set()
+
+
 def _clamp_score(value: Any) -> int:
     try:
         number = int(round(float(value)))
@@ -1011,6 +1116,7 @@ def _merge_llm_with_heuristic_guardrails(
     # substantive incompatibility findings from the LLM.
     for key in (
         "twin_transition_policy_fit",
+        "policy_objective_fit",
         "selected_sector_fit",
         "country_region_fit",
     ):

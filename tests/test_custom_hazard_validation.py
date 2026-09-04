@@ -42,6 +42,191 @@ class CustomHazardValidationTests(unittest.TestCase):
             result["dimension_scores"]["affected_groups_fit"]["needs_clarification"]
         )
 
+    def test_each_sector_has_the_defined_policy_objective(self):
+        self.assertEqual(
+            validator.policy_objective_for_sector("Energy"),
+            "Transition towards renewable energy",
+        )
+        self.assertEqual(
+            validator.policy_objective_for_sector("Housing"),
+            "Adaptation of housing to climate change",
+        )
+        self.assertEqual(
+            validator.policy_objective_for_sector("Transport"),
+            "Transition to electric vehicles",
+        )
+
+    def test_policy_objective_fit_is_a_mandatory_dimension(self):
+        dimensions = {
+            key: {"score": 8, "needs_clarification": False}
+            for key in validator.DIMENSION_WEIGHTS
+        }
+        dimensions["policy_objective_fit"] = {
+            "score": 4,
+            "needs_clarification": True,
+            "clarification_question": "How does this relate to the sector objective?",
+        }
+        result = {
+            "overall_score": 82,
+            "dimension_scores": dimensions,
+            "affected_groups": [{"group": "Taxi drivers"}],
+            "duplicate_candidates": [],
+        }
+
+        action = validator._recommended_action(result, {}, "strict")
+
+        self.assertEqual(action.value, "ask_clarification")
+
+    def test_dimension_floor_is_seven_in_strict_and_three_in_easy_mode(self):
+        self.assertEqual(validator.custom_hazard_dimension_floor("strict"), 7)
+        self.assertEqual(validator.custom_hazard_dimension_floor("easy"), 3)
+
+        configured_settings = SimpleNamespace(
+            custom_hazard_validation_thresholds={
+                "strict": {"ready_score": 80, "dimension_floor": 8},
+                "easy": {"ready_score": 40, "dimension_floor": 2},
+            }
+        )
+        with patch.object(validator, "get_settings", return_value=configured_settings):
+            self.assertEqual(validator.custom_hazard_dimension_floor("strict"), 8)
+            self.assertEqual(validator.custom_hazard_dimension_floor("easy"), 2)
+
+        dimensions = {
+            key: {"score": 6, "needs_clarification": False}
+            for key in validator.DIMENSION_WEIGHTS
+        }
+        result = {
+            "overall_score": 60,
+            "dimension_scores": dimensions,
+            "affected_groups": [],
+            "duplicate_candidates": [],
+        }
+
+        self.assertEqual(
+            validator._recommended_action(result, {}, "strict").value,
+            "ask_clarification",
+        )
+        self.assertEqual(
+            validator._recommended_action(result, {}, "easy").value,
+            "validate",
+        )
+
+    def test_grounding_status_uses_the_mode_specific_dimension_floor(self):
+        dimension_scores = {
+            key: {"score": 6, "needs_clarification": False}
+            for key in validator.DIMENSION_WEIGHTS
+        }
+
+        strict_cards = validator.build_custom_hazard_grounding_status(
+            {"validation_mode": "strict", "dimension_scores": dimension_scores}
+        )
+        easy_cards = validator.build_custom_hazard_grounding_status(
+            {"validation_mode": "easy", "dimension_scores": dimension_scores}
+        )
+
+        self.assertEqual(strict_cards[0]["status"], "NEEDS CLARIFICATION")
+        self.assertEqual(easy_cards[0]["status"], "SUPPORTED")
+
+    def test_missing_policy_objective_score_is_not_inferred_from_other_dimensions(self):
+        llm_result = {
+            "dimension_scores": {
+                key: {"score": 8, "reason": "Supported."}
+                for key in (
+                    "hazard_definition_fit",
+                    "twin_transition_policy_fit",
+                    "selected_sector_fit",
+                    "country_region_fit",
+                    "affected_groups_fit",
+                )
+            }
+        }
+
+        result = validator._coerce_validation_result(llm_result)
+
+        self.assertIsNotNone(result)
+        objective = result["dimension_scores"]["policy_objective_fit"]
+        self.assertEqual(objective["score"], 0)
+        self.assertTrue(objective["needs_clarification"])
+
+    def test_transport_hazard_without_ev_objective_link_requests_clarification(self):
+        with patch.object(validator, "ask_llm_chat", _unavailable):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    "Low-income commuters face higher public transport costs from digital mobility policy.",
+                    "Transport",
+                    "Italy",
+                    "Veneto",
+                    [],
+                    None,
+                )
+            )
+
+        objective = result["dimension_scores"]["policy_objective_fit"]
+        self.assertEqual(objective["score"], validator.SCORE_WEAK)
+        self.assertTrue(objective["needs_clarification"])
+        self.assertIn("Transition to electric vehicles", objective["clarification_question"])
+        self.assertEqual(result["next_action"], "ask_clarification")
+        self.assertEqual(
+            result["dimension_scores"]["affected_groups_fit"]["status"],
+            "DEFERRED",
+        )
+
+    def test_transport_ev_hazard_supports_policy_objective_fit(self):
+        with patch.object(validator, "ask_llm_chat", _unavailable):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    "Taxi drivers face income loss from EV charging downtime.",
+                    "Transport",
+                    "Italy",
+                    "Veneto",
+                    [],
+                    None,
+                )
+            )
+
+        objective = result["dimension_scores"]["policy_objective_fit"]
+        self.assertEqual(objective["score"], validator.SCORE_STRONG)
+        self.assertFalse(objective["needs_clarification"])
+
+    def test_grounding_status_displays_policy_objective_fit(self):
+        cards = validator.build_custom_hazard_grounding_status(
+            {
+                "dimension_scores": {
+                    "policy_objective_fit": {
+                        "score": 8,
+                        "reason": "The EV transition can cause this hazard.",
+                        "needs_clarification": False,
+                    }
+                }
+            }
+        )
+
+        objective_card = next(card for card in cards if card["title"] == "Policy Objective Fit")
+        self.assertEqual(objective_card["status"], "SUPPORTED")
+        self.assertEqual(objective_card["score"], 80)
+
+    def test_policy_objective_clarification_names_the_selected_objective(self):
+        state = {
+            "selected_sector": "Transport",
+            "dimension_scores": {
+                key: {
+                    "score": 8,
+                    "needs_clarification": False,
+                }
+                for key in validator.CRITICAL_DIMENSIONS
+            },
+        }
+        state["dimension_scores"]["policy_objective_fit"] = {
+            "score": 4,
+            "needs_clarification": True,
+            "clarification_question": "",
+        }
+
+        details = ChatService._custom_hazard_missing_dimension_details(state)
+
+        self.assertEqual(details[0][0], "Policy Objective Fit")
+        self.assertIn("Transition to electric vehicles", details[0][1])
+
     def test_affected_groups_are_deferred_until_mandatory_dimensions_are_supported(self):
         hazard = (
             'Mismatch in Transport Design ("Trip-Chaining"): Transit infrastructure '
@@ -111,6 +296,7 @@ class CustomHazardValidationTests(unittest.TestCase):
                 for key in [
                     "hazard_definition_fit",
                     "twin_transition_policy_fit",
+                    "policy_objective_fit",
                     "selected_sector_fit",
                     "country_region_fit",
                     "affected_groups_fit",
@@ -161,6 +347,7 @@ class CustomHazardValidationTests(unittest.TestCase):
                 for key in [
                     "hazard_definition_fit",
                     "twin_transition_policy_fit",
+                    "policy_objective_fit",
                     "selected_sector_fit",
                     "country_region_fit",
                     "affected_groups_fit",
@@ -313,6 +500,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             for key in [
                 "hazard_definition_fit",
                 "twin_transition_policy_fit",
+                "policy_objective_fit",
                 "selected_sector_fit",
                 "country_region_fit",
                 "affected_groups_fit",
@@ -1342,6 +1530,10 @@ class CustomHazardValidationTests(unittest.TestCase):
                         "needs_clarification": False,
                     },
                     "twin_transition_policy_fit": {
+                        "score": 8,
+                        "needs_clarification": False,
+                    },
+                    "policy_objective_fit": {
                         "score": 8,
                         "needs_clarification": False,
                     },

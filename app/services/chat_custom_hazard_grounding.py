@@ -29,9 +29,11 @@ from app.services.chat_session import ChatSession
 from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.custom_hazard_validation import (
     build_custom_hazard_grounding_status,
+    custom_hazard_dimension_floor,
     custom_hazard_validation_details,
     default_custom_hazard_state,
     frontend_custom_hazard_payload,
+    policy_objective_for_sector,
     validate_custom_hazard_dimensions,
 )
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
@@ -278,6 +280,7 @@ class ChatCustomHazardGroundingMixin:
         state["selected_country"] = session.country or ""
         state["selected_region"] = session.region or ""
         state["selected_sector"] = session.sector or ""
+        state["validation_mode"] = session.validation_mode or "strict"
         state["validation_round"] = int(state.get("validation_round") or 0) + 1
         state["overall_score"] = int(result.get("overall_score") or 0)
         scores = list(state.get("scores") or [])
@@ -763,12 +766,19 @@ class ChatCustomHazardGroundingMixin:
         dimensions = state.get("dimension_scores")
         if not isinstance(dimensions, dict):
             return []
+        policy_objective = policy_objective_for_sector(
+            str(state.get("selected_sector") or "")
+        )
+        dimension_floor = custom_hazard_dimension_floor(state.get("validation_mode"))
         prompts = {
             "hazard_definition_fit": (
                 "What specific negative harm or risk occurs, and who is affected?"
             ),
             "twin_transition_policy_fit": (
                 "Which green, digital, or twin-transition policy or measure causes or worsens the harm?"
+            ),
+            "policy_objective_fit": (
+                f"How could pursuing the policy objective '{policy_objective}' cause or worsen this hazard?"
             ),
             "selected_sector_fit": (
                 "How does this hazard relate specifically to the selected sector?"
@@ -783,6 +793,7 @@ class ChatCustomHazardGroundingMixin:
         labels = {
             "hazard_definition_fit": "Hazard definition",
             "twin_transition_policy_fit": "Twin-transition policy fit",
+            "policy_objective_fit": "Policy Objective Fit",
             "selected_sector_fit": "Sector fit",
             "country_region_fit": "Country / region fit",
             "affected_groups_fit": "Affected population groups",
@@ -790,12 +801,13 @@ class ChatCustomHazardGroundingMixin:
         core_dimensions = (
             "hazard_definition_fit",
             "twin_transition_policy_fit",
+            "policy_objective_fit",
             "selected_sector_fit",
             "country_region_fit",
         )
         core_supported = all(
             isinstance(dimensions.get(key), dict)
-            and int(dimensions[key].get("score") or 0) >= 5
+            and int(dimensions[key].get("score") or 0) >= dimension_floor
             and not dimensions[key].get("needs_clarification")
             and str(dimensions[key].get("status") or "").strip().upper()
             not in {"REJECTED", "INSUFFICIENT INFO"}
@@ -817,7 +829,7 @@ class ChatCustomHazardGroundingMixin:
             if not item.get("needs_clarification") and status not in {
                 "REJECTED",
                 "INSUFFICIENT INFO",
-            } and score >= 5:
+            } and score >= dimension_floor:
                 continue
             question = str(item.get("clarification_question") or "").strip() or prompt
             reason = str(item.get("reason") or "").strip()
@@ -1051,6 +1063,7 @@ class ChatCustomHazardGroundingMixin:
         core_dimensions = (
             "hazard_definition_fit",
             "twin_transition_policy_fit",
+            "policy_objective_fit",
             "selected_sector_fit",
             "country_region_fit",
         )
@@ -1066,13 +1079,15 @@ class ChatCustomHazardGroundingMixin:
         session: ChatSession,
         dimension: str,
         *,
-        minimum_score: int = 5,
+        minimum_score: int | None = None,
     ) -> bool:
         state = self._custom_hazard_state(session)
         dimensions = state.get("dimension_scores")
         item = dimensions.get(dimension) if isinstance(dimensions, dict) else {}
         if not isinstance(item, dict):
             return False
+        if minimum_score is None:
+            minimum_score = custom_hazard_dimension_floor(session.validation_mode)
         status = str(item.get("status") or "").strip().upper()
         if status in {"REJECTED", "INSUFFICIENT INFO"}:
             return False
@@ -1089,6 +1104,7 @@ class ChatCustomHazardGroundingMixin:
             for dimension in (
                 "hazard_definition_fit",
                 "twin_transition_policy_fit",
+                "policy_objective_fit",
                 "selected_sector_fit",
                 "country_region_fit",
             )

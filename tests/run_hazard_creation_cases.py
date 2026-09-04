@@ -188,6 +188,12 @@ class _HazardCreationEngine:
                     "needs_clarification": True,
                     "clarification_question": "Which green, digital, or twin-transition policy creates this hazard?",
                 },
+                "policy_objective_fit": {
+                    "score": 3,
+                    "reason": "The selected sector policy objective needs clearer grounding.",
+                    "needs_clarification": True,
+                    "clarification_question": "How does this hazard arise from the selected sector policy objective?",
+                },
                 "selected_sector_fit": {
                     "score": 4,
                     "reason": "The selected-sector mechanism needs more detail.",

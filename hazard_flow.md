@@ -111,14 +111,18 @@ The dimensions are:
 ```text
 Hazard definition fit
 Twin-transition policy fit
+Policy Objective Fit
 Selected sector fit
 Country / region fit
 Affected population groups fit
 ```
 
-Strict mode requires overall score 75 and dimension floor 5. Easy mode requires
+Strict mode requires overall score 75 and dimension floor 7. Easy mode requires
 45 and 3. Critical dimensions are hazard definition, twin-transition policy,
-selected-sector fit, and country/region fit.
+policy-objective fit, selected-sector fit, and country/region fit. Policy
+Objective Fit checks the hazard against the selected sector's defined objective:
+renewable-energy transition for Energy, climate adaptation for Housing, and
+electric-vehicle transition for Transport.
 
 The validator routes to:
 

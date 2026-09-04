@@ -57,6 +57,7 @@ class GroundingStatus(AppStrEnum):
 class CustomHazardDimension(AppStrEnum):
     HAZARD_DEFINITION_FIT = "hazard_definition_fit"
     TWIN_TRANSITION_POLICY_FIT = "twin_transition_policy_fit"
+    POLICY_OBJECTIVE_FIT = "policy_objective_fit"
     SELECTED_SECTOR_FIT = "selected_sector_fit"
     COUNTRY_REGION_FIT = "country_region_fit"
     AFFECTED_GROUPS_FIT = "affected_groups_fit"

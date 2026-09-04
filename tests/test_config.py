@@ -92,6 +92,26 @@ class SettingsSafetyTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Settings(prompt_source="remote")
 
+    def test_custom_hazard_validation_thresholds_are_configurable(self) -> None:
+        settings = Settings(
+            custom_hazard_strict_ready_score=80,
+            custom_hazard_strict_dimension_floor=8,
+            custom_hazard_easy_ready_score=40,
+            custom_hazard_easy_dimension_floor=2,
+        )
+
+        self.assertEqual(
+            settings.custom_hazard_validation_thresholds,
+            {
+                "strict": {"ready_score": 80, "dimension_floor": 8},
+                "easy": {"ready_score": 40, "dimension_floor": 2},
+            },
+        )
+
+    def test_custom_hazard_dimension_floor_must_be_between_zero_and_ten(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(custom_hazard_strict_dimension_floor=11)
+
     def test_env_file_override_is_supported_for_parallel_dev_runs(self) -> None:
         with patch.dict("os.environ", {"ENV_FILE": ".env.server.dev"}):
             self.assertEqual(_env_files(), (Path(".env.server.dev"),))

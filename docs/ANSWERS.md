@@ -2,7 +2,7 @@
 
 ## Which hazard dimensions are contradiction-blocking, and which are recoverable?
 
-Platform co-created hazard dimension scoring has five dimensions: hazard definition, twin-transition policy fit, selected sector fit, country/region fit, and affected population groups. Critical low or clarification-needed states on hazard definition, twin-transition policy fit, selected sector fit, and country/region fit block progress until clarified or rejected after flatline; affected groups can trigger clarification/review and is handled separately from the critical set. [app/services/custom_hazard_validation.py :: CRITICAL_DIMENSIONS] [app/services/custom_hazard_validation.py :: _recommended_action()]
+Platform co-created hazard dimension scoring has six dimensions: hazard definition, twin-transition policy fit, policy-objective fit, selected sector fit, country/region fit, and affected population groups. Critical low or clarification-needed states on hazard definition, twin-transition policy fit, policy-objective fit, selected sector fit, and country/region fit block progress until clarified or rejected after flatline; affected groups can trigger clarification/review and are handled separately from the critical set. Policy-objective fit uses the objective defined for the selected sector. [app/services/custom_hazard_validation.py :: CRITICAL_DIMENSIONS] [app/services/custom_hazard_validation.py :: SECTOR_POLICY_OBJECTIVES] [app/services/custom_hazard_validation.py :: _recommended_action()]
 
 Contradiction as `INVALID` is handled by the evidence contradiction service rather than per hazard dimension; contradiction or contraindication forces invalid. [app/services/evidence_contradiction_service.py :: _normalize_verdict()]
 
@@ -12,7 +12,7 @@ Contradiction as `INVALID` is handled by the evidence contradiction service rath
 
 ## Does strict check alter contradiction handling, or only insufficient handling?
 
-Strict/easy mode alters platform co-created hazard ready score and dimension floor, and mitigation storage/crowdsourcing gates. The inspected contradiction service does not branch on strict/easy mode; contradiction or contraindication forces `INVALID` regardless of mode. [app/services/custom_hazard_validation.py :: VALIDATION_THRESHOLDS] [app/services/custom_hazard_validation.py :: _recommended_action()] [app/services/evidence_contradiction_service.py :: _normalize_verdict()]
+Strict/easy mode alters the configurable platform co-created hazard ready score and dimension floor, and mitigation storage/crowdsourcing gates. The inspected contradiction service does not branch on strict/easy mode; contradiction or contraindication forces `INVALID` regardless of mode. [app/config.py :: Settings.custom_hazard_validation_thresholds] [app/services/custom_hazard_validation.py :: _recommended_action()] [app/services/evidence_contradiction_service.py :: _normalize_verdict()]
 
 ## Does provenance capture exist anywhere in the pipeline?
 
