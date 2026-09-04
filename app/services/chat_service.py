@@ -678,9 +678,10 @@ class ChatService(
             "mitigation_measure",
             "mitigation_reason",
             "mitigation_clarity",
+            "evaluation_question",
         }:
-            # These phases have their own hazard-aware validation and must
-            # receive the complete user response, including long descriptions.
+            # These phases have their own phase-specific validation and must
+            # receive the complete user response, including score-only answers.
             return False
         if self._matches_current_step_option(session, clean_message):
             return False

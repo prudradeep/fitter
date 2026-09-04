@@ -1428,6 +1428,22 @@ class CustomHazardValidationTests(unittest.TestCase):
             )
         )
 
+    def test_evaluation_score_only_skips_common_quality_gate(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="evaluation_question",
+        )
+
+        self.assertFalse(
+            service._should_check_common_user_input_quality(
+                session,
+                "Score: 9",
+            )
+        )
+
     def test_hazard_evidence_decision_accepts_url_in_open_text(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
