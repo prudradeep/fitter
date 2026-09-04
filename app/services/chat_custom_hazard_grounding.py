@@ -353,10 +353,7 @@ class ChatCustomHazardGroundingMixin:
         ).strip():
             session.pending_hazard = hazard
             session.pending_hazard_reason = ""
-            if not bool(state.get("evidence_decision_asked")) and not str(
-                state.get("evidence") or session.pending_hazard_evidence or ""
-            ).strip():
-                return self._hazard_evidence_decision_step(session_id, session)
+            return self._hazard_reason_step(session_id, session, hazard)
         if (
             action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE}
             and not bool(state.get("evidence_decision_asked"))
@@ -696,13 +693,13 @@ class ChatCustomHazardGroundingMixin:
         if not isinstance(dimensions, dict):
             return []
         prompts = {
-            "hazard_definition": (
+            "hazard_definition_fit": (
                 "What specific negative harm or risk occurs, and who is affected?"
             ),
             "twin_transition_policy_fit": (
                 "Which green, digital, or twin-transition policy or measure causes or worsens the harm?"
             ),
-            "sector_fit": (
+            "selected_sector_fit": (
                 "How does this hazard relate specifically to the selected sector?"
             ),
             "country_region_fit": (
@@ -713,9 +710,9 @@ class ChatCustomHazardGroundingMixin:
             ),
         }
         labels = {
-            "hazard_definition": "Hazard definition",
+            "hazard_definition_fit": "Hazard definition",
             "twin_transition_policy_fit": "Twin-transition policy fit",
-            "sector_fit": "Sector fit",
+            "selected_sector_fit": "Sector fit",
             "country_region_fit": "Country / region fit",
             "affected_groups_fit": "Affected population groups",
         }

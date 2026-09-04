@@ -729,7 +729,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
         self.assertEqual(session.phase, "add_hazard_evidence_input")
 
-    def test_hazard_evidence_input_skip_validates_with_stored_reason(self):
+    def test_hazard_evidence_input_skip_routes_without_revalidating_dimensions(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
             sector="Energy",
@@ -740,24 +740,28 @@ class CustomHazardValidationTests(unittest.TestCase):
             pending_hazard_reason="Coal phase-out policy can cause job losses.",
             custom_hazard={"raw_text": "Regional employment shock"},
         )
-        service._validate_custom_hazard = AsyncMock(
-            return_value=ChatResponse(
-                session_id="session-1",
-                step="custom_hazard_validation",
-                bot_message="validated",
-                options=[],
-                session=session.summary(),
-            )
+        expected = ChatResponse(
+            session_id="session-1",
+            step="custom_hazard_group_review",
+            bot_message="review groups",
+            options=[],
+            session=session.summary(),
         )
+        service._route_custom_hazard_next_action = AsyncMock(return_value=expected)
+        service._run_custom_hazard_dimension_check = AsyncMock()
 
         response = _run(service._capture_hazard_evidence("session-1", session, "Skip"))
 
-        self.assertEqual(response.bot_message, "validated")
-        service._validate_custom_hazard.assert_awaited_once()
-        self.assertEqual(
-            service._validate_custom_hazard.await_args.args[2],
-            "Reason: Coal phase-out policy can cause job losses.",
+        self.assertIs(response, expected)
+        service._route_custom_hazard_next_action.assert_awaited_once_with(
+            "session-1", session
         )
+        service._run_custom_hazard_dimension_check.assert_not_awaited()
+        self.assertEqual(
+            session.custom_hazard["reason"],
+            "Coal phase-out policy can cause job losses.",
+        )
+        self.assertEqual(session.custom_hazard["evidence"], "")
 
     def test_evidence_revalidation_preserves_existing_affected_groups(self):
         service = ChatService.__new__(ChatService)
@@ -928,8 +932,12 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertFalse(session.custom_hazard["confirmed_affected_groups"])
         service._finalize_custom_hazard_from_grounding.assert_not_awaited()
 
-    def test_hazard_evidence_decision_no_validates_with_stored_reason(self):
+    def test_hazard_evidence_decision_no_routes_without_revalidating_dimensions(self):
         service = ChatService.__new__(ChatService)
+        service._ensure_custom_hazard_generated_title = AsyncMock(
+            return_value="Regional employment shock"
+        )
+        service._run_custom_hazard_dimension_check = AsyncMock()
         session = ChatSession(
             sector="Energy",
             country="Germany",
@@ -937,28 +945,41 @@ class CustomHazardValidationTests(unittest.TestCase):
             phase="add_hazard_evidence_decision",
             pending_hazard="Regional employment shock",
             pending_hazard_reason="Coal phase-out policy can cause job losses.",
-            custom_hazard={"raw_text": "Regional employment shock"},
-        )
-        service._validate_custom_hazard = AsyncMock(
-            return_value=ChatResponse(
-                session_id="session-1",
-                step="custom_hazard_validation",
-                bot_message="validated",
-                options=[],
-                session=session.summary(),
-            )
+            custom_hazard={
+                "raw_text": "Regional employment shock",
+                "next_action": "review_groups",
+                "evidence_decision_asked": True,
+                "affected_groups": [
+                    {
+                        "group": "Coal workers",
+                        "reason": "Coal phase-out can cause job losses.",
+                    }
+                ],
+                "dimension_scores": {
+                    key: {"score": 8, "needs_clarification": False}
+                    for key in [
+                        "hazard_definition_fit",
+                        "twin_transition_policy_fit",
+                        "selected_sector_fit",
+                        "country_region_fit",
+                        "affected_groups_fit",
+                    ]
+                },
+            },
         )
 
         response = _run(
             service._handle_hazard_evidence_decision("session-1", session, "No")
         )
 
-        self.assertEqual(response.bot_message, "validated")
-        service._validate_custom_hazard.assert_awaited_once()
+        self.assertEqual(response.step, "custom_hazard_group_review")
+        self.assertEqual(session.phase, "custom_hazard_group_review")
+        service._run_custom_hazard_dimension_check.assert_not_awaited()
         self.assertEqual(
-            service._validate_custom_hazard.await_args.args[2],
-            "Reason: Coal phase-out policy can cause job losses.",
+            session.custom_hazard["reason"],
+            "Coal phase-out policy can cause job losses.",
         )
+        self.assertEqual(session.custom_hazard["evidence"], "")
 
     def test_no_evidence_validation_failure_with_pending_dimension_question_asks_clarification(self):
         service = ChatService.__new__(ChatService)
@@ -2447,9 +2468,13 @@ class CustomHazardValidationTests(unittest.TestCase):
             [
                 "Which clean mobility policy creates the access problem?",
                 "How is this connected to the selected Transport sector?",
+                "Which population groups are affected by this hazard, and why?",
             ],
         )
-        self.assertIn("I need a little more detail", response.bot_message)
+        self.assertIn(
+            "Additional information is required before this custom hazard can be validated.",
+            response.bot_message,
+        )
 
     def test_repeated_dimension_clarification_after_answer_returns_error(self):
         service = ChatService.__new__(ChatService)

@@ -295,6 +295,11 @@ class ChatCustomHazardEvidenceMixin:
             state["reason"] = reason
             state["evidence"] = evidence
             session.pending_hazard_evidence = evidence
+            if not evidence:
+                return await self._route_custom_hazard_next_action(
+                    session_id,
+                    session,
+                )
             return await self._run_custom_hazard_dimension_check(session_id, session)
         if not reason:
             return self._hazard_reason_step(
