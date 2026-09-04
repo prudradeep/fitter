@@ -415,6 +415,7 @@ function stageKeyForStep(step = "", mode = appState.inputMode) {
       "add_dgs",
       "stats_deep_dive",
       "target_population_question",
+      "custom_hazard_summary_review",
       "mitigation_measure",
       "mitigation_reason",
       "mitigation_evidence_decision",
@@ -1870,6 +1871,9 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     if (step === "custom_hazard_group_review") {
       return "Type a group to remove, or add/edit an affected group...";
     }
+    if (step === "custom_hazard_summary_review") {
+      return "Describe how the generated summary should be revised...";
+    }
     if (step === "target_population_question" || step === "add_dgs") {
       return "Choose a socio-demographic option...";
     }
@@ -1884,6 +1888,7 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     hazards: "Type the hazard you want to add...",
     custom_hazard_group_review: "Type a group to remove, or add/edit an affected group...",
     custom_hazard_profile_reason: "Explain how this hazard affects the added group...",
+    custom_hazard_summary_review: "Describe how the generated summary should be revised...",
     mitigation: "Ask a mitigation question or continue the plan...",
     mitigation_clarity: "Answer all clarification questions...",
     system_inquiry_observation: "Write your reflection...",

@@ -30,6 +30,7 @@ class CustomHazardHandler(StrEnum):
     CAPTURE_EVIDENCE = "capture_evidence"
     VALIDATE_HAZARD = "validate_hazard"
     REVIEW_POPULATION = "review_population"
+    REVIEW_SUMMARY = "review_summary"
     RESOLVE_DUPLICATE = "resolve_duplicate"
 
 
@@ -63,6 +64,7 @@ class CustomHazardHandlers:
     capture_evidence: AsyncMessageHandler
     validate_hazard: AsyncMessageHandler
     review_population: AsyncMessageHandler
+    review_summary: AsyncMessageHandler
     resolve_duplicate: AsyncMessageHandler
 
 
@@ -128,6 +130,11 @@ CUSTOM_HAZARD_STATES: Mapping[ChatPhase, CustomHazardState] = MappingProxyType({
     ChatPhase.CUSTOM_HAZARD_PROFILE_REASON: CustomHazardState(
         ChatPhase.CUSTOM_HAZARD_PROFILE_REASON,
         CustomHazardHandler.REVIEW_POPULATION,
+        quality_gate=False,
+    ),
+    ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW: CustomHazardState(
+        ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW,
+        CustomHazardHandler.REVIEW_SUMMARY,
         quality_gate=False,
     ),
     ChatPhase.CUSTOM_HAZARD_DUPLICATE_CONFIRMATION: CustomHazardState(
@@ -302,6 +309,7 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
                 ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_PROFILE_REASON,
+                ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_INPUT,
                 ChatPhase.HAZARDS,
             }
@@ -311,6 +319,7 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
                 ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_PROFILE_REASON,
                 ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
+                ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_INPUT,
                 ChatPhase.HAZARDS,
             }
@@ -318,6 +327,16 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
         ChatPhase.CUSTOM_HAZARD_PROFILE_REASON: frozenset(
             {
                 ChatPhase.CUSTOM_HAZARD_PROFILE_REASON,
+                ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW,
+                ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
+                ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW,
+                ChatPhase.CUSTOM_HAZARD_INPUT,
+                ChatPhase.HAZARDS,
+            }
+        ),
+        ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW: frozenset(
+            {
+                ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_INPUT,

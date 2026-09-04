@@ -394,10 +394,9 @@ class ChatCustomHazardInputMixin:
         )
         session.accepted_custom_hazard_record_id = None
         session.selected_hazard_record_id = None
-        # The affected-group review has already been confirmed before the
-        # grounding validator reaches this branch. Persist only now, after
-        # that review has been shown to the user.
-        return await self._custom_hazard_added_step(session_id, session)
+        # The affected-group review has been confirmed. Generate and review
+        # the summary before any shared hazard record is persisted.
+        return await self._custom_hazard_summary_review_step(session_id, session)
 
     async def _capture_custom_hazard(
         self, session_id: str, session: ChatSession, message: str

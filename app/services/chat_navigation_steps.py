@@ -588,6 +588,13 @@ class ChatNavigationStepsMixin:
                 error=error,
             )
 
+        if session.phase == "custom_hazard_summary_review":
+            return self._custom_hazard_summary_review_response(
+                session_id,
+                session,
+                error_reason=message if error else None,
+            )
+
         if session.phase in {
             "custom_hazard_input",
             "custom_hazard_review",
@@ -911,6 +918,7 @@ class ChatNavigationStepsMixin:
             "custom_hazard_clarification",
             "custom_hazard_duplicate_confirmation",
             "custom_hazard_group_review",
+            "custom_hazard_summary_review",
             "custom_hazard_reason",
             "custom_hazard_evidence",
         }:

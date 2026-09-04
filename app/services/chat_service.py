@@ -606,6 +606,7 @@ class ChatService(
             capture_evidence=self._capture_hazard_evidence,
             validate_hazard=self._validate_custom_hazard,
             review_population=self._handle_custom_hazard_population_review,
+            review_summary=self._handle_custom_hazard_summary_review,
             resolve_duplicate=self._handle_hazard_duplicate_suggestion,
         )
 
@@ -668,6 +669,7 @@ class ChatService(
             "custom_hazard_clarification",
             "custom_hazard_title_clarification",
             "custom_hazard_group_review",
+            "custom_hazard_summary_review",
             "custom_hazard_reason",
             "custom_hazard_evidence",
             "add_hazard_evidence_input",
@@ -1487,7 +1489,7 @@ class ChatService(
     ) -> ChatResponse:
         question = self._current_target_population_question(session)
         if question is None:
-            return self._custom_hazard_added_step_sync(session_id, session)
+            return self._custom_hazard_summary_review_step_sync(session_id, session)
 
         options = self._target_population_options(question)
         return ChatResponse(

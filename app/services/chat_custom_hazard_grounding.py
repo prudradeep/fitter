@@ -601,6 +601,77 @@ class ChatCustomHazardGroundingMixin:
         summary = str(parsed.get("summary") or "").strip() if isinstance(parsed, dict) else ""
         return self._limit_custom_hazard_summary(summary) or fallback
 
+    async def _revise_custom_hazard_summary(
+        self,
+        session: ChatSession,
+        original_hazard: str,
+        generated_title: str,
+        current_summary: str,
+        user_context: str,
+    ) -> str:
+        """Revise a draft summary without changing its validated hazard facts."""
+        state = session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
+        groups = [
+            {
+                "group": str(group.get("group") or group.get("name") or "").strip(),
+                "reason": str(group.get("reason") or "").strip(),
+            }
+            for group in (
+                state.get("confirmed_affected_groups")
+                or state.get("affected_groups")
+                or []
+            )
+            if isinstance(group, dict)
+            and str(group.get("group") or group.get("name") or "").strip()
+        ]
+        try:
+            response = await ask_llm_chat(
+                context=load_nested_prompt_file("llm/custom_hazard_summary_revision.txt"),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "country": session.country or "Not selected",
+                                "region": session.region or "Not selected",
+                                "sector": session.sector or "Not selected",
+                                "title": generated_title,
+                                "original_hazard": original_hazard,
+                                "validated_reason": str(
+                                    state.get("reason")
+                                    or session.accepted_custom_hazard_reason
+                                    or ""
+                                ).strip(),
+                                "validated_evidence": str(
+                                    state.get("evidence")
+                                    or session.accepted_custom_hazard_evidence
+                                    or ""
+                                ).strip(),
+                                "negative_consequence": str(
+                                    state.get("negative_consequence") or ""
+                                ).strip(),
+                                "clarifications": list(state.get("clarifications") or []),
+                                "confirmed_affected_groups": groups,
+                                "current_summary": current_summary,
+                                "user_revision_request": user_context,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                ],
+                temperature=0.0,
+                max_tokens=240,
+            )
+        except Exception:
+            logger.exception("Failed to revise custom-hazard summary")
+            return ""
+
+        if is_llm_unavailable_response(response):
+            return ""
+        parsed = parse_json_object(response) or {}
+        summary = str(parsed.get("summary") or "").strip() if isinstance(parsed, dict) else ""
+        return self._limit_custom_hazard_summary(summary)
+
     def _custom_hazard_summary_fallback(
         self,
         session: ChatSession,

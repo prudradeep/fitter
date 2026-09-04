@@ -3599,7 +3599,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         ]
         service._ensure_custom_hazard = lambda *args, **kwargs: SimpleNamespace(id=123)
         service._record_activity = lambda *args, **kwargs: None
-        service._custom_hazard_added_step = AsyncMock(return_value="done")
+        service._custom_hazard_summary_review_step = AsyncMock(return_value="done")
         session = ChatSession(
             session_key="session-1",
             phase="custom_hazard_group_review",
@@ -3627,6 +3627,9 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
 
         self.assertEqual(response, "done")
+        service._custom_hazard_summary_review_step.assert_awaited_once_with(
+            "session-1", session
+        )
         profiles = session.hazard_profiles["Coal phase-out job shock"]
         self.assertEqual(profiles[0]["target_population_option_ids"], ["1", "2"])
         self.assertEqual(profiles[1]["target_population_option_ids"], ["3"])

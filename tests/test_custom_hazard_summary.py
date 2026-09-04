@@ -9,6 +9,7 @@ from app.db.sqlite_migrations import _009_custom_hazard_summary
 from app.services.chat_formatters import evidence_for_display
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
+from app.services.enums import ChatPhase
 
 
 class CustomHazardSummaryTests(unittest.IsolatedAsyncioTestCase):
@@ -141,6 +142,133 @@ class CustomHazardSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Rising costs deepen energy poverty", summary)
         self.assertIn("Single mothers are especially exposed", summary)
         self.assertIn("Confirmed affected groups: Women", summary)
+
+    async def test_summary_review_is_shown_before_hazard_is_saved(self) -> None:
+        service = ChatService.__new__(ChatService)
+        service._generate_custom_hazard_title = AsyncMock(
+            return_value="Energy poverty impact in Berlin"
+        )
+        service._generate_custom_hazard_summary = AsyncMock(
+            return_value="Validated energy costs disproportionately affect low-income renters."
+        )
+        service._prepare_custom_hazard_added_profiles = MagicMock(
+            return_value="Energy poverty impact in Berlin"
+        )
+        service._stored_hazard_profiles = MagicMock(return_value=[])
+        service._additional_profiles_with_population_context = AsyncMock(return_value=[])
+        service._crowd_sourcing_visibility_notice = MagicMock(return_value="")
+        session = ChatSession(
+            phase=ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW.value,
+            country="Germany",
+            region="Berlin",
+            sector="Energy",
+            accepted_custom_hazard="Higher transition energy costs",
+            custom_hazard={
+                "raw_text": "Higher transition energy costs",
+                "confirmed_affected_groups": [
+                    {"group": "Low-income renters", "reason": "Higher bills."}
+                ],
+            },
+        )
+
+        response = await service._custom_hazard_summary_review_step("session-1", session)
+
+        self.assertEqual(response.step, "custom_hazard_summary_review")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertEqual(session.phase, ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW.value)
+        self.assertIn("Review Summary", response.bot_message)
+        self.assertIn("Validated energy costs", response.bot_message)
+        self.assertEqual(
+            [option.label for option in response.options],
+            ["Continue", "Regenerate summary", "Back to affected groups"],
+        )
+        service._prepare_custom_hazard_added_profiles.assert_not_called()
+
+        final_response = await service._handle_custom_hazard_summary_review(
+            "session-1",
+            session,
+            "Continue",
+        )
+
+        self.assertEqual(final_response.step, "hazards")
+        self.assertIn("Validated energy costs", final_response.bot_message)
+        service._prepare_custom_hazard_added_profiles.assert_called_once_with(
+            "session-1", session
+        )
+
+    async def test_llm_summary_revision_receives_current_summary_and_user_context(self) -> None:
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            country="Germany",
+            region="Berlin",
+            sector="Energy",
+            accepted_custom_hazard_reason="Transition tariffs increase household costs.",
+            custom_hazard={
+                "confirmed_affected_groups": [
+                    {"group": "Low-income renters", "reason": "Limited ability to absorb costs."}
+                ]
+            },
+        )
+
+        with patch(
+            "app.services.chat_custom_hazard_grounding.ask_llm_chat",
+            AsyncMock(return_value=json.dumps({"summary": "A clearer revised summary."})),
+        ) as ask_llm:
+            summary = await service._revise_custom_hazard_summary(
+                session,
+                "Higher transition energy costs",
+                "Energy affordability risk in Berlin",
+                "The current draft.",
+                "Emphasise renters and use simpler language.",
+            )
+
+        self.assertEqual(summary, "A clearer revised summary.")
+        payload = json.loads(ask_llm.await_args.kwargs["messages"][0]["content"])
+        self.assertEqual(payload["current_summary"], "The current draft.")
+        self.assertEqual(
+            payload["user_revision_request"],
+            "Emphasise renters and use simpler language.",
+        )
+        self.assertEqual(payload["confirmed_affected_groups"][0]["group"], "Low-income renters")
+
+    async def test_summary_revision_loops_until_continue_confirms_it(self) -> None:
+        service = ChatService.__new__(ChatService)
+        final_response = SimpleNamespace(step="hazards")
+        service._revise_custom_hazard_summary = AsyncMock(
+            return_value="Revised summary focused on low-income renters."
+        )
+        service._custom_hazard_added_step = AsyncMock(return_value=final_response)
+        session = ChatSession(
+            phase=ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW.value,
+            accepted_custom_hazard="Higher transition energy costs",
+            accepted_custom_hazard_summary="Initial summary.",
+            generated_custom_hazard_title="Energy affordability risk",
+            custom_hazard={"generated_summary": "Initial summary."},
+        )
+
+        revised = await service._handle_custom_hazard_summary_review(
+            "session-1",
+            session,
+            "Make renters more prominent.",
+        )
+
+        self.assertEqual(revised.step, "custom_hazard_summary_review")
+        self.assertEqual(session.phase, ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW.value)
+        self.assertEqual(
+            session.accepted_custom_hazard_summary,
+            "Revised summary focused on low-income renters.",
+        )
+        service._custom_hazard_added_step.assert_not_awaited()
+
+        confirmed = await service._handle_custom_hazard_summary_review(
+            "session-1",
+            session,
+            "Continue",
+        )
+
+        self.assertIs(confirmed, final_response)
+        self.assertTrue(session.custom_hazard["summary_confirmed"])
+        service._custom_hazard_added_step.assert_awaited_once_with("session-1", session)
 
 
 class CustomHazardSummaryPersistenceTests(unittest.TestCase):

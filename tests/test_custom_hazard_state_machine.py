@@ -45,6 +45,7 @@ def _handlers(
         capture_evidence=async_message,
         validate_hazard=async_message,
         review_population=async_message,
+        review_summary=async_message,
         resolve_duplicate=async_message,
     )
 
@@ -69,6 +70,7 @@ class CustomHazardStateMachineTests(unittest.TestCase):
             ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW: CustomHazardHandler.REVIEW_POPULATION,
             ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW: CustomHazardHandler.REVIEW_POPULATION,
             ChatPhase.CUSTOM_HAZARD_PROFILE_REASON: CustomHazardHandler.REVIEW_POPULATION,
+            ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW: CustomHazardHandler.REVIEW_SUMMARY,
             ChatPhase.CUSTOM_HAZARD_DUPLICATE_CONFIRMATION: CustomHazardHandler.RESOLVE_DUPLICATE,
             ChatPhase.HAZARD_DUPLICATE_SUGGESTION: CustomHazardHandler.RESOLVE_DUPLICATE,
         }
@@ -90,6 +92,7 @@ class CustomHazardStateMachineTests(unittest.TestCase):
             ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
             ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW,
             ChatPhase.CUSTOM_HAZARD_PROFILE_REASON,
+            ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW,
             ChatPhase.CUSTOM_HAZARD_DUPLICATE_CONFIRMATION,
             ChatPhase.HAZARD_DUPLICATE_SUGGESTION,
         }

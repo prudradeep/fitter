@@ -83,6 +83,8 @@ def default_custom_hazard_state() -> dict[str, Any]:
         "title_clarification_answers": [],
         "generated_title": "",
         "generated_summary": "",
+        "summary_confirmed": False,
+        "summary_revision_history": [],
         "transition_link": None,
         "detected_sector": None,
         "negative_consequence": None,

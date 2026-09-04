@@ -15,6 +15,7 @@ from app.services.chat_formatters import (
 from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
     CUSTOM_HAZARD_FINAL_OPTIONS,
+    CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS,
     HAZARD_POPULATION_REVIEW_OPTIONS,
     exact_option_label,
     normalize,
@@ -393,7 +394,7 @@ class ChatCustomHazardPopulationStepsMixin:
             normalize("Done"),
             normalize("Confirm affected groups"),
         }:
-            return await self._custom_hazard_added_step(session_id, session)
+            return await self._custom_hazard_summary_review_step(session_id, session)
 
         edits = await self._extract_affected_population_edits(session, message)
         remove_items = edits.get("remove", [])
@@ -792,6 +793,162 @@ class ChatCustomHazardPopulationStepsMixin:
             "target_population_question_answered",
             f"{question['question']} -> {answer_text}",
         )
+
+    def _custom_hazard_summary_review_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error_reason: str | None = None,
+    ) -> ChatResponse:
+        transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW)
+        state = self._custom_hazard_state(session)
+        state["summary_confirmed"] = False
+        summary = str(session.accepted_custom_hazard_summary or "").strip()
+        message = render_message(
+            "hazard_summary_review.md",
+            hazard=session.accepted_custom_hazard or "New hazard",
+            generated_title=session.generated_custom_hazard_title or "",
+            summary=summary,
+            error_reason=error_reason or "",
+        )
+        return self._custom_hazard_response(
+            session_id=session_id,
+            session=session,
+            step="custom_hazard_summary_review",
+            bot_message=message,
+            options=CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS,
+            input_mode="textarea",
+            error=bool(error_reason),
+        )
+
+    async def _custom_hazard_summary_review_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+    ) -> ChatResponse:
+        original_hazard = session.accepted_custom_hazard or "New hazard"
+        generated_title = await self._ensure_custom_hazard_generated_title(
+            session,
+            original_hazard,
+        )
+        await self._ensure_custom_hazard_summary(
+            session,
+            original_hazard,
+            generated_title,
+        )
+        return self._custom_hazard_summary_review_response(session_id, session)
+
+    def _custom_hazard_summary_review_step_sync(
+        self,
+        session_id: str,
+        session: ChatSession,
+    ) -> ChatResponse:
+        original_hazard = session.accepted_custom_hazard or "New hazard"
+        generated_title = str(
+            session.generated_custom_hazard_title or original_hazard
+        ).strip()
+        session.generated_custom_hazard_title = generated_title
+        if not str(session.accepted_custom_hazard_summary or "").strip():
+            state = self._custom_hazard_state(session)
+            groups = [
+                {
+                    "group": str(group.get("group") or group.get("name") or "").strip(),
+                    "reason": str(group.get("reason") or "").strip(),
+                }
+                for group in (
+                    state.get("confirmed_affected_groups")
+                    or state.get("affected_groups")
+                    or []
+                )
+                if isinstance(group, dict)
+            ]
+            session.accepted_custom_hazard_summary = self._custom_hazard_summary_fallback(
+                session,
+                original_hazard,
+                generated_title,
+                [
+                    item
+                    for item in state.get("clarifications") or []
+                    if isinstance(item, dict)
+                ],
+                groups,
+            )
+            state["generated_summary"] = session.accepted_custom_hazard_summary
+        return self._custom_hazard_summary_review_response(session_id, session)
+
+    async def _handle_custom_hazard_summary_review(
+        self,
+        session_id: str,
+        session: ChatSession,
+        message: str,
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS)
+        action = normalize(exact_label or "")
+        state = self._custom_hazard_state(session)
+
+        if action == normalize("Continue"):
+            if not str(session.accepted_custom_hazard_summary or "").strip():
+                return self._custom_hazard_summary_review_response(
+                    session_id,
+                    session,
+                    error_reason="A summary must be generated before it can be confirmed.",
+                )
+            state["summary_confirmed"] = True
+            return await self._custom_hazard_added_step(session_id, session)
+
+        if action == normalize("Back to affected groups"):
+            session.accepted_custom_hazard_summary = None
+            state["generated_summary"] = ""
+            state["summary_confirmed"] = False
+            transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW)
+            return self._custom_hazard_population_review_step(session_id, session)
+
+        revision_request = message.strip()
+        if action == normalize("Regenerate summary"):
+            revision_request = (
+                "Write a fresh alternative using different concise wording while preserving "
+                "all validated facts."
+            )
+        if not revision_request:
+            return self._custom_hazard_summary_review_response(
+                session_id,
+                session,
+                error_reason=(
+                    "Enter instructions or context for revising the summary, or choose Continue."
+                ),
+            )
+
+        original_hazard = session.accepted_custom_hazard or "New hazard"
+        generated_title = await self._ensure_custom_hazard_generated_title(
+            session,
+            original_hazard,
+        )
+        current_summary = str(session.accepted_custom_hazard_summary or "").strip()
+        revised_summary = await self._revise_custom_hazard_summary(
+            session,
+            original_hazard,
+            generated_title,
+            current_summary,
+            revision_request,
+        )
+        if not revised_summary:
+            return self._custom_hazard_summary_review_response(
+                session_id,
+                session,
+                error_reason=(
+                    "I could not revise the summary right now. The current summary has been "
+                    "kept; please try again or choose Continue."
+                ),
+            )
+
+        session.accepted_custom_hazard_summary = revised_summary
+        state["generated_summary"] = revised_summary
+        state["summary_confirmed"] = False
+        history = list(state.get("summary_revision_history") or [])
+        history.append({"request": revision_request, "summary": revised_summary})
+        state["summary_revision_history"] = history
+        return self._custom_hazard_summary_review_response(session_id, session)
 
     def _prepare_custom_hazard_added_profiles(
         self, session_id: str, session: ChatSession

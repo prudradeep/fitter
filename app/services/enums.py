@@ -108,4 +108,5 @@ class ChatPhase(AppStrEnum):
     CUSTOM_HAZARD_GROUP_REVIEW = "custom_hazard_group_review"
     CUSTOM_HAZARD_POPULATION_REVIEW = "custom_hazard_population_review"
     CUSTOM_HAZARD_PROFILE_REASON = "custom_hazard_profile_reason"
+    CUSTOM_HAZARD_SUMMARY_REVIEW = "custom_hazard_summary_review"
     HAZARD_POPULATION_REGION_COMPARISON = "hazard_population_region_comparison"

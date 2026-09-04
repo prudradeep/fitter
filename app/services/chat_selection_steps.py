@@ -1733,6 +1733,7 @@ class ChatSelectionStepsMixin:
             "custom_hazard_clarification",
             "custom_hazard_duplicate_confirmation",
             "custom_hazard_group_review",
+            "custom_hazard_summary_review",
             "custom_hazard_reason",
             "custom_hazard_evidence",
         }:

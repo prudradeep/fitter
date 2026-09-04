@@ -57,6 +57,12 @@ HAZARD_POPULATION_REVIEW_OPTIONS = [
     Option(id=1, label="Confirm affected groups"),
 ]
 
+CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS = [
+    Option(id=1, label="Continue"),
+    Option(id=2, label="Regenerate summary"),
+    Option(id=3, label="Back to affected groups"),
+]
+
 MITIGATION_DUPLICATE_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No"),
