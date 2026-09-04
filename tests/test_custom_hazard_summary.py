@@ -178,6 +178,10 @@ class CustomHazardSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.phase, ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW.value)
         self.assertIn("Review Summary", response.bot_message)
         self.assertIn("Validated energy costs", response.bot_message)
+        self.assertIn('class="hazard-summary-review"', response.bot_message)
+        self.assertIn('class="hazard-summary-review-original"', response.bot_message)
+        self.assertIn('class="hazard-summary-review-generated"', response.bot_message)
+        self.assertIn('class="hazard-summary-review-action"', response.bot_message)
         self.assertEqual(
             [option.label for option in response.options],
             ["Continue", "Regenerate summary", "Back to affected groups"],

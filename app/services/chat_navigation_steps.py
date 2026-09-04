@@ -249,6 +249,8 @@ class ChatNavigationStepsMixin:
         session.hazard_profiles = None
         session.custom_hazards = None
         session.custom_hazard_evidence_statuses = None
+        session.custom_hazard_evidence = None
+        session.custom_hazard_summaries = None
         session.additional_hazards = None
         cls._clear_selected_hazard_context(session)
 

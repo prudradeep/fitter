@@ -143,34 +143,50 @@ async def validate_custom_hazard_dimensions(
     else:
         result = _merge_llm_with_heuristic_guardrails(result, heuristic_result)
 
+    _ensure_dimension_reasons(result)
+
     result["duplicate_candidates"] = _duplicate_candidates(
         hazard_text,
         known_hazards,
         result.get("duplicate_candidates", []),
     )
-    explicitly_identified_groups = _dedupe_groups(
-        [
-            *_extract_affected_groups(hazard_text),
-            *[
-                group
-                for clarification in state.get("clarifications", [])
-                if isinstance(clarification, dict)
-                for group in _extract_affected_groups(str(clarification.get("answer") or ""))
-            ],
-        ]
+    dimensions = result.setdefault("dimension_scores", {})
+    core_supported = _core_dimensions_supported(
+        dimensions,
+        _validation_thresholds(validation_mode)["dimension_floor"],
     )
-    result["affected_groups"] = _dedupe_groups(
-        [
-            *explicitly_identified_groups,
-            *[group for group in result.get("affected_groups", []) if isinstance(group, dict)],
-        ]
-    )
+    if core_supported:
+        explicitly_identified_groups = _dedupe_groups(
+            [
+                *_extract_affected_groups(hazard_text),
+                *[
+                    group
+                    for clarification in state.get("clarifications", [])
+                    if isinstance(clarification, dict)
+                    for group in _extract_affected_groups(str(clarification.get("answer") or ""))
+                ],
+            ]
+        )
+        result["affected_groups"] = _dedupe_groups(
+            [
+                *explicitly_identified_groups,
+                *[
+                    group
+                    for group in state.get("affected_groups", [])
+                    if isinstance(group, dict)
+                ],
+                *[
+                    group
+                    for group in result.get("affected_groups", [])
+                    if isinstance(group, dict)
+                ],
+            ]
+        )
 
-    # Keep the affected-groups dimension consistent with the groups actually
-    # extracted/coerced after LLM output is sanitized.
-    if result["affected_groups"]:
-        group_dimension = result.setdefault("dimension_scores", {}).get("affected_groups_fit")
-        if isinstance(group_dimension, dict):
+        # Keep the affected-groups dimension consistent with the groups
+        # actually extracted/coerced after LLM output is sanitized.
+        group_dimension = dimensions.get("affected_groups_fit")
+        if result["affected_groups"] and isinstance(group_dimension, dict):
             group_dimension.update(
                 _score_payload(
                     max(SCORE_PARTIAL, _clamp_score(group_dimension.get("score"))),
@@ -178,8 +194,29 @@ async def validate_custom_hazard_dimensions(
                     "",
                 )
             )
+        elif not result["affected_groups"]:
+            dimensions["affected_groups_fit"] = _score_payload(
+                SCORE_WEAK,
+                "No specific affected population group was identified in the submitted information.",
+                "Which specific population groups are affected by this hazard, and why?",
+            )
         # Extraction establishes candidate groups, not user approval. Only the
         # affected-groups review handler may populate confirmed_affected_groups.
+    else:
+        # Affected populations are deliberately evaluated only after the four
+        # mandatory grounding dimensions have passed.
+        result["affected_groups"] = []
+        deferred_group_score = _dimension_score(dimensions, "affected_groups_fit")
+        dimensions["affected_groups_fit"] = {
+            **_score_payload(
+                deferred_group_score,
+                "Affected population groups will be checked after all mandatory dimensions are supported.",
+                "",
+            ),
+            "needs_clarification": False,
+            "clarification_question": "",
+            "status": "DEFERRED",
+        }
 
     result["overall_score"] = _overall_score(result.get("dimension_scores", {}))
     result["confidence"] = _overall_confidence(result).value
@@ -260,6 +297,15 @@ async def _llm_dimension_validation(
         return None
 
     system = load_nested_prompt_file("llm/custom_hazard_dimension_validation.txt")
+    system += """
+
+Validation order and application-context rules:
+- Evaluate the four mandatory dimensions first: hazard definition, twin-transition policy fit, selected sector fit, and country/region fit.
+- The selected country, region, and sector are application context. Do not ask the user to reconfirm them merely because their names are absent from the hazard text.
+- Use the hazard's meaning and the supplied application context to assess sector and location fit. Ask only when there is a substantive ambiguity or contradiction.
+- Only after all four mandatory dimensions are supported, evaluate and extract affected population groups.
+- If the mandatory dimensions are supported and no specific affected group can be extracted, ask the user for one.
+"""
 
     payload = {
         "selected_country": country,
@@ -587,7 +633,7 @@ def _recommended_action(
 
     # Never mark ready while required dimensions are below the floor. Flattening
     # means the conversation stopped improving, not that the hazard became valid.
-    if groups_low and not state.get("reason"):
+    if groups_low:
         return CustomHazardAction.REJECT if flattened else CustomHazardAction.ASK_CLARIFICATION
 
     if result.get("affected_groups") and not state.get("confirmed_affected_groups"):
@@ -613,6 +659,43 @@ def _dimension_needs_clarification(dimensions: dict[str, Any], key: str) -> bool
     return bool(item.get("needs_clarification")) and bool(
         str(item.get("clarification_question") or "").strip()
     )
+
+
+def _core_dimensions_supported(dimensions: dict[str, Any], minimum_score: int) -> bool:
+    return all(
+        _dimension_score(dimensions, key) >= minimum_score
+        and not _dimension_needs_clarification(dimensions, key)
+        for key in CRITICAL_DIMENSIONS
+    )
+
+
+def _ensure_dimension_reasons(result: dict[str, Any]) -> None:
+    dimensions = result.get("dimension_scores")
+    if not isinstance(dimensions, dict):
+        return
+    supported_reasons = {
+        "hazard_definition_fit": "The submitted text describes a negative impact or risk.",
+        "twin_transition_policy_fit": "The submitted text has a supported twin-transition policy link.",
+        "selected_sector_fit": "The hazard is compatible with the selected sector.",
+        "country_region_fit": "The selected country and region provide the application context for this hazard.",
+        "affected_groups_fit": "A specific affected population group was identified.",
+    }
+    clarification_reasons = {
+        "hazard_definition_fit": "The negative impact or risk is not yet explicit.",
+        "twin_transition_policy_fit": "The link to a green, digital, or twin-transition policy is not yet clear.",
+        "selected_sector_fit": "The relationship to the selected sector is not yet clear.",
+        "country_region_fit": "The applicability to the selected country or region is not yet clear.",
+        "affected_groups_fit": "No specific affected population group was identified.",
+    }
+    for key in DIMENSION_WEIGHTS:
+        item = dimensions.get(key)
+        if not isinstance(item, dict) or str(item.get("reason") or "").strip():
+            continue
+        item["reason"] = (
+            supported_reasons[key]
+            if _clamp_score(item.get("score")) >= 5 and not item.get("needs_clarification")
+            else clarification_reasons[key]
+        )
 
 
 def _status_for_action(action: str | CustomHazardAction) -> CustomHazardStatus:
@@ -689,7 +772,12 @@ def _duplicate_card(state: dict[str, Any]) -> dict[str, Any]:
 
 def _affected_groups_card(state: dict[str, Any]) -> dict[str, Any]:
     groups = state.get("confirmed_affected_groups") or state.get("affected_groups") or []
-    if groups:
+    dimensions = state.get("dimension_scores")
+    core_supported = isinstance(dimensions, dict) and _core_dimensions_supported(dimensions, 5)
+    if not core_supported:
+        reason = "This check will run after all mandatory dimensions are supported."
+        status = GroundingStatus.WARNING.value
+    elif groups:
         names = [str(group.get("group") or group.get("name") or "").strip() for group in groups if isinstance(group, dict)]
         reason = "Identified groups: " + ", ".join([name for name in names if name])
         status = (
@@ -704,7 +792,11 @@ def _affected_groups_card(state: dict[str, Any]) -> dict[str, Any]:
         "title": "Affected population groups",
         "status": status,
         "score": None,
-        "confidence": ConfidenceLevel.HIGH.value if groups else ConfidenceLevel.LOW.value,
+        "confidence": (
+            ConfidenceLevel.HIGH.value
+            if core_supported and groups
+            else ConfidenceLevel.LOW.value
+        ),
         "reason": reason,
         "clarification_question": None,
     }
@@ -912,10 +1004,62 @@ def _merge_llm_with_heuristic_guardrails(
                 or "The text may describe a benefit, mitigation, fact, or observation rather than a hazard."
             )
 
+    # Sector and place are supplied application context, and policy fit can be
+    # established from explicit transition terminology. A small model sometimes
+    # asks the user to reconfirm these values even when deterministic tool checks
+    # already support them. Promote only generic/missing-detail responses; keep
+    # substantive incompatibility findings from the LLM.
+    for key in (
+        "twin_transition_policy_fit",
+        "selected_sector_fit",
+        "country_region_fit",
+    ):
+        item = dimensions.get(key)
+        heuristic_item = heuristic_dimensions.get(key)
+        if (
+            isinstance(item, dict)
+            and isinstance(heuristic_item, dict)
+            and _dimension_score(heuristic_dimensions, key) >= 5
+            and _contextual_result_only_requests_reconfirmation(item)
+        ):
+            item.update(heuristic_item)
+
     for group in heuristic.get("affected_groups", []):
         if isinstance(group, dict):
             result.setdefault("affected_groups", []).append(group)
     return result
+
+
+def _contextual_result_only_requests_reconfirmation(item: dict[str, Any]) -> bool:
+    if _clamp_score(item.get("score")) >= 5 and not item.get("needs_clarification"):
+        return False
+    reason = normalize_for_match(str(item.get("reason") or ""))
+    if not reason:
+        return True
+    conflict_terms = (
+        "contradict",
+        "incompatible",
+        "incorrect sector",
+        "wrong sector",
+        "wrong country",
+        "wrong region",
+        "unrelated to",
+        "outside the selected",
+    )
+    if any(term in reason for term in conflict_terms):
+        return False
+    missing_context_terms = (
+        "not found",
+        "not mentioned",
+        "not explicitly",
+        "missing",
+        "does not name",
+        "doesn't name",
+        "cannot determine",
+        "insufficient information",
+        "required details",
+    )
+    return any(term in reason for term in missing_context_terms)
 
 
 def _reset_duplicate_override_if_hazard_changed(

@@ -1,6 +1,7 @@
 import json
 import re
 from html import escape
+from urllib.parse import urlsplit
 
 from app.services.chat_session import ChatSession
 
@@ -113,6 +114,41 @@ def _custom_hazard_has_evidence(session: ChatSession, hazard: str) -> bool:
     return False
 
 
+def _custom_hazard_evidence(session: ChatSession, hazard: str) -> str:
+    key = _normalize_key(hazard)
+    evidence = (session.custom_hazard_evidence or {}).get(key)
+    if not evidence and key == _normalize_key(session.accepted_custom_hazard):
+        evidence = session.accepted_custom_hazard_evidence
+    return evidence_for_display(evidence) if evidence_is_provided(evidence) else ""
+
+
+def _custom_hazard_summary(session: ChatSession, hazard: str) -> str:
+    key = _normalize_key(hazard)
+    summary = (session.custom_hazard_summaries or {}).get(key)
+    if not summary and key == _normalize_key(session.accepted_custom_hazard):
+        summary = session.accepted_custom_hazard_summary
+    return str(summary or "").strip()
+
+
+def _evidence_http_url(evidence: str) -> str:
+    match = re.search(r"(?im)^\s*Evidence URL:\s*(.+?)\s*$", evidence)
+    candidate = match.group(1).strip() if match else evidence.strip()
+    markdown_link = re.fullmatch(
+        r"\[[^\]]*\]\(\s*(https?://[^\s)]+)(?:\s+['\"][^)]*['\"])?\s*\)",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    if markdown_link:
+        candidate = markdown_link.group(1)
+    elif candidate.startswith("<") and candidate.endswith(">"):
+        candidate = candidate[1:-1].strip()
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return ""
+    return candidate if parsed.scheme in {"http", "https"} and parsed.netloc else ""
+
+
 def format_hazards(session: ChatSession, *, show_admin_details: bool = False) -> str:
     survey_hazards = [
         hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
@@ -218,8 +254,25 @@ def format_custom_hazards(
     lines: list[str] = []
     for hazard in hazards:
         has_evidence = _custom_hazard_has_evidence(session, str(hazard))
+        evidence = _custom_hazard_evidence(session, str(hazard)) if has_evidence else ""
+        evidence_url = _evidence_http_url(evidence) if evidence else ""
+        summary = _custom_hazard_summary(session, str(hazard))
         evidence_label = "Evidence provided" if has_evidence else "Evidence not provided"
         evidence_class = "provided" if has_evidence else "not-provided"
+        if has_evidence:
+            evidence_action = (
+                '<button type="button" '
+                f'class="hazard-evidence-label hazard-evidence-label--{evidence_class}" '
+                f'data-evidence-url="{escape(evidence_url, quote=True)}" '
+                f'data-evidence-text="{escape(evidence, quote=True)}" '
+                f'aria-label="View evidence for {escape(str(hazard), quote=True)}">'
+                f"{evidence_label}</button>"
+            )
+        else:
+            evidence_action = (
+                f'<span class="hazard-evidence-label hazard-evidence-label--{evidence_class}">'
+                f"{evidence_label}</span>"
+            )
         lines.append(
             '<article class="hazard-card">'
             '<div class="hazard-card-heading">'
@@ -227,11 +280,17 @@ def format_custom_hazards(
             f"<strong>{escape(str(hazard))}</strong>"
             '<span class="hazard-card-labels">'
             f'<span class="hazard-visibility-label">{escape(_custom_hazard_visibility_label(session))}</span>'
-            f'<span class="hazard-evidence-label hazard-evidence-label--{evidence_class}">'
-            f"{evidence_label}</span>"
+            f"{evidence_action}"
             "</span>"
             "</div>"
         )
+        if summary:
+            lines.append(
+                '<details class="hazard-card-summary">'
+                '<summary>Hazard summary</summary>'
+                f"<p>{escape(summary)}</p>"
+                "</details>"
+            )
         _append_hazard_profiles(
             lines,
             session,

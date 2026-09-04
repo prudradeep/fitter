@@ -28,7 +28,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         with patch.object(validator, "ask_llm_chat", _unavailable):
             result = _run(
                 validator.validate_custom_hazard_dimensions(
-                    "Communities face higher costs from a vague transition risk.",
+                    "Communities in Saxony face higher energy costs from a green transition risk.",
                     "Energy",
                     "Germany",
                     "Saxony",
@@ -40,6 +40,158 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(result["affected_groups"], [])
         self.assertTrue(
             result["dimension_scores"]["affected_groups_fit"]["needs_clarification"]
+        )
+
+    def test_affected_groups_are_deferred_until_mandatory_dimensions_are_supported(self):
+        hazard = (
+            'Mismatch in Transport Design ("Trip-Chaining"): Transit infrastructure '
+            "modelled under the Sustainable and Smart Mobility Strategy tends to focus "
+            "on direct, single-destination commutes to work, while women frequently "
+            "engage in complex trip-chaining for caregiving and family support."
+        )
+        llm_result = {
+            "dimension_scores": {
+                key: {
+                    "score": 3,
+                    "reason": "",
+                    "needs_clarification": True,
+                    "clarification_question": question,
+                }
+                for key, question in {
+                    "hazard_definition_fit": "What specific negative impact occurs?",
+                    "twin_transition_policy_fit": "Which specific policy measure causes the harm?",
+                    "selected_sector_fit": "Is Transport valid for this hazard?",
+                    "country_region_fit": "Is Veneto in Italy a valid location?",
+                    "affected_groups_fit": "Which groups are affected?",
+                }.items()
+            },
+            "affected_groups": [],
+            "duplicate_candidates": [],
+        }
+
+        with patch.object(
+            validator,
+            "_llm_dimension_validation",
+            AsyncMock(return_value=llm_result),
+        ):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    hazard,
+                    "Transport",
+                    "Italy",
+                    "Veneto",
+                    [],
+                    None,
+                )
+            )
+
+        dimensions = result["dimension_scores"]
+        self.assertTrue(dimensions["hazard_definition_fit"]["needs_clarification"])
+        self.assertFalse(dimensions["twin_transition_policy_fit"]["needs_clarification"])
+        self.assertFalse(dimensions["selected_sector_fit"]["needs_clarification"])
+        self.assertFalse(dimensions["country_region_fit"]["needs_clarification"])
+        self.assertEqual(dimensions["affected_groups_fit"]["status"], "DEFERRED")
+        self.assertFalse(dimensions["affected_groups_fit"]["needs_clarification"])
+        self.assertEqual(result["affected_groups"], [])
+        self.assertNotEqual(
+            dimensions["hazard_definition_fit"]["reason"],
+            "The required details were not found in the submitted information.",
+        )
+
+    def test_trip_chaining_extracts_women_after_mandatory_dimensions_pass(self):
+        hazard = (
+            'Mismatch in Transport Design ("Trip-Chaining"): Transit infrastructure '
+            "modelled under the Sustainable and Smart Mobility Strategy tends to focus "
+            "on direct, single-destination commutes to work, while women frequently "
+            "engage in complex trip-chaining for caregiving and family support."
+        )
+        llm_result = {
+            "dimension_scores": {
+                key: {"score": 8, "reason": "Supported.", "needs_clarification": False}
+                for key in [
+                    "hazard_definition_fit",
+                    "twin_transition_policy_fit",
+                    "selected_sector_fit",
+                    "country_region_fit",
+                    "affected_groups_fit",
+                ]
+            },
+            "affected_groups": [],
+            "duplicate_candidates": [],
+        }
+        state = {
+            "reason": "The design mismatch increases women's travel-time and caregiving burden.",
+            "clarifications": [
+                {
+                    "questions": ["What specific negative impact occurs?"],
+                    "answer": "Women experience an additional caregiving burden and limited access to essential services.",
+                }
+            ],
+        }
+
+        with patch.object(
+            validator,
+            "_llm_dimension_validation",
+            AsyncMock(return_value=llm_result),
+        ):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    hazard,
+                    "Transport",
+                    "Italy",
+                    "Veneto",
+                    [],
+                    state,
+                )
+            )
+
+        self.assertEqual(
+            [group["group"] for group in result["affected_groups"]],
+            ["Women"],
+        )
+        self.assertFalse(
+            result["dimension_scores"]["affected_groups_fit"]["needs_clarification"]
+        )
+        self.assertEqual(result["next_action"], "review_groups")
+
+    def test_missing_group_is_requested_only_after_mandatory_dimensions_pass(self):
+        llm_result = {
+            "dimension_scores": {
+                key: {"score": 8, "reason": "Supported.", "needs_clarification": False}
+                for key in [
+                    "hazard_definition_fit",
+                    "twin_transition_policy_fit",
+                    "selected_sector_fit",
+                    "country_region_fit",
+                    "affected_groups_fit",
+                ]
+            },
+            "affected_groups": [],
+            "duplicate_candidates": [],
+        }
+
+        with patch.object(
+            validator,
+            "_llm_dimension_validation",
+            AsyncMock(return_value=llm_result),
+        ):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    "Smart transport policy creates higher costs in Veneto.",
+                    "Transport",
+                    "Italy",
+                    "Veneto",
+                    [],
+                    {"reason": "The policy increases travel costs."},
+                )
+            )
+
+        group_dimension = result["dimension_scores"]["affected_groups_fit"]
+        self.assertTrue(group_dimension["needs_clarification"])
+        self.assertEqual(result["next_action"], "ask_clarification")
+        self.assertEqual(
+            ChatService._custom_hazard_missing_dimension_questions(result),
+            ["Which specific population groups are affected by this hazard, and why?"],
         )
 
     def test_policy_specific_group_is_extracted(self):
@@ -1629,6 +1781,44 @@ class CustomHazardValidationTests(unittest.TestCase):
             response.bot_message,
         )
 
+    def test_selected_co_created_hazard_shows_saved_summary_beneath_title(self):
+        service = ChatService.__new__(ChatService)
+        profiles = [
+            {
+                "name": "Women",
+                "explanation": "Trip-chaining needs are poorly served.",
+            }
+        ]
+        summary = (
+            "Direct-commute transport design reduces accessibility for women "
+            "with caregiving responsibilities."
+        )
+        service._stored_hazard_profiles = MagicMock(return_value=profiles)
+        service._stored_user_hazard_profiles = MagicMock(return_value=[])
+        service._is_additional_hazard = MagicMock(return_value=False)
+        service._is_saved_custom_hazard = MagicMock(return_value=True)
+        service._custom_hazard_summary_for_duplicate = MagicMock(return_value=summary)
+        service._additional_profiles_with_population_context = AsyncMock(
+            return_value=profiles
+        )
+        service._profiles_with_population_context = AsyncMock(return_value=[])
+        hazard = "Gendered Transport Inequality Due to Trip-Chaining Mismatch"
+        session = ChatSession(
+            selected_hazard=hazard,
+            accepted_custom_hazard=hazard,
+        )
+
+        response = _run(
+            service._hazard_profiles_response("session-1", session, hazard)
+        )
+
+        self.assertIn('class="selected-hazard-summary"', response.bot_message)
+        self.assertIn("<strong>Hazard summary</strong>", response.bot_message)
+        self.assertIn(summary, response.bot_message)
+        self.assertLess(response.bot_message.index(hazard), response.bot_message.index(summary))
+        self.assertLess(response.bot_message.index(summary), response.bot_message.index("Women"))
+        self.assertEqual(session.accepted_custom_hazard_summary, summary)
+
     def test_early_invalid_custom_hazard_still_updates_duplicate_status(self):
         service = ChatService.__new__(ChatService)
         service.db = SimpleNamespace(
@@ -1944,19 +2134,24 @@ class CustomHazardValidationTests(unittest.TestCase):
                     "clarification_question": "Explain groups?",
                 },
             },
-            "affected_groups": [],
+            "affected_groups": [
+                {
+                    "group": "Tenant households",
+                    "reason": "They face retrofit cost burdens.",
+                }
+            ],
             "duplicate_candidates": [],
         }
 
         with patch.object(validator, "_llm_dimension_validation", AsyncMock(return_value=llm_payload)):
             result = _run(
                 validator.validate_custom_hazard_dimensions(
-                    "Retrofit cost burdens from green transition policy.",
+                    "Tenant households face retrofit cost burdens from green transition policy.",
                     "Housing",
                     "Germany",
                     "Saxony",
                     [],
-                    None,
+                    {"confirmed_affected_groups": [{"group": "Tenant households"}]},
                 )
             )
 
@@ -2005,19 +2200,28 @@ class CustomHazardValidationTests(unittest.TestCase):
                     "clarification_question": "",
                 },
             },
-            "affected_groups": [],
+            "affected_groups": [
+                {
+                    "group": "Energy-sector workers",
+                    "reason": "They face transition-related uncertainty.",
+                }
+            ],
             "duplicate_candidates": [],
         }
 
         with patch.object(validator, "_llm_dimension_validation", AsyncMock(return_value=llm_payload)):
             result = _run(
                 validator.validate_custom_hazard_dimensions(
-                    "Transition policy creates local uncertainty.",
+                    "Energy-sector workers face local uncertainty from transition policy.",
                     "Energy",
                     "Germany",
                     "Saxony",
                     [],
-                    {"validation_round": 2, "scores": [42, 58]},
+                    {
+                        "validation_round": 2,
+                        "scores": [42, 58],
+                        "confirmed_affected_groups": [{"group": "Energy-sector workers"}],
+                    },
                 )
             )
 
@@ -2484,9 +2688,9 @@ class CustomHazardValidationTests(unittest.TestCase):
             [
                 "Which clean mobility policy creates the access problem?",
                 "How is this connected to the selected Transport sector?",
-                "Which population groups are affected by this hazard, and why?",
             ],
         )
+        self.assertNotIn("Which population groups", response.bot_message)
         self.assertIn(
             "Additional information is required before this custom hazard can be validated.",
             response.bot_message,
@@ -3189,6 +3393,10 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(response.step, "hazard_population_region_comparison")
         self.assertEqual([option.label for option in response.options], ["Saxony"])
         self.assertEqual(session.region, "Bavaria")
+        self.assertIn("<h2>Compare regional affected population</h2>", response.bot_message)
+        self.assertIn("Current region: <strong>Bavaria</strong>", response.bot_message)
+        self.assertNotIn("##", response.bot_message)
+        self.assertNotIn("**", response.bot_message)
 
     def test_final_hazard_comparison_cta_opens_region_selection(self):
         service = ChatService.__new__(ChatService)
@@ -3270,6 +3478,13 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertIn("21.5%", response.bot_message)
         self.assertIn("18.0%", response.bot_message)
         self.assertIn("25.5%", response.bot_message)
+        self.assertIn(
+            "<h2>Regional affected population comparison</h2>",
+            response.bot_message,
+        )
+        self.assertIn("<strong>Compare regional population</strong>", response.bot_message)
+        self.assertNotIn("##", response.bot_message)
+        self.assertNotIn("**", response.bot_message)
         self.assertEqual(session.region_id, "bavaria")
         self.assertEqual(session.region, "Bavaria")
 

@@ -136,18 +136,27 @@ class ChatHazardCatalogMixin:
         seen: set[str] = set()
         hazards: list[str] = []
         evidence_statuses: dict[str, bool] = {}
+        evidence_by_hazard: dict[str, str] = {}
+        summaries_by_hazard: dict[str, str] = {}
         system_names = {normalize(hazard) for hazard in (session.hazards or [])}
         for row in [*shared_rows, *legacy_rows]:
             name = str(getattr(row, "name", row) or "").strip()
             key = normalize(name)
-            evidence_statuses[key] = evidence_statuses.get(key, False) or evidence_is_provided(
-                getattr(row, "evidence", None)
-            )
+            evidence = str(getattr(row, "evidence", None) or "").strip()
+            has_evidence = evidence_is_provided(evidence)
+            evidence_statuses[key] = evidence_statuses.get(key, False) or has_evidence
+            if has_evidence and not evidence_by_hazard.get(key):
+                evidence_by_hazard[key] = evidence
+            summary = str(getattr(row, "summary", None) or "").strip()
+            if summary and not summaries_by_hazard.get(key):
+                summaries_by_hazard[key] = summary
             if key in seen or key in system_names:
                 continue
             seen.add(key)
             hazards.append(name)
         session.custom_hazard_evidence_statuses = evidence_statuses
+        session.custom_hazard_evidence = evidence_by_hazard
+        session.custom_hazard_summaries = summaries_by_hazard
         return hazards
 
     def _additional_hazards_for_context(self, session: ChatSession) -> list[str]:

@@ -36,7 +36,7 @@ from app.services.custom_hazard_validation import (
 from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE
-from app.services.message_renderer import render_message
+from app.services.message_renderer import markdown_to_html, render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 
 logger = logging.getLogger(__name__)
@@ -588,7 +588,7 @@ class ChatCustomHazardPopulationStepsMixin:
             return ChatResponse(
                 session_id=session_id,
                 step=ChatPhase.HAZARDS.value,
-                bot_message=(
+                bot_message=markdown_to_html(
                     "No other regions are available for comparison within "
                     f"**{session.country or 'the selected country'}**."
                 ),
@@ -608,7 +608,7 @@ class ChatCustomHazardPopulationStepsMixin:
         return ChatResponse(
             session_id=session_id,
             step=ChatPhase.HAZARD_POPULATION_REGION_COMPARISON.value,
-            bot_message=message,
+            bot_message=markdown_to_html(message),
             options=option_list(regions),
             session=session.summary(),
             error=bool(error_reason),
@@ -718,7 +718,7 @@ class ChatCustomHazardPopulationStepsMixin:
         return ChatResponse(
             session_id=session_id,
             step="hazard_population_region_comparison_result",
-            bot_message=(
+            bot_message=markdown_to_html(
                 "## Regional affected population comparison\n\n"
                 f"{table}\n\n"
                 "Choose **Compare regional population** to compare another region."
@@ -1001,6 +1001,22 @@ class ChatCustomHazardPopulationStepsMixin:
         session.custom_hazard_evidence_statuses[normalize(accepted_hazard)] = (
             evidence_is_provided(session.accepted_custom_hazard_evidence)
         )
+        if session.custom_hazard_evidence is None:
+            session.custom_hazard_evidence = {}
+        if evidence_is_provided(session.accepted_custom_hazard_evidence):
+            session.custom_hazard_evidence[normalize(accepted_hazard)] = str(
+                session.accepted_custom_hazard_evidence
+            )
+        else:
+            session.custom_hazard_evidence.pop(normalize(accepted_hazard), None)
+        if session.custom_hazard_summaries is None:
+            session.custom_hazard_summaries = {}
+        if str(session.accepted_custom_hazard_summary or "").strip():
+            session.custom_hazard_summaries[normalize(accepted_hazard)] = str(
+                session.accepted_custom_hazard_summary
+            ).strip()
+        else:
+            session.custom_hazard_summaries.pop(normalize(accepted_hazard), None)
         self._record_activity(session_id, session, "custom_hazard_added", accepted_hazard)
         if session.accepted_custom_hazard_evidence not in {None, "", "Not provided"}:
             self._promote_temporary_evidence(

@@ -875,6 +875,11 @@ class ChatService(
         is_custom_hazard = self._is_saved_custom_hazard(session, hazard) or (
             normalize(hazard) == normalize(session.accepted_custom_hazard or "")
         )
+        hazard_summary = ""
+        if is_custom_hazard:
+            hazard_summary = self._custom_hazard_summary_for_duplicate(session, hazard)
+            if hazard_summary:
+                session.accepted_custom_hazard_summary = hazard_summary
         if not profiles and is_custom_hazard:
             profiles = self._additional_hazard_profiles_for_custom_hazard(session, hazard)
             if profiles:
@@ -910,10 +915,12 @@ class ChatService(
             hazard,
             display_profiles,
             user_profiles=display_user_profiles,
+            hazard_summary=hazard_summary,
         )
         session.socio_demographic_findings = self._format_hazard_profiles_markdown(
             hazard,
             display_profiles,
+            hazard_summary=hazard_summary,
         )
         if is_custom_hazard:
             assistant_names, user_names = self._custom_hazard_profile_name_sections(

@@ -31,6 +31,16 @@ def is_hazard_action_label(label: str) -> bool:
 
 class ChatHazardStepsMixin:
     def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
+        if (
+            (
+                session.custom_hazard_evidence is None
+                or session.custom_hazard_summaries is None
+            )
+            and session.country_id is not None
+            and session.sector_id is not None
+            and hasattr(self, "db")
+        ):
+            session.custom_hazards = self._saved_custom_hazards_for_context(session)
         self._hydrate_custom_hazard_profiles(session)
         self._filter_session_hazards_without_profiles(session)
         session.phase = "hazards"

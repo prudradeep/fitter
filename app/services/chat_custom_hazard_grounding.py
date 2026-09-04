@@ -787,8 +787,28 @@ class ChatCustomHazardGroundingMixin:
             "country_region_fit": "Country / region fit",
             "affected_groups_fit": "Affected population groups",
         }
+        core_dimensions = (
+            "hazard_definition_fit",
+            "twin_transition_policy_fit",
+            "selected_sector_fit",
+            "country_region_fit",
+        )
+        core_supported = all(
+            isinstance(dimensions.get(key), dict)
+            and int(dimensions[key].get("score") or 0) >= 5
+            and not dimensions[key].get("needs_clarification")
+            and str(dimensions[key].get("status") or "").strip().upper()
+            not in {"REJECTED", "INSUFFICIENT INFO"}
+            for key in core_dimensions
+        )
+        dimensions_to_check = (
+            (*core_dimensions, "affected_groups_fit")
+            if core_supported
+            else core_dimensions
+        )
         details: list[tuple[str, str, str]] = []
-        for key, prompt in prompts.items():
+        for key in dimensions_to_check:
+            prompt = prompts[key]
             item = dimensions.get(key)
             if not isinstance(item, dict):
                 continue
@@ -806,7 +826,7 @@ class ChatCustomHazardGroundingMixin:
             detail = (labels.get(key, key), question, reason)
             if detail not in details:
                 details.append(detail)
-        return details
+        return details[:2]
 
     @classmethod
     def _custom_hazard_missing_dimension_questions(

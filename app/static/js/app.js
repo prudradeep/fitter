@@ -164,6 +164,9 @@ const closePlatformUsersButton = document.querySelector("#closePlatformUsersButt
 const platformUsersZoomIn = document.querySelector("#platformUsersZoomIn");
 const platformUsersZoomOut = document.querySelector("#platformUsersZoomOut");
 const platformUsersZoomReset = document.querySelector("#platformUsersZoomReset");
+const hazardEvidenceDialog = document.querySelector("#hazardEvidenceDialog");
+const hazardEvidenceDialogBody = document.querySelector("#hazardEvidenceDialogBody");
+const closeHazardEvidenceButton = document.querySelector("#closeHazardEvidenceButton");
 const uiTour = document.querySelector("#uiTour");
 const uiTourOverlay = document.querySelector(".ui-tour-overlay");
 const uiTourOverlayTop = document.querySelector(".ui-tour-overlay-top");
@@ -1999,6 +2002,17 @@ chatScrollBottomButton?.addEventListener("click", () => {
   chatLog?.scrollTo({ top: chatLog.scrollHeight, behavior: "smooth" });
 });
 chatLog?.addEventListener("click", (event) => {
+  const evidenceButton = event.target.closest("button.hazard-evidence-label--provided");
+  if (evidenceButton) {
+    event.preventDefault();
+    const evidenceUrl = evidenceButton.dataset.evidenceUrl || "";
+    if (evidenceUrl) {
+      window.open(evidenceUrl, "_blank", "noopener,noreferrer");
+    } else {
+      openHazardEvidenceDialog(evidenceButton.dataset.evidenceText || "Evidence details are unavailable.");
+    }
+    return;
+  }
   const platformUsersButton = event.target.closest("[data-open-platform-users], .platform-users-source-button");
   if (platformUsersButton) {
     event.preventDefault();
@@ -3809,6 +3823,27 @@ function closePlatformUsersDialog() {
     platformUsersDialog.close();
   } else {
     platformUsersDialog.setAttribute("hidden", "");
+  }
+  messageInput?.focus();
+}
+
+function openHazardEvidenceDialog(evidence) {
+  if (!hazardEvidenceDialog || !hazardEvidenceDialogBody) return;
+  hazardEvidenceDialogBody.textContent = evidence;
+  if (typeof hazardEvidenceDialog.showModal === "function") {
+    if (!hazardEvidenceDialog.open) hazardEvidenceDialog.showModal();
+  } else {
+    hazardEvidenceDialog.removeAttribute("hidden");
+  }
+  closeHazardEvidenceButton?.focus();
+}
+
+function closeHazardEvidenceDialog() {
+  if (!hazardEvidenceDialog) return;
+  if (typeof hazardEvidenceDialog.close === "function") {
+    hazardEvidenceDialog.close();
+  } else {
+    hazardEvidenceDialog.setAttribute("hidden", "");
   }
   messageInput?.focus();
 }
@@ -5775,6 +5810,10 @@ platformUsersDialog?.addEventListener("click", (event) => {
 platformUsersZoomIn?.addEventListener("click", () => setPlatformUsersZoom(platformUsersZoom + 0.25));
 platformUsersZoomOut?.addEventListener("click", () => setPlatformUsersZoom(platformUsersZoom - 0.25));
 platformUsersZoomReset?.addEventListener("click", () => setPlatformUsersZoom(1));
+closeHazardEvidenceButton?.addEventListener("click", closeHazardEvidenceDialog);
+hazardEvidenceDialog?.addEventListener("click", (event) => {
+  if (event.target === hazardEvidenceDialog) closeHazardEvidenceDialog();
+});
 targetAllGeneralPopulationButton?.addEventListener("click", () => {
   targetPopulationDialogBody
     ?.querySelectorAll("[data-quick-target-option='true']")

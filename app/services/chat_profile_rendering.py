@@ -11,8 +11,20 @@ class ChatProfileRenderingMixin:
         profiles: list[dict[str, str]],
         *,
         user_profiles: list[dict[str, str]] | None = None,
+        hazard_summary: str = "",
     ) -> str:
         lines = [f"### Socio-demographic profiles most affected by {hazard}"]
+        summary = str(hazard_summary or "").strip()
+        if summary:
+            lines.extend(
+                [
+                    "",
+                    '<div class="selected-hazard-summary">',
+                    '  <span class="selected-hazard-summary-label"><strong>Hazard summary</strong></span>',
+                    f"  <p>{escape(summary)}</p>",
+                    "</div>",
+                ]
+            )
         if not profiles and not user_profiles:
             lines.append("- No clearly supported socio-demographic profiles were returned for this hazard.")
             return "\n".join(lines)

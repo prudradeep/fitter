@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260904-prompt-source-preference" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260904-co-created-hazard-evidence" />
   </head>
   <body data-tour-user-id="{{ current_user.id }}">
     <header class="topbar">
@@ -763,6 +763,16 @@
       </section>
     </dialog>
 
+    <dialog id="hazardEvidenceDialog" class="evidence-dialog">
+      <section class="evidence-dialog-panel" aria-labelledby="hazardEvidenceDialogTitle">
+        <header class="evidence-dialog-header">
+          <h2 id="hazardEvidenceDialogTitle">Provided evidence</h2>
+          <button id="closeHazardEvidenceButton" type="button" aria-label="Close provided evidence">×</button>
+        </header>
+        <div id="hazardEvidenceDialogBody" class="evidence-dialog-body"></div>
+      </section>
+    </dialog>
+
     <dialog
       id="knowledgeDialog"
       class="target-dialog knowledge-dialog"
@@ -1162,6 +1172,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260904-prompt-source-preference"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260904-hazard-summary-review"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260904-co-created-hazard-evidence"></script>
   </body>
 </html>

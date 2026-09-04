@@ -52,6 +52,9 @@ ALLOWED_ATTRIBUTES = {
         "data-open-methodology",
         "data-open-survey-results",
         "data-open-platform-users",
+        "data-evidence-url",
+        "data-evidence-text",
+        "aria-label",
     ],
     "details": ["class", "open"],
     "div": [

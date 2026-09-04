@@ -1,19 +1,38 @@
+<article class="hazard-summary-review">
 {% if error_reason %}
-**{{ error_reason }}**
-
+<div class="hazard-summary-review-error" role="alert">
+  <strong>{{ error_reason }}</strong>
+</div>
 {% endif %}
-## Review Summary
+<div class="hazard-summary-review-header">
+  <span class="hazard-summary-review-eyebrow">Final review</span>
+  <h2 class="hazard-summary-review-title">Review Summary</h2>
+  <p>Check the generated content before saving this custom hazard.</p>
+</div>
 
-Hazard to be co-created:
+<div class="hazard-summary-review-original">
+  <span class="hazard-summary-review-label">Hazard to be co-created</span>
+  <p><strong>{{ hazard }}</strong></p>
+</div>
 
-- **{{ hazard }}**
-
+<div class="hazard-summary-review-generated">
 {% if generated_title and generated_title != hazard %}
-**Generated title:** {{ generated_title }}
-
+  <div class="hazard-summary-review-field">
+    <span class="hazard-summary-review-label">Generated title</span>
+    <h3 class="hazard-summary-review-generated-title">{{ generated_title }}</h3>
+  </div>
 {% endif %}
-### Generated summary
+  <div class="hazard-summary-review-field hazard-summary-review-summary">
+    <span class="hazard-summary-review-label">Generated summary</span>
+    <p>{{ summary }}</p>
+  </div>
+</div>
 
-{{ summary }}
-
-Choose **Continue** to confirm this summary and save the hazard. To change it, enter instructions or additional context in the text area; the revised summary will return here for confirmation.
+<div class="hazard-summary-review-action">
+  <span class="hazard-summary-review-action-icon" aria-hidden="true">✓</span>
+  <div>
+    <strong>Ready to save?</strong>
+    <p>Choose <strong>Continue</strong> to confirm and save. To make changes, enter revision instructions or additional context in the text area.</p>
+  </div>
+</div>
+</article>

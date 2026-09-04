@@ -132,6 +132,7 @@ def extract_affected_groups(text: str) -> list[dict[str, Any]]:
         return []
 
     alias_map: tuple[tuple[tuple[str, ...], str], ...] = (
+        (("women", "woman", "female"), "Women"),
         (("low-income", "low income", "income poor"), "Low-income households"),
         (("middle-income", "medium income", "middle income"), "Middle-income households"),
         (("high-income", "high income"), "High-income households"),
