@@ -974,17 +974,29 @@ class ChatService(
 
     async def _practical_policy_recommendations(self, session: ChatSession) -> str:
         matched_examples = self._matched_mitigation_measure_examples(session)
+        policy_reference_context = self._format_full_knowledge_results(
+            self._mitigation_policy_reference_results(session)
+        )
+        request = render_prompt_template(
+            "llm/practical_policy_recommendations_user.txt",
+            selected_hazard=session.selected_hazard,
+            socio_demographic_profiles=format_all_dgs(session),
+            target_population=self._mitigation_target_population_text(session),
+            matched_examples=matched_examples
+            or "- No matching examples were found for this sector, hazard, and profile set.",
+        )
         context, messages = await self._build_deep_dive_messages(
             session,
-            render_prompt_template(
-                "llm/practical_policy_recommendations_user.txt",
-                selected_hazard=session.selected_hazard,
-                socio_demographic_profiles=format_all_dgs(session),
-                target_population=self._mitigation_target_population_text(session),
-                matched_examples=matched_examples
-                or "- No matching examples were found for this sector, hazard, and profile set.",
-            ),
+            request,
         )
+        if policy_reference_context:
+            context += (
+                "\n\nProvided policy-reference excerpts associated with this hazard:\n"
+                f"{policy_reference_context}\n"
+                "Use these excerpts as policy-design context and preserve their causal "
+                "link to the selected hazard. Do not treat them as proof that the hazard "
+                "occurred."
+            )
         practical_considerations_response = await ask_llm_chat(
             context=context,
             messages=messages,

@@ -75,27 +75,24 @@ class CustomHazardEvidenceLabelTests(unittest.TestCase):
     def test_saved_custom_hazards_hydrate_evidence_status_from_current_and_legacy_rows(self):
         service = ChatHazardCatalogMixin()
         service.user_id = "user-1"
+        shared_hazard = SimpleNamespace(
+            name="Hazard with evidence",
+            evidence="Evidence URL: https://example.com/report.pdf",
+            summary="A stored summary.",
+            created_by_user_id="user-2",
+            is_crowd_sourced=True,
+        )
+        legacy_hazard = SimpleNamespace(
+            name="Legacy hazard",
+            evidence="Not provided",
+            is_crowd_sourced=False,
+        )
         service.db = SimpleNamespace(
             scalars=MagicMock(
-                side_effect=[
-                    SimpleNamespace(
-                        all=lambda: [
-                            SimpleNamespace(
-                                name="Hazard with evidence",
-                                evidence="Evidence URL: https://example.com/report.pdf",
-                                summary="A stored summary.",
-                            )
-                        ]
-                    ),
-                    SimpleNamespace(
-                        all=lambda: [
-                            SimpleNamespace(
-                                name="Legacy hazard",
-                                evidence="Not provided",
-                            )
-                        ]
-                    ),
-                ]
+                return_value=SimpleNamespace(all=lambda: [shared_hazard])
+            ),
+            execute=MagicMock(
+                return_value=SimpleNamespace(all=lambda: [(legacy_hazard, "user-1")])
             )
         )
         session = ChatSession(
@@ -122,6 +119,30 @@ class CustomHazardEvidenceLabelTests(unittest.TestCase):
             session.custom_hazard_summaries,
             {"hazard with evidence": "A stored summary."},
         )
+        self.assertEqual(
+            session.custom_hazard_crowd_sourced,
+            {"hazard with evidence": True, "legacy hazard": False},
+        )
+
+    def test_crowd_sourced_label_only_appears_for_another_users_hazard(self):
+        session = ChatSession(
+            custom_hazards=["Shared hazard", "My hazard"],
+            custom_hazard_crowd_sourced={
+                "shared hazard": True,
+                "my hazard": False,
+            },
+            hazard_profiles={
+                "Shared hazard": [{"name": "Workers"}],
+                "My hazard": [{"name": "Households"}],
+            },
+        )
+
+        html = format_custom_hazards(session)
+
+        self.assertEqual(html.count("Crowd sourced"), 1)
+        shared_card, my_card = html.split('</article>')[:2]
+        self.assertIn("Crowd sourced", shared_card)
+        self.assertNotIn("Crowd sourced", my_card)
 
 
 if __name__ == "__main__":

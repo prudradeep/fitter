@@ -329,36 +329,13 @@ Use `country_mismatch` only when the hazard clearly depends on a condition that 
 
 When the hazard is generally plausible and no contradiction is present, set `country_fit` to true.
 
-### 6. Region plausibility
+### 6. Region context
 
-When a region is supplied, check whether the hazard can reasonably apply there.
+The selected region is display and application context only. Do not evaluate whether
+the hazard fits the region, and do not reject or request clarification because of
+regional applicability.
 
-Do not require the region name to appear.
-
-Do not assume that a region is:
-
-* coal-dependent
-* rural
-* urban
-* industrial
-* low-income
-* digitally excluded
-* infrastructure-constrained
-
-unless the submitted hazard or additional context supports that condition.
-
-A general hazard can still be valid for the selected region without naming a region-specific characteristic.
-
-Use `needs_clarification` only when the validity of the hazard depends on an unsupported regional claim.
-
-Example:
-
-`"Coal-worker displacement in a region with no stated connection to coal employment"` may need clarification only when the regional dependency is essential to the hazard.
-
-When no region is supplied:
-
-* set region to null
-* set region_fit to true
+Always set `region_fit` to true. When no region is supplied, set `region` to null.
 
 ### 7. Affected group or affected entity
 
@@ -458,7 +435,7 @@ If a duplicate is found:
 * a negative consequence is explicit or clearly implied
 * a green or digital transition mechanism is explicit or clearly implied
 * the primary causal mechanism fits the selected sector
-* the hazard is reasonably plausible for the country and region
+* the hazard is reasonably plausible for the selected country; regional fit is not evaluated
 * the affected entity is explicit or reasonably implied
 * the hazard is not a duplicate
 
@@ -478,7 +455,7 @@ If a duplicate is found:
 * it is a generic socioeconomic issue
 * it lacks any reasonably inferable transition link
 * it clearly belongs to another sector
-* it clearly contradicts the selected country or region
+* it clearly contradicts the selected country
 * it is a duplicate
 
 ## Validation codes

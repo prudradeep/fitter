@@ -64,6 +64,21 @@ class ChatCustomHazardGroundingMixin:
         error: bool = False,
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
+        if state.pop("show_evidence_linkages", False):
+            bot_message = self._prepend_custom_hazard_evidence_linkages(
+                state,
+                bot_message,
+            )
+        if state.pop("show_policy_hazard_causal_linkage", False):
+            causal_linkage = self._custom_hazard_policy_causal_linkage(state)
+            if causal_linkage:
+                bot_message = (
+                    markdown_to_html(
+                        "## Causal linkage to the provided policy document\n\n"
+                        f"{causal_linkage}"
+                    )
+                    + bot_message
+                )
         return ChatResponse(
             session_id=session_id,
             step=step,
@@ -76,6 +91,48 @@ class ChatCustomHazardGroundingMixin:
             custom_hazard=frontend_custom_hazard_payload(state),
             custom_hazard_grounding_status=build_custom_hazard_grounding_status(state),
         )
+
+    @staticmethod
+    def _custom_hazard_policy_causal_linkage(state: dict[str, object]) -> str:
+        if not state.get("policy_reference_available"):
+            return ""
+        dimensions = state.get("dimension_scores")
+        twin_fit = (
+            dimensions.get("twin_transition_policy_fit")
+            if isinstance(dimensions, dict)
+            else None
+        )
+        if not isinstance(twin_fit, dict):
+            return ""
+        if int(twin_fit.get("score") or 0) < 7 or twin_fit.get("needs_clarification"):
+            return ""
+        return str(twin_fit.get("causal_linkage") or "").strip()
+
+    @staticmethod
+    def _prepend_custom_hazard_evidence_linkages(
+        state: dict[str, object],
+        bot_message: str,
+    ) -> str:
+        analysis = state.get("linkage_analysis")
+        if not isinstance(analysis, dict):
+            analysis = {}
+        sections: list[str] = []
+        for key, title in (
+            ("evidence_hazard_linkage", "Evidence-to-hazard linkage"),
+            ("policy_evidence_linkage", "Policy-to-evidence causal linkage"),
+        ):
+            item = analysis.get(key)
+            supported = isinstance(item, dict) and bool(item.get("supported"))
+            linkage = str(item.get("causal_linkage") or "").strip() if isinstance(item, dict) else ""
+            reason = str(item.get("reason") or "").strip() if isinstance(item, dict) else ""
+            if supported and linkage:
+                body = linkage
+            else:
+                body = "No supported causal linkage found."
+                if reason:
+                    body += f" {reason}"
+            sections.append(f"## {title}\n\n{body}")
+        return markdown_to_html("\n\n".join(sections)) + bot_message
 
     async def _run_custom_hazard_dimension_check(
         self, session_id: str, session: ChatSession
@@ -115,6 +172,46 @@ class ChatCustomHazardGroundingMixin:
                 input_mode="textarea",
                 error=True,
             )
+        policy_reference_context = await self._policy_reference_context(
+            session,
+            [
+                str(document_id)
+                for document_id in state.get("policy_reference_document_ids") or []
+                if str(document_id).strip()
+            ],
+        )
+        evidence_text = str(state.get("evidence") or "").strip()
+        evidence_document_ids = re.findall(
+            r"Temporary evidence document ID:\s*(\S+)",
+            evidence_text,
+            flags=re.IGNORECASE,
+        )
+        evidence_document_context = await self._temporary_evidence_context(
+            session,
+            evidence_document_ids or None,
+        ) if evidence_document_ids else ""
+        inline_evidence = re.sub(
+            r"Temporary evidence document ID:\s*\S+",
+            "",
+            evidence_text,
+            flags=re.IGNORECASE,
+        )
+        inline_evidence = re.sub(
+            r"Evidence URL:\s*\S+",
+            "",
+            inline_evidence,
+            flags=re.IGNORECASE,
+        )
+        inline_evidence = re.sub(
+            r"Evidence file:\s*.*$",
+            "",
+            inline_evidence,
+            flags=re.IGNORECASE,
+        ).strip()
+        evidence_context = "\n".join(
+            part for part in (evidence_document_context, inline_evidence) if part
+        )
+        state["policy_reference_available"] = bool(policy_reference_context.strip())
         result = await validate_custom_hazard_dimensions(
             self._custom_hazard_grounding_text(state, hazard),
             session.sector or "",
@@ -123,6 +220,8 @@ class ChatCustomHazardGroundingMixin:
             self._duplicate_hazard_names_for_check(session),
             state,
             session.validation_mode,
+            policy_reference_context,
+            evidence_context,
         )
         self._store_custom_hazard_validation_result(session, hazard, result)
         if self._custom_hazard_repeated_clarification_questions_after_answer(session):
@@ -287,6 +386,7 @@ class ChatCustomHazardGroundingMixin:
         scores.append(state["overall_score"])
         state["scores"] = scores[-4:]
         state["dimension_scores"] = result.get("dimension_scores") or {}
+        state["linkage_analysis"] = result.get("linkage_analysis") or {}
         # Evidence validation is a second pass over the same hazard. Some LLM
         # responses omit affected groups when focusing on the supplied URL;
         # do not discard groups already identified during the title/grounding
@@ -736,6 +836,12 @@ class ChatCustomHazardGroundingMixin:
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
         missing_details = self._custom_hazard_missing_dimension_details(state)
+        if self._custom_hazard_needs_policy_reference(state):
+            return self._custom_hazard_policy_reference_step(
+                session_id,
+                session,
+                error=rejected,
+            )
         questions = [question for _, question, _ in missing_details]
         if not questions:
             questions = ["Can you clarify how this hazard fits the selected sector, place, and twin-transition policy context?"]
@@ -757,6 +863,62 @@ class ChatCustomHazardGroundingMixin:
             options=HAZARD_ENTRY_OPTIONS,
             input_mode="textarea",
             error=False,
+        )
+
+    @staticmethod
+    def _custom_hazard_needs_policy_reference(state: dict[str, object]) -> bool:
+        dimensions = state.get("dimension_scores")
+        if not isinstance(dimensions, dict) or state.get("policy_reference_available"):
+            return False
+        objective = dimensions.get("policy_objective_fit")
+        twin_fit = dimensions.get("twin_transition_policy_fit")
+        floor = custom_hazard_dimension_floor(state.get("validation_mode"))
+        objective_supported = (
+            isinstance(objective, dict)
+            and int(objective.get("score") or 0) >= floor
+            and not objective.get("needs_clarification")
+        )
+        twin_needs_reference = (
+            isinstance(twin_fit, dict)
+            and (
+                int(twin_fit.get("score") or 0) < floor
+                or bool(twin_fit.get("needs_clarification"))
+            )
+        )
+        return objective_supported and twin_needs_reference
+
+    def _custom_hazard_policy_reference_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error: bool = False,
+        detail: str = "",
+    ) -> ChatResponse:
+        state = self._custom_hazard_state(session)
+        transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_CLARIFICATION)
+        state["awaiting_policy_reference"] = True
+        state["pending_clarification_questions"] = [
+            "Provide the twin-transition policy document as a URL or file."
+        ]
+        message = (
+            "**Twin-transition policy fit**\n\n"
+            "Provide the policy document as a URL or upload a PDF, DOCX, MD, or TXT file. "
+            "I will check the document itself to assess the policy–hazard fit, identify "
+            "mismatches, and trace causal links between its provisions and the hazard.\n\n"
+            "This document is a policy reference only and will not be treated as evidence "
+            "that the hazard occurred or affects a population."
+        )
+        if detail:
+            message = f"{detail}\n\n{message}"
+        return self._custom_hazard_response(
+            session_id=session_id,
+            session=session,
+            step="custom_hazard_policy_reference",
+            bot_message=markdown_to_html(message),
+            options=HAZARD_ENTRY_OPTIONS,
+            input_mode="policy_reference",
+            error=error,
         )
 
     @staticmethod
@@ -784,7 +946,7 @@ class ChatCustomHazardGroundingMixin:
                 "How does this hazard relate specifically to the selected sector?"
             ),
             "country_region_fit": (
-                "Why is this hazard relevant to the selected country or region?"
+                "Why is this hazard relevant to the selected country?"
             ),
             "affected_groups_fit": (
                 "Which specific population groups are affected, and what impact do they experience?"
@@ -799,11 +961,19 @@ class ChatCustomHazardGroundingMixin:
             "affected_groups_fit": "Affected population groups",
         }
         core_dimensions = (
-            "hazard_definition_fit",
-            "twin_transition_policy_fit",
             "policy_objective_fit",
+            "twin_transition_policy_fit",
+            "hazard_definition_fit",
             "selected_sector_fit",
             "country_region_fit",
+        )
+        objective_item = dimensions.get("policy_objective_fit")
+        objective_supported = (
+            isinstance(objective_item, dict)
+            and int(objective_item.get("score") or 0) >= dimension_floor
+            and not objective_item.get("needs_clarification")
+            and str(objective_item.get("status") or "").strip().upper()
+            not in {"REJECTED", "INSUFFICIENT INFO"}
         )
         core_supported = all(
             isinstance(dimensions.get(key), dict)
@@ -813,11 +983,12 @@ class ChatCustomHazardGroundingMixin:
             not in {"REJECTED", "INSUFFICIENT INFO"}
             for key in core_dimensions
         )
-        dimensions_to_check = (
-            (*core_dimensions, "affected_groups_fit")
-            if core_supported
-            else core_dimensions
-        )
+        if not objective_supported:
+            dimensions_to_check = ("policy_objective_fit",)
+        elif core_supported:
+            dimensions_to_check = (*core_dimensions, "affected_groups_fit")
+        else:
+            dimensions_to_check = core_dimensions
         details: list[tuple[str, str, str]] = []
         for key in dimensions_to_check:
             prompt = prompts[key]
@@ -923,6 +1094,8 @@ class ChatCustomHazardGroundingMixin:
         session: ChatSession,
     ) -> bool:
         state = self._custom_hazard_state(session)
+        if self._custom_hazard_needs_policy_reference(state):
+            return False
         clarifications = [
             item
             for item in state.get("clarifications") or []
@@ -1061,9 +1234,9 @@ class ChatCustomHazardGroundingMixin:
             else {}
         )
         core_dimensions = (
-            "hazard_definition_fit",
-            "twin_transition_policy_fit",
             "policy_objective_fit",
+            "twin_transition_policy_fit",
+            "hazard_definition_fit",
             "selected_sector_fit",
             "country_region_fit",
         )
@@ -1102,9 +1275,9 @@ class ChatCustomHazardGroundingMixin:
         return all(
             self._custom_hazard_dimension_is_supported(session, dimension)
             for dimension in (
-                "hazard_definition_fit",
-                "twin_transition_policy_fit",
                 "policy_objective_fit",
+                "twin_transition_policy_fit",
+                "hazard_definition_fit",
                 "selected_sector_fit",
                 "country_region_fit",
             )

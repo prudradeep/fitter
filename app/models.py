@@ -588,6 +588,9 @@ class KnowledgeDocument(Base):
     source_uri: Mapped[str | None] = mapped_column(Text)
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="main", index=True)
     session_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    custom_hazard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True
+    )
     scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="global", server_default="global", index=True)
     country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True)
     region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)

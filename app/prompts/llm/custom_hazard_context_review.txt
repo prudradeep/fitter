@@ -6,7 +6,8 @@ submission for the selected context.
 {scope_instruction}
 
 Decide whether the hazard, reason, optional evidence, and optional clarification
-together are clear enough to save as a custom hazard for the selected context.
+together are clear enough to save as a custom hazard for the selected country and
+sector. The region is application context only and must not affect this decision.
 
 Selected context:
 - Country: {country}
@@ -19,7 +20,8 @@ Do not include Markdown, code fences, comments, trailing commas, or extra keys.
 
 Rules:
 - Use "accept" when the full submission is a clear green/digital transition hazard
-  for the selected sector and place.
+  for the selected sector and country.
+- Do not reject or request clarification based on regional fit.
 - Use "clarification" only when the submission is plausibly in scope but one
   specific detail is needed before affected population groups can be extracted.
 - Use "reject" when the submission is outside scope, incoherent, or belongs to a

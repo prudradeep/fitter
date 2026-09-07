@@ -28,10 +28,14 @@ from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
 from app.services.chat_parsers import parse_evaluation_answer
 from app.services.audit_log import record_audit_event
-from app.services.hazard_effect_size import hazard_effect_size_rows
-from app.services.hazard_ranking_service import HazardRankingService
-from app.services.knowledge_base import MAIN_KB_SCOPE, KnowledgeBaseService
-from app.services.hazard_salience import country_hazard_salience
+from app.services.hazard_effect_size import hazard_effect_size_rows, hazard_predictor_effect_rows
+from app.services.hazard_ranking_service import HAZARD_COLUMN_BY_SLUG, HazardRankingService
+from app.services.knowledge_base import (
+    MAIN_KB_SCOPE,
+    POLICY_REFERENCE_SCOPE,
+    KnowledgeBaseService,
+)
+from app.services.hazard_salience import country_hazard_salience, hazard_concern_rows
 from app.services.prompt_loader import clear_prompt_caches
 from app.services.prompt_store import list_prompts, prompt_metadata, seed_prompts_from_files_for_session
 from app.services.rate_limit import record_failed_attempt, reset_rate_limit, retry_after_seconds
@@ -499,12 +503,31 @@ async def sessions(
 async def hazard_salience(
     country: str | None = Query(default=None, max_length=120),
     sector: str | None = Query(default=None, max_length=120),
+    region: str | None = Query(default=None, max_length=180),
+    hazard: str | None = Query(default=None, max_length=180),
     current_user: AppUser = Depends(require_current_user),
 ) -> dict[str, object]:
+    hazard_column = HAZARD_COLUMN_BY_SLUG.get(str(hazard or "").strip(), "")
+    calculation_rows = (
+        hazard_concern_rows(
+            country=country or "",
+            sector=sector or "",
+            hazard_column=hazard_column or "",
+            region=region,
+        )
+        if hazard_column
+        else []
+    )
     return {
         "threshold": "> 12",
         "formula": "mean_concern * pct_high_concern / 100",
-        "salience": country_hazard_salience(country=country, sector=sector),
+        "salience": country_hazard_salience(country=country, sector=sector, region=region),
+        "calculation_data": {
+            "region_column": "Region",
+            "regions": [row["region"] for row in calculation_rows],
+            "column": "Concern score",
+            "values": [row["concern_score"] for row in calculation_rows],
+        },
     }
 
 
@@ -515,10 +538,21 @@ async def hazard_effect_size(
     min_or: float = Query(default=1.0, gt=0),
     current_user: AppUser = Depends(require_current_user),
 ) -> dict[str, object]:
+    predictor_rows = hazard_predictor_effect_rows(
+        sector=sector,
+        hazard=hazard,
+        min_or=min_or,
+    )
     return {
-        "formula": "mean(abs(log(OR_k))) for OR_k > min_or",
+        "formula": "mean(abs(log(OR_k))) for OR_k >= min_or",
         "min_or": min_or,
         "effect_sizes": hazard_effect_size_rows(sector=sector, hazard=hazard, min_or=min_or),
+        "calculation_data": {
+            "predictor_column": "Predictor",
+            "predictors": [row["predictor"] for row in predictor_rows],
+            "column": "Odds ratio (OR)",
+            "values": [row["odds_ratio"] for row in predictor_rows],
+        },
     }
 
 
@@ -1345,6 +1379,87 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
     crowd_sourcing_enabled = _truthy(form.get("crowd_sourcing_enabled"))
     evidence_parts: list[str] = []
 
+    policy_reference_parts: list[str] = []
+    policy_reference_url = str(form.get("policy_reference_url") or "").strip()
+    if policy_reference_url:
+        if not session_id:
+            policy_reference_parts.append(
+                "Policy reference error: A chat session is required before adding a policy document."
+            )
+        else:
+            policy_service = KnowledgeBaseService(
+                db,
+                user_id,
+                scope=POLICY_REFERENCE_SCOPE,
+                session_key=session_id,
+            )
+            try:
+                result = await policy_service.ingest_url(
+                    policy_reference_url,
+                    policy_reference_url,
+                    allow_lexical_only=True,
+                )
+                if result.get("error"):
+                    raise ValueError(str(result.get("detail") or "No readable policy text was found."))
+                policy_reference_parts.extend(
+                    [
+                        f"Policy reference URL: {policy_reference_url}",
+                        f"Policy reference document ID: {result.get('document_id')}",
+                    ]
+                )
+            except (httpx.HTTPError, ValueError) as exc:
+                policy_reference_parts.append(
+                    f"Policy reference error: The URL could not be read ({exc})."
+                )
+
+    policy_reference_file = form.get("policy_reference_file")
+    policy_filename = getattr(policy_reference_file, "filename", "")
+    if isinstance(policy_filename, str) and policy_filename.strip():
+        policy_filename = policy_filename.strip()
+        if not _allowed_evidence_file(policy_filename) or not hasattr(policy_reference_file, "read"):
+            policy_reference_parts.append(
+                "Policy reference error: Use a PDF, DOCX, MD, or TXT file."
+            )
+        elif not session_id:
+            policy_reference_parts.append(
+                "Policy reference error: A chat session is required before adding a policy document."
+            )
+        else:
+            too_large = upload_too_large_response(
+                policy_reference_file,
+                settings.max_upload_bytes,
+                "Policy reference upload",
+            )
+            if too_large is not None:
+                raise HTTPException(status_code=413, detail="Policy reference upload is too large.")
+            file_bytes = await policy_reference_file.read()
+            if len(file_bytes) > settings.max_upload_bytes:
+                raise HTTPException(status_code=413, detail="Policy reference upload is too large.")
+            policy_service = KnowledgeBaseService(
+                db,
+                user_id,
+                scope=POLICY_REFERENCE_SCOPE,
+                session_key=session_id,
+            )
+            try:
+                result = await policy_service.ingest_file(
+                    policy_filename,
+                    file_bytes,
+                    allow_lexical_only=True,
+                )
+                if result.get("error"):
+                    raise ValueError(str(result.get("detail") or "No readable policy text was found."))
+                policy_reference_parts.extend(
+                    [
+                        f"Policy reference file: {policy_filename}",
+                        f"Policy reference document ID: {result.get('document_id')}",
+                    ]
+                )
+            except ValueError as exc:
+                policy_reference_parts.append(
+                    f"Policy reference error: The file could not be read ({exc})."
+                )
+
     evidence_url = str(form.get("evidence_url") or "").strip()
     if evidence_url:
         evidence_parts.append(f"Evidence URL: {evidence_url}")
@@ -1356,11 +1471,14 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                 session_key=session_id,
             )
             try:
-                await temporary_service.ingest_url(
+                result = await temporary_service.ingest_url(
                     evidence_url,
                     evidence_url,
                     allow_lexical_only=True,
                 )
+                document_id = str(result.get("document_id") or "").strip()
+                if document_id:
+                    evidence_parts.append(f"Temporary evidence document ID: {document_id}")
             except (httpx.HTTPError, ValueError):
                 pass
 
@@ -1388,16 +1506,21 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                     session_key=session_id,
                 )
                 try:
-                    await temporary_service.ingest_file(
+                    result = await temporary_service.ingest_file(
                         filename,
                         file_bytes,
                         allow_lexical_only=True,
                     )
+                    document_id = str(result.get("document_id") or "").strip()
+                    if document_id:
+                        evidence_parts.append(f"Temporary evidence document ID: {document_id}")
                 except (httpx.HTTPError, ValueError):
                     pass
 
-    if evidence_parts:
-        message = "\n".join([message.strip(), *evidence_parts]).strip()
+    if evidence_parts or policy_reference_parts:
+        message = "\n".join(
+            [message.strip(), *policy_reference_parts, *evidence_parts]
+        ).strip()
 
     return ChatRequest(
         message=message,

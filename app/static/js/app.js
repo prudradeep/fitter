@@ -167,6 +167,11 @@ const platformUsersZoomReset = document.querySelector("#platformUsersZoomReset")
 const hazardEvidenceDialog = document.querySelector("#hazardEvidenceDialog");
 const hazardEvidenceDialogBody = document.querySelector("#hazardEvidenceDialogBody");
 const closeHazardEvidenceButton = document.querySelector("#closeHazardEvidenceButton");
+const hazardMetricDataDialog = document.querySelector("#hazardMetricDataDialog");
+const hazardMetricDataDialogTitle = document.querySelector("#hazardMetricDataDialogTitle");
+const hazardMetricDataDialogSubtitle = document.querySelector("#hazardMetricDataDialogSubtitle");
+const hazardMetricDataDialogBody = document.querySelector("#hazardMetricDataDialogBody");
+const closeHazardMetricDataButton = document.querySelector("#closeHazardMetricDataButton");
 const uiTour = document.querySelector("#uiTour");
 const uiTourOverlay = document.querySelector(".ui-tour-overlay");
 const uiTourOverlayTop = document.querySelector(".ui-tour-overlay-top");
@@ -267,6 +272,7 @@ const mapTopologyCache = new Map();
 let optionTooltipElement = null;
 let optionTooltipTarget = null;
 let sourceCitationTooltipTarget = null;
+let hazardMetricDataRequestId = 0;
 let listedHazardOptions = [];
 let promptRows = [];
 let selectedPromptId = "";
@@ -1907,6 +1913,19 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
 }
 
 function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
+  if (mode === "policy_reference") {
+    primaryInputLabel.textContent = "Reason/Justification";
+    reasonInput.closest("label").hidden = true;
+    secondaryReasonInput.closest("label").hidden = true;
+    evidenceUrlField.hidden = false;
+    evidenceFileField.hidden = false;
+    evidenceUrlField.querySelector("span").innerHTML = "Policy document URL <small>(URL or file required)</small>";
+    evidenceFileField.querySelector("span").innerHTML = "Policy document file <small>(PDF, DOCX, MD, or TXT)</small>";
+    evidenceInput.placeholder = "https://example.org/twin-transition-policy";
+    evidenceInput.setAttribute("aria-label", "Policy document URL");
+    evidenceFileInput.setAttribute("aria-label", "Policy document file");
+    return;
+  }
   if (mode === "mitigation_measure") {
     primaryInputLabel.textContent = "Mitigation measure";
     reasonInput.placeholder = "What mitigation measure should be used?";
@@ -1923,6 +1942,10 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
   reasonInput.closest("label").hidden = mode === "evidence_only";
   evidenceUrlField.hidden = mode === "reason_only";
   evidenceFileField.hidden = mode === "reason_only";
+  evidenceUrlField.querySelector("span").innerHTML = "Evidence URL <small>(optional)</small>";
+  evidenceFileField.querySelector("span").innerHTML = "Evidence file <small>(PDF, DOCX, MD, or TXT; optional)</small>";
+  evidenceInput.setAttribute("aria-label", "Evidence URL");
+  evidenceFileInput.setAttribute("aria-label", "Evidence file");
 
   if (mode === "evidence_only") {
     evidenceInput.placeholder = step === "mitigation_evidence"
@@ -2002,6 +2025,12 @@ chatScrollBottomButton?.addEventListener("click", () => {
   chatLog?.scrollTo({ top: chatLog.scrollHeight, behavior: "smooth" });
 });
 chatLog?.addEventListener("click", (event) => {
+  const metricDataButton = event.target.closest("button.metric-data-cta");
+  if (metricDataButton) {
+    event.preventDefault();
+    openHazardMetricDataDialog(metricDataButton);
+    return;
+  }
   const evidenceButton = event.target.closest("button.hazard-evidence-label--provided");
   if (evidenceButton) {
     event.preventDefault();
@@ -2951,7 +2980,7 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
   appState.currentOptions = options || [];
   syncTargetPopulationQuestion(step, appState.currentOptions);
   updateStageVisual(step, session || appState.currentSession, appState.currentOptions);
-  const reasonEvidenceMode = ["reason_evidence", "reason_only", "evidence_only", "mitigation_measure"].includes(effectiveMode);
+  const reasonEvidenceMode = ["reason_evidence", "reason_only", "evidence_only", "policy_reference", "mitigation_measure"].includes(effectiveMode);
   const evaluationMode = effectiveMode === "evaluation_question";
   const textareaMode = effectiveMode === "textarea";
   micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode;
@@ -2970,12 +2999,12 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
     evidenceInput.value = "";
     evidenceFileInput.value = "";
   }
-  if (effectiveMode === "evidence_only") {
+  if (["evidence_only", "policy_reference"].includes(effectiveMode)) {
     reasonInput.value = "";
   }
 
   if (reasonEvidenceMode) {
-    if (effectiveMode === "evidence_only") {
+    if (["evidence_only", "policy_reference"].includes(effectiveMode)) {
       evidenceInput.focus();
     } else {
       reasonInput.focus();
@@ -3846,6 +3875,136 @@ function closeHazardEvidenceDialog() {
     hazardEvidenceDialog.setAttribute("hidden", "");
   }
   messageInput?.focus();
+}
+
+function showHazardMetricDataDialog() {
+  if (!hazardMetricDataDialog) return;
+  if (typeof hazardMetricDataDialog.showModal === "function") {
+    if (!hazardMetricDataDialog.open) hazardMetricDataDialog.showModal();
+  } else {
+    hazardMetricDataDialog.removeAttribute("hidden");
+  }
+  closeHazardMetricDataButton?.focus();
+}
+
+function closeHazardMetricDataDialog() {
+  hazardMetricDataRequestId += 1;
+  if (!hazardMetricDataDialog) return;
+  if (typeof hazardMetricDataDialog.close === "function") {
+    hazardMetricDataDialog.close();
+  } else {
+    hazardMetricDataDialog.setAttribute("hidden", "");
+  }
+  messageInput?.focus();
+}
+
+function renderHazardMetricData(payload = {}) {
+  if (!hazardMetricDataDialogBody) return;
+  clearElement(hazardMetricDataDialogBody);
+  const calculationData = payload.calculation_data || {};
+  const column = String(calculationData.column || "Value");
+  const values = Array.isArray(calculationData.values) ? calculationData.values : [];
+  const predictors = Array.isArray(calculationData.predictors)
+    ? calculationData.predictors
+    : [];
+  const regions = Array.isArray(calculationData.regions) ? calculationData.regions : [];
+  const rowLabels = predictors.length ? predictors : regions;
+  const showRowLabels = rowLabels.length === values.length && rowLabels.length > 0;
+  const predictorColumn = String(calculationData.predictor_column || "Predictor");
+  const regionColumn = String(calculationData.region_column || "Region");
+  const rowLabelColumn = predictors.length ? predictorColumn : regionColumn;
+  const formula = String(payload.formula || "");
+  const summary = formula
+    ? `Formula: ${formula}. ${values.length} source value${values.length === 1 ? "" : "s"}.`
+    : `${values.length} source value${values.length === 1 ? "" : "s"}.`;
+  hazardMetricDataDialogBody.appendChild(
+    createElement("p", { className: "metric-data-summary", text: summary }),
+  );
+  if (!values.length) {
+    hazardMetricDataDialogBody.appendChild(
+      createElement("p", {
+        className: "metric-data-status",
+        text: "No calculation data is available for this hazard.",
+      }),
+    );
+    return;
+  }
+  const tbody = createElement("tbody");
+  values.forEach((value, index) => {
+    const cells = [];
+    if (showRowLabels) {
+      cells.push(createElement("td", { text: String(rowLabels[index]) }));
+    }
+    cells.push(createElement("td", { text: String(value) }));
+    tbody.appendChild(createElement("tr", {}, cells));
+  });
+  const headerCells = [];
+  if (showRowLabels) {
+    headerCells.push(createElement("th", { text: rowLabelColumn, attrs: { scope: "col" } }));
+  }
+  headerCells.push(createElement("th", { text: column, attrs: { scope: "col" } }));
+  const table = createElement("table", {
+    className: "metric-data-table",
+    attrs: {
+      "aria-label": showRowLabels
+        ? `${rowLabelColumn} and ${column} calculation data`
+        : `${column} calculation data`,
+    },
+  }, [
+    createElement("thead", {}, [
+      createElement("tr", {}, headerCells),
+    ]),
+    tbody,
+  ]);
+  hazardMetricDataDialogBody.appendChild(table);
+}
+
+async function openHazardMetricDataDialog(button) {
+  if (!hazardMetricDataDialog || !hazardMetricDataDialogBody) return;
+  const metric = String(button?.dataset.metric || "");
+  const sourceKey = String(button?.dataset.sourceKey || "");
+  const hazardName = String(button?.dataset.hazardName || "Hazard");
+  if (!sourceKey || !["salience", "effect_size"].includes(metric)) return;
+
+  const metricLabel = metric === "salience" ? "Salience" : "Effect Size";
+  hazardMetricDataDialogTitle.textContent = `${metricLabel} calculation data`;
+  hazardMetricDataDialogSubtitle.textContent = hazardName;
+  clearElement(hazardMetricDataDialogBody);
+  hazardMetricDataDialogBody.appendChild(
+    createElement("p", { className: "metric-data-status", text: "Loading calculation data…" }),
+  );
+  showHazardMetricDataDialog();
+
+  const params = new URLSearchParams();
+  params.set("sector", String(appState.currentSession?.sector || ""));
+  let endpoint = "/api/hazard-effect-size";
+  if (metric === "salience") {
+    endpoint = "/api/hazard-salience";
+    params.set("country", String(appState.currentSession?.country || ""));
+    params.set("region", String(appState.currentSession?.region || ""));
+    params.set("hazard", sourceKey);
+  } else {
+    params.set("hazard", sourceKey);
+    params.set("min_or", "1");
+  }
+
+  const requestId = ++hazardMetricDataRequestId;
+  try {
+    const response = await fetch(`${endpoint}?${params.toString()}`);
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const payload = await response.json();
+    if (requestId !== hazardMetricDataRequestId) return;
+    renderHazardMetricData(payload);
+  } catch (error) {
+    if (requestId !== hazardMetricDataRequestId) return;
+    clearElement(hazardMetricDataDialogBody);
+    hazardMetricDataDialogBody.appendChild(
+      createElement("p", {
+        className: "metric-data-status is-error",
+        text: "Calculation data could not be loaded. Please try again.",
+      }),
+    );
+  }
 }
 
 function selectedTargetPopulationLabels(questionId) {
@@ -5234,6 +5393,7 @@ function normalizeAutoConversationMessage(message) {
     "reason_evidence",
     "reason_only",
     "evidence_only",
+    "policy_reference",
     "textarea",
     "evaluation_question",
   ]);
@@ -5270,6 +5430,9 @@ function normalizeAutoConversationMessage(message) {
   if (appState.inputMode === "evidence_only") {
     return "Evidence: Published policy evaluation or statistical evidence supporting the hazard.";
   }
+  if (appState.inputMode === "policy_reference") {
+    return "A policy document URL or file is required for this step.";
+  }
   if (appState.inputMode === "textarea") {
     return "The cost coverage applies to the affected target groups by paying or reimbursing upfront adaptation costs directly for them, with guidance and implementation support so they can use the measure in practice.";
   }
@@ -5293,7 +5456,9 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
   try {
     const hasEvidenceFile = extras.evidenceFile instanceof File && extras.evidenceFile.size > 0;
     const hasEvidenceUrl = Boolean(extras.evidenceUrl);
-    const useMultipart = hasEvidenceFile || hasEvidenceUrl;
+    const hasPolicyReferenceFile = extras.policyReferenceFile instanceof File && extras.policyReferenceFile.size > 0;
+    const hasPolicyReferenceUrl = Boolean(extras.policyReferenceUrl);
+    const useMultipart = hasEvidenceFile || hasEvidenceUrl || hasPolicyReferenceFile || hasPolicyReferenceUrl;
     const response = await csrfFetch("/api/chat", {
       method: "POST",
       ...(useMultipart
@@ -5351,7 +5516,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     setLoading(false);
     if (["reason_evidence", "reason_only", "mitigation_measure"].includes(appState.inputMode)) {
       reasonInput.focus();
-    } else if (appState.inputMode === "evidence_only") {
+    } else if (["evidence_only", "policy_reference"].includes(appState.inputMode)) {
       evidenceInput.focus();
     } else if (appState.inputMode === "evaluation_question") {
       scoreInput.focus();
@@ -5376,6 +5541,10 @@ function buildChatFormData(message, extras = {}) {
   if (extras.evidenceFile instanceof File && extras.evidenceFile.size > 0) {
     formData.append("evidence_file", extras.evidenceFile);
   }
+  if (extras.policyReferenceUrl) formData.append("policy_reference_url", extras.policyReferenceUrl);
+  if (extras.policyReferenceFile instanceof File && extras.policyReferenceFile.size > 0) {
+    formData.append("policy_reference_file", extras.policyReferenceFile);
+  }
   return formData;
 }
 
@@ -5389,7 +5558,7 @@ function evidenceSummary(url, file) {
 chatForm.addEventListener("submit", (event) => {
   event.preventDefault();
 
-  if (["reason_evidence", "reason_only", "evidence_only", "mitigation_measure"].includes(appState.inputMode)) {
+  if (["reason_evidence", "reason_only", "evidence_only", "policy_reference", "mitigation_measure"].includes(appState.inputMode)) {
     const primaryValue = reasonInput.value.trim();
     const evidenceUrl = evidenceInput.value.trim();
     const evidenceFile = evidenceFileInput.files[0];
@@ -5418,6 +5587,28 @@ chatForm.addEventListener("submit", (event) => {
       collapseExpandedMessages();
       addMessage("user", value);
       sendMessage("", false, { evidenceUrl, evidenceFile });
+      return;
+    }
+
+    if (appState.inputMode === "policy_reference") {
+      if (!evidenceUrl && !(evidenceFile instanceof File && evidenceFile.size > 0)) {
+        flashRequiredField(evidenceInput);
+        return;
+      }
+      const value = [
+        evidenceUrl ? `Policy reference URL: ${evidenceUrl}` : "",
+        evidenceFile instanceof File && evidenceFile.size > 0
+          ? `Policy reference file: ${evidenceFile.name}`
+          : "",
+      ].filter(Boolean).join("\n");
+      evidenceInput.value = "";
+      evidenceFileInput.value = "";
+      collapseExpandedMessages();
+      addMessage("user", value);
+      sendMessage("", false, {
+        policyReferenceUrl: evidenceUrl,
+        policyReferenceFile: evidenceFile,
+      });
       return;
     }
 
@@ -5813,6 +6004,10 @@ platformUsersZoomReset?.addEventListener("click", () => setPlatformUsersZoom(1))
 closeHazardEvidenceButton?.addEventListener("click", closeHazardEvidenceDialog);
 hazardEvidenceDialog?.addEventListener("click", (event) => {
   if (event.target === hazardEvidenceDialog) closeHazardEvidenceDialog();
+});
+closeHazardMetricDataButton?.addEventListener("click", closeHazardMetricDataDialog);
+hazardMetricDataDialog?.addEventListener("click", (event) => {
+  if (event.target === hazardMetricDataDialog) closeHazardMetricDataDialog();
 });
 targetAllGeneralPopulationButton?.addEventListener("click", () => {
   targetPopulationDialogBody

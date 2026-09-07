@@ -39,6 +39,7 @@ LEXICAL_WEIGHT = 0.55
 SCOPE_MATCH_WEIGHT = 0.35
 MAIN_KB_SCOPE = "main"
 TEMPORARY_KB_SCOPE = "temporary"
+POLICY_REFERENCE_SCOPE = "policy_reference"
 VALIDATED_EVIDENCE_SCOPE = "validated_evidence"
 SECTOR_PROMPT_SCOPE = "sector_prompt"
 QUARANTINED_SCOPE = "quarantined"
@@ -171,7 +172,11 @@ class KnowledgeBaseService:
             scope_level=scope_level,
             session_key=(
                 self.session_key
-                if self.scope in {TEMPORARY_KB_SCOPE, QUARANTINED_SCOPE}
+                if self.scope in {
+                    TEMPORARY_KB_SCOPE,
+                    POLICY_REFERENCE_SCOPE,
+                    QUARANTINED_SCOPE,
+                }
                 else None
             ),
             country_id=self.country_id if self.scope == VALIDATED_EVIDENCE_SCOPE else None,
@@ -363,7 +368,7 @@ class KnowledgeBaseService:
             KnowledgeDocument.scope == self.scope,
             *self._document_access_filters(),
         ]
-        if self.scope == TEMPORARY_KB_SCOPE:
+        if self.scope in {TEMPORARY_KB_SCOPE, POLICY_REFERENCE_SCOPE}:
             filters.append(KnowledgeDocument.session_key == self.session_key)
         if self.scope == VALIDATED_EVIDENCE_SCOPE:
             if self.country_id is not None:
@@ -753,7 +758,7 @@ class KnowledgeBaseService:
         return faiss.read_index(str(self._index_path))
 
     def _save_index(self, index) -> None:
-        if self.scope == TEMPORARY_KB_SCOPE and index.ntotal == 0:
+        if self.scope in {TEMPORARY_KB_SCOPE, POLICY_REFERENCE_SCOPE} and index.ntotal == 0:
             try:
                 self._index_path.unlink(missing_ok=True)
                 return
@@ -774,6 +779,10 @@ class KnowledgeBaseService:
             return main_path.with_name(f"{main_path.stem}.main{main_path.suffix}")
         if self.scope == TEMPORARY_KB_SCOPE:
             return main_path.with_name(f"{main_path.stem}.temporary{main_path.suffix}")
+        if self.scope == POLICY_REFERENCE_SCOPE:
+            return main_path.with_name(
+                f"{main_path.stem}.policy_reference{main_path.suffix}"
+            )
         if self.scope == SECTOR_PROMPT_SCOPE:
             return main_path.with_name(f"{main_path.stem}.sector_prompts{main_path.suffix}")
         if self.scope == VALIDATED_EVIDENCE_SCOPE:

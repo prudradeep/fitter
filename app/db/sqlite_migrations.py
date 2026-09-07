@@ -184,6 +184,21 @@ def _009_custom_hazard_summary(connection: Connection) -> None:
     _add_column(connection, "custom_hazards", "summary", "summary TEXT NULL")
 
 
+def _010_policy_reference_custom_hazard(connection: Connection) -> None:
+    _add_column(
+        connection,
+        "knowledge_documents",
+        "custom_hazard_id",
+        "custom_hazard_id CHAR(36) NULL REFERENCES custom_hazards(id) ON DELETE SET NULL",
+    )
+    _create_index(
+        connection,
+        "knowledge_documents",
+        "ix_knowledge_documents_custom_hazard_id",
+        "custom_hazard_id",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -194,6 +209,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("007_user_mitigation_system_inquiry", _007_user_mitigation_system_inquiry),
     ("008_system_inquiry_telemetry_events", _008_system_inquiry_telemetry_events),
     ("009_custom_hazard_summary", _009_custom_hazard_summary),
+    ("010_policy_reference_custom_hazard", _010_policy_reference_custom_hazard),
 )
 
 

@@ -12,6 +12,7 @@ from app.models import (
     CustomHazardProfile,
     EurostatPopulationCache,
     EvaluationQuestion,
+    KnowledgeDocument,
     QuestionOption,
     SystemHazard,
     SystemHazardSocioDemographic,
@@ -32,6 +33,7 @@ from app.services.chat_formatters import (
 from app.services.chat_json import parse_json_object
 from app.services.chat_options import best_fuzzy_label, normalize, normalize_for_match
 from app.services.chat_session import ChatSession
+from app.services.knowledge_base import POLICY_REFERENCE_SCOPE
 
 logger = logging.getLogger("app.services.chat_hazard_creation")
 
@@ -112,8 +114,8 @@ class ChatHazardCatalogMixin:
             )
             .order_by(CustomHazard.name)
         ).all()
-        legacy_rows = self.db.scalars(
-            select(UserHazard)
+        legacy_records = self.db.execute(
+            select(UserHazard, UserSession.user_id)
             .join(UserSession, UserSession.id == UserHazard.user_session_id)
             .where(
                 UserSession.country_id == session.country_id,
@@ -138,10 +140,21 @@ class ChatHazardCatalogMixin:
         evidence_statuses: dict[str, bool] = {}
         evidence_by_hazard: dict[str, str] = {}
         summaries_by_hazard: dict[str, str] = {}
+        owned_hazard_keys: set[str] = set()
+        crowd_sourced_hazard_keys: set[str] = set()
         system_names = {normalize(hazard) for hazard in (session.hazards or [])}
-        for row in [*shared_rows, *legacy_rows]:
+        records = [
+            (row, getattr(row, "created_by_user_id", None))
+            for row in shared_rows
+        ]
+        records.extend((row, owner_id) for row, owner_id in legacy_records)
+        for row, owner_id in records:
             name = str(getattr(row, "name", row) or "").strip()
             key = normalize(name)
+            if owner_id == self.user_id:
+                owned_hazard_keys.add(key)
+            elif bool(getattr(row, "is_crowd_sourced", False)):
+                crowd_sourced_hazard_keys.add(key)
             evidence = str(getattr(row, "evidence", None) or "").strip()
             has_evidence = evidence_is_provided(evidence)
             evidence_statuses[key] = evidence_statuses.get(key, False) or has_evidence
@@ -157,6 +170,10 @@ class ChatHazardCatalogMixin:
         session.custom_hazard_evidence_statuses = evidence_statuses
         session.custom_hazard_evidence = evidence_by_hazard
         session.custom_hazard_summaries = summaries_by_hazard
+        session.custom_hazard_crowd_sourced = {
+            key: key in crowd_sourced_hazard_keys and key not in owned_hazard_keys
+            for key in seen
+        }
         return hazards
 
     def _additional_hazards_for_context(self, session: ChatSession) -> list[str]:
@@ -1220,6 +1237,7 @@ class ChatHazardCatalogMixin:
         if custom_hazard is not None:
             session.accepted_custom_hazard_id = custom_hazard.id
             session.accepted_custom_hazard = hazard
+            self._associate_policy_references_with_custom_hazard(session, custom_hazard.id)
             reference["custom_hazard_id"] = custom_hazard.id
             return reference
 
@@ -1241,6 +1259,36 @@ class ChatHazardCatalogMixin:
         session.accepted_custom_hazard_record_id = record.id
         reference["user_hazard_id"] = record.id
         return reference
+
+    def _associate_policy_references_with_custom_hazard(
+        self,
+        session: ChatSession,
+        custom_hazard_id: str,
+    ) -> None:
+        state = session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
+        document_ids = [
+            str(document_id).strip()
+            for document_id in state.get("policy_reference_document_ids") or []
+            if str(document_id).strip()
+        ]
+        if not document_ids or not session.session_key:
+            return
+        try:
+            documents = self.db.scalars(
+                select(KnowledgeDocument).where(
+                    KnowledgeDocument.id.in_(document_ids),
+                    KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
+                    KnowledgeDocument.session_key == session.session_key,
+                )
+            ).all()
+            for document in documents:
+                document.custom_hazard_id = custom_hazard_id
+            if documents:
+                self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("Failed to associate policy references with custom hazard")
 
     def _selected_user_hazard_source(self, session: ChatSession, hazard: str) -> str:
         if self._is_saved_custom_hazard(session, hazard) or normalize(hazard) == normalize(

@@ -1344,7 +1344,10 @@ class SyncServiceTests(unittest.TestCase):
             self.assertEqual(allowed.json()["server_to_client_knowledge_scopes"], ["main", "validated_evidence", "sector_prompt"])
             self.assertEqual(allowed.json()["client_to_server_knowledge_scopes"], ["validated_evidence"])
             self.assertEqual(allowed.json()["admin_client_to_server_knowledge_scopes"], ["main", "validated_evidence", "sector_prompt"])
-            self.assertEqual(allowed.json()["excluded_knowledge_scopes"], ["temporary"])
+            self.assertEqual(
+                allowed.json()["excluded_knowledge_scopes"],
+                ["temporary", "policy_reference"],
+            )
         finally:
             sync_routes.settings.sync_enabled = original_enabled
             sync_routes.settings.sync_api_token = original_token

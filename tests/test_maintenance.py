@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import unittest
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -14,7 +14,7 @@ from app.models import (
     SystemInquiryTelemetryEvent,
 )
 from app.services.maintenance import cleanup_retained_data
-from app.services.knowledge_base import TEMPORARY_KB_SCOPE
+from app.services.knowledge_base import POLICY_REFERENCE_SCOPE, TEMPORARY_KB_SCOPE
 
 
 class MaintenanceCleanupTests(unittest.TestCase):
@@ -52,6 +52,14 @@ class MaintenanceCleanupTests(unittest.TestCase):
             )
         )
         self.db.add(
+            KnowledgeDocument(
+                title="Policy reference",
+                source_type="txt",
+                scope=POLICY_REFERENCE_SCOPE,
+                created_at=old,
+            )
+        )
+        self.db.add(
             LlmExchangeLog(
                 request_id="req",
                 provider="test",
@@ -83,6 +91,12 @@ class MaintenanceCleanupTests(unittest.TestCase):
 
         self.assertEqual(result["rate_limits"], 1)
         self.assertEqual(result["temporary_knowledge_documents"], 1)
+        retained_policy = self.db.scalar(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE
+            )
+        )
+        self.assertIsNotNone(retained_policy)
         self.assertEqual(result["llm_exchange_logs"], 1)
         self.assertEqual(result["system_inquiry_telemetry_events"], 1)
         self.assertIsNone(self.db.get(AppRateLimit, "login:test:old"))

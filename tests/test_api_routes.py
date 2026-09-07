@@ -14,7 +14,7 @@ from sqlalchemy import inspect
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.auth import create_auth_token, get_current_user, hash_password, verify_password
 from app.db.session import Base
@@ -25,6 +25,7 @@ from app.models import (
     Country,
     CountrySector,
     EvaluationQuestion,
+    KnowledgeDocument,
     Prompt,
     Region,
     Sector,
@@ -1199,6 +1200,83 @@ class ApiRouteIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 413)
         self.assertEqual(response.json()["detail"], "Evidence upload is too large.")
+
+    def test_policy_reference_upload_uses_isolated_scope_and_message_marker(self) -> None:
+        chat_response = {
+            "session_id": "policy-session",
+            "step": "custom_hazard_policy_reference",
+            "bot_message": "Policy reference accepted.",
+            "options": [],
+            "session": {},
+            "input_mode": "policy_reference",
+        }
+        handle_message = AsyncMock(return_value=chat_response)
+        with (
+            patch.object(api_routes.ChatService, "handle_message", handle_message),
+            patch.object(
+                api_routes.KnowledgeBaseService,
+                "_embed_many",
+                AsyncMock(side_effect=RuntimeError("offline test")),
+            ),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                data={"session_id": "policy-session"},
+                files={
+                    "policy_reference_file": (
+                        "transport-policy.txt",
+                        b"Electric vehicle charging policy requirements.",
+                        "text/plain",
+                    )
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        message = handle_message.await_args.args[0]
+        self.assertIn("Policy reference file: transport-policy.txt", message)
+        self.assertIn("Policy reference document ID:", message)
+        document = self.db.scalar(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.scope == "policy_reference"
+            )
+        )
+        self.assertIsNotNone(document)
+        self.assertEqual(document.session_key, "policy-session")
+
+    def test_evidence_upload_passes_ingested_document_id_to_chat_validation(self) -> None:
+        chat_response = {
+            "session_id": "evidence-session",
+            "step": "custom_hazard_evidence",
+            "bot_message": "Evidence accepted.",
+            "options": [],
+            "session": {},
+            "input_mode": "evidence_only",
+        }
+        handle_message = AsyncMock(return_value=chat_response)
+        with (
+            patch.object(api_routes.ChatService, "handle_message", handle_message),
+            patch.object(
+                api_routes.KnowledgeBaseService,
+                "_embed_many",
+                AsyncMock(side_effect=RuntimeError("offline test")),
+            ),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                data={"session_id": "evidence-session"},
+                files={
+                    "evidence_file": (
+                        "impact-study.txt",
+                        b"Charging mandates increased fleet costs for rural taxi drivers.",
+                        "text/plain",
+                    )
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        message = handle_message.await_args.args[0]
+        self.assertIn("Evidence file: impact-study.txt", message)
+        self.assertIn("Temporary evidence document ID:", message)
 
     def test_content_length_parses_numeric_header(self) -> None:
         request = self.client.build_request(

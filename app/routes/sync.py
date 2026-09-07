@@ -56,7 +56,7 @@ async def sync_status(
         "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
         "client_to_server_knowledge_scopes": ["validated_evidence"],
         "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
-        "excluded_knowledge_scopes": ["temporary"],
+        "excluded_knowledge_scopes": ["temporary", "policy_reference"],
         "knowledge_index_dirty_scopes": service.knowledge_index_dirty_scopes(),
         "tables": [table.name for table in service.sync_tables()],
     }
@@ -249,7 +249,7 @@ async def sync_client_status(
             "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
             "client_to_server_knowledge_scopes": ["validated_evidence"],
             "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
-            "excluded_knowledge_scopes": ["temporary"],
+            "excluded_knowledge_scopes": ["temporary", "policy_reference"],
             "user_data_sync": {"enabled": False, "enabled_at": None},
             "knowledge_index_dirty_scopes": [],
         }
@@ -265,7 +265,7 @@ async def sync_client_status(
         "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
         "client_to_server_knowledge_scopes": ["validated_evidence"],
         "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
-        "excluded_knowledge_scopes": ["temporary"],
+        "excluded_knowledge_scopes": ["temporary", "policy_reference"],
         "user_data_sync": service.user_data_sync_status(),
         "knowledge_index_dirty_scopes": service.knowledge_index_dirty_scopes() if configured else [],
     }

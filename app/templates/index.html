@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260904-co-created-hazard-evidence" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260907-hide-current-policy-ui" />
   </head>
   <body data-tour-user-id="{{ current_user.id }}">
     <header class="topbar">
@@ -695,6 +695,7 @@
           </div>
 
           <button
+            id="closeMethodologyButton"
             type="button"
             class="methodology-close"
             aria-label="Close methodology"
@@ -770,6 +771,19 @@
           <button id="closeHazardEvidenceButton" type="button" aria-label="Close provided evidence">×</button>
         </header>
         <div id="hazardEvidenceDialogBody" class="evidence-dialog-body"></div>
+      </section>
+    </dialog>
+
+    <dialog id="hazardMetricDataDialog" class="metric-data-dialog">
+      <section class="metric-data-dialog-panel" aria-labelledby="hazardMetricDataDialogTitle">
+        <header class="evidence-dialog-header">
+          <div>
+            <h2 id="hazardMetricDataDialogTitle">Calculation data</h2>
+            <p id="hazardMetricDataDialogSubtitle"></p>
+          </div>
+          <button id="closeHazardMetricDataButton" type="button" aria-label="Close calculation data">×</button>
+        </header>
+        <div id="hazardMetricDataDialogBody" class="metric-data-dialog-body" aria-live="polite"></div>
       </section>
     </dialog>
 
@@ -1172,6 +1186,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260904-prompt-source-preference"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260904-co-created-hazard-evidence"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20260907-policy-reference-fit"></script>
   </body>
 </html>

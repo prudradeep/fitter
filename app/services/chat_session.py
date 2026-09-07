@@ -23,6 +23,7 @@ class ChatSession:
     custom_hazard_evidence_statuses: dict[str, bool] | None = None
     custom_hazard_evidence: dict[str, str] | None = None
     custom_hazard_summaries: dict[str, str] | None = None
+    custom_hazard_crowd_sourced: dict[str, bool] | None = None
     additional_hazards: list[str] | None = None
     pending_hazard: str | None = None
     selected_hazard: str | None = None

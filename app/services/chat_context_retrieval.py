@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.models import KnowledgeChunk, KnowledgeDocument, MitigationMeasureExample
 from app.services.chat_session import ChatSession
 from app.services.knowledge_base import (
+    POLICY_REFERENCE_SCOPE,
     MAIN_KB_SCOPE,
     TEMPORARY_KB_SCOPE,
     VALIDATED_EVIDENCE_SCOPE,
@@ -106,6 +107,7 @@ class ChatContextRetrievalMixin:
         query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
         shared_results = await self._shared_knowledge_results(session, query, main_limit=5, evidence_limit=4)
         temporary_results: list[dict[str, object]] = []
+        policy_reference_results = self._mitigation_policy_reference_results(session)
         if session.session_key:
             try:
                 temporary_results = await KnowledgeBaseService(
@@ -118,9 +120,48 @@ class ChatContextRetrievalMixin:
                 logger.exception("Temporary evidence lookup failed during mitigation validation")
         results = await self.grounding_models.ground_results(
             query,
-            [*temporary_results, *shared_results],
+            [*policy_reference_results, *temporary_results, *shared_results],
         )
         return self._format_knowledge_results(results)
+
+    def _mitigation_policy_reference_results(
+        self,
+        session: ChatSession,
+    ) -> list[dict[str, object]]:
+        """Load durable policy references owned by this user for the selected hazard."""
+        custom_hazard_id = str(session.accepted_custom_hazard_id or "").strip()
+        selected_hazard = str(session.selected_hazard or "").strip().casefold()
+        accepted_hazard = str(session.accepted_custom_hazard or "").strip().casefold()
+        if not custom_hazard_id or not self.user_id:
+            return []
+        if selected_hazard and selected_hazard != accepted_hazard:
+            return []
+        try:
+            rows = self.db.execute(
+                select(KnowledgeChunk, KnowledgeDocument)
+                .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+                .where(
+                    KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
+                    KnowledgeDocument.custom_hazard_id == custom_hazard_id,
+                )
+                .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+            ).all()
+        except Exception:
+            logger.exception("Policy-reference lookup failed during mitigation creation")
+            return []
+        return [
+            {
+                "document_id": document.id,
+                "title": document.title,
+                "source_type": chunk.source_type,
+                "source_uri": chunk.source_uri,
+                "page_number": chunk.page_number,
+                "score": None,
+                "content": chunk.content,
+            }
+            for chunk, document in rows
+        ]
 
     async def _shared_knowledge_results(
         self,
@@ -170,11 +211,15 @@ class ChatContextRetrievalMixin:
             f"{session.country or ''} {session.sector or ''} {session.region or ''}"
         )
 
-    async def _temporary_evidence_context(self, session: ChatSession) -> str:
+    async def _temporary_evidence_context(
+        self,
+        session: ChatSession,
+        document_ids: list[str] | None = None,
+    ) -> str:
         if not session.session_key:
             return ""
         try:
-            rows = self.db.execute(
+            query = (
                 select(KnowledgeChunk, KnowledgeDocument)
                 .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
                 .where(
@@ -183,9 +228,53 @@ class ChatContextRetrievalMixin:
                     KnowledgeDocument.session_key == session.session_key,
                 )
                 .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
-            ).all()
+            )
+            if document_ids:
+                query = query.where(KnowledgeDocument.id.in_(document_ids))
+            rows = self.db.execute(query).all()
         except Exception:
             logger.exception("Temporary evidence lookup failed during validation")
+            return ""
+        results = [
+            {
+                "document_id": document.id,
+                "title": document.title,
+                "source_type": chunk.source_type,
+                "source_uri": chunk.source_uri,
+                "page_number": chunk.page_number,
+                "score": None,
+                "content": chunk.content,
+            }
+            for chunk, document in rows
+        ]
+        return self._format_full_knowledge_results(results)
+
+    async def _policy_reference_context(
+        self,
+        session: ChatSession,
+        document_ids: list[str] | None = None,
+    ) -> str:
+        """Return policy-reference text without exposing it to evidence retrieval."""
+        if not session.session_key:
+            return ""
+        try:
+            query = (
+                select(KnowledgeChunk, KnowledgeDocument)
+                .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+                .where(
+                    KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
+                    KnowledgeDocument.session_key == session.session_key,
+                )
+                .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+            )
+            if document_ids:
+                query = query.where(KnowledgeDocument.id.in_(document_ids))
+            else:
+                return ""
+            rows = self.db.execute(query).all()
+        except Exception:
+            logger.exception("Policy-reference lookup failed during hazard validation")
             return ""
         results = [
             {

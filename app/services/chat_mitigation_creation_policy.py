@@ -1,11 +1,6 @@
 # ruff: noqa: F403,F405
 from app.services.chat_mitigation_creation_common import *
 
-async def _ask_llm_chat(*args, **kwargs):
-    from app.services import chat_mitigation_creation as facade
-
-    return await facade.ask_llm_chat(*args, **kwargs)
-
 
 class ChatMitigationCreationPolicyMixin:
     def _selected_system_hazard_id(self, session: ChatSession) -> str | None:
@@ -145,11 +140,12 @@ class ChatMitigationCreationPolicyMixin:
             self._current_policy_implementations_intro(),
         )
         if not rows:
-            return (
+            content = (
                 f"{heading}\n\n"
                 "No matching current policy implementations were found for this "
                 "sector, hazard, and profile set."
             )
+            return self._current_policy_ui_section(content)
 
         sections = [heading]
         grouped_examples: dict[str, dict[str, object]] = {}
@@ -220,7 +216,16 @@ class ChatMitigationCreationPolicyMixin:
                 + "\n".join(details)
             )
 
-        return "\n\n".join(sections)
+        return self._current_policy_ui_section("\n\n".join(sections))
+
+    @staticmethod
+    def _current_policy_ui_section(content: str) -> str:
+        """Keep policy implementation content available while marking it hidden in the UI."""
+        return (
+            '<div class="current-policy-implementation-section" markdown="1">\n\n'
+            f"{content.strip()}\n\n"
+            "</div>"
+        )
 
     @classmethod
     def _ensure_practical_considerations_intro(cls, markdown: str) -> str:
@@ -524,72 +529,46 @@ class ChatMitigationCreationPolicyMixin:
                 "and selected hazard context."
             )
 
-        candidate_context = self._new_policy_suggestion_context(candidates)
-        current_policy_context = self._matched_mitigation_measure_examples(session, limit=5)
-        context = load_nested_prompt_file("llm/new_policy_suggestion.txt")
-        messages = [
-            {
-                "role": "user",
-                "content": (
-                    "Create the markdown body for the policy proposal section. "
-                    "Do not include the section heading and do not include an "
-                    "introductory paragraph; start directly with ONE synthesized "
-                    "proposal.\n\n"
-                    "Output exactly one proposal, 150-200 words total, using this structure:\n"
-                    "### [short proposal title]\n"
-                    "- **Proposal:** one clear, user-ready mitigation measure sentence "
-                    "tailored to the selected country and region where possible.\n"
-                    "- **Top policy basis:** mention that it combines the strongest/top-scored "
-                    "MM policy proposals; name only the most relevant policy codes/titles.\n"
-                    "- **Target-group mechanisms:** short bullets explaining how each covered "
-                    "target group is mitigated.\n"
-                    "- **Why this helps:** one short sentence linking the combined measure to "
-                    "the selected hazard and high proposal scores.\n\n"
-                    "Do not output multiple policy candidates. Do not include a score table. "
-                    "Keep it concise and make the proposal sound like a single coherent "
-                    "regional mitigation measure that inspires the user to create their own.\n\n"
-                    f"Selected country: {session.country or 'Not specified'}\n"
-                    f"Selected region: {session.region or 'Not specified'}\n"
-                    f"Selected sector: {session.sector or 'Not specified'}\n"
-                    f"Selected hazard: {session.selected_hazard or session.accepted_custom_hazard or 'Not specified'}\n"
-                    f"Selected socio-demographic profiles:\n{format_all_dgs(session)}\n\n"
-                    "Current policy implementation context:\n"
-                    f"{current_policy_context or '- No matching current implementation context was found.'}\n\n"
-                    f"Candidate policy context:\n{candidate_context}"
-                ),
-            }
-        ]
-        for attempt in range(2):
-            attempt_messages = messages
-            if attempt:
-                retry_instruction = {
-                    "role": "user",
-                    "content": (
-                        "Retry once. The previous response could not be used. "
-                        "Return only the requested markdown body with the exact "
-                        "proposal structure and no introductory paragraph."
-                    ),
-                }
-                attempt_messages = [*messages, retry_instruction]
-            response = await _ask_llm_chat(
-                context=context,
-                messages=attempt_messages,
-                temperature=0.2,
-                max_tokens=1000,
-            )
-            if response and not is_llm_unavailable_response(response):
-                cleaned = self._strip_new_policy_suggestions_heading(response)
-                if cleaned:
-                    ensured = self._ensure_new_policy_intro(cleaned)
-                    if ensured:
-                        return heading + "\n\n" + self._format_new_policy_proposal_body(ensured)
+        return heading + "\n\n" + self._separate_new_policy_suggestions(candidates)
 
-        return (
-            f"{heading}\n\n"
-            "I could not generate a reliable new policy proposal from the matched "
-            "policy basis after retrying. Please try again, or continue by writing "
-            "your own regional mitigation measure."
-        )
+    def _separate_new_policy_suggestions(
+        self,
+        candidates: list[dict[str, object]],
+    ) -> str:
+        policies: list[str] = []
+        for candidate in candidates:
+            title = str(candidate.get("policy_title") or "Untitled policy").strip()
+            code = str(candidate.get("policy_code") or "").strip()
+            description = str(candidate.get("short_description") or title).strip()
+            policy_type = str(candidate.get("policy_type") or "Not specified").strip()
+            mitigation_effect = str(
+                candidate.get("mitigation_effect") or "Not specified"
+            ).strip()
+            matched_targets = candidate.get("matched_target_groups")
+            all_targets = candidate.get("target_groups")
+            target_groups = self._policy_target_group_summary(
+                matched_targets if isinstance(matched_targets, list) else []
+            ) or self._policy_target_group_summary(
+                all_targets if isinstance(all_targets, list) else []
+            )
+            policy_label = f"{code}: {title}" if code else title
+            why_this_helps = (
+                f"This policy has a {mitigation_effect.lower()} effect for the selected hazard"
+                + (f" and targets {target_groups}" if target_groups else "")
+                + "."
+            )
+            policies.append(
+                "\n".join(
+                    [
+                        f"- **{policy_label}**",
+                        f"    - **Proposal:** {description}",
+                        f"    - **Policy type:** {policy_type}",
+                        f"    - **Target groups:** {target_groups or 'No matched target group specified'}",
+                        f"    - **Why this helps:** {why_this_helps}",
+                    ]
+                )
+            )
+        return "\n".join(policies)
 
     @classmethod
     def _strip_new_policy_suggestions_heading(cls, markdown: str) -> str:
@@ -925,63 +904,11 @@ class ChatMitigationCreationPolicyMixin:
         session: ChatSession,
         candidates: list[dict[str, object]],
     ) -> str:
-        sections = [
-            self._policy_section_heading(
-                self._new_policy_proposals_title(),
-                self._new_policy_proposals_intro(),
-            )
-        ]
-        top_candidate = candidates[0]
-        matched_targets: list[dict[str, object]] = []
-        all_targets: list[dict[str, object]] = []
-        source_policy_lines: list[str] = []
-        action_parts: list[str] = []
-        for candidate in candidates:
-            candidate_targets = candidate.get("matched_target_groups")
-            if isinstance(candidate_targets, list):
-                matched_targets.extend(candidate_targets)
-            candidate_all_targets = candidate.get("target_groups")
-            if isinstance(candidate_all_targets, list):
-                all_targets.extend(candidate_all_targets)
-            title = str(candidate.get("policy_title") or "Untitled policy").strip()
-            code = str(candidate.get("policy_code") or "Policy").strip()
-            effect = str(candidate.get("mitigation_effect") or "relevant mitigation effect").strip()
-            description = str(candidate.get("short_description") or "").strip()
-            source_policy_lines.append(
-                f"{code}: {title}"
-                + (f" ({effect})" if effect else "")
-            )
-            if description:
-                self._append_unique_text(action_parts, description)
-
-        target_groups = matched_targets or all_targets
-        target_mechanisms = self._fallback_target_group_mechanisms(target_groups)
-        policy_basis = "; ".join(source_policy_lines[:3])
-        hazard_name = str(top_candidate.get("hazard_name") or "the selected hazard").strip()
-        effect_label = str(top_candidate.get("mitigation_effect") or "relevant").strip()
-        action_summary = (
-            action_parts[:3]
-            if action_parts
-            else [f"Adapt the strongest scored policy actions to reduce {hazard_name.lower()}."]
+        heading = self._policy_section_heading(
+            self._new_policy_proposals_title(),
+            self._new_policy_proposals_intro(),
         )
-        body = (
-            "### Integrated Regional Mitigation Support Package\n\n"
-            f"- **Proposal:** In {self._session_place_label_for_sentence(session)}, "
-            f"combine the top-scored MM policy proposals into a regional support package "
-            f"that reduces **{hazard_name}** through targeted assistance, delivery "
-            "guidance, and safeguards for affected groups.\n"
-            f"- **Top policy basis:** {policy_basis or 'Top-ranked MM policy proposals'}.\n"
-            "- **Target-group mechanisms:**\n"
-            + "\n".join(f"    - {item}" for item in target_mechanisms)
-            + "\n"
-            f"- **Why this helps:** The proposal is a strong inspiration because its source "
-            f"policies have **{effect_label}** mitigation relevance and combine complementary "
-            "actions: "
-            + "; ".join(action_summary[:2])
-            + "."
-        )
-        sections.append(self._format_new_policy_proposal_body(body))
-        return "\n\n".join(sections)
+        return heading + "\n\n" + self._separate_new_policy_suggestions(candidates)
 
     @staticmethod
     def _session_place_label_for_sentence(session: ChatSession) -> str:

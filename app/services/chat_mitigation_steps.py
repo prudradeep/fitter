@@ -27,6 +27,13 @@ class ChatMitigationStepsMixin:
         *,
         target_population_confirmed: bool = False,
     ) -> ChatResponse:
+        # Persist policy references captured while creating this hazard before
+        # they are needed by the mitigation-design and validation stages.
+        custom_hazard_state = (
+            session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
+        )
+        if custom_hazard_state.get("policy_reference_document_ids"):
+            self._selected_hazard_reference(session_id, session)
         previous_phase = str(session.phase or "")
         if (
             not target_population_confirmed

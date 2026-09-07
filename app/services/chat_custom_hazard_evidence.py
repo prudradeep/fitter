@@ -252,7 +252,14 @@ class ChatCustomHazardEvidenceMixin:
                 message="Please add an evidence URL or file, or choose Skip.",
             )
         evidence_url = self._evidence_url(evidence)
-        if evidence_url and session.session_key:
+        has_document_marker = bool(
+            re.search(
+                r"Temporary evidence document ID:\s*\S+",
+                evidence,
+                flags=re.IGNORECASE,
+            )
+        )
+        if evidence_url and session.session_key and not has_document_marker:
             try:
                 ingestion = await KnowledgeBaseService(
                     self.db,
@@ -300,6 +307,7 @@ class ChatCustomHazardEvidenceMixin:
                     session_id,
                     session,
                 )
+            state["show_evidence_linkages"] = True
             return await self._run_custom_hazard_dimension_check(session_id, session)
         if not reason:
             return self._hazard_reason_step(

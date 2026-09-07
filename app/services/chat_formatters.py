@@ -130,6 +130,10 @@ def _custom_hazard_summary(session: ChatSession, hazard: str) -> str:
     return str(summary or "").strip()
 
 
+def _custom_hazard_is_crowd_sourced(session: ChatSession, hazard: str) -> bool:
+    return bool((session.custom_hazard_crowd_sourced or {}).get(_normalize_key(hazard)))
+
+
 def _evidence_http_url(evidence: str) -> str:
     match = re.search(r"(?im)^\s*Evidence URL:\s*(.+?)\s*$", evidence)
     candidate = match.group(1).strip() if match else evidence.strip()
@@ -158,14 +162,17 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
         'data-open-survey-results="true">From the survey</button>'
     )
     sections = [
-        f'<h3 class="hazard-group-heading">Top 3 {survey_source_button}</h3>',
+        '<h3 class="hazard-group-heading hazard-group-heading--top">'
+        f"Top 3 {survey_source_button}</h3>",
         format_system_hazards(
             session,
             survey_hazards[:3],
             show_admin_details=show_admin_details,
         ),
         "",
-        f'<h3 class="hazard-group-heading">Other hazards {survey_source_button}</h3>',
+        '<div class="hazard-group-divider" role="separator"></div>',
+        '<h3 class="hazard-group-heading hazard-group-heading--other">'
+        f"Other hazards {survey_source_button}</h3>",
         format_system_hazards(
             session,
             survey_hazards[3:],
@@ -179,11 +186,16 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
         sections.extend(
             [
                 "",
-                '<h3 class="hazard-group-heading hazard-group-heading--with-info">'
+                '<div class="hazard-group-divider" role="separator"></div>',
+                '<h3 class="hazard-group-heading hazard-group-heading--co-created '
+                'hazard-group-heading--with-info">'
                 "Co-Created hazards "
                 f"{_platform_users_source_button()}"
                 f"{_custom_hazards_info_icon()}"
                 "</h3>",
+                '<p class="hazard-group-intro hazard-group-intro--co-created">'
+                "These hazards were created by platform users for this specific region and sector."
+                "</p>",
                 format_custom_hazards(
                     session,
                     show_admin_details=show_admin_details,
@@ -194,12 +206,18 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
         sections.extend(
             [
                 "",
-                '<h3 class="hazard-group-heading hazard-group-heading--with-info">'
+                '<div class="hazard-group-divider" role="separator"></div>',
+                '<h3 class="hazard-group-heading hazard-group-heading--additional '
+                'hazard-group-heading--with-info">'
                 "Additional hazards "
-                "<span>By experts</span>"
+                '<span class="additional-hazards-source-label">By experts</span>'
                 f"{_additional_hazards_info_icon()}"
                 f"{_additional_hazards_methodology_cta()}"
                 "</h3>",
+                '<p class="hazard-group-intro hazard-group-intro--additional">'
+                "These hazards were identified by policy and subject-matter experts to "
+                "complement the sectoral survey findings."
+                "</p>",
                 format_additional_hazards(
                     session,
                     show_admin_details=show_admin_details,
@@ -259,6 +277,11 @@ def format_custom_hazards(
         summary = _custom_hazard_summary(session, str(hazard))
         evidence_label = "Evidence provided" if has_evidence else "Evidence not provided"
         evidence_class = "provided" if has_evidence else "not-provided"
+        crowd_sourced_label = (
+            '<span class="hazard-crowd-sourced-label">Crowd sourced</span>'
+            if _custom_hazard_is_crowd_sourced(session, str(hazard))
+            else ""
+        )
         if has_evidence:
             evidence_action = (
                 '<button type="button" '
@@ -279,6 +302,7 @@ def format_custom_hazards(
             '<span class="hazard-alert-icon" aria-hidden="true">!</span>'
             f"<strong>{escape(str(hazard))}</strong>"
             '<span class="hazard-card-labels">'
+            f"{crowd_sourced_label}"
             f'<span class="hazard-visibility-label">{escape(_custom_hazard_visibility_label(session))}</span>'
             f"{evidence_action}"
             "</span>"
@@ -829,7 +853,8 @@ def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) 
     )]
     metric_items = "".join(
         f'<div class="metric-tile" data-value="{escape(str(raw_value), quote=True)}">'
-        f"<dt>{_metric_label_html(label, tooltip)}</dt><dd>{value}</dd></div>"
+        f"<dt>{_metric_label_html(label, tooltip)}</dt><dd>{value}"
+        f"{_metric_data_cta(label, hazard, ranking)}</dd></div>"
         for (label, value, tooltip), raw_value in zip(metrics, raw_values)
     )
     lines.append(f'<dl class="hazard-metrics">{metric_items}</dl>')
@@ -849,6 +874,28 @@ def _metric_label_html(label: str, tooltip: str) -> str:
         f'<span class="metric-tooltip" role="tooltip">{tooltip_text}</span>'
         "</span>"
         "</span>"
+    )
+
+
+def _metric_data_cta(label: str, hazard: str, ranking: dict[str, object]) -> str:
+    metric = ""
+    source_key = ""
+    if label == "Salience":
+        metric = "salience"
+        source_key = str(ranking.get("hazard_slug") or "").strip()
+    elif label == "Effect size":
+        metric = "effect_size"
+        source_key = str(ranking.get("hazard_slug") or "").strip()
+    if not metric or not source_key:
+        return ""
+    metric_label = escape(label)
+    return (
+        '<button class="metric-data-cta" type="button" '
+        f'data-metric="{metric}" '
+        f'data-source-key="{escape(source_key, quote=True)}" '
+        f'data-hazard-name="{escape(hazard, quote=True)}" '
+        f'aria-label="Show data used to calculate {metric_label} for '
+        f'{escape(hazard, quote=True)}">Show data</button>'
     )
 
 

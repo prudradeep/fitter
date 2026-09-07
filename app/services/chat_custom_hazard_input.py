@@ -777,6 +777,57 @@ class ChatCustomHazardInputMixin:
         answer = message.strip()
         if session.phase == "custom_hazard_clarification":
             state = self._custom_hazard_state(session)
+            if state.get("awaiting_policy_reference"):
+                if (
+                    "Policy reference error:" in answer
+                    and "Policy reference document ID:" not in answer
+                ):
+                    detail = answer.split("Policy reference error:", 1)[1].strip()
+                    return self._custom_hazard_policy_reference_step(
+                        session_id,
+                        session,
+                        error=True,
+                        detail=f"The policy reference could not be read: {detail}",
+                    )
+                if not re.search(
+                    r"^Policy reference (?:URL|file):\s*.+$",
+                    answer,
+                    flags=re.IGNORECASE | re.MULTILINE,
+                ):
+                    return self._custom_hazard_policy_reference_step(
+                        session_id,
+                        session,
+                        error=True,
+                        detail="Please provide a readable policy document URL or file.",
+                    )
+                document_ids = re.findall(
+                    r"^Policy reference document ID:\s*(\S+)",
+                    answer,
+                    flags=re.IGNORECASE | re.MULTILINE,
+                )
+                policy_context = await self._policy_reference_context(session, document_ids)
+                if not policy_context.strip():
+                    return self._custom_hazard_policy_reference_step(
+                        session_id,
+                        session,
+                        error=True,
+                        detail="No readable text could be extracted from that policy document.",
+                    )
+                reference_match = re.search(
+                    r"^Policy reference (?:URL|file):\s*(.+)$",
+                    answer,
+                    flags=re.IGNORECASE | re.MULTILINE,
+                )
+                state["policy_reference"] = (
+                    reference_match.group(1).strip() if reference_match else "Provided policy document"
+                )
+                state["policy_reference_document_ids"] = document_ids
+                state["policy_reference_available"] = True
+                state["awaiting_policy_reference"] = False
+                state["show_policy_hazard_causal_linkage"] = True
+                state["message"] = "Twin-transition policy fit was analysed against the supplied policy document."
+                transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
+                return await self._run_custom_hazard_dimension_check(session_id, session)
             if not answer:
                 return self._custom_hazard_clarification_step(session_id, session)
             clarifications = list(state.get("clarifications") or [])

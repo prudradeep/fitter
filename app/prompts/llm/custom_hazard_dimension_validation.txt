@@ -15,7 +15,7 @@ Rules:
 - The selected sector must be one of: Energy, Housing, Transport.
 - Validate only against the selected sector.
 - Do not assume Energy when the sector is Housing or Transport.
-- Judge country/region fit separately from sector fit.
+- Use the country_region_fit key to judge country fit separately from sector fit. Do not assess regional fit.
 - Generic groups alone are invalid: people, communities, citizens, residents, households, consumers, public, society, stakeholders.
 - Qualified or policy-specific groups are valid: low-income households, rural communities, energy communities, renewable energy communities, tenants, taxi drivers, older adults, disabled people.
 - Ask at most 2 clarification questions.

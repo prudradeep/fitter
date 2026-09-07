@@ -251,6 +251,7 @@ class ChatNavigationStepsMixin:
         session.custom_hazard_evidence_statuses = None
         session.custom_hazard_evidence = None
         session.custom_hazard_summaries = None
+        session.custom_hazard_crowd_sourced = None
         session.additional_hazards = None
         cls._clear_selected_hazard_context(session)
 
@@ -595,6 +596,17 @@ class ChatNavigationStepsMixin:
                 session_id,
                 session,
                 error_reason=message if error else None,
+            )
+
+        if (
+            session.phase == "custom_hazard_clarification"
+            and isinstance(session.custom_hazard, dict)
+            and session.custom_hazard.get("awaiting_policy_reference")
+        ):
+            return self._custom_hazard_policy_reference_step(
+                session_id,
+                session,
+                error=error,
             )
 
         if session.phase in {

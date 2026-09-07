@@ -4,6 +4,7 @@ from app.services.chat_formatters import format_hazards
 from app.services.chat_persistence import ChatPersistenceMixin
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
+from app.services.message_renderer import render_message
 
 
 PROFILE = {
@@ -57,6 +58,77 @@ class ProfileAdminDetailsTests(unittest.TestCase):
         self.assertNotIn("Reference:", html)
         self.assertNotIn("Mapped target population:", html)
         self.assertNotIn("Eurostat population lookup:", html)
+
+    def test_hazard_overview_marks_each_category_for_distinct_styling(self):
+        session = ChatSession(
+            hazards=["Top 1", "Top 2", "Top 3", "Other"],
+            custom_hazards=["Co-created"],
+            additional_hazards=["Additional"],
+            hazard_profiles={
+                hazard: [PROFILE]
+                for hazard in ["Top 1", "Top 2", "Top 3", "Other", "Co-created", "Additional"]
+            },
+        )
+
+        html = format_hazards(session)
+
+        self.assertIn("hazard-group-heading--top", html)
+        self.assertIn("hazard-group-heading--other", html)
+        self.assertIn("hazard-group-heading--co-created", html)
+        self.assertIn("hazard-group-heading--additional", html)
+        self.assertEqual(html.count('class="hazard-group-divider" role="separator"'), 3)
+        self.assertIn('class="additional-hazards-source-label"', html)
+        self.assertIn("hazard-group-intro--co-created", html)
+        self.assertIn("created by platform users", html)
+        self.assertIn("hazard-group-intro--additional", html)
+        self.assertIn("identified by policy and subject-matter experts", html)
+
+    def test_ranked_hazard_keeps_metric_data_ctas_after_sanitizing(self):
+        session = ChatSession(
+            sector="Transport",
+            hazards=["More pollution exposure"],
+            hazard_profiles={"More pollution exposure": [PROFILE]},
+            hazard_rankings={
+                "More pollution exposure": {
+                    "hazard_slug": "more_pollution_exposure",
+                    "relevance_score": 4.2,
+                    "salience_score": 3.1,
+                    "effect_size_score": 0.8,
+                    "reach_score": 0.3,
+                }
+            },
+        )
+
+        message = render_message(
+            "hazards_overview.md",
+            sector="Transport",
+            region="Calabria",
+            hazards=format_hazards(session),
+        )
+
+        self.assertEqual(message.count('class="metric-data-cta"'), 2)
+        self.assertIn('data-metric="salience"', message)
+        self.assertIn('data-metric="effect_size"', message)
+        self.assertIn('data-source-key="more_pollution_exposure"', message)
+        self.assertIn('data-hazard-name="More pollution exposure"', message)
+
+    def test_hazard_intro_note_styles_survive_message_sanitizing(self):
+        session = ChatSession(
+            custom_hazards=["Co-created"],
+            additional_hazards=["Additional"],
+            hazard_profiles={"Co-created": [PROFILE], "Additional": [PROFILE]},
+        )
+
+        message = render_message(
+            "hazards_overview.md",
+            sector="Transport",
+            region="Calabria",
+            hazards=format_hazards(session),
+        )
+
+        self.assertIn('class="hazard-group-intro hazard-group-intro--co-created"', message)
+        self.assertIn('class="hazard-group-intro hazard-group-intro--additional"', message)
+        self.assertEqual(message.count('class="hazard-group-divider" role="separator"'), 3)
 
     def test_persisted_message_display_strips_admin_details_for_non_admin(self):
         service = ChatService.__new__(ChatService)
