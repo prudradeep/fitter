@@ -3,6 +3,214 @@ from app.services.chat_mitigation_creation_common import *
 
 
 class ChatMitigationCreationPolicyMixin:
+    @staticmethod
+    def _is_selected_co_created_hazard(session: ChatSession) -> bool:
+        selected = normalize(session.selected_hazard or "")
+        accepted = normalize(session.accepted_custom_hazard or "")
+        return bool(
+            selected
+            and session.accepted_custom_hazard_id
+            and (not accepted or selected == accepted)
+        )
+
+    async def _co_created_hazard_policy_sections(self, session: ChatSession) -> str:
+        """Describe the harmful policy provision and a grounded amendment for custom hazards."""
+        if not self._is_selected_co_created_hazard(session):
+            return ""
+        session.suggested_existing_policy_modification = None
+
+        policy_heading = self._policy_section_heading(
+            "Policy point that causes this hazard",
+            (
+                "This section identifies the provision or policy direction in the "
+                "reference associated with the co-created hazard and explains its "
+                "causal connection to that hazard."
+            ),
+        )
+        modification_heading = self._policy_section_heading(
+            "Suggested modification to the policy causing the hazard",
+            (
+                "This section suggests how the identified policy point could be "
+                "amended to reduce the co-created hazard."
+            ),
+        )
+        reference_results = self._mitigation_policy_reference_results(session)
+        if not reference_results:
+            unavailable = (
+                "No supporting policy reference is associated with this co-created "
+                "hazard, so a policy point cannot be identified without inventing content."
+            )
+            return (
+                f"{policy_heading}\n\n{unavailable}\n\n"
+                f"{modification_heading}\n\n"
+                "No grounded modification can be suggested until a supporting policy "
+                "reference is available."
+            )
+
+        grounder = getattr(getattr(self, "grounding_models", None), "ground_results", None)
+        if grounder is not None:
+            try:
+                grounded_results = await grounder(
+                    (
+                        f"Policy provisions causing {session.selected_hazard or 'the selected hazard'} "
+                        "and possible amendments"
+                    ),
+                    reference_results,
+                )
+                if grounded_results:
+                    reference_results = grounded_results
+            except Exception:
+                logger.exception(
+                    "Policy-reference ranking failed during mitigation creation"
+                )
+        reference_results = [
+            {**result, "content": str(result.get("content") or "")[:1200]}
+            for result in reference_results[:12]
+        ]
+        policy_context = self._format_full_knowledge_results(reference_results)
+        custom_state = (
+            session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
+        )
+        causal_linkage_provider = getattr(
+            self,
+            "_custom_hazard_policy_causal_linkage",
+            None,
+        )
+        causal_linkage = (
+            str(causal_linkage_provider(custom_state) or "").strip()
+            if causal_linkage_provider is not None
+            else ""
+        )
+        response = await ask_llm_chat(
+            context=load_nested_prompt_file(
+                "llm/co_created_hazard_policy_mitigation.txt"
+            ),
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Selected co-created hazard: {session.selected_hazard or ''}\n"
+                        f"Country: {session.country or 'Not specified'}\n"
+                        f"Region: {session.region or 'Not specified'}\n"
+                        f"Sector: {session.sector or 'Not specified'}\n"
+                        f"Previously validated causal linkage: {causal_linkage or 'Not available'}\n\n"
+                        "Policy-reference excerpts:\n"
+                        f"{policy_context}"
+                    ),
+                }
+            ],
+            temperature=0.2,
+            max_tokens=900,
+            response_format="json",
+        )
+        payload = (
+            None
+            if is_llm_unavailable_response(response)
+            else parse_json_object(response)
+        )
+        if not isinstance(payload, dict):
+            return self._co_created_hazard_policy_fallback_sections(
+                policy_heading,
+                modification_heading,
+                causal_linkage,
+                reference_results,
+            )
+
+        points = self._co_created_policy_points_markdown(
+            payload.get("policy_points"),
+            reference_results,
+        )
+        modification = normalize_markdown_text(
+            str(payload.get("suggested_modification") or "")
+        ).strip()
+        if not points or not modification:
+            return self._co_created_hazard_policy_fallback_sections(
+                policy_heading,
+                modification_heading,
+                causal_linkage,
+                reference_results,
+            )
+        session.suggested_existing_policy_modification = modification
+        return (
+            f"{policy_heading}\n\n{points}\n\n"
+            f"{modification_heading}\n\n{modification}"
+        )
+
+    @classmethod
+    def _co_created_policy_points_markdown(
+        cls,
+        raw_points: object,
+        reference_results: list[dict[str, object]],
+    ) -> str:
+        if not isinstance(raw_points, list):
+            return ""
+        rendered: list[str] = []
+        for item in raw_points[:5]:
+            if not isinstance(item, dict):
+                continue
+            point = normalize_markdown_text(str(item.get("text") or "")).strip()
+            if not point:
+                continue
+            source_labels: list[str] = []
+            source_ids = item.get("source_ids")
+            if isinstance(source_ids, list):
+                for source_id in source_ids:
+                    match = re.fullmatch(
+                        r"S(\d+)",
+                        str(source_id).strip(),
+                        re.IGNORECASE,
+                    )
+                    if not match:
+                        continue
+                    index = int(match.group(1)) - 1
+                    if 0 <= index < len(reference_results):
+                        label = cls._policy_reference_source_label(
+                            reference_results[index]
+                        )
+                        if label and label not in source_labels:
+                            source_labels.append(label)
+            source_line = (
+                f"\n    - **Source:** {'; '.join(source_labels)}"
+                if source_labels
+                else ""
+            )
+            rendered.append(f"- {point}{source_line}")
+        return "\n".join(rendered)
+
+    @staticmethod
+    def _policy_reference_source_label(result: dict[str, object]) -> str:
+        title = normalize_markdown_text(
+            str(result.get("title") or "Policy reference")
+        ).strip()
+        page = result.get("page_number")
+        return f"{title}, page {page}" if page else title
+
+    @classmethod
+    def _co_created_hazard_policy_fallback_sections(
+        cls,
+        policy_heading: str,
+        modification_heading: str,
+        causal_linkage: str,
+        reference_results: list[dict[str, object]],
+    ) -> str:
+        if causal_linkage:
+            source = cls._policy_reference_source_label(reference_results[0])
+            policy_body = (
+                f"- {normalize_markdown_text(causal_linkage)}\n"
+                f"    - **Source:** {source}"
+            )
+        else:
+            policy_body = (
+                "The associated policy reference is available, but no sufficiently "
+                "supported policy point could be extracted."
+            )
+        return (
+            f"{policy_heading}\n\n{policy_body}\n\n"
+            f"{modification_heading}\n\n"
+            "No grounded policy modification could be generated from the available "
+            "excerpts."
+        )
+
     def _selected_system_hazard_id(self, session: ChatSession) -> str | None:
         if session.sector_id is None or not session.selected_hazard:
             return None
@@ -551,11 +759,21 @@ class ChatMitigationCreationPolicyMixin:
             ) or self._policy_target_group_summary(
                 all_targets if isinstance(all_targets, list) else []
             )
+            target_group_markdown = self._policy_target_group_markdown(
+                matched_targets if isinstance(matched_targets, list) else []
+            ) or self._policy_target_group_markdown(
+                all_targets if isinstance(all_targets, list) else []
+            )
             policy_label = f"{code}: {title}" if code else title
             why_this_helps = (
                 f"This policy has a {mitigation_effect.lower()} effect for the selected hazard"
-                + (f" and targets {target_groups}" if target_groups else "")
+                + (" and addresses the target groups listed above" if target_groups else "")
                 + "."
+            )
+            target_group_lines = (
+                ["    - **Target groups:**", target_group_markdown]
+                if target_group_markdown
+                else ["    - **Target groups:** No matched target group specified"]
             )
             policies.append(
                 "\n".join(
@@ -563,7 +781,7 @@ class ChatMitigationCreationPolicyMixin:
                         f"- **{policy_label}**",
                         f"    - **Proposal:** {description}",
                         f"    - **Policy type:** {policy_type}",
-                        f"    - **Target groups:** {target_groups or 'No matched target group specified'}",
+                        *target_group_lines,
                         f"    - **Why this helps:** {why_this_helps}",
                     ]
                 )
@@ -706,6 +924,8 @@ class ChatMitigationCreationPolicyMixin:
             targets_by_policy.setdefault(policy_id, []).append(
                 {
                     "question_option_id": str(row["question_option_id"]),
+                    "question": str(row["question"] or "").strip(),
+                    "option": str(row["option"] or "").strip(),
                     "label": label,
                     "match_value": str(row["match_value"] or "").strip(),
                 }
@@ -1151,23 +1371,73 @@ class ChatMitigationCreationPolicyMixin:
                 labels.append(label)
         return labels
 
+    @classmethod
+    def _policy_target_group_summary(
+        cls,
+        target_groups: list[dict[str, object]],
+    ) -> str:
+        return "; ".join(cls._combined_policy_target_groups(target_groups))
+
+    @classmethod
+    def _policy_target_group_markdown(
+        cls,
+        target_groups: list[dict[str, object]],
+    ) -> str:
+        return "\n".join(
+            f"        - {group}"
+            for group in cls._combined_policy_target_groups(target_groups)
+        )
+
     @staticmethod
-    def _policy_target_group_summary(target_groups: list[dict[str, object]]) -> str:
-        labels: list[str] = []
-        seen: set[str] = set()
+    def _combined_policy_target_groups(
+        target_groups: list[dict[str, object]],
+    ) -> list[str]:
+        question_labels: dict[str, str] = {}
+        grouped: dict[str, dict[str, list[str]]] = {}
+        seen: set[tuple[str, str, str]] = set()
+        standalone: list[str] = []
         for group in target_groups:
+            question = str(group.get("question") or "").strip()
+            option = str(group.get("option") or "").strip()
             label = str(group.get("label") or "").strip()
+            if (not question or not option) and ":" in label:
+                label_question, label_option = label.split(":", 1)
+                question = question or label_question.strip()
+                option = option or label_option.strip()
+            elif not option:
+                option = label
             value = str(group.get("match_value") or "").strip()
             if value.casefold() == "pp":
                 continue
-            if not label:
+            if not question and label:
+                rendered = f"{label} ({value})" if value else label
+                if normalize_for_match(rendered) not in {
+                    normalize_for_match(item) for item in standalone
+                }:
+                    standalone.append(rendered)
                 continue
-            rendered = f"{label} ({value})" if value else label
-            key = normalize_for_match(rendered)
-            if key and key not in seen:
-                seen.add(key)
-                labels.append(rendered)
-        return "; ".join(labels)
+            if not question or not option:
+                continue
+            question_key = normalize_for_match(question)
+            option_key = (normalize_for_match(option), normalize_for_match(value))
+            dedupe_key = (question_key, *option_key)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            question_labels.setdefault(question_key, question)
+            grouped.setdefault(question_key, {}).setdefault(value, []).append(option)
+
+        combined: list[str] = list(standalone)
+        for question_key, value_groups in grouped.items():
+            value_parts: list[str] = []
+            for value, options in value_groups.items():
+                option_text = ", ".join(options)
+                value_parts.append(f"{option_text} ({value})" if value else option_text)
+            if value_parts:
+                combined.append(
+                    f"{question_labels[question_key]}: {'; '.join(value_parts)}"
+                )
+        return combined
 
     @staticmethod
     def _target_population_label(question: str, option: str) -> str:

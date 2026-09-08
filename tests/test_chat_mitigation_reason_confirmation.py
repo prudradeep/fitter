@@ -1,8 +1,11 @@
 import asyncio
 import unittest
 
+from app.schemas import ChatResponse
 from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
+from app.services.chat_options import REASON_CONFIRMATION_OPTIONS
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
+from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
 
 
@@ -46,6 +49,32 @@ class _ReasonSelectionEngine(_ReasonConfirmationEngine, ChatSelectionStepsMixin)
 
 
 class ReasonConfirmationOpenConversationTests(unittest.TestCase):
+    def test_reason_confirmation_has_three_policy_creation_options(self):
+        self.assertEqual(
+            [option.label for option in REASON_CONFIRMATION_OPTIONS],
+            [
+                "Modify existing policy",
+                "Adopt mitigation proposal suggested above",
+                "Create new proposal",
+            ],
+        )
+
+    def test_reason_confirmation_keeps_other_options_menu(self):
+        engine = ChatService.__new__(ChatService)
+        session = ChatSession(selected_hazard="A hazard")
+        response = ChatResponse(
+            session_id="test-session",
+            step="reason_confirmation",
+            bot_message="Choose an approach",
+            options=REASON_CONFIRMATION_OPTIONS,
+            other_options=["Go back to list of hazards"],
+            session=session.summary(),
+        )
+
+        engine._attach_other_options(response, session)
+
+        self.assertIn("Go back to list of hazards", response.other_options)
+
     def test_open_text_maps_to_adopt_suggested_mitigation(self):
         engine = _ReasonConfirmationEngine()
 
@@ -59,23 +88,23 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
         )
         self.assertEqual(
             engine._reason_confirmation_action_from_open_text("write my own"),
-            "yes",
+            "create new proposal",
         )
         self.assertEqual(
             engine._reason_confirmation_action_from_open_text(
                 "The mitigation above dont make sense i want to add a new mitigation"
             ),
-            "yes",
+            "create new proposal",
         )
         self.assertEqual(
             engine._reason_confirmation_action_from_open_text(
                 "None of these mitigation measures fit. I want to add one."
             ),
-            "yes",
+            "create new proposal",
         )
         self.assertEqual(
-            engine._reason_confirmation_action_from_open_text("not now"),
-            "no",
+            engine._reason_confirmation_action_from_open_text("modify existing policy"),
+            "modify existing policy",
         )
 
     def test_open_text_write_new_mitigation_enters_measure_flow(self):
@@ -144,7 +173,7 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
         self.assertIn("Target-group mechanisms", response.bot_message)
         self.assertIn("older adults", response.bot_message)
 
-    def test_adopt_falls_back_to_current_policy_mitigation(self):
+    def test_modify_existing_policy_uses_current_policy_mitigation(self):
         engine = _ReasonConfirmationEngine()
         session = ChatSession(
             country="Germany",
@@ -156,14 +185,42 @@ class ReasonConfirmationOpenConversationTests(unittest.TestCase):
         )
 
         response = asyncio.run(
-            engine._handle_reason_confirmation("test-session", session, "adopt it")
+            engine._handle_reason_confirmation(
+                "test-session",
+                session,
+                "Modify existing policy",
+            )
         )
 
         self.assertEqual(response.step, "mitigation_clarity")
         self.assertEqual(session.pending_mitigation_measure, "Current policy-based mitigation")
         self.assertIn("Higher electricity bills", session.pending_mitigation_reason)
-        self.assertIn("Low-income households", session.pending_mitigation_reason)
-        self.assertIn("Eligibility checks", session.pending_mitigation_reason)
+        self.assertIn("modifies the existing policy", session.pending_mitigation_reason)
+
+    def test_modify_existing_policy_uses_generated_custom_hazard_amendment(self):
+        engine = _ReasonConfirmationEngine()
+        session = ChatSession(
+            selected_hazard="A co-created hazard",
+            accepted_custom_hazard="A co-created hazard",
+            accepted_custom_hazard_id="custom-1",
+            suggested_existing_policy_modification=(
+                "Replace the abrupt eligibility cutoff with tapered support."
+            ),
+        )
+
+        response = asyncio.run(
+            engine._handle_reason_confirmation(
+                "test-session",
+                session,
+                "Modify existing policy",
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_clarity")
+        self.assertEqual(
+            session.pending_mitigation_measure,
+            "Replace the abrupt eligibility cutoff with tapered support.",
+        )
 
     def test_change_sector_is_not_captured_as_mitigation_measure(self):
         engine = _ReasonSelectionEngine()

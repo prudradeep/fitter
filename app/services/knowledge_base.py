@@ -498,16 +498,23 @@ class KnowledgeBaseService:
         country_id: str | None = None,
         region_id: str | None = None,
         sector_id: str | None = None,
+        document_ids: list[str] | None = None,
+        exclude_document_ids: list[str] | None = None,
     ) -> int:
         if self.scope != TEMPORARY_KB_SCOPE or not self.session_key:
             return 0
-        documents = self.db.scalars(
-            select(KnowledgeDocument).where(
-                KnowledgeDocument.user_id == self.user_id,
-                KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
-                KnowledgeDocument.session_key == self.session_key,
-            )
-        ).all()
+        query = select(KnowledgeDocument).where(
+            KnowledgeDocument.user_id == self.user_id,
+            KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
+            KnowledgeDocument.session_key == self.session_key,
+        )
+        if document_ids is not None:
+            if not document_ids:
+                return 0
+            query = query.where(KnowledgeDocument.id.in_(document_ids))
+        if exclude_document_ids:
+            query = query.where(KnowledgeDocument.id.not_in(exclude_document_ids))
+        documents = self.db.scalars(query).all()
         if not documents:
             return 0
         document_ids = [document.id for document in documents]

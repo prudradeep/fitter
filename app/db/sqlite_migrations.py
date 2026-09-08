@@ -199,6 +199,35 @@ def _010_policy_reference_custom_hazard(connection: Connection) -> None:
     )
 
 
+def _011_custom_hazard_policy_references(connection: Connection) -> None:
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS custom_hazard_policy_references (
+          custom_hazard_id CHAR(36) NOT NULL,
+          knowledge_document_id CHAR(36) NOT NULL,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (custom_hazard_id, knowledge_document_id),
+          FOREIGN KEY (custom_hazard_id) REFERENCES custom_hazards(id) ON DELETE CASCADE,
+          FOREIGN KEY (knowledge_document_id) REFERENCES knowledge_documents(id) ON DELETE CASCADE
+        )
+    """))
+    _create_index(
+        connection,
+        "custom_hazard_policy_references",
+        "ix_custom_hazard_policy_references_document_id",
+        "knowledge_document_id",
+    )
+    connection.execute(text("""
+        INSERT OR IGNORE INTO custom_hazard_policy_references (
+          custom_hazard_id,
+          knowledge_document_id
+        )
+        SELECT custom_hazard_id, id
+        FROM knowledge_documents
+        WHERE custom_hazard_id IS NOT NULL
+          AND scope = 'policy_reference'
+    """))
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -210,6 +239,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("008_system_inquiry_telemetry_events", _008_system_inquiry_telemetry_events),
     ("009_custom_hazard_summary", _009_custom_hazard_summary),
     ("010_policy_reference_custom_hazard", _010_policy_reference_custom_hazard),
+    ("011_custom_hazard_policy_references", _011_custom_hazard_policy_references),
 )
 
 

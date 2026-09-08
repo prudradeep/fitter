@@ -47,6 +47,7 @@ class ChatSession:
     mitigation_frozen_inputs: dict[str, str] | None = None
     suggested_mitigation_measure_id: str | None = None
     suggested_mitigation_measure_name: str | None = None
+    suggested_existing_policy_modification: str | None = None
     suggested_new_policy_proposal: str | None = None
     suggested_new_policy_reason: str | None = None
     suggested_new_policy_target_group_mechanisms: str | None = None

@@ -598,6 +598,27 @@ class KnowledgeDocument(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class CustomHazardPolicyReference(Base):
+    __tablename__ = "custom_hazard_policy_references"
+
+    custom_hazard_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("custom_hazards.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    knowledge_document_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
 class KnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
 

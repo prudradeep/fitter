@@ -1237,7 +1237,7 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         self.assertIn("Policy reference document ID:", message)
         document = self.db.scalar(
             select(KnowledgeDocument).where(
-                KnowledgeDocument.scope == "policy_reference"
+                KnowledgeDocument.scope == "temporary"
             )
         )
         self.assertIsNotNone(document)

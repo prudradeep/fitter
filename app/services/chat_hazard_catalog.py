@@ -9,6 +9,7 @@ from app.models import (
     AdditionalHazardProfile,
     AdditionalHazardProfileTargetPopulation,
     CustomHazard,
+    CustomHazardPolicyReference,
     CustomHazardProfile,
     EurostatPopulationCache,
     EvaluationQuestion,
@@ -33,7 +34,11 @@ from app.services.chat_formatters import (
 from app.services.chat_json import parse_json_object
 from app.services.chat_options import best_fuzzy_label, normalize, normalize_for_match
 from app.services.chat_session import ChatSession
-from app.services.knowledge_base import POLICY_REFERENCE_SCOPE
+from app.services.knowledge_base import (
+    POLICY_REFERENCE_SCOPE,
+    TEMPORARY_KB_SCOPE,
+    KnowledgeBaseService,
+)
 
 logger = logging.getLogger("app.services.chat_hazard_creation")
 
@@ -1279,16 +1284,79 @@ class ChatHazardCatalogMixin:
                     KnowledgeDocument.id.in_(document_ids),
                     KnowledgeDocument.user_id == self.user_id,
                     KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
-                    KnowledgeDocument.session_key == session.session_key,
                 )
             ).all()
-            for document in documents:
-                document.custom_hazard_id = custom_hazard_id
-            if documents:
+            document_ids = {str(document.id) for document in documents}
+            existing_document_ids = set(
+                self.db.scalars(
+                    select(CustomHazardPolicyReference.knowledge_document_id).where(
+                        CustomHazardPolicyReference.custom_hazard_id == custom_hazard_id,
+                        CustomHazardPolicyReference.knowledge_document_id.in_(document_ids),
+                    )
+                ).all()
+            ) if document_ids else set()
+            associations = [
+                CustomHazardPolicyReference(
+                    custom_hazard_id=custom_hazard_id,
+                    knowledge_document_id=document_id,
+                )
+                for document_id in document_ids
+                if document_id not in existing_document_ids
+            ]
+            if associations:
+                self.db.add_all(associations)
                 self.db.commit()
         except Exception:
             self.db.rollback()
             logger.exception("Failed to associate policy references with custom hazard")
+
+    @staticmethod
+    def _temporary_policy_reference_document_ids(session: ChatSession) -> list[str]:
+        state = session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
+        return [
+            str(document_id).strip()
+            for document_id in state.get("policy_reference_document_ids") or []
+            if str(document_id).strip()
+        ]
+
+    def _promote_temporary_policy_references(
+        self,
+        session: ChatSession,
+        custom_hazard_id: str,
+    ) -> None:
+        document_ids = self._temporary_policy_reference_document_ids(session)
+        if not document_ids or not session.session_key:
+            return
+        try:
+            KnowledgeBaseService(
+                self.db,
+                self.user_id,
+                scope=TEMPORARY_KB_SCOPE,
+                session_key=session.session_key,
+            ).promote_temporary_documents(
+                target_scope=POLICY_REFERENCE_SCOPE,
+                document_ids=document_ids,
+            )
+            self._associate_policy_references_with_custom_hazard(
+                session,
+                custom_hazard_id,
+            )
+        except Exception:
+            logger.exception("Failed to promote temporary policy references")
+
+    def _discard_temporary_policy_references(self, session: ChatSession) -> None:
+        document_ids = self._temporary_policy_reference_document_ids(session)
+        if not document_ids or not session.session_key:
+            return
+        try:
+            KnowledgeBaseService(
+                self.db,
+                self.user_id,
+                scope=TEMPORARY_KB_SCOPE,
+                session_key=session.session_key,
+            ).delete_temporary_documents(document_ids)
+        except Exception:
+            logger.exception("Failed to discard temporary policy references")
 
     def _selected_user_hazard_source(self, session: ChatSession, hazard: str) -> str:
         if self._is_saved_custom_hazard(session, hazard) or normalize(hazard) == normalize(

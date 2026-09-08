@@ -101,6 +101,7 @@ class ChatCustomHazardEvidenceMixin:
     ) -> ChatResponse:
         exact_label = exact_option_label(message, HAZARD_ENTRY_OPTIONS)
         if normalize(exact_label or message) == normalize("Go back to list of hazards"):
+            self._discard_temporary_policy_references(session)
             session.pending_hazard = None
             session.pending_hazard_reason = None
             session.pending_hazard_evidence = None
@@ -151,9 +152,10 @@ class ChatCustomHazardEvidenceMixin:
             state = self._custom_hazard_state(session)
             state["evidence_decision_asked"] = True
         bot_message = message or markdown_to_html(
-            "Evidence is optional, but it can make this hazard easier to validate "
-            "and more useful to other users. Do you have evidence for this hazard, "
-            "such as a report, article, dataset, policy document, or URL?\n\n"
+            "Do you have evidence for this hazard, "
+            "such as a report, article, dataset, policy document, or URL? Evidence is optional, "
+            "but it can make this hazard easier to validate "
+            "and more useful to other users. \n\n"
             "Choose **Yes** to add evidence, or **No** to continue without it."
         )
         if isinstance(session.custom_hazard, dict):
@@ -434,6 +436,7 @@ class ChatCustomHazardEvidenceMixin:
             return await self._start_custom_hazard_grounding_check(session_id, session, hazard)
 
         if action in {normalize("Explore suggested hazard"), normalize("Use existing hazard")}:
+            self._discard_temporary_policy_references(session)
             suggested_hazard = session.suggested_duplicate_hazard or ""
             hazard = self._match_hazard(suggested_hazard, session) or self._fuzzy_hazard(
                 suggested_hazard,
@@ -451,6 +454,7 @@ class ChatCustomHazardEvidenceMixin:
             return await self._hazard_profiles_response(session_id, session, hazard)
 
         if action in {normalize("Write hazard again"), normalize("Edit custom hazard")}:
+            self._discard_temporary_policy_references(session)
             session.pending_hazard = None
             session.suggested_duplicate_hazard = None
             session.pending_hazard_title_clarification_question = None

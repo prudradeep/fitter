@@ -32,7 +32,7 @@ from app.services.hazard_effect_size import hazard_effect_size_rows, hazard_pred
 from app.services.hazard_ranking_service import HAZARD_COLUMN_BY_SLUG, HazardRankingService
 from app.services.knowledge_base import (
     MAIN_KB_SCOPE,
-    POLICY_REFERENCE_SCOPE,
+    TEMPORARY_KB_SCOPE,
     KnowledgeBaseService,
 )
 from app.services.hazard_salience import country_hazard_salience, hazard_concern_rows
@@ -1390,7 +1390,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
             policy_service = KnowledgeBaseService(
                 db,
                 user_id,
-                scope=POLICY_REFERENCE_SCOPE,
+                scope=TEMPORARY_KB_SCOPE,
                 session_key=session_id,
             )
             try:
@@ -1438,7 +1438,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
             policy_service = KnowledgeBaseService(
                 db,
                 user_id,
-                scope=POLICY_REFERENCE_SCOPE,
+                scope=TEMPORARY_KB_SCOPE,
                 session_key=session_id,
             )
             try:

@@ -407,6 +407,7 @@ class ChatCustomHazardInputMixin:
             if fuzzy_label is not None:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
         if normalize(exact_label or message) == normalize("Go back to list of hazards"):
+            self._discard_temporary_policy_references(session)
             session.pending_hazard = None
             session.custom_hazard = None
             session.pending_hazard_title_clarification_question = None
@@ -620,6 +621,7 @@ class ChatCustomHazardInputMixin:
             if fuzzy_label is not None:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
         if normalize(exact_label or message) == normalize("Go back to list of hazards"):
+            self._discard_temporary_policy_references(session)
             session.pending_hazard = None
             session.pending_hazard_title_clarification_question = None
             session.pending_hazard_title_clarification_answers = []
@@ -765,6 +767,7 @@ class ChatCustomHazardInputMixin:
             if fuzzy_label is not None:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
         if normalize(exact_label or message) == normalize("Go back to list of hazards"):
+            self._discard_temporary_policy_references(session)
             session.pending_hazard = None
             session.pending_hazard_reason = None
             session.pending_hazard_evidence = None

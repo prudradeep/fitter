@@ -1015,7 +1015,17 @@ class ChatService(
             practical_consideration_items
             or self._extract_practical_consideration_items(practical_considerations)
         )
-        current_policy = self._current_policy_implementations_section(session)
+        is_co_created_hazard = self._is_selected_co_created_hazard(session)
+        co_created_policy_sections = (
+            await self._co_created_hazard_policy_sections(session)
+            if is_co_created_hazard
+            else ""
+        )
+        current_policy = (
+            ""
+            if is_co_created_hazard
+            else self._current_policy_implementations_section(session)
+        )
         new_policy_suggestions = await self._new_policy_suggestions_section(session)
         session.suggested_new_policy_proposal = self._extract_suggested_policy_proposal(
             new_policy_suggestions
@@ -1031,6 +1041,7 @@ class ChatService(
         return "\n\n".join(
             section.strip()
             for section in (
+                co_created_policy_sections,
                 practical_considerations,
                 current_policy,
                 new_policy_suggestions,
@@ -1070,10 +1081,12 @@ class ChatService(
                     f"Last visit label: {stats['last_visit_label']}\n"
                     f"User type: {stats['user_type']}\n\n"
                     "Required content:\n"
-                    "- Mention Dr Transition.\n"
-                    "- Invite the user to start by selecting their country.\n"
-                    "- Keep it to 2 or 3 short sentences.\n"
-                    "- Use only positive wording."
+                    "- Begin with: Welcome back to **Dr Transition**.\n"
+                    "- Invite the user to select a country to continue their analysis.\n"
+                    "- Keep it to exactly 2 short sentences.\n"
+                    "- Use formal, professional wording.\n"
+                    "- Do not ask about the user's feelings or use journey metaphors.\n"
+                    "- Do not include a name, country, or placeholder for either."
                 ),
             }
         ]
@@ -1146,10 +1159,7 @@ class ChatService(
         if previous_sessions:
             message = (
                 "Welcome back to **Dr Transition**. "
-                f"You have built momentum across {previous_sessions} prior session"
-                f"{'' if previous_sessions == 1 else 's'}, and we can continue shaping "
-                "a thoughtful Twin-Transition analysis together.\n\n"
-                "*Which country would you like to analyse?** Our research currently covers:"
+                "Please select a country to continue your Twin-Transition analysis."
             )
         else:
             message = render_message("welcome.md")

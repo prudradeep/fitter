@@ -119,12 +119,14 @@ class ChatNavigationStepsMixin:
         if action == normalize("Go back to list of hazards"):
             if session.sector is None:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
+            self._discard_temporary_policy_references(session)
             self._clear_selected_hazard_context(session)
             return self._hazards_step(session_id, session)
 
         if action == normalize("Add a new hazard"):
             if session.sector is None:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
+            self._discard_temporary_policy_references(session)
             self._clear_selected_hazard_context(session)
             transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_INPUT)
             session.custom_hazard = default_custom_hazard_state()
@@ -150,6 +152,7 @@ class ChatNavigationStepsMixin:
                     for hazard in session.custom_hazards
                     if normalize(hazard) != normalize(hazard_to_rewrite)
                 ]
+            self._discard_temporary_policy_references(session)
             self._clear_selected_hazard_context(session)
             transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_INPUT)
             session.custom_hazard = default_custom_hazard_state()
@@ -278,6 +281,7 @@ class ChatNavigationStepsMixin:
         cls._clear_mitigation_clarity_state(session)
         session.suggested_mitigation_measure_id = None
         session.suggested_mitigation_measure_name = None
+        session.suggested_existing_policy_modification = None
         session.mitigation_measure = None
         session.mitigation_reason = None
         session.mitigation_target_population = None

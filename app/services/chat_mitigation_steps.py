@@ -96,7 +96,7 @@ class ChatMitigationStepsMixin:
         if exact_label is None and open_action is not None:
             action = open_action
 
-        if action == normalize("Yes"):
+        if action == normalize("Create new proposal"):
             session.phase = "mitigation_measure"
             session.pending_mitigation_measure = None
             self._clear_mitigation_clarity_state(session)
@@ -121,15 +121,10 @@ class ChatMitigationStepsMixin:
         }:
             return await self._adopt_suggested_mitigation_response(session_id, session)
 
-        if action == normalize("No"):
-            session.phase = "other_actions"
-            return ChatResponse(
-                session_id=session_id,
-                step="complete",
-                bot_message=await self._other_actions_message_from_llm(session),
-                options=self._primary_other_nav_options(session, "complete"),
-                session=session.summary(),
-                error=False,
+        if action == normalize("Modify existing policy"):
+            return self._adopt_existing_policy_modification_response(
+                session_id,
+                session,
             )
 
         return ChatResponse(
@@ -146,7 +141,7 @@ class ChatMitigationStepsMixin:
         session_id: str,
         session: ChatSession,
     ) -> ChatResponse:
-        mitigation_measure = self._suggested_mitigation_measure_for_context(session)
+        mitigation_measure = str(session.suggested_new_policy_proposal or "").strip()
         if not mitigation_measure:
             return ChatResponse(
                 session_id=session_id,
@@ -173,11 +168,44 @@ class ChatMitigationStepsMixin:
             reason,
         )
 
-    def _suggested_mitigation_measure_for_context(self, session: ChatSession) -> str:
-        return (
-            str(session.suggested_new_policy_proposal or "").strip()
+    def _adopt_existing_policy_modification_response(
+        self,
+        session_id: str,
+        session: ChatSession,
+    ) -> ChatResponse:
+        mitigation_measure = (
+            str(session.suggested_existing_policy_modification or "").strip()
             or self._current_policy_mitigation_measure(session)
         )
+        if not mitigation_measure:
+            return ChatResponse(
+                session_id=session_id,
+                step="reason_confirmation",
+                bot_message=(
+                    "I could not find a grounded existing-policy modification to use. "
+                    "Choose **Create new proposal** to write one manually."
+                ),
+                options=REASON_CONFIRMATION_OPTIONS,
+                session=session.summary(),
+                error=True,
+            )
+        self._clear_mitigation_clarity_state(session)
+        self._clear_mitigation_validation_state(session)
+        session.pending_mitigation_measure = mitigation_measure
+        hazard = session.selected_hazard or session.accepted_custom_hazard
+        reason = (
+            "This measure modifies the existing policy associated with the selected "
+            f"hazard{f' ({hazard})' if hazard else ''}."
+        )
+        return self._mitigation_initial_clarification_step(
+            session_id,
+            session,
+            mitigation_measure,
+            reason,
+        )
+
+    def _suggested_mitigation_measure_for_context(self, session: ChatSession) -> str:
+        return str(session.suggested_new_policy_proposal or "").strip()
 
     def _suggested_mitigation_reason_for_adoption(
         self,
@@ -360,7 +388,7 @@ class ChatMitigationStepsMixin:
         normalized = normalize_for_match(message)
         if not normalized:
             return None
-        yes_phrases = {
+        create_phrases = {
             "yes",
             "yes please",
             "continue",
@@ -391,15 +419,15 @@ class ChatMitigationStepsMixin:
             "start a new mitigation",
             "start a new mitigation measure",
             "manual",
+            "create new proposal",
         }
-        no_phrases = {
-            "no",
-            "no thanks",
-            "not now",
-            "skip",
-            "cancel",
-            "stop",
-            "do not continue",
+        modify_phrases = {
+            "modify existing policy",
+            "modify the existing policy",
+            "amend existing policy",
+            "amend the existing policy",
+            "use policy modification",
+            "use the policy modification",
         }
         adopt_phrases = {
             "adopt",
@@ -424,10 +452,10 @@ class ChatMitigationStepsMixin:
             "show the suggested mitigation measure",
             "continue with current mitigation measure",
         }
-        if normalized in yes_phrases:
-            return normalize("Yes")
-        if normalized in no_phrases:
-            return normalize("No")
+        if normalized in create_phrases:
+            return normalize("Create new proposal")
+        if normalized in modify_phrases:
+            return normalize("Modify existing policy")
         if normalized in adopt_phrases:
             return normalize("Adopt mitigation proposal suggested above")
         if "mitigation" in normalized and any(
@@ -459,7 +487,7 @@ class ChatMitigationStepsMixin:
                 )
             )
         ):
-            return normalize("Yes")
+            return normalize("Create new proposal")
         if any(
             phrase in normalized
             for phrase in (
@@ -476,11 +504,11 @@ class ChatMitigationStepsMixin:
                 "missing measure",
             )
         ):
-            return normalize("Yes")
+            return normalize("Create new proposal")
         if "mitigation" in normalized and any(
             token in normalized for token in ("add", "create", "new", "write", "manual")
         ):
-            return normalize("Yes")
+            return normalize("Create new proposal")
         return None
 
     async def _reason_confirmation_should_handle_before_quality(
@@ -511,16 +539,19 @@ class ChatMitigationStepsMixin:
             "Classify a user message shown after the app suggests or asks about "
             "creating a mitigation measure for a selected hazard.\n\n"
             "Return one valid JSON object only:\n"
-            '{"action":"write_new_mitigation|adopt_suggested_mitigation|'
-            'decline|none","confidence":"high|medium|low","reason":"Brief reason."}\n\n'
+            '{"action":"modify_existing_policy|write_new_mitigation|'
+            'adopt_suggested_mitigation|none","confidence":"high|medium|low",'
+            '"reason":"Brief reason."}\n\n'
+            "Use modify_existing_policy when the user wants to amend or modify the "
+            "existing policy associated with the hazard.\n"
             "Use write_new_mitigation when the user wants to add, create, write, "
             "provide, define, or use their own mitigation measure, or says the "
             "suggested/proposed/current mitigation does not fit, does not make "
             "sense, is missing something, or is not the measure they want. The "
             "wording may be informal or indirect.\n"
             "Use adopt_suggested_mitigation only when they want to use/adopt/show "
-            "the suggested proposal. Use decline only when they do not want to "
-            "continue. Use none for questions, navigation, or unrelated text."
+            "the suggested proposal. Use none for questions, navigation, declining, "
+            "or unrelated text."
         )
         response = await ask_llm_chat(
             context=prompt,
@@ -551,11 +582,11 @@ class ChatMitigationStepsMixin:
         if confidence not in {"high", "medium"}:
             return None
         return {
-            "write_new_mitigation": normalize("Yes"),
+            "modify_existing_policy": normalize("Modify existing policy"),
+            "write_new_mitigation": normalize("Create new proposal"),
             "adopt_suggested_mitigation": normalize(
                 "Adopt mitigation proposal suggested above"
             ),
-            "decline": normalize("No"),
         }.get(action)
 
     @staticmethod

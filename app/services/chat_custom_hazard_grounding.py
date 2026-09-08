@@ -1049,8 +1049,7 @@ class ChatCustomHazardGroundingMixin:
             )
         else:
             message += (
-                "\n\nPlease clarify the hazard, its transition-policy link, "
-                "and its affected groups."
+                "\n\nPlease clarify the hazard, its transition-policy link."
             )
         return message + "\n\nPlease answer the questions above in one response."
 

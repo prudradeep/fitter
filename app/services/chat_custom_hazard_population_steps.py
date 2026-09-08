@@ -989,6 +989,11 @@ class ChatCustomHazardPopulationStepsMixin:
                 accepted_hazard,
             )
         session.accepted_custom_hazard_id = custom_hazard_id
+        if custom_hazard_id is not None:
+            self._promote_temporary_policy_references(
+                session,
+                custom_hazard_id,
+            )
         if accepted_hazard and not any(
             normalize(item) == normalize(accepted_hazard)
             for item in (session.custom_hazards or [])

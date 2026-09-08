@@ -84,9 +84,9 @@ FUZZY_CONFIRMATION_OPTIONS = [
 ]
 
 REASON_CONFIRMATION_OPTIONS = [
-    Option(id=1, label="Yes"),
-    Option(id=2, label="No"),
-    Option(id=3, label="Adopt mitigation proposal suggested above"),
+    Option(id=1, label="Modify existing policy"),
+    Option(id=2, label="Adopt mitigation proposal suggested above"),
+    Option(id=3, label="Create new proposal"),
 ]
 
 MITIGATION_REVIEW_OPTIONS = [

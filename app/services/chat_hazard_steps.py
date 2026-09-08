@@ -145,6 +145,7 @@ class ChatHazardStepsMixin:
     def _custom_hazard_input_step(
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
+        self._discard_temporary_policy_references(session)
         self._clear_selected_hazard_context(session)
         transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_INPUT)
         session.custom_hazard = default_custom_hazard_state()
@@ -592,6 +593,7 @@ class ChatHazardStepsMixin:
                 error=True,
             )
 
+        self._discard_temporary_policy_references(session)
         self._clear_selected_hazard_context(session)
         session.selected_hazard = hazard
         is_saved_custom_hazard = self._is_saved_custom_hazard(session, hazard)

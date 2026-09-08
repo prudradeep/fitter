@@ -793,6 +793,9 @@ class ChatHazardProfilesMixin:
                 country_id=session.country_id,
                 region_id=session.region_id,
                 sector_id=session.sector_id,
+                exclude_document_ids=self._temporary_policy_reference_document_ids(
+                    session
+                ),
             )
         except Exception:
             logger.exception("Failed to promote temporary evidence")

@@ -3,7 +3,12 @@ import re
 
 from sqlalchemy import select
 
-from app.models import KnowledgeChunk, KnowledgeDocument, MitigationMeasureExample
+from app.models import (
+    CustomHazardPolicyReference,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    MitigationMeasureExample,
+)
 from app.services.chat_session import ChatSession
 from app.services.knowledge_base import (
     POLICY_REFERENCE_SCOPE,
@@ -140,10 +145,15 @@ class ChatContextRetrievalMixin:
             rows = self.db.execute(
                 select(KnowledgeChunk, KnowledgeDocument)
                 .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+                .join(
+                    CustomHazardPolicyReference,
+                    CustomHazardPolicyReference.knowledge_document_id
+                    == KnowledgeDocument.id,
+                )
                 .where(
                     KnowledgeDocument.user_id == self.user_id,
                     KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
-                    KnowledgeDocument.custom_hazard_id == custom_hazard_id,
+                    CustomHazardPolicyReference.custom_hazard_id == custom_hazard_id,
                 )
                 .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
             ).all()
@@ -263,7 +273,7 @@ class ChatContextRetrievalMixin:
                 .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
                 .where(
                     KnowledgeDocument.user_id == self.user_id,
-                    KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
+                    KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
                     KnowledgeDocument.session_key == session.session_key,
                 )
                 .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
