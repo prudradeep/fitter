@@ -2,6 +2,7 @@ import re
 
 from app.schemas import ChatResponse
 from app.services.chat_options import (
+    CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
     compact_for_match,
     exact_option_label,
@@ -11,8 +12,10 @@ from app.services.chat_options import (
 )
 from app.services.chat_session import ChatSession
 from app.services.custom_hazard_state_machine import transition_custom_hazard
-from app.services.custom_hazard_text_rules import deterministic_custom_hazard_input_review
-from app.services.custom_hazard_validation import default_custom_hazard_state
+from app.services.custom_hazard_validation import (
+    default_custom_hazard_state,
+    validate_policy_reference_twin_transition,
+)
 from app.services.enums import ChatPhase, CustomHazardStatus
 from app.services.message_renderer import markdown_to_html, render_message
 
@@ -475,142 +478,10 @@ class ChatCustomHazardInputMixin:
             )
 
         self._initialize_custom_hazard_title_state(session, hazard)
-
-        plain_rejection_reason = self._plain_custom_hazard_rejection_reason(
-            session,
-            hazard,
-        )
-        if plain_rejection_reason:
-            return self._custom_hazard_title_rejection_response(
-                session_id,
-                session,
-                hazard=hazard,
-                review={
-                    "status": "invalid",
-                    "valid": False,
-                    "validation_code": "not_twin_transition_related",
-                    "reason": plain_rejection_reason,
-                    "confidence": 0.95,
-                },
-            )
-
-        deterministic_review = deterministic_custom_hazard_input_review(
-            selected_sector=session.sector,
-            hazard=hazard,
-        )
-        if deterministic_review is not None and self._custom_hazard_title_status(deterministic_review) == "needs_clarification":
-            self._store_custom_hazard_title_review(
-                session,
-                deterministic_review,
-                fallback_hazard=hazard,
-            )
-            return self._custom_hazard_title_clarification_step(
-                session_id,
-                session,
-                hazard=hazard,
-                review=deterministic_review,
-            )
-
-        if deterministic_review is not None and not bool(deterministic_review.get("valid")):
-            if str(deterministic_review.get("validation_code") or "") == "personal_preference":
-                reason = str(deterministic_review.get("reason") or "This reads as a personal preference or opinion, not a policy hazard.")
-                self._mark_custom_hazard_dimension(
-                    session,
-                    self._custom_hazard_rejection_dimension(reason),
-                    status="REJECTED",
-                    score=0,
-                    reason=reason,
-                )
-                return self._custom_hazard_input_quality_rejection_response(
-                    session_id,
-                    session,
-                    reason=reason,
-                )
-            return self._custom_hazard_title_rejection_response(
-                session_id,
-                session,
-                hazard=hazard,
-                review=deterministic_review,
-                dimension=self._custom_hazard_rejection_dimension(
-                    str(deterministic_review.get("reason") or "")
-                ),
-            )
-
-        sector_mismatch_reason = self._custom_hazard_sector_mismatch_reason(
-            session,
-            hazard,
-        )
-        if sector_mismatch_reason:
-            return self._custom_hazard_title_rejection_response(
-                session_id,
-                session,
-                hazard=hazard,
-                review={
-                    "status": "invalid",
-                    "valid": False,
-                    "validation_code": "sector_mismatch",
-                    "reason": sector_mismatch_reason,
-                    "confidence": 0.95,
-                    "suggested_rewrite": self._custom_hazard_sector_rewrite_suggestion(
-                        session,
-                        hazard,
-                    ),
-                },
-                dimension="selected_sector_fit",
-            )
-
-        if deterministic_review is not None and bool(deterministic_review.get("valid")):
-            resolved_hazard = self._store_custom_hazard_title_review(
-                session,
-                deterministic_review,
-                fallback_hazard=hazard,
-            )
-            return await self._continue_valid_custom_hazard(
-                session_id,
-                session,
-                resolved_hazard,
-            )
-
-        hazard_review = await self._review_custom_hazard_input(session, hazard)
-        if hazard_review is None:
-            return self._custom_hazard_response(
-                session_id=session_id,
-                session=session,
-                step="hazards",
-                bot_message=(
-                    "I could not review this hazard for clarity and policy fit because "
-                    "the local LLM is unavailable. Please try again."
-                ),
-                options=HAZARD_ENTRY_OPTIONS,
-                error=True,
-            )
-        title_status = self._custom_hazard_title_status(hazard_review)
-        if title_status == "invalid":
-            return self._custom_hazard_title_rejection_response(
-                session_id,
-                session,
-                hazard=hazard,
-                review=hazard_review,
-            )
-        if title_status == "needs_clarification":
-            self._store_custom_hazard_title_review(
-                session,
-                hazard_review,
-                fallback_hazard=hazard,
-            )
-            return self._custom_hazard_title_clarification_step(
-                session_id,
-                session,
-                hazard=hazard,
-                review=hazard_review,
-            )
-
-        resolved_hazard = self._store_custom_hazard_title_review(
-            session,
-            hazard_review,
-            fallback_hazard=hazard,
-        )
-        return await self._continue_valid_custom_hazard(session_id, session, resolved_hazard)
+        # Semantic fit belongs to the ordered dimension workflow. At this point
+        # only basic text quality has passed; policy-objective fit must be the
+        # first substantive validation performed.
+        return await self._continue_valid_custom_hazard(session_id, session, hazard)
 
     async def _handle_custom_hazard_title_clarification(
         self, session_id: str, session: ChatSession, message: str
@@ -758,12 +629,80 @@ class ChatCustomHazardInputMixin:
             "sector": session.sector,
         }
 
+    @staticmethod
+    def _clear_replaced_policy_reference_validation(
+        session: ChatSession,
+        state: dict[str, object],
+    ) -> None:
+        dimensions = state.get("dimension_scores")
+        if isinstance(dimensions, dict):
+            dimensions.pop("twin_transition_policy_fit", None)
+
+        removed_answers: set[str] = set()
+        retained_clarifications: list[object] = []
+        policy_question_markers = (
+            "specific provisions",
+            "supplied policy",
+            "policy document",
+            "policy hazard",
+        )
+        for clarification in state.get("clarifications") or []:
+            if not isinstance(clarification, dict):
+                retained_clarifications.append(clarification)
+                continue
+            questions = " ".join(
+                str(question) for question in clarification.get("questions") or []
+            )
+            is_policy_clarification = (
+                clarification.get("dimension") == "twin_transition_policy_fit"
+                or any(
+                    marker in normalize_for_match(questions)
+                    for marker in policy_question_markers
+                )
+            )
+            if is_policy_clarification:
+                answer = normalize_for_match(str(clarification.get("answer") or ""))
+                if answer:
+                    removed_answers.add(answer)
+            else:
+                retained_clarifications.append(clarification)
+
+        state["clarifications"] = retained_clarifications
+        if normalize_for_match(str(state.get("reason") or "")) in removed_answers:
+            state["reason"] = ""
+            session.pending_hazard_reason = None
+        state["linkage_analysis"] = {}
+        state["active_validation_dimension"] = "twin_transition_policy_fit"
+        state["active_validation_dimensions"] = ["twin_transition_policy_fit"]
+        state["pending_clarification_questions"] = []
+
+    def _discard_submitted_policy_reference(
+        self,
+        session: ChatSession,
+        state: dict[str, object],
+        document_ids: list[str],
+    ) -> None:
+        if not document_ids:
+            return
+        retained_document_ids = list(state.get("policy_reference_document_ids") or [])
+        try:
+            state["policy_reference_document_ids"] = document_ids
+            self._discard_temporary_policy_references(session)
+        finally:
+            state["policy_reference_document_ids"] = retained_document_ids
+
     async def _handle_custom_hazard_clarification(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        exact_label = exact_option_label(message, HAZARD_ENTRY_OPTIONS)
+        exact_label = exact_option_label(
+            message,
+            CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+        )
         if exact_label is None:
-            fuzzy_label = match_option_label(message, HAZARD_ENTRY_OPTIONS)
+            fuzzy_label = match_option_label(
+                message,
+                CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+            )
             if fuzzy_label is not None:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
         if normalize(exact_label or message) == normalize("Go back to list of hazards"):
@@ -780,6 +719,21 @@ class ChatCustomHazardInputMixin:
         answer = message.strip()
         if session.phase == "custom_hazard_clarification":
             state = self._custom_hazard_state(session)
+            if (
+                normalize(exact_label or answer) == normalize("Add a Policy Reference")
+                and state.get("policy_reference_available")
+                and state.get("active_validation_dimension")
+                == "twin_transition_policy_fit"
+            ):
+                state["replacing_policy_reference"] = True
+                return self._custom_hazard_policy_reference_step(
+                    session_id,
+                    session,
+                    detail=(
+                        "Provide a new policy URL or file. The current reference will be "
+                        "discarded after the replacement is successfully read."
+                    ),
+                )
             if state.get("awaiting_policy_reference"):
                 if (
                     "Policy reference error:" in answer
@@ -816,17 +770,67 @@ class ChatCustomHazardInputMixin:
                         error=True,
                         detail="No readable text could be extracted from that policy document.",
                     )
+                policy_relevance = await validate_policy_reference_twin_transition(
+                    policy_context
+                )
+                if policy_relevance is None:
+                    self._discard_submitted_policy_reference(
+                        session,
+                        state,
+                        document_ids,
+                    )
+                    return self._custom_hazard_policy_reference_step(
+                        session_id,
+                        session,
+                        error=True,
+                        detail=(
+                            "I could not verify whether that document is related to the "
+                            "twin transition. Please try the URL or file again."
+                        ),
+                    )
+                if not policy_relevance["related"]:
+                    self._discard_submitted_policy_reference(
+                        session,
+                        state,
+                        document_ids,
+                    )
+                    return self._custom_hazard_policy_reference_step(
+                        session_id,
+                        session,
+                        error=True,
+                        detail=(
+                            "This document does not appear to be related to a green, "
+                            "digital, or twin transition. Please provide a different "
+                            "policy URL or file."
+                        ),
+                    )
                 reference_match = re.search(
                     r"^Policy reference (?:URL|file):\s*(.+)$",
                     answer,
                     flags=re.IGNORECASE | re.MULTILINE,
                 )
+                if state.get("replacing_policy_reference"):
+                    old_document_ids = [
+                        str(document_id).strip()
+                        for document_id in state.get("policy_reference_document_ids") or []
+                        if str(document_id).strip()
+                    ]
+                    obsolete_document_ids = [
+                        document_id
+                        for document_id in old_document_ids
+                        if document_id not in document_ids
+                    ]
+                    if obsolete_document_ids:
+                        state["policy_reference_document_ids"] = obsolete_document_ids
+                        self._discard_temporary_policy_references(session)
+                    self._clear_replaced_policy_reference_validation(session, state)
                 state["policy_reference"] = (
                     reference_match.group(1).strip() if reference_match else "Provided policy document"
                 )
                 state["policy_reference_document_ids"] = document_ids
                 state["policy_reference_available"] = True
                 state["awaiting_policy_reference"] = False
+                state["replacing_policy_reference"] = False
                 state["show_policy_hazard_causal_linkage"] = True
                 state["message"] = "Twin-transition policy fit was analysed against the supplied policy document."
                 transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
@@ -838,6 +842,7 @@ class ChatCustomHazardInputMixin:
                 {
                     "questions": list(state.get("pending_clarification_questions") or []),
                     "answer": answer,
+                    "dimension": str(state.get("active_validation_dimension") or ""),
                 }
             )
             state["clarifications"] = clarifications
@@ -1025,32 +1030,6 @@ class ChatCustomHazardInputMixin:
         *,
         clarification: str | None = None,
     ) -> ChatResponse:
-        sector_mismatch_reason = self._custom_hazard_sector_mismatch_reason(
-            session,
-            hazard,
-        )
-        if sector_mismatch_reason:
-            session.pending_hazard = None
-            return ChatResponse(
-                session_id=session_id,
-                step="hazards",
-                bot_message=render_message(
-                    "hazard_rewrite_required.md",
-                    hazard=hazard,
-                    reason=sector_mismatch_reason,
-                    rewrite_suggestion=self._custom_hazard_sector_rewrite_suggestion(
-                        session,
-                        hazard,
-                    ),
-                    suggestions="",
-                    has_suggestions=False,
-                ),
-                options=HAZARD_ENTRY_OPTIONS,
-                session=session.summary(),
-                input_mode="textarea",
-                error=True,
-            )
-
         existing_hazard = self._match_hazard(hazard, session)
         if existing_hazard is not None:
             return self._hazard_duplicate_suggestion_step(

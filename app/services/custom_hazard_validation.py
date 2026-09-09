@@ -35,6 +35,19 @@ DIMENSION_WEIGHTS = {
     CustomHazardDimension.AFFECTED_GROUPS_FIT.value: 0.15,
 }
 
+DIMENSION_SEQUENCE = tuple(DIMENSION_WEIGHTS)
+
+DIMENSION_STAGES = (
+    (CustomHazardDimension.POLICY_OBJECTIVE_FIT.value,),
+    (CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value,),
+    (
+        CustomHazardDimension.HAZARD_DEFINITION_FIT.value,
+        CustomHazardDimension.SELECTED_SECTOR_FIT.value,
+        CustomHazardDimension.COUNTRY_REGION_FIT.value,
+    ),
+    (CustomHazardDimension.AFFECTED_GROUPS_FIT.value,),
+)
+
 CRITICAL_DIMENSIONS = (
     CustomHazardDimension.POLICY_OBJECTIVE_FIT.value,
     CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value,
@@ -65,6 +78,115 @@ SCORE_PARTIAL = 6
 SCORE_WEAK = 4
 SCORE_POOR = 3
 
+
+async def validate_policy_reference_twin_transition(
+    policy_reference_context: str,
+) -> dict[str, Any] | None:
+    """Classify the document itself before using it as a policy reference."""
+    content = str(policy_reference_context or "").strip()
+    if not content:
+        return {
+            "related": False,
+            "reason": "No readable policy content was supplied.",
+        }
+
+    system = load_nested_prompt_file(
+        "llm/policy_reference_twin_transition_validation.txt"
+    )
+    user = json.dumps(
+        {
+            "policy_reference_content": content[:24000],
+            "required_output_schema": {
+                "related": False,
+                "reason": "",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    try:
+        response = await ask_llm_chat(
+            context=system,
+            messages=[{"role": "user", "content": user}],
+            temperature=0.0,
+            max_tokens=300,
+        )
+    except Exception:
+        return _heuristic_policy_reference_twin_transition(content)
+
+    if is_llm_unavailable_response(response):
+        return _heuristic_policy_reference_twin_transition(content)
+    result = parse_json_object(response)
+    if not isinstance(result, dict) or not isinstance(result.get("related"), bool):
+        return _heuristic_policy_reference_twin_transition(content)
+    return {
+        "related": result["related"],
+        "reason": re.sub(r"\s+", " ", str(result.get("reason") or "")).strip()[:500],
+    }
+
+
+def _heuristic_policy_reference_twin_transition(content: str) -> dict[str, Any]:
+    normalized = normalize_for_match(content)
+    transition_terms = {
+        "green transition",
+        "digital transition",
+        "twin transition",
+        "climate change",
+        "climate adaptation",
+        "climate mitigation",
+        "decarbonisation",
+        "decarbonization",
+        "renewable energy",
+        "clean energy",
+        "energy efficiency",
+        "energy transition",
+        "circular economy",
+        "sustainable housing",
+        "sustainable transport",
+        "electric vehicle",
+        "zero emission",
+        "digitalisation",
+        "digitalization",
+        "digital transformation",
+        "artificial intelligence",
+        "data governance",
+        "digital public service",
+        "broadband",
+        "automation",
+        "smart grid",
+    }
+    policy_terms = {
+        "policy",
+        "regulation",
+        "regulatory",
+        "directive",
+        "legislation",
+        "law",
+        "strategy",
+        "programme",
+        "program",
+        "action plan",
+        "implementation",
+        "requirement",
+        "mandate",
+        "target",
+        "subsidy",
+        "governance",
+    }
+    related = _contains_any_term(normalized, transition_terms) and _contains_any_term(
+        normalized,
+        policy_terms,
+    )
+    return {
+        "related": related,
+        "reason": (
+            "The readable content contains both transition and policy signals."
+            if related
+            else "The readable content does not establish a green, digital, or twin-transition policy context."
+        ),
+    }
+
+
 def default_custom_hazard_state() -> dict[str, Any]:
     return {
         "raw_text": "",
@@ -88,10 +210,15 @@ def default_custom_hazard_state() -> dict[str, Any]:
         "policy_reference": "",
         "policy_reference_document_ids": [],
         "policy_reference_available": False,
+        "replacing_policy_reference": False,
         "linkage_analysis": {},
         "detected_sector": None,
         "negative_consequence": None,
         "validation_round": 0,
+        "active_validation_dimension": CustomHazardDimension.POLICY_OBJECTIVE_FIT.value,
+        "active_validation_dimensions": [
+            CustomHazardDimension.POLICY_OBJECTIVE_FIT.value
+        ],
         "scores": [],
         "dimension_scores": {},
         "clarifications": [],
@@ -117,8 +244,11 @@ async def validate_custom_hazard_dimensions(
     validation_mode: str = "strict",
     policy_reference_context: str = "",
     evidence_context: str = "",
+    dimensions_to_validate: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
     state = _merged_state(previous_state)
+    requested_dimensions = _requested_dimensions(dimensions_to_validate)
+    staged_validation = dimensions_to_validate is not None
     raw_hazard_text = str(hazard_text or "").strip()
 
     # If the user edits the hazard after overriding a duplicate warning, the
@@ -137,6 +267,8 @@ async def validate_custom_hazard_dimensions(
         policy_reference_context,
         evidence_context,
     )
+    if staged_validation:
+        _limit_validation_to_dimensions(heuristic_result, requested_dimensions)
 
     llm_result = await _llm_dimension_validation(
         hazard_text,
@@ -146,19 +278,39 @@ async def validate_custom_hazard_dimensions(
         state,
         policy_reference_context,
         evidence_context,
+        requested_dimensions,
     )
-    result = _coerce_validation_result(llm_result) if llm_result else None
+    result = (
+        _coerce_validation_result(llm_result, requested_dimensions)
+        if llm_result
+        else None
+    )
     if result is None:
         result = heuristic_result
     else:
         result = _merge_llm_with_heuristic_guardrails(result, heuristic_result)
+    if (
+        CustomHazardDimension.POLICY_OBJECTIVE_FIT.value in requested_dimensions
+        and _objective_result_requests_policy_reference(result)
+    ):
+        heuristic_objective = heuristic_result.get("dimension_scores", {}).get(
+            CustomHazardDimension.POLICY_OBJECTIVE_FIT.value
+        )
+        if isinstance(heuristic_objective, dict):
+            result.setdefault("dimension_scores", {})[
+                CustomHazardDimension.POLICY_OBJECTIVE_FIT.value
+            ] = heuristic_objective
     _enforce_linkage_content_guardrails(
         result,
         has_policy_reference=bool(policy_reference_context.strip()),
         has_evidence=bool(evidence_context.strip()),
     )
 
-    if not policy_reference_context.strip():
+    if (
+        CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value
+        in requested_dimensions
+        and not policy_reference_context.strip()
+    ):
         result.setdefault("dimension_scores", {})[
             CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value
         ] = _score_payload(
@@ -166,6 +318,25 @@ async def validate_custom_hazard_dimensions(
             "A policy document must be provided before twin-transition policy fit can be analysed.",
             "Provide the twin-transition policy document as a URL or file.",
         )
+
+    if staged_validation:
+        current_dimensions = state.get("dimension_scores")
+        merged_dimensions = (
+            dict(current_dimensions) if isinstance(current_dimensions, dict) else {}
+        )
+        minimum_score = _validation_thresholds(validation_mode)["dimension_floor"]
+        for key, item in (result.get("dimension_scores") or {}).items():
+            current_item = merged_dimensions.get(key)
+            # Staged follow-up passes (especially evidence-linkage analysis)
+            # may inspect all context again, but a completed dimension is an
+            # established workflow decision. Only an explicit state reset,
+            # such as replacing the policy reference, may make it mutable.
+            if _dimension_result_is_supported(current_item, minimum_score):
+                continue
+            merged_dimensions[key] = item
+        for key in DIMENSION_SEQUENCE:
+            merged_dimensions.setdefault(key, _deferred_dimension())
+        result["dimension_scores"] = merged_dimensions
 
     _ensure_dimension_reasons(result)
 
@@ -179,7 +350,11 @@ async def validate_custom_hazard_dimensions(
         dimensions,
         _validation_thresholds(validation_mode)["dimension_floor"],
     )
-    if core_supported:
+    should_evaluate_groups = (
+        not staged_validation
+        or CustomHazardDimension.AFFECTED_GROUPS_FIT.value in requested_dimensions
+    )
+    if core_supported and should_evaluate_groups:
         explicitly_identified_groups = _dedupe_groups(
             [
                 *_extract_affected_groups(hazard_text),
@@ -226,7 +401,7 @@ async def validate_custom_hazard_dimensions(
             )
         # Extraction establishes candidate groups, not user approval. Only the
         # affected-groups review handler may populate confirmed_affected_groups.
-    else:
+    elif not core_supported:
         # Affected populations are deliberately evaluated only after the five
         # mandatory grounding dimensions have passed.
         result["affected_groups"] = []
@@ -241,6 +416,11 @@ async def validate_custom_hazard_dimensions(
             "clarification_question": "",
             "status": "DEFERRED",
         }
+    else:
+        result["affected_groups"] = list(state.get("affected_groups") or [])
+        dimensions["affected_groups_fit"] = _deferred_dimension(
+            "Affected population groups will be checked after the mandatory dimensions."
+        )
 
     result["overall_score"] = _overall_score(result.get("dimension_scores", {}))
     result["confidence"] = _overall_confidence(result).value
@@ -318,6 +498,7 @@ async def _llm_dimension_validation(
     state: dict[str, Any],
     policy_reference_context: str = "",
     evidence_context: str = "",
+    requested_dimensions: tuple[str, ...] = DIMENSION_SEQUENCE,
 ) -> dict[str, Any] | None:
     hazard_text = (hazard_text or "").strip()
     selected_sector = (selected_sector or "").strip()
@@ -329,10 +510,30 @@ async def _llm_dimension_validation(
         return None
 
     system = load_nested_prompt_file("llm/custom_hazard_dimension_validation.txt")
-    system += """
+    requested_labels = ", ".join(
+        DIMENSION_TITLES[key] for key in requested_dimensions
+    )
+    objective_only = requested_dimensions == (
+        CustomHazardDimension.POLICY_OBJECTIVE_FIT.value,
+    )
+    if objective_only:
+        system += f"""
+
+Policy-objective validation stage:
+- Evaluate only this requested dimension: {requested_labels}.
+- Compare the submitted hazard directly with the supplied predefined sector policy objective and the selected country, region, and sector context.
+- Decide whether the hazard is a plausible adverse consequence of pursuing that objective. The hazard need not repeat the objective verbatim.
+- The predefined sector objective is authoritative application context for this stage. No policy document, policy reference, evidence source, URL, upload, or file path is required.
+- Never request or mention missing policy-reference content.
+- Do not evaluate document-level causal linkage, twin-transition policy fit, hazard definition, sector fit, country fit, or affected groups in this call.
+- If clarification is required, ask only how pursuing the predefined sector policy objective could cause or worsen the submitted hazard.
+"""
+    else:
+        system += f"""
 
 Validation order and application-context rules:
-- Evaluate the five mandatory dimensions in this order: policy objective fit, twin-transition policy fit, hazard definition, selected sector fit, and country fit. Keep using the country_region_fit output key, but do not assess regional fit in that dimension.
+- Evaluate only these requested dimensions in this call: {requested_labels}. Do not evaluate, score, or comment on any other dimension.
+- Across calls, the workflow evaluates policy objective fit, twin-transition policy fit, hazard definition, selected sector fit, country fit, and affected groups in that order. Keep using the country_region_fit output key, but do not assess regional fit in that dimension.
 - Policy objective fit is distinct from general twin-transition policy fit. Determine whether the hazard is a plausible adverse consequence of pursuing the supplied sector policy objective.
 - For twin-transition policy fit, inspect the supplied policy-reference content itself. Identify the causal linkage between the policy's provisions and the hazard, and explicitly describe any policy-hazard mismatch.
 - Populate twin_transition_policy_fit.causal_linkage only when the document supports a defensible chain from a specific policy provision, through an intermediate mechanism, to the hazard impact. Use the form "policy provision -> intermediate mechanism -> hazard impact" and leave it empty when no such chain is found.
@@ -356,15 +557,14 @@ Validation order and application-context rules:
         "selected_sector_policy_objective": policy_objective,
         "custom_hazard_text": hazard_text,
         "hazard_statement": _hazard_title_from_grounding_text(hazard_text),
-        "policy_reference_content": policy_reference_context[:24000]
-        or "Not provided",
-        "evidence_content": evidence_context[:24000] or "Not provided",
         "previous_clarifications": state.get("clarifications", []),
         "current_affected_groups": state.get("affected_groups", []),
-        "dimensions": list(DIMENSION_WEIGHTS.keys()),
+        "dimensions": list(requested_dimensions),
         "scoring": {
             "score_range": "0-10 per dimension",
-            "weights": DIMENSION_WEIGHTS,
+            "weights": {
+                key: DIMENSION_WEIGHTS[key] for key in requested_dimensions
+            },
             "overall_score": "weighted score converted to 0-100",
         },
         "required_output_schema": {
@@ -447,6 +647,21 @@ Validation order and application-context rules:
             "clarification_questions": [],
         },
     }
+    if not objective_only:
+        payload["policy_reference_content"] = (
+            policy_reference_context[:24000] or "Not provided"
+        )
+        payload["evidence_content"] = evidence_context[:24000] or "Not provided"
+    schema_dimensions = payload["required_output_schema"]["dimension_scores"]
+    payload["required_output_schema"]["dimension_scores"] = {
+        key: schema_dimensions[key] for key in requested_dimensions
+    }
+    if (
+        CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value
+        not in requested_dimensions
+        and not evidence_context.strip()
+    ):
+        payload["required_output_schema"].pop("linkage_analysis", None)
 
     user = render_prompt_template(
         "llm/custom_hazard_dimension_validation_user.txt",
@@ -786,7 +1001,10 @@ def _merged_state(previous_state: dict[str, Any] | None) -> dict[str, Any]:
     return state
 
 
-def _coerce_validation_result(value: dict[str, Any] | None) -> dict[str, Any] | None:
+def _coerce_validation_result(
+    value: dict[str, Any] | None,
+    requested_dimensions: tuple[str, ...] = DIMENSION_SEQUENCE,
+) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     dimensions = value.get("dimension_scores")
@@ -799,7 +1017,7 @@ def _coerce_validation_result(value: dict[str, Any] | None) -> dict[str, Any] | 
         "linkage_analysis": {},
     }
     fallback_score = _fallback_dimension_score(dimensions)
-    for key in DIMENSION_WEIGHTS:
+    for key in requested_dimensions:
         item = dimensions.get(key)
         if not isinstance(item, dict):
             if key == CustomHazardDimension.POLICY_OBJECTIVE_FIT.value:
@@ -863,6 +1081,43 @@ def _coerce_validation_result(value: dict[str, Any] | None) -> dict[str, Any] | 
                 ).strip()[:800],
             }
     return coerced
+
+
+def _requested_dimensions(
+    dimensions: tuple[str, ...] | list[str] | None,
+) -> tuple[str, ...]:
+    if dimensions is None:
+        return DIMENSION_SEQUENCE
+    requested = tuple(key for key in DIMENSION_SEQUENCE if key in dimensions)
+    if not requested:
+        raise ValueError("At least one recognized custom-hazard dimension is required.")
+    return requested
+
+
+def _limit_validation_to_dimensions(
+    result: dict[str, Any],
+    requested_dimensions: tuple[str, ...],
+) -> None:
+    dimensions = result.get("dimension_scores")
+    if isinstance(dimensions, dict):
+        result["dimension_scores"] = {
+            key: dimensions[key]
+            for key in requested_dimensions
+            if key in dimensions
+        }
+
+
+def _deferred_dimension(
+    reason: str = "This dimension has not been checked yet.",
+) -> dict[str, Any]:
+    return {
+        "score": 0,
+        "reason": reason,
+        "confidence": ConfidenceLevel.LOW.value,
+        "needs_clarification": False,
+        "clarification_question": "",
+        "status": "DEFERRED",
+    }
 
 
 def _score_payload(score: int, reason: str, question: str) -> dict[str, Any]:
@@ -958,9 +1213,20 @@ def _dimension_needs_clarification(dimensions: dict[str, Any], key: str) -> bool
 
 def _core_dimensions_supported(dimensions: dict[str, Any], minimum_score: int) -> bool:
     return all(
-        _dimension_score(dimensions, key) >= minimum_score
-        and not _dimension_needs_clarification(dimensions, key)
+        _dimension_result_is_supported(dimensions.get(key), minimum_score)
         for key in CRITICAL_DIMENSIONS
+    )
+
+
+def _dimension_result_is_supported(item: object, minimum_score: int) -> bool:
+    if not isinstance(item, dict):
+        return False
+    status = str(item.get("status") or "").strip().upper()
+    if status in {"REJECTED", "INSUFFICIENT INFO"}:
+        return False
+    return (
+        _clamp_score(item.get("score")) >= minimum_score
+        and not bool(item.get("needs_clarification"))
     )
 
 
@@ -1022,18 +1288,20 @@ def _dimension_card(
     needs = bool(item.get("needs_clarification")) if isinstance(item, dict) else True
     explicit_status = str(item.get("status") or "").strip().upper() if isinstance(item, dict) else ""
     below_floor = raw_score < minimum_score
-    if explicit_status in {"REJECTED", "INSUFFICIENT INFO"}:
+    if explicit_status == "DEFERRED":
+        status = "DEFERRED"
+    elif explicit_status in {"REJECTED", "INSUFFICIENT INFO"}:
         status = explicit_status
     elif needs or below_floor:
         status = "NEEDS CLARIFICATION"
     else:
         status = explicit_status or "SUPPORTED"
-    if raw_score == 0:
+    if raw_score == 0 and explicit_status != "DEFERRED":
         status = explicit_status or "INSUFFICIENT INFO"
     return {
         "title": DIMENSION_TITLES[key],
         "status": status,
-        "score": score,
+        "score": None if explicit_status == "DEFERRED" else score,
         "confidence": _coerce_confidence(
             item.get("confidence") if isinstance(item, dict) else None,
             raw_score,
@@ -1431,6 +1699,35 @@ def _contextual_result_only_requests_reconfirmation(item: dict[str, Any]) -> boo
         "required details",
     )
     return any(term in reason for term in missing_context_terms)
+
+
+def _objective_result_requests_policy_reference(result: dict[str, Any]) -> bool:
+    dimensions = result.get("dimension_scores")
+    objective = (
+        dimensions.get(CustomHazardDimension.POLICY_OBJECTIVE_FIT.value)
+        if isinstance(dimensions, dict)
+        else None
+    )
+    if not isinstance(objective, dict):
+        return False
+    response_text = normalize_for_match(
+        " ".join(
+            (
+                str(objective.get("reason") or ""),
+                str(objective.get("clarification_question") or ""),
+            )
+        )
+    )
+    forbidden_phrases = (
+        "policy reference",
+        "reference content",
+        "policy document",
+        "document url",
+        "file path",
+        "upload a file",
+        "upload the file",
+    )
+    return any(phrase in response_text for phrase in forbidden_phrases)
 
 
 def _reset_duplicate_override_if_hazard_changed(

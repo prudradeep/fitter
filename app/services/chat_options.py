@@ -37,6 +37,11 @@ HAZARD_ENTRY_OPTIONS = [
     Option(id=1, label="Go back to list of hazards"),
 ]
 
+CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS = [
+    *HAZARD_ENTRY_OPTIONS,
+    Option(id=2, label="Add a Policy Reference"),
+]
+
 HAZARD_EVIDENCE_INPUT_OPTIONS = [
     Option(id=1, label="Go back to list of hazards"),
     Option(id=2, label="Skip"),

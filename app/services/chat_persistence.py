@@ -72,17 +72,18 @@ class ChatPersistenceMixin:
         self, session_id: str, session: ChatSession, response: ChatResponse
     ) -> None:
         if isinstance(session.custom_hazard, dict):
-            # Show the technical grounding report only while explaining a
-            # custom-hazard validation rejection or clarification. Keep the
-            # validation state in the session for later processing, but do not
-            # attach this panel to every subsequent hazard-flow response.
-            show_grounding_status = response.step in {
-                "custom_hazard_clarification",
-                "custom_hazard_evidence_decision",
-                "custom_hazard_evidence",
-                "hazard_evidence_decision",
-                "hazard_evidence",
-            }
+            # Keep the grounding report visible throughout custom-hazard
+            # creation so completed and deferred checks remain transparent at
+            # the policy-reference, evidence, population, and review steps.
+            show_grounding_status = (
+                response.step.startswith("custom_hazard_")
+                or response.step
+                in {
+                    "hazard_evidence_decision",
+                    "hazard_evidence",
+                    "hazard_population_region_comparison_result",
+                }
+            )
             if show_grounding_status:
                 response.validation_details = response.validation_details or custom_hazard_validation_details(
                     session.custom_hazard
