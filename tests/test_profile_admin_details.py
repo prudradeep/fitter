@@ -27,6 +27,8 @@ class ProfileAdminDetailsTests(unittest.TestCase):
 
         self.assertIn("Low-income households", html)
         self.assertIn("More exposed to energy affordability risks.", html)
+        self.assertIn("Proposed Eurostat dataset: edat_lfse_22 (mocked)", html)
+        self.assertIn("Proposed indicator label: Mock indicator for Low-income households", html)
         self.assertNotIn("Reference:", html)
         self.assertNotIn("Plain-English:", html)
         self.assertNotIn("Mapped target population:", html)
@@ -42,6 +44,28 @@ class ProfileAdminDetailsTests(unittest.TestCase):
         self.assertIn("Plain-English:", html)
         self.assertIn("Mapped target population:", html)
         self.assertIn("Eurostat population lookup:", html)
+        self.assertLess(html.index("Proposed Eurostat dataset:"), html.index("Reference:"))
+
+    def test_hazard_profile_uses_proposed_indicator_metadata_when_available(self):
+        service = ChatService.__new__(ChatService)
+        service.is_admin = False
+        profile = {
+            **PROFILE,
+            "metadata": {
+                "indicator_mapping": {
+                    "proposed_eurostat_dataset": "ilc_li41",
+                    "proposed_indicator_label": "At-risk-of-poverty rate by NUTS 2 region",
+                }
+            },
+        }
+
+        html = service._format_hazard_profiles_markdown("Energy poverty", [profile])
+
+        self.assertIn("Proposed Eurostat dataset: ilc_li41", html)
+        self.assertIn(
+            "Proposed indicator label: At-risk-of-poverty rate by NUTS 2 region",
+            html,
+        )
 
     def test_hazard_overview_formatter_hides_admin_details_by_default(self):
         session = ChatSession(
@@ -55,6 +79,8 @@ class ProfileAdminDetailsTests(unittest.TestCase):
         html = format_hazards(session)
 
         self.assertIn("Low-income households", html)
+        self.assertIn("Proposed Eurostat dataset: edat_lfse_22 (mocked)", html)
+        self.assertIn("Proposed indicator label: Mock indicator for Low-income households", html)
         self.assertNotIn("Reference:", html)
         self.assertNotIn("Mapped target population:", html)
         self.assertNotIn("Eurostat population lookup:", html)
@@ -111,6 +137,17 @@ class ProfileAdminDetailsTests(unittest.TestCase):
         self.assertIn('data-metric="effect_size"', message)
         self.assertIn('data-source-key="more_pollution_exposure"', message)
         self.assertIn('data-hazard-name="More pollution exposure"', message)
+
+    def test_hazard_overview_shows_sector_survey_respondent_count(self):
+        message = render_message(
+            "hazards_overview.md",
+            sector="Energy",
+            region="Bavaria",
+            survey_count=407,
+            hazards="",
+        )
+
+        self.assertIn("Number of people responded in the survey: <strong>407</strong>.", message)
 
     def test_hazard_intro_note_styles_survive_message_sanitizing(self):
         session = ChatSession(

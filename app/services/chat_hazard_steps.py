@@ -18,6 +18,7 @@ from app.services.chat_session import ChatSession
 from app.services.custom_hazard_validation import default_custom_hazard_state
 from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.enums import ChatPhase
+from app.services.hazard_salience import survey_respondent_count
 from app.services.message_renderer import render_message
 
 
@@ -52,6 +53,7 @@ class ChatHazardStepsMixin:
                 country=session.country,
                 region=session.region,
                 sector=session.sector,
+                survey_count=survey_respondent_count(sector=session.sector or ""),
                 hazards=format_hazards(
                     session,
                     show_admin_details=bool(getattr(self, "is_admin", False)),

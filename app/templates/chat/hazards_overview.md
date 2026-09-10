@@ -5,6 +5,7 @@
 
 
 These are the following hazards as per the sectoral survey carried out across 6 case study countries in Europe. The survey results are augmented with data for **{{ region }}** to show the effects of the hazards at regional level.
+{% if survey_count is defined %}Number of people responded in the survey: **{{ survey_count }}**.{% endif %}
 
 {{ hazards }}
 

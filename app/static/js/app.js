@@ -3920,6 +3920,15 @@ function renderHazardMetricData(payload = {}) {
   hazardMetricDataDialogBody.appendChild(
     createElement("p", { className: "metric-data-summary", text: summary }),
   );
+  if (Number.isInteger(payload.respondent_count)) {
+    hazardMetricDataDialogBody.appendChild(
+      createElement("p", {
+        className: "metric-data-summary",
+        text: `Number of people responded in the survey: ${payload.respondent_count}.`,
+      }),
+    );
+  }
+  if (payload.show_table === false) return;
   if (!values.length) {
     hazardMetricDataDialogBody.appendChild(
       createElement("p", {
@@ -3981,7 +3990,6 @@ async function openHazardMetricDataDialog(button) {
   if (metric === "salience") {
     endpoint = "/api/hazard-salience";
     params.set("country", String(appState.currentSession?.country || ""));
-    params.set("region", String(appState.currentSession?.region || ""));
     params.set("hazard", sourceKey);
   } else {
     params.set("hazard", sourceKey);

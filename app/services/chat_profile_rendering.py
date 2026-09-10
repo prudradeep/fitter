@@ -2,6 +2,7 @@ import re
 from html import escape
 
 from app.services.chat_options import normalize_for_match
+from app.services.profile_indicator_mapping import proposed_indicator_details
 
 
 class ChatProfileRenderingMixin:
@@ -73,6 +74,7 @@ class ChatProfileRenderingMixin:
                 profile,
                 "population_lookup_labels",
             )
+            proposed_dataset, proposed_indicator_label = proposed_indicator_details(profile, name)
             rows.append(
                 {
                     "name": name,
@@ -82,6 +84,8 @@ class ChatProfileRenderingMixin:
                     "statistical_basis": str(profile.get("statistical_basis") or "").strip(),
                     "target_population_labels": target_population_labels,
                     "population_lookup_labels": population_lookup_labels,
+                    "proposed_eurostat_dataset": proposed_dataset,
+                    "proposed_indicator_label": proposed_indicator_label,
                     "regional": profile.get("regional_population_pct")
                     or profile.get("population_pct"),
                     "national": profile.get("national_population_pct"),
@@ -305,6 +309,12 @@ class ChatProfileRenderingMixin:
                 explanation = cls._strip_profile_admin_detail_lines(explanation)
             if explanation:
                 description_parts.append(explanation)
+            proposed_dataset = str(row.get("proposed_eurostat_dataset") or "").strip()
+            proposed_indicator_label = str(row.get("proposed_indicator_label") or "").strip()
+            if proposed_dataset:
+                description_parts.append(f"Proposed Eurostat dataset: {proposed_dataset}")
+            if proposed_indicator_label:
+                description_parts.append(f"Proposed indicator label: {proposed_indicator_label}")
             statistical_basis = str(row.get("statistical_basis") or "").strip()
             target_population_labels = row.get("target_population_labels")
             population_lookup_labels = row.get("population_lookup_labels")
@@ -407,6 +417,12 @@ class ChatProfileRenderingMixin:
                 explanation = cls._strip_profile_admin_detail_lines(explanation)
             if explanation:
                 description_parts.append(explanation)
+            proposed_dataset = str(row.get("proposed_eurostat_dataset") or "").strip()
+            proposed_indicator_label = str(row.get("proposed_indicator_label") or "").strip()
+            if proposed_dataset:
+                description_parts.append(f"Proposed Eurostat dataset: {proposed_dataset}")
+            if proposed_indicator_label:
+                description_parts.append(f"Proposed indicator label: {proposed_indicator_label}")
             if show_admin_details and row.get("statistical_basis"):
                 description_parts.append(
                     "Reference: " + str(row.get("statistical_basis") or "")

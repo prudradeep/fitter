@@ -35,7 +35,11 @@ from app.services.knowledge_base import (
     TEMPORARY_KB_SCOPE,
     KnowledgeBaseService,
 )
-from app.services.hazard_salience import country_hazard_salience, hazard_concern_rows
+from app.services.hazard_salience import (
+    country_hazard_salience,
+    hazard_concern_rows,
+    survey_respondent_count,
+)
 from app.services.prompt_loader import clear_prompt_caches
 from app.services.prompt_store import list_prompts, prompt_metadata, seed_prompts_from_files_for_session
 from app.services.rate_limit import record_failed_attempt, reset_rate_limit, retry_after_seconds
@@ -513,7 +517,6 @@ async def hazard_salience(
             country=country or "",
             sector=sector or "",
             hazard_column=hazard_column or "",
-            region=region,
         )
         if hazard_column
         else []
@@ -521,7 +524,12 @@ async def hazard_salience(
     return {
         "threshold": "> 12",
         "formula": "mean_concern * pct_high_concern / 100",
-        "salience": country_hazard_salience(country=country, sector=sector, region=region),
+        "respondent_count": survey_respondent_count(
+            sector=sector or "",
+            country=country,
+        ),
+        "show_table": False,
+        "salience": country_hazard_salience(country=country, sector=sector),
         "calculation_data": {
             "region_column": "Region",
             "regions": [row["region"] for row in calculation_rows],

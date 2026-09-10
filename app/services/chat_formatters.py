@@ -4,6 +4,7 @@ from html import escape
 from urllib.parse import urlsplit
 
 from app.services.chat_session import ChatSession
+from app.services.profile_indicator_mapping import proposed_indicator_details
 
 
 ADDITIONAL_HAZARDS_INFO_TOOLTIP = (
@@ -215,8 +216,8 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
                 f"{_additional_hazards_methodology_cta()}"
                 "</h3>",
                 '<p class="hazard-group-intro hazard-group-intro--additional">'
-                "These hazards were identified by policy and subject-matter experts to "
-                "complement the sectoral survey findings."
+                "These hazards were identified by policy and subject-matter experts "
+                "during the open labs under WP4."
                 "</p>",
                 format_additional_hazards(
                     session,
@@ -404,6 +405,7 @@ def _append_hazard_profiles(
             population_lookup_labels = []
         if not name:
             continue
+        proposed_dataset, proposed_indicator_label = proposed_indicator_details(profile, name)
         population = population_by_profile.get(normalize_markdown_text(name).casefold(), {})
         regional, national = _profile_population_values(profile, population, explanation)
         explanation = _without_population_sentence(explanation)
@@ -417,6 +419,8 @@ def _append_hazard_profiles(
                 "source": source,
                 "target_population_labels": target_population_labels,
                 "population_lookup_labels": population_lookup_labels,
+                "proposed_eurostat_dataset": proposed_dataset,
+                "proposed_indicator_label": proposed_indicator_label,
                 "regional": regional,
                 "national": national,
             }
@@ -660,6 +664,12 @@ def _render_profile_row(
         explanation = _strip_profile_admin_detail_lines(explanation)
     if explanation:
         description_parts.append(escape(explanation))
+    proposed_dataset = str(item.get("proposed_eurostat_dataset") or "").strip()
+    proposed_indicator_label = str(item.get("proposed_indicator_label") or "").strip()
+    if proposed_dataset:
+        description_parts.append(f"Proposed Eurostat dataset: {escape(proposed_dataset)}")
+    if proposed_indicator_label:
+        description_parts.append(f"Proposed indicator label: {escape(proposed_indicator_label)}")
     statistical_basis = str(item.get("statistical_basis") or "").strip()
     if show_admin_details and statistical_basis:
         description_parts.append(f"Reference: {escape(statistical_basis)}")

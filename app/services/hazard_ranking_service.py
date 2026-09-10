@@ -94,7 +94,6 @@ class HazardRankingService:
             for row in country_hazard_salience(
                 country=country_name,
                 sector=sector_name,
-                region=region.name if region else None,
             )
         }
         hazard_names = list(hazards or [])

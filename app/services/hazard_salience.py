@@ -95,7 +95,7 @@ def country_hazard_salience(
     sector_key = normalized_key(sector)
     rows = [
         row
-        for row in _hazard_salience(_region_filter_keys(country, region))
+        for row in _hazard_salience()
         if (not country_key or normalized_key(row.country) == country_key)
         and (not sector_key or normalized_key(row.sector) == sector_key)
     ]
@@ -132,7 +132,6 @@ def hazard_concern_rows(
     country_key = normalized_key(country)
     sector_key = normalized_key(sector)
     hazard_key = normalized_key(hazard_column)
-    region_keys = _region_filter_keys(country, region)
     if not country_key or not sector_key or not hazard_key:
         return []
 
@@ -155,8 +154,6 @@ def hazard_concern_rows(
             for record in reader:
                 if normalized_key(record.get("country")) != country_key:
                     continue
-                if region_keys and normalized_key(record.get("region")) not in region_keys:
-                    continue
                 value = optional_float(record.get(matched_column))
                 if value is not None:
                     rows.append(
@@ -166,6 +163,26 @@ def hazard_concern_rows(
                         }
                     )
     return rows
+
+
+@lru_cache(maxsize=64)
+def survey_respondent_count(*, sector: str, country: str | None = None) -> int:
+    """Count survey rows for a sector, optionally limited to one country."""
+    sector_key = normalized_key(sector)
+    country_key = normalized_key(country)
+    if not sector_key:
+        return 0
+
+    count = 0
+    for path in _df_csv_paths():
+        if normalized_key(_sector_from_filename(path)) != sector_key:
+            continue
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            for record in csv.DictReader(handle):
+                if country_key and normalized_key(record.get("country")) != country_key:
+                    continue
+                count += 1
+    return count
 
 
 def top_hazard_salience_by_country(limit: int = 3) -> dict[str, list[dict[str, object]]]:
