@@ -19,8 +19,8 @@ state and returns to `hazards`.
 
 ```text
 custom_hazard_input
-  -> deterministic title gates
-  -> optional LLM title review
+  -> text-quality gate
+  -> mandatory LLM ambiguity review and hazard extraction
   -> custom_hazard_title_clarification     (underspecified title only)
   -> duplicate check
   -> custom_hazard_dimension_check
@@ -40,21 +40,23 @@ nothing.
 
 `_capture_custom_hazard(session_id, session, message)` initializes
 `session.custom_hazard` with `default_custom_hazard_state()` for a non-empty
-title. The state contains the raw/resolved title, selected scope, validation
+title. The state keeps the complete user input in `raw_text` and the concise
+LLM-extracted hazard in `resolved_hazard_text`, along with selected scope, validation
 rounds, scores, clarifications, affected groups, duplicate candidates, status,
 and duplicate-override state.
 
 The title gates run in this order:
 
-1. `_plain_custom_hazard_rejection_reason(...)` rejects obvious
-   non-transition hazards.
-2. `deterministic_custom_hazard_input_review(...)` rejects questions, requests,
-   benefits, vague inputs, and other non-hazards; it can return
+1. Basic text-quality checks reject empty or meaningless input.
+2. `_review_custom_hazard_input(..., use_llm_for_title=True)` always checks for
+   ambiguous or overly general wording and returns `valid`, `invalid`, or
    `needs_clarification`.
-3. `_custom_hazard_sector_mismatch_reason(...)` rejects a mechanism belonging
-   mainly to another selected sector.
-4. `_review_custom_hazard_input(...)` is used when deterministic logic has not
-   decided the title. It returns `valid`, `invalid`, or `needs_clarification`.
+3. For valid context, the same review extracts one concise hazard containing the
+   concrete harm/risk, affected subject when stated, and causal condition when
+   stated. It excludes background narrative, policy commentary, evidence
+   discussion, and recommendations.
+4. Duplicate detection and every subsequent dimension use
+   `resolved_hazard_text`; `raw_text` remains available as internal context.
 
 An unavailable title-review model returns an error at the entry step. A rejected
 title returns a rewrite-required response and is not saved.
@@ -92,6 +94,18 @@ normal hazard/profile flow. `Edit custom hazard` clears the state and returns to
 title entry. The override survives later validation, but is reset if the title
 changes.
 
+## Free-text ambiguity rule
+
+Every free-text contribution in the custom-hazard flow is checked before it is
+accepted. This includes hazard and clarification text, reasons, evidence
+explanations, user-provided mechanisms and linkage revisions, affected-group
+edits and reasons, and summary revision instructions. Ambiguous or overly general
+wording repeats the current step with a targeted request for the missing detail.
+Confirmation buttons and other structured selections bypass this prose check.
+Evidence URLs, uploaded files, and stored document identifiers are validated from
+their extracted source content; accompanying user-written explanations are still
+checked as prose.
+
 ## 4. Dimension grounding
 
 `_start_custom_hazard_grounding_check(...)` sets:
@@ -110,7 +124,7 @@ The dimensions are:
 
 ```text
 Hazard definition fit
-Twin-transition policy fit
+Mechanism Fit
 Policy Objective Fit
 Selected sector fit
 Country / region fit
@@ -118,7 +132,7 @@ Affected population groups fit
 ```
 
 Strict mode requires overall score 75 and dimension floor 7. Easy mode requires
-45 and 3. Critical dimensions are hazard definition, twin-transition policy,
+45 and 3. Critical dimensions are hazard definition, mechanism fit,
 policy-objective fit, selected-sector fit, and country/region fit. Policy
 Objective Fit checks the hazard against the selected sector's defined objective:
 renewable-energy transition for Energy, climate adaptation for Housing, and
@@ -135,19 +149,31 @@ Only the first one or two unresolved grounding questions are shown. Answers in
 dimension check runs again. Repeated clarification questions return an error
 instead of silently advancing.
 
-## 5. Reason and evidence
+## 5. Evidence and mechanism confirmation
 
-When the router needs reason/evidence, the pending custom hazard uses:
+After objective fit is supported, the tool shows the extracted hazard and asks
+whether evidence is available. Supplied evidence is checked for material relevance
+to the hazard. Irrelevant evidence can be clarified or replaced. Before fetching an
+evidence URL, the knowledge base checks for an accessible document with the same
+normalized URL. Existing chunks are reused without downloading, parsing, chunking,
+or embedding the source again.
 
 ```text
-add_hazard_reason
-  -> custom_hazard_clarification (textarea answer containing the reason)
-  -> add_hazard_evidence_decision
+add_hazard_evidence_decision
+  -> add_hazard_evidence_input (when evidence is available)
+  -> custom_hazard_mechanism_confirmation
 ```
 
-The reason is parsed with `parse_reason_evidence(...)`; an empty reason is
-rejected. It is staged in `session.pending_hazard_reason` and custom state, not
-saved.
+The LLM suggests a causal mechanism and asks for confirmation. Confirmed AI
+suggestions are checked against the knowledge base. If no supported suggestion is
+available, or the user rejects it, the tool asks for a specific mechanism. A
+user-provided mechanism is checked for ambiguity and then validated against a
+policy URL or file.
+
+The supported chain is displayed as `source finding or policy provision ->
+mechanism -> hazard impact`. The user must confirm that linkage before the
+existing affected population group stage begins. A rejected linkage returns to
+mechanism input and is checked against the available KB or policy text.
 
 Evidence decision:
 

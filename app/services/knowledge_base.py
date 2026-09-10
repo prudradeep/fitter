@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
-from sqlalchemy import delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -60,6 +60,29 @@ class QueryFeatures:
     page_numbers: set[int]
 
 
+def normalize_source_url(url: str) -> str:
+    """Canonicalize URL identity without changing meaningful query parameters."""
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    try:
+        parsed = urlparse(value)
+        scheme = parsed.scheme.casefold()
+        hostname = (parsed.hostname or "").casefold().rstrip(".")
+        port = parsed.port
+    except ValueError:
+        return ""
+    if scheme not in {"http", "https"} or not hostname or parsed.username or parsed.password:
+        return ""
+    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    display_host = f"[{hostname}]" if ":" in hostname else hostname
+    netloc = display_host if port is None or default_port else f"{display_host}:{port}"
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/") or "/"
+    return urlunparse((scheme, netloc, path, parsed.params, parsed.query, ""))
+
+
 class KnowledgeBaseService:
     def __init__(
         self,
@@ -87,15 +110,120 @@ class KnowledgeBaseService:
         title: str | None = None,
         *,
         allow_lexical_only: bool = False,
+        reuse_existing: bool = False,
     ) -> dict[str, object]:
+        if reuse_existing:
+            reusable = self.find_reusable_url_document(url)
+            if reusable is not None:
+                return reusable
         drafts = await extract_url_chunks(url, self.settings.max_url_ingest_bytes)
-        return await self.ingest_chunks(
+        result = await self.ingest_chunks(
             drafts,
             title or url,
             "url",
             url,
             allow_lexical_only=allow_lexical_only,
         )
+        result["scope"] = self.scope
+        result["reused"] = False
+        return result
+
+    def find_reusable_url_document(self, url: str) -> dict[str, object] | None:
+        """Find an accessible parsed URL before any network or embedding work."""
+        canonical_url = normalize_source_url(url)
+        if not canonical_url:
+            return None
+
+        validated_filters: list[object] = []
+        if self.country_id is not None:
+            validated_filters.append(
+                or_(
+                    KnowledgeDocument.country_id == self.country_id,
+                    KnowledgeDocument.scope_level == "global",
+                )
+            )
+        if self.sector_id is not None:
+            validated_filters.append(KnowledgeDocument.sector_id == self.sector_id)
+        if self.region_id is not None:
+            validated_filters.append(
+                or_(
+                    KnowledgeDocument.region_id == self.region_id,
+                    KnowledgeDocument.region_id.is_(None),
+                    KnowledgeDocument.scope_level == "global",
+                )
+            )
+        else:
+            validated_filters.append(
+                or_(
+                    KnowledgeDocument.region_id.is_(None),
+                    KnowledgeDocument.scope_level == "global",
+                )
+            )
+
+        access_options = [
+            and_(
+                KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
+                KnowledgeDocument.user_id == self.user_id,
+                KnowledgeDocument.session_key == self.session_key,
+            ),
+            and_(
+                KnowledgeDocument.scope == MAIN_KB_SCOPE,
+                KnowledgeDocument.user_id.is_(None),
+            ),
+        ]
+        if self.sector_id is not None:
+            access_options.insert(
+                1,
+                and_(
+                    KnowledgeDocument.scope == VALIDATED_EVIDENCE_SCOPE,
+                    *validated_filters,
+                ),
+            )
+        access_filter = or_(*access_options)
+        rows = self.db.scalars(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.source_type == "url",
+                KnowledgeDocument.source_uri.is_not(None),
+                access_filter,
+            )
+        ).all()
+        matches = [
+            document
+            for document in rows
+            if normalize_source_url(document.source_uri or "") == canonical_url
+        ]
+        if not matches:
+            return None
+        priority = {
+            TEMPORARY_KB_SCOPE: 0,
+            VALIDATED_EVIDENCE_SCOPE: 1,
+            MAIN_KB_SCOPE: 2,
+        }
+        document = min(
+            matches,
+            key=lambda item: (
+                priority.get(item.scope, 99),
+                -(item.created_at.timestamp() if item.created_at else 0),
+            ),
+        )
+        chunk_count = self.db.scalar(
+            select(func.count(KnowledgeChunk.id)).where(
+                KnowledgeChunk.document_id == document.id
+            )
+        )
+        if not chunk_count:
+            return None
+        return {
+            "error": False,
+            "document_id": document.id,
+            "title": document.title,
+            "chunks": int(chunk_count),
+            "scope": document.scope,
+            "reused": True,
+            "source_uri": document.source_uri,
+            "vector_indexed": True,
+            "vector_error": "",
+        }
 
     async def ingest_file(
         self,
@@ -245,6 +373,60 @@ class KnowledgeBaseService:
                 "created_at": row.created_at.isoformat() if row.created_at else None,
             }
             for row in rows
+        ]
+
+    def document_results(self, document_id: str) -> list[dict[str, object]]:
+        """Return all chunks for one document when it is accessible in this context."""
+        filters: list[object] = [
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.scope == self.scope,
+            *self._document_access_filters(),
+        ]
+        if self.scope in {TEMPORARY_KB_SCOPE, POLICY_REFERENCE_SCOPE}:
+            filters.append(KnowledgeDocument.session_key == self.session_key)
+        if self.scope == VALIDATED_EVIDENCE_SCOPE:
+            if self.country_id is not None:
+                filters.append(
+                    or_(
+                        KnowledgeDocument.country_id == self.country_id,
+                        KnowledgeDocument.scope_level == "global",
+                    )
+                )
+            if self.sector_id is not None:
+                filters.append(KnowledgeDocument.sector_id == self.sector_id)
+            if self.region_id is not None:
+                filters.append(
+                    or_(
+                        KnowledgeDocument.region_id == self.region_id,
+                        KnowledgeDocument.region_id.is_(None),
+                        KnowledgeDocument.scope_level == "global",
+                    )
+                )
+            else:
+                filters.append(
+                    or_(
+                        KnowledgeDocument.region_id.is_(None),
+                        KnowledgeDocument.scope_level == "global",
+                    )
+                )
+        rows = self.db.execute(
+            select(KnowledgeChunk, KnowledgeDocument)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(*filters)
+            .order_by(KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+        ).all()
+        return [
+            {
+                "document_id": document.id,
+                "title": document.title,
+                "source_type": chunk.source_type,
+                "source_uri": chunk.source_uri,
+                "page_number": chunk.page_number,
+                "score": None,
+                "content": chunk.content,
+            }
+            for chunk, document in rows
+            if not is_index_page_text(chunk.content)
         ]
 
     async def delete_document(self, document_id: str) -> bool:

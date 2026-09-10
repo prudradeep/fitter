@@ -130,13 +130,13 @@ Content quality is treated as a product requirement. A saved hazard, affected gr
 10. If the user pastes a URL during the evidence decision, the tool treats it as evidence.
 11. The tool validates the custom hazard across:
     - hazard definition;
-    - twin transition policy fit;
+    - mechanism fit;
     - sector fit;
     - country/region fit;
     - duplicate status;
     - affected population groups.
 12. The tool does not move to affected population group review while a core validation dimension still needs clarification.
-13. Core validation dimensions are hazard definition, twin transition policy fit, sector fit, and country/region fit.
+13. Core validation dimensions are hazard definition, mechanism fit, sector fit, and country/region fit.
 14. If all core dimensions are supported, the tool does not ask the same core clarification again.
 15. If only affected population groups need more detail, the tool asks only for affected-group clarification.
 16. If the user answer does not resolve a pending clarification and the same question would be asked again, the tool returns a clarification-still-needed error instead of looping.
@@ -330,7 +330,7 @@ The main interface is a chat workflow with:
 9. A contradicted non-core or evidential caveat is preserved as a warning and must appear in the validation summary and report if the related content is saved.
 10. An insufficient outcome means the system cannot yet confirm the claim. For core custom hazard and mitigation requirements, the user must clarify or revise before saving. For optional evidence or non-core dimensions, the tool may allow continuation but must preserve the caveat.
 11. An unavailable outcome means the relevant validation service, model, retrieval, document extraction, or URL ingestion could not complete. The user sees a validation-unavailable message and can retry, revise, continue without optional evidence where allowed, or stop the workflow.
-12. The tool does not save a custom hazard while hazard definition, twin transition policy fit, sector fit, or country/region fit is contradicted or still insufficient.
+12. The tool does not save a custom hazard while hazard definition, mechanism fit, sector fit, or country/region fit is contradicted or still insufficient.
 13. The tool does not save a mitigation measure while required clarity, hazard relevance, sector/geography fit, or target-population fit is contradicted or still insufficient.
 14. The tool does not invent missing evidence or fill missing report fields with fabricated content.
 15. The tool does not move past unresolved core custom hazard clarification.

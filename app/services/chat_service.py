@@ -601,6 +601,9 @@ class ChatService(
             clarify_title=self._handle_custom_hazard_title_clarification,
             clarify_hazard=self._handle_custom_hazard_clarification,
             check_dimensions=self._run_custom_hazard_dimension_check,
+            confirm_mechanism=self._handle_custom_hazard_mechanism_confirmation,
+            capture_mechanism=self._handle_custom_hazard_mechanism_input,
+            confirm_causal_linkage=self._handle_custom_hazard_causal_linkage_confirmation,
             capture_reason=self._capture_hazard_reason,
             decide_evidence=self._handle_hazard_evidence_decision,
             capture_evidence=self._capture_hazard_evidence,
@@ -636,10 +639,23 @@ class ChatService(
     ) -> ChatResponse | None:
         if not self._should_check_common_user_input_quality(session, clean_message):
             return None
+        is_custom_hazard_text = (
+            custom_hazard_state_machine.state_for(session.phase) is not None
+            or (
+                session.phase == "target_population_question"
+                and isinstance(session.custom_hazard, dict)
+                and bool(
+                    session.custom_hazard.get("resolved_hazard_text")
+                    or session.custom_hazard.get("raw_text")
+                )
+            )
+        )
+        quality_text = self._custom_hazard_quality_text(session, clean_message)
         review = await self._check_user_input_quality(
             session=session,
             purpose=self._common_user_input_quality_purpose(session),
-            user_input_text=clean_message,
+            user_input_text=quality_text,
+            strict=is_custom_hazard_text,
         )
         if review is None or review.get("valid"):
             return None
@@ -664,17 +680,24 @@ class ChatService(
             return False
         if not all([session.country, session.region, session.sector]):
             return False
+        if self._matches_current_step_option(session, clean_message):
+            return False
+        if self._could_be_fuzzy_selection(session, clean_message):
+            return False
+        if session.phase in {
+            "add_hazard_evidence_input",
+            "add_hazard_evidence",
+        } and self._custom_hazard_evidence_reference_only(clean_message):
+            # URLs and uploaded-file markers are validated from their extracted
+            # document content, not as prose supplied by the user.
+            return False
         if session.phase.startswith("mitigation_") or session.phase in {
             "custom_hazard_input",
             "custom_hazard_clarification",
             "custom_hazard_title_clarification",
-            "custom_hazard_group_review",
-            "custom_hazard_summary_review",
-            "custom_hazard_reason",
-            "custom_hazard_evidence",
-            "add_hazard_evidence_input",
-            "add_hazard_evidence",
+            "custom_hazard_mechanism_input",
             "custom_hazard_validation",
+            "custom_hazard_profile_reason",
             "mitigation_measure",
             "mitigation_reason",
             "mitigation_clarity",
@@ -683,16 +706,38 @@ class ChatService(
             # These phases have their own phase-specific validation and must
             # receive the complete user response, including score-only answers.
             return False
-        if self._matches_current_step_option(session, clean_message):
-            return False
-        if self._could_be_fuzzy_selection(session, clean_message):
-            return False
         if session.phase in {
             "add_hazard_evidence_decision",
             "mitigation_evidence_decision",
         } and open_evidence_decision_action(clean_message):
             return False
         return True
+
+    @staticmethod
+    def _custom_hazard_evidence_reference_only(message: str) -> bool:
+        return not ChatService._custom_hazard_evidence_prose(message)
+
+    @staticmethod
+    def _custom_hazard_evidence_prose(message: str) -> str:
+        remaining = str(message or "")
+        remaining = re.sub(r"https?://[^\s<>)\"']+", "", remaining, flags=re.IGNORECASE)
+        remaining = re.sub(
+            r"(?im)^\s*(?:Evidence (?:URL|file)|Temporary evidence document ID|"
+            r"Reused evidence (?:document ID|scope))\s*:\s*.*$",
+            "",
+            remaining,
+        )
+        return re.sub(r"\s+", " ", remaining).strip(" :-")
+
+    @classmethod
+    def _custom_hazard_quality_text(
+        cls,
+        session: ChatSession,
+        message: str,
+    ) -> str:
+        if session.phase in {"add_hazard_evidence_input", "add_hazard_evidence"}:
+            return cls._custom_hazard_evidence_prose(message) or message
+        return message
 
     @staticmethod
     def _common_user_input_quality_purpose(session: ChatSession) -> str:

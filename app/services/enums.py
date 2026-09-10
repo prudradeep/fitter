@@ -56,7 +56,9 @@ class GroundingStatus(AppStrEnum):
 
 class CustomHazardDimension(AppStrEnum):
     HAZARD_DEFINITION_FIT = "hazard_definition_fit"
-    TWIN_TRANSITION_POLICY_FIT = "twin_transition_policy_fit"
+    MECHANISM_FIT = "mechanism_fit"
+    # Compatibility alias for persisted code paths while old sessions are migrated.
+    TWIN_TRANSITION_POLICY_FIT = "mechanism_fit"
     POLICY_OBJECTIVE_FIT = "policy_objective_fit"
     SELECTED_SECTOR_FIT = "selected_sector_fit"
     COUNTRY_REGION_FIT = "country_region_fit"
@@ -104,6 +106,9 @@ class ChatPhase(AppStrEnum):
     CUSTOM_HAZARD_TITLE_CLARIFICATION = "custom_hazard_title_clarification"
     CUSTOM_HAZARD_VALIDATION = "custom_hazard_validation"
     CUSTOM_HAZARD_DIMENSION_CHECK = "custom_hazard_dimension_check"
+    CUSTOM_HAZARD_MECHANISM_CONFIRMATION = "custom_hazard_mechanism_confirmation"
+    CUSTOM_HAZARD_MECHANISM_INPUT = "custom_hazard_mechanism_input"
+    CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION = "custom_hazard_causal_linkage_confirmation"
     CUSTOM_HAZARD_CLARIFICATION = "custom_hazard_clarification"
     CUSTOM_HAZARD_DUPLICATE_CONFIRMATION = "custom_hazard_duplicate_confirmation"
     CUSTOM_HAZARD_GROUP_REVIEW = "custom_hazard_group_review"

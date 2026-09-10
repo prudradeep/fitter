@@ -484,6 +484,11 @@ class ChatSessionStore:
         self._sessions[new_session_id] = session
         return new_session_id, session
 
+    def get(self, session_id: str | None) -> ChatSession | None:
+        if not session_id:
+            return None
+        return self._sessions.get(session_id)
+
     def reset(self, session_id: str | None = None) -> tuple[str, ChatSession]:
         if session_id:
             self._sessions.pop(session_id, None)

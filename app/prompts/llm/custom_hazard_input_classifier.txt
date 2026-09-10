@@ -11,6 +11,8 @@ User hazard: {hazard}
 
 A valid hazard describes or clearly implies a negative consequence, risk, vulnerability, or unintended impact caused or materially intensified by a green-transition or digital-transition policy, regulation, technology, infrastructure change, service model, or market mechanism.
 
+Current workflow override: this is the short-title stage. A specific causal mechanism is not required yet; mechanism suggestion and confirmation happen later. Accept a concise negative harm or risk when it is clear enough to check against the selected objective. Do not reject or clarify solely because the transition mechanism is absent. This override takes precedence over later examples that require an explicit mechanism.
+
 Use this general causal structure:
 
 Transition intervention -> negative consequence -> affected people, workers, businesses, communities, infrastructure, or regions

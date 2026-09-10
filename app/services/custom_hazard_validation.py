@@ -26,7 +26,7 @@ from app.services.prompt_loader import load_nested_prompt_file, render_prompt_te
 
 DIMENSION_WEIGHTS = {
     CustomHazardDimension.POLICY_OBJECTIVE_FIT.value: 0.15,
-    CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value: 0.20,
+    CustomHazardDimension.MECHANISM_FIT.value: 0.20,
     # Hazard definition is the foundation. A policy/sector match is not enough
     # if the input is actually a benefit, mitigation, neutral fact, or question.
     CustomHazardDimension.HAZARD_DEFINITION_FIT.value: 0.25,
@@ -39,7 +39,7 @@ DIMENSION_SEQUENCE = tuple(DIMENSION_WEIGHTS)
 
 DIMENSION_STAGES = (
     (CustomHazardDimension.POLICY_OBJECTIVE_FIT.value,),
-    (CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value,),
+    (CustomHazardDimension.MECHANISM_FIT.value,),
     (
         CustomHazardDimension.HAZARD_DEFINITION_FIT.value,
         CustomHazardDimension.SELECTED_SECTOR_FIT.value,
@@ -50,7 +50,7 @@ DIMENSION_STAGES = (
 
 CRITICAL_DIMENSIONS = (
     CustomHazardDimension.POLICY_OBJECTIVE_FIT.value,
-    CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value,
+    CustomHazardDimension.MECHANISM_FIT.value,
     CustomHazardDimension.HAZARD_DEFINITION_FIT.value,
     CustomHazardDimension.SELECTED_SECTOR_FIT.value,
     CustomHazardDimension.COUNTRY_REGION_FIT.value,
@@ -58,7 +58,7 @@ CRITICAL_DIMENSIONS = (
 
 DIMENSION_TITLES = {
     CustomHazardDimension.POLICY_OBJECTIVE_FIT.value: "Policy Objective Fit",
-    CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value: "Twin transition policy fit",
+    CustomHazardDimension.MECHANISM_FIT.value: "Mechanism Fit",
     CustomHazardDimension.HAZARD_DEFINITION_FIT.value: "Hazard definition",
     CustomHazardDimension.SELECTED_SECTOR_FIT.value: "Sector fit",
     CustomHazardDimension.COUNTRY_REGION_FIT.value: "Country / region fit",
@@ -77,6 +77,177 @@ SCORE_STRONG = 8
 SCORE_PARTIAL = 6
 SCORE_WEAK = 4
 SCORE_POOR = 3
+
+
+async def suggest_custom_hazard_mechanisms(
+    hazard: str,
+    sector: str,
+    objective: str,
+) -> list[str]:
+    """Return concise candidate causal mechanisms without claiming they are proven."""
+    payload = {
+        "hazard": str(hazard or "").strip(),
+        "selected_sector": str(sector or "").strip(),
+        "policy_objective": str(objective or "").strip(),
+        "required_output_schema": {"mechanisms": ["concise causal mechanism"]},
+    }
+    try:
+        response = await ask_llm_chat(
+            context=load_nested_prompt_file("llm/custom_hazard_mechanism_suggestion.txt"),
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            temperature=0.0,
+            max_tokens=350,
+        )
+        result = parse_json_object(response)
+    except Exception:
+        result = None
+    values = result.get("mechanisms") if isinstance(result, dict) else []
+    mechanisms: list[str] = []
+    for value in values if isinstance(values, list) else []:
+        item = re.sub(r"\s+", " ", str(value or "")).strip(" .-•")[:220]
+        if item and normalize_for_match(item) not in {
+            normalize_for_match(existing) for existing in mechanisms
+        }:
+            mechanisms.append(item)
+    return mechanisms[:3]
+
+
+async def validate_hazard_evidence_relevance(
+    hazard: str,
+    evidence_context: str,
+) -> dict[str, Any]:
+    content = str(evidence_context or "").strip()
+    if not content:
+        return {"relevant": False, "reason": "No readable evidence content was supplied."}
+    payload = {
+        "hazard": str(hazard or "").strip(),
+        "evidence_content": content[:24000],
+        "required_output_schema": {"relevant": False, "reason": "", "causal_linkage": ""},
+    }
+    try:
+        response = await ask_llm_chat(
+            context=load_nested_prompt_file("llm/custom_hazard_evidence_relevance.txt"),
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            temperature=0.0,
+            max_tokens=350,
+        )
+        result = parse_json_object(response)
+    except Exception:
+        result = None
+    if isinstance(result, dict) and isinstance(result.get("relevant"), bool):
+        return {
+            "relevant": result["relevant"],
+            "reason": re.sub(r"\s+", " ", str(result.get("reason") or "")).strip()[:600],
+            "causal_linkage": re.sub(
+                r"\s+", " ", str(result.get("causal_linkage") or "")
+            ).strip()[:1200],
+        }
+    hazard_terms = set(normalize_for_match(hazard).split()) - {
+        "the", "and", "for", "with", "from"
+    }
+    evidence_terms = set(normalize_for_match(content).split())
+    overlap = hazard_terms & evidence_terms
+    return {
+        "relevant": len(overlap) >= 2,
+        "reason": (
+            "The evidence shares material hazard concepts."
+            if len(overlap) >= 2
+            else "The evidence does not clearly address the stated hazard."
+        ),
+        "causal_linkage": "",
+    }
+
+
+async def validate_custom_hazard_mechanism_linkage(
+    hazard: str,
+    mechanism: str,
+    source_context: str,
+    source_label: str,
+) -> dict[str, Any]:
+    content = str(source_context or "").strip()
+    if not content:
+        return {
+            "supported": False,
+            "reason": f"No relevant {source_label} text was found.",
+            "causal_linkage": "",
+        }
+    payload = {
+        "hazard": str(hazard or "").strip(),
+        "mechanism": str(mechanism or "").strip(),
+        "source_label": source_label,
+        "source_content": content[:24000],
+        "required_output_schema": {"supported": False, "reason": "", "causal_linkage": ""},
+    }
+    try:
+        response = await ask_llm_chat(
+            context=load_nested_prompt_file("llm/custom_hazard_mechanism_linkage.txt"),
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            temperature=0.0,
+            max_tokens=450,
+        )
+        result = parse_json_object(response)
+    except Exception:
+        result = None
+    if isinstance(result, dict) and isinstance(result.get("supported"), bool):
+        return {
+            "supported": result["supported"],
+            "reason": re.sub(r"\s+", " ", str(result.get("reason") or "")).strip()[:600],
+            "causal_linkage": re.sub(
+                r"\s+", " ", str(result.get("causal_linkage") or "")
+            ).strip()[:1200],
+        }
+    mechanism_terms = set(normalize_for_match(mechanism).split()) - {
+        "the", "and", "for", "with", "from"
+    }
+    source_terms = set(normalize_for_match(content).split())
+    supported = len(mechanism_terms & source_terms) >= 2
+    return {
+        "supported": supported,
+        "reason": (
+            "The source contains the proposed mechanism."
+            if supported
+            else f"The {source_label} text does not support the proposed mechanism."
+        ),
+        "causal_linkage": (
+            f"{source_label} finding -> {mechanism} -> {hazard}" if supported else ""
+        ),
+    }
+
+
+async def assess_custom_hazard_mechanism_clarity(
+    hazard: str,
+    mechanism: str,
+) -> dict[str, Any]:
+    value = re.sub(r"\s+", " ", str(mechanism or "")).strip()
+    if len(value.split()) < 3:
+        return {
+            "clear": False,
+            "reason": (
+                "Please describe the process or change that produces the hazard, "
+                "not only a broad topic."
+            ),
+        }
+    payload = {
+        "hazard": str(hazard or "").strip(),
+        "mechanism": value,
+        "required_output_schema": {"clear": False, "reason": ""},
+    }
+    try:
+        response = await ask_llm_chat(
+            context=load_nested_prompt_file("llm/custom_hazard_mechanism_clarity.txt"),
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            temperature=0.0,
+            max_tokens=220,
+        )
+        result = parse_json_object(response)
+    except Exception:
+        result = None
+    if isinstance(result, dict) and isinstance(result.get("clear"), bool):
+        return {
+            "clear": result["clear"],
+            "reason": re.sub(r"\s+", " ", str(result.get("reason") or "")).strip()[:500],
+        }
+    return {"clear": True, "reason": ""}
 
 
 async def validate_policy_reference_twin_transition(
@@ -211,6 +382,16 @@ def default_custom_hazard_state() -> dict[str, Any]:
         "policy_reference_document_ids": [],
         "policy_reference_available": False,
         "replacing_policy_reference": False,
+        "suggested_mechanisms": [],
+        "selected_mechanism": "",
+        "mechanism_source": "",
+        "mechanism_confirmed": False,
+        "mechanism_causal_linkage": "",
+        "causal_linkage_confirmed": False,
+        "mechanism_knowledge_context": "",
+        "evidence_relevance_checked": False,
+        "evidence_relevant": False,
+        "objective_fit_reason": "",
         "linkage_analysis": {},
         "detected_sector": None,
         "negative_consequence": None,
@@ -307,16 +488,17 @@ async def validate_custom_hazard_dimensions(
     )
 
     if (
-        CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value
+        CustomHazardDimension.MECHANISM_FIT.value
         in requested_dimensions
         and not policy_reference_context.strip()
+        and not bool(state.get("causal_linkage_confirmed"))
     ):
         result.setdefault("dimension_scores", {})[
-            CustomHazardDimension.TWIN_TRANSITION_POLICY_FIT.value
+            CustomHazardDimension.MECHANISM_FIT.value
         ] = _score_payload(
             0,
-            "A policy document must be provided before twin-transition policy fit can be analysed.",
-            "Provide the twin-transition policy document as a URL or file.",
+            "A supported mechanism has not yet been confirmed.",
+            "Confirm a suggested mechanism or provide the mechanism that causes or worsens the hazard.",
         )
 
     if staged_validation:
@@ -438,7 +620,7 @@ def build_custom_hazard_grounding_status(custom_hazard: dict[str, Any] | None) -
     dimension_floor = custom_hazard_dimension_floor(state.get("validation_mode"))
     cards = [
         _dimension_card("policy_objective_fit", dimension_scores, dimension_floor),
-        _dimension_card("twin_transition_policy_fit", dimension_scores, dimension_floor),
+        _dimension_card("mechanism_fit", dimension_scores, dimension_floor),
         _dimension_card("hazard_definition_fit", dimension_scores, dimension_floor),
         _dimension_card("selected_sector_fit", dimension_scores, dimension_floor),
         _dimension_card("country_region_fit", dimension_scores, dimension_floor),
@@ -472,6 +654,11 @@ def frontend_custom_hazard_payload(custom_hazard: dict[str, Any] | None) -> dict
         "status": state.get("status") or CustomHazardStatus.DRAFT.value,
         "policy_reference": state.get("policy_reference") or "",
         "linkage_analysis": state.get("linkage_analysis") or {},
+        "suggested_mechanisms": state.get("suggested_mechanisms") or [],
+        "selected_mechanism": state.get("selected_mechanism") or "",
+        "mechanism_source": state.get("mechanism_source") or "",
+        "mechanism_causal_linkage": state.get("mechanism_causal_linkage") or "",
+        "causal_linkage_confirmed": bool(state.get("causal_linkage_confirmed")),
     }
 
 
@@ -533,16 +720,16 @@ Policy-objective validation stage:
 
 Validation order and application-context rules:
 - Evaluate only these requested dimensions in this call: {requested_labels}. Do not evaluate, score, or comment on any other dimension.
-- Across calls, the workflow evaluates policy objective fit, twin-transition policy fit, hazard definition, selected sector fit, country fit, and affected groups in that order. Keep using the country_region_fit output key, but do not assess regional fit in that dimension.
-- Policy objective fit is distinct from general twin-transition policy fit. Determine whether the hazard is a plausible adverse consequence of pursuing the supplied sector policy objective.
-- For twin-transition policy fit, inspect the supplied policy-reference content itself. Identify the causal linkage between the policy's provisions and the hazard, and explicitly describe any policy-hazard mismatch.
-- Populate twin_transition_policy_fit.causal_linkage only when the document supports a defensible chain from a specific policy provision, through an intermediate mechanism, to the hazard impact. Use the form "policy provision -> intermediate mechanism -> hazard impact" and leave it empty when no such chain is found.
+- Across calls, the workflow evaluates policy objective fit, mechanism fit, hazard definition, selected sector fit, country fit, and affected groups in that order. Keep using the country_region_fit output key, but do not assess regional fit in that dimension.
+- Policy objective fit is distinct from mechanism fit. Determine whether the hazard is a plausible adverse consequence of pursuing the supplied sector policy objective.
+- For mechanism fit, assess the confirmed mechanism against knowledge-base excerpts or the supplied policy-reference content. Identify the causal linkage from the mechanism to the hazard and explicitly describe any mismatch.
+- Populate mechanism_fit.causal_linkage only when the supplied source supports a defensible chain in the form "source finding or policy provision -> mechanism -> hazard impact"; otherwise leave it empty.
 - The policy reference is context for this dimension only. Never treat it as evidence that the hazard occurred, is prevalent, or affects a population.
 - When evidence content is supplied, separately assess whether it supports the hazard and whether the policy document has a defensible causal connection to that evidence.
 - Populate evidence_hazard_linkage only for a chain grounded in the evidence content: "evidence finding -> supported impact -> hazard".
 - Populate policy_evidence_linkage only for a chain grounded across both documents: "policy provision -> intermediate mechanism -> evidence finding".
 - Do not infer support from filenames, URLs, topic similarity, or the user's assertion alone. If a chain is not supported, set supported to false, leave causal_linkage empty, and briefly explain the missing link.
-- If no readable policy-reference content is supplied, score twin_transition_policy_fit as 0 and request a policy document URL or file.
+- A policy document is required only for a user-provided mechanism when no supporting knowledge-base text is available.
 - A hazard need not repeat the policy objective verbatim, but its causal mechanism must be compatible with that objective.
 - The selected country and sector are application context. Do not ask the user to reconfirm them merely because their names are absent from the hazard text. The selected region may inform other regional context, but it must not affect country_region_fit.
 - Use the hazard's meaning and the supplied application context to assess sector and location fit. Ask only when there is a substantive ambiguity or contradiction.
@@ -589,7 +776,7 @@ Validation order and application-context rules:
                     "needs_clarification": False,
                     "clarification_question": "",
                 },
-                "twin_transition_policy_fit": {
+                "mechanism_fit": {
                     "score": 0,
                     "reason": "",
                     "causal_linkage": "",
@@ -730,11 +917,17 @@ def _heuristic_dimension_validation(
         for term in hazard_policy_terms
         if _contains_any_term(policy_reference_lower, {term})
     }
-    if not policy_reference_lower:
+    confirmed_mechanism = str(state.get("selected_mechanism") or "").strip()
+    confirmed_linkage = str(state.get("mechanism_causal_linkage") or "").strip()
+    if state.get("causal_linkage_confirmed") and confirmed_mechanism and confirmed_linkage:
+        policy_score = SCORE_STRONG
+        policy_causal_linkage = confirmed_linkage
+        policy_reason = "The source-supported mechanism and causal linkage were confirmed by the user."
+    elif not policy_reference_lower:
         policy_score = 0
         policy_causal_linkage = ""
         policy_reason = (
-            "A policy document must be provided before twin-transition policy fit can be analysed."
+            "A source-supported causal mechanism has not yet been confirmed."
         )
     elif shared_policy_terms:
         policy_score = SCORE_STRONG
@@ -798,14 +991,14 @@ def _heuristic_dimension_validation(
     if _contains_any_term(lower, benefit_terms) and not _contains_any_term(lower, hazard_terms):
         hazard_definition_score = min(hazard_definition_score, SCORE_POOR)
 
-    twin_transition_policy_fit = _score_payload(
+    mechanism_fit = _score_payload(
         policy_score,
         policy_reason,
-        "Provide a readable twin-transition policy document URL or file with provisions causally related to this hazard."
+        "Confirm an AI-suggested mechanism or provide a specific mechanism for this hazard."
         if not policy_reference_lower
-        else "How do the specific provisions in the supplied policy cause or worsen this hazard?",
+        else "How does the proposed mechanism connect the policy provisions to this hazard?",
     )
-    twin_transition_policy_fit["causal_linkage"] = policy_causal_linkage
+    mechanism_fit["causal_linkage"] = policy_causal_linkage
 
     linkage_analysis = _heuristic_linkage_analysis(
         hazard_text,
@@ -824,7 +1017,7 @@ def _heuristic_dimension_validation(
                 else f"The hazard is not clearly linked to the sector policy objective: {policy_objective}.",
                 f"How could pursuing the policy objective '{policy_objective}' cause or worsen this hazard?",
             ),
-            "twin_transition_policy_fit": twin_transition_policy_fit,
+            "mechanism_fit": mechanism_fit,
             "hazard_definition_fit": _score_payload(
                 hazard_definition_score,
                 "The input describes a negative impact, risk, or burden."
@@ -985,6 +1178,9 @@ def _merged_state(previous_state: dict[str, Any] | None) -> dict[str, Any]:
     state = default_custom_hazard_state()
     if isinstance(previous_state, dict):
         state.update(previous_state)
+    dimensions = state.get("dimension_scores")
+    if isinstance(dimensions, dict) and "twin_transition_policy_fit" in dimensions:
+        dimensions.setdefault("mechanism_fit", dimensions.pop("twin_transition_policy_fit"))
     state["confidence"] = ConfidenceLevel.coerce(
         state.get("confidence"),
         ConfidenceLevel.LOW,
@@ -1010,6 +1206,11 @@ def _coerce_validation_result(
     dimensions = value.get("dimension_scores")
     if not isinstance(dimensions, dict):
         return None
+    if "mechanism_fit" not in dimensions and "twin_transition_policy_fit" in dimensions:
+        dimensions = {
+            **dimensions,
+            "mechanism_fit": dimensions["twin_transition_policy_fit"],
+        }
     coerced = {
         "dimension_scores": {},
         "affected_groups": [],
@@ -1088,7 +1289,11 @@ def _requested_dimensions(
 ) -> tuple[str, ...]:
     if dimensions is None:
         return DIMENSION_SEQUENCE
-    requested = tuple(key for key in DIMENSION_SEQUENCE if key in dimensions)
+    normalized = {
+        "mechanism_fit" if str(key) == "twin_transition_policy_fit" else str(key)
+        for key in dimensions
+    }
+    requested = tuple(key for key in DIMENSION_SEQUENCE if key in normalized)
     if not requested:
         raise ValueError("At least one recognized custom-hazard dimension is required.")
     return requested
@@ -1236,7 +1441,7 @@ def _ensure_dimension_reasons(result: dict[str, Any]) -> None:
         return
     supported_reasons = {
         "hazard_definition_fit": "The submitted text describes a negative impact or risk.",
-        "twin_transition_policy_fit": "The submitted text has a supported twin-transition policy link.",
+        "mechanism_fit": "The confirmed mechanism has a supported causal link to the hazard.",
         "policy_objective_fit": "The hazard is compatible with the selected sector's policy objective.",
         "selected_sector_fit": "The hazard is compatible with the selected sector.",
         "country_region_fit": "The selected country provides the application context for this hazard.",
@@ -1244,7 +1449,7 @@ def _ensure_dimension_reasons(result: dict[str, Any]) -> None:
     }
     clarification_reasons = {
         "hazard_definition_fit": "The negative impact or risk is not yet explicit.",
-        "twin_transition_policy_fit": "The link to a green, digital, or twin-transition policy is not yet clear.",
+        "mechanism_fit": "The causal mechanism producing or worsening the hazard is not yet clear.",
         "policy_objective_fit": "The link to the selected sector's policy objective is not yet clear.",
         "selected_sector_fit": "The relationship to the selected sector is not yet clear.",
         "country_region_fit": "The applicability to the selected country is not yet clear.",
@@ -1648,7 +1853,7 @@ def _merge_llm_with_heuristic_guardrails(
     # already support them. Promote only generic/missing-detail responses; keep
     # substantive incompatibility findings from the LLM.
     for key in (
-        "twin_transition_policy_fit",
+        "mechanism_fit",
         "policy_objective_fit",
         "selected_sector_fit",
         "country_region_fit",

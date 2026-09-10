@@ -25,6 +25,9 @@ class CustomHazardHandler(StrEnum):
     CLARIFY_TITLE = "clarify_title"
     CLARIFY_HAZARD = "clarify_hazard"
     CHECK_DIMENSIONS = "check_dimensions"
+    CONFIRM_MECHANISM = "confirm_mechanism"
+    CAPTURE_MECHANISM = "capture_mechanism"
+    CONFIRM_CAUSAL_LINKAGE = "confirm_causal_linkage"
     CAPTURE_REASON = "capture_reason"
     DECIDE_EVIDENCE = "decide_evidence"
     CAPTURE_EVIDENCE = "capture_evidence"
@@ -66,6 +69,9 @@ class CustomHazardHandlers:
     review_population: AsyncMessageHandler
     review_summary: AsyncMessageHandler
     resolve_duplicate: AsyncMessageHandler
+    confirm_mechanism: AsyncMessageHandler | None = None
+    capture_mechanism: AsyncMessageHandler | None = None
+    confirm_causal_linkage: AsyncMessageHandler | None = None
 
 
 CUSTOM_HAZARD_STATES: Mapping[ChatPhase, CustomHazardState] = MappingProxyType({
@@ -96,6 +102,20 @@ CUSTOM_HAZARD_STATES: Mapping[ChatPhase, CustomHazardState] = MappingProxyType({
         CustomHazardHandler.CHECK_DIMENSIONS,
         HandlerKind.ASYNC_SESSION,
     ),
+    ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION: CustomHazardState(
+        ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
+        CustomHazardHandler.CONFIRM_MECHANISM,
+        quality_gate=False,
+    ),
+    ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT: CustomHazardState(
+        ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
+        CustomHazardHandler.CAPTURE_MECHANISM,
+    ),
+    ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION: CustomHazardState(
+        ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION,
+        CustomHazardHandler.CONFIRM_CAUSAL_LINKAGE,
+        quality_gate=False,
+    ),
     ChatPhase.ADD_HAZARD_REASON: CustomHazardState(
         ChatPhase.ADD_HAZARD_REASON,
         CustomHazardHandler.CAPTURE_REASON,
@@ -120,12 +140,10 @@ CUSTOM_HAZARD_STATES: Mapping[ChatPhase, CustomHazardState] = MappingProxyType({
     ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW: CustomHazardState(
         ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
         CustomHazardHandler.REVIEW_POPULATION,
-        quality_gate=False,
     ),
     ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW: CustomHazardState(
         ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW,
         CustomHazardHandler.REVIEW_POPULATION,
-        quality_gate=False,
     ),
     ChatPhase.CUSTOM_HAZARD_PROFILE_REASON: CustomHazardState(
         ChatPhase.CUSTOM_HAZARD_PROFILE_REASON,
@@ -135,7 +153,6 @@ CUSTOM_HAZARD_STATES: Mapping[ChatPhase, CustomHazardState] = MappingProxyType({
     ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW: CustomHazardState(
         ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW,
         CustomHazardHandler.REVIEW_SUMMARY,
-        quality_gate=False,
     ),
     ChatPhase.CUSTOM_HAZARD_DUPLICATE_CONFIRMATION: CustomHazardState(
         ChatPhase.CUSTOM_HAZARD_DUPLICATE_CONFIRMATION,
@@ -207,6 +224,8 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
                 ChatPhase.CUSTOM_HAZARD_INPUT,
                 ChatPhase.CUSTOM_HAZARD_DUPLICATE_CONFIRMATION,
                 ChatPhase.HAZARDS,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
+                ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION,
             }
         ),
         ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK: frozenset(
@@ -221,6 +240,9 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
                 ChatPhase.ADD_HAZARD_EVIDENCE,
                 ChatPhase.CUSTOM_HAZARD_INPUT,
                 ChatPhase.HAZARDS,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
+                ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION,
             }
         ),
         ChatPhase.ADD_HAZARD_REASON: frozenset(
@@ -245,6 +267,8 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
                 ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_INPUT,
                 ChatPhase.HAZARDS,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
             }
         ),
         ChatPhase.ADD_HAZARD_EVIDENCE_INPUT: frozenset(
@@ -259,6 +283,8 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
                 ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_INPUT,
                 ChatPhase.HAZARDS,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
             }
         ),
         ChatPhase.ADD_HAZARD_EVIDENCE: frozenset(
@@ -271,6 +297,39 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
                 ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_INPUT,
                 ChatPhase.HAZARDS,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
+            }
+        ),
+        ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION: frozenset(
+            {
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
+                ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION,
+                ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK,
+                ChatPhase.HAZARDS,
+                ChatPhase.CUSTOM_HAZARD_INPUT,
+            }
+        ),
+        ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT: frozenset(
+            {
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
+                ChatPhase.CUSTOM_HAZARD_CLARIFICATION,
+                ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION,
+                ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK,
+                ChatPhase.HAZARDS,
+                ChatPhase.CUSTOM_HAZARD_INPUT,
+            }
+        ),
+        ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION: frozenset(
+            {
+                ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
+                ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK,
+                ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW,
+                ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
+                ChatPhase.HAZARDS,
+                ChatPhase.CUSTOM_HAZARD_INPUT,
             }
         ),
         ChatPhase.CUSTOM_HAZARD_VALIDATION: frozenset(
@@ -399,6 +458,10 @@ class CustomHazardStateMachine:
                 )
 
         handler = getattr(handlers, state.handler.value)
+        if handler is None:
+            raise InvalidCustomHazardTransition(
+                f"No handler is configured for {state.handler.value!r}."
+            )
         if state.handler_kind == HandlerKind.ASYNC_SESSION:
             response = await handler(session_id, session)
         elif state.handler_kind == HandlerKind.SYNC_MESSAGE:

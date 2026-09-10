@@ -40,11 +40,28 @@ HAZARD_ENTRY_OPTIONS = [
 CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS = [
     *HAZARD_ENTRY_OPTIONS,
     Option(id=2, label="Add a Policy Reference"),
+    Option(id=3, label="Revise mechanism"),
+]
+
+CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS = [
+    Option(id=1, label="Yes"),
+    Option(id=2, label="No, provide a mechanism"),
+]
+
+CUSTOM_HAZARD_CAUSAL_LINKAGE_OPTIONS = [
+    Option(id=1, label="Yes"),
+    Option(id=2, label="No, revise the linkage"),
 ]
 
 HAZARD_EVIDENCE_INPUT_OPTIONS = [
     Option(id=1, label="Go back to list of hazards"),
     Option(id=2, label="Skip"),
+]
+
+HAZARD_EVIDENCE_RETRY_OPTIONS = [
+    Option(id=1, label="Go back to list of hazards"),
+    Option(id=2, label="Provide evidence again"),
+    Option(id=3, label="Clarify relevance"),
 ]
 
 HAZARD_EVIDENCE_DECISION_OPTIONS = [

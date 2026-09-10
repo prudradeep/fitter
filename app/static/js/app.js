@@ -1895,6 +1895,7 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
   const placeholders = {
     add_dgs: "Choose socio-demographic options...",
     hazards: "Type the hazard you want to add...",
+    custom_hazard_mechanism_input: "Describe the process or change causing the hazard...",
     custom_hazard_group_review: "Type a group to remove, or add/edit an affected group...",
     custom_hazard_profile_reason: "Explain how this hazard affects the added group...",
     custom_hazard_summary_review: "Describe how the generated summary should be revised...",

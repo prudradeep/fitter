@@ -9,6 +9,7 @@ from app.services.chat_options import (
     HAZARD_ENTRY_OPTIONS,
     HAZARD_EVIDENCE_DECISION_OPTIONS,
     HAZARD_EVIDENCE_INPUT_OPTIONS,
+    HAZARD_EVIDENCE_RETRY_OPTIONS,
     exact_option_label,
     match_option_label,
     normalize,
@@ -20,7 +21,10 @@ from app.services.chat_parsers import (
 )
 from app.services.chat_session import ChatSession
 from app.services.custom_hazard_state_machine import transition_custom_hazard
-from app.services.custom_hazard_validation import default_custom_hazard_state
+from app.services.custom_hazard_validation import (
+    default_custom_hazard_state,
+    validate_hazard_evidence_relevance,
+)
 from app.services.enums import ChatPhase, CustomHazardStatus
 from app.services.knowledge_base import TEMPORARY_KB_SCOPE, KnowledgeBaseService
 from app.services.message_renderer import markdown_to_html, render_message
@@ -39,7 +43,7 @@ class ChatCustomHazardEvidenceMixin:
         transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
         state = self._custom_hazard_state(session)
         state["resolved_hazard_text"] = hazard
-        state["raw_text"] = hazard
+        state["raw_text"] = str(state.get("raw_text") or hazard).strip()
         return await self._run_custom_hazard_dimension_check(session_id, session)
 
     def _hazard_reason_evidence_step(
@@ -151,8 +155,21 @@ class ChatCustomHazardEvidenceMixin:
         if isinstance(session.custom_hazard, dict):
             state = self._custom_hazard_state(session)
             state["evidence_decision_asked"] = True
+        state = self._custom_hazard_state(session) if isinstance(session.custom_hazard, dict) else {}
+        resolved_hazard = str(
+            state.get("resolved_hazard_text") or state.get("raw_text") or session.pending_hazard or ""
+        ).strip()
+        objective = (state.get("dimension_scores") or {}).get("policy_objective_fit", {})
+        objective_reason = str(objective.get("reason") or "").strip() if isinstance(objective, dict) else ""
+        prefix = (
+            "## What is the hazard?\n\n"
+            f"**{resolved_hazard}**\n\n"
+            "## Objective Fit\n\n"
+            f"{objective_reason or 'The hazard fits the selected sector objective.'}\n\n"
+        )
         bot_message = message or markdown_to_html(
-            "Do you have evidence for this hazard, "
+            prefix
+            + "Do you have evidence for this hazard, "
             "such as a report, article, dataset, policy document, or URL? Evidence is optional, "
             "but it can make this hazard easier to validate "
             "and more useful to other users. \n\n"
@@ -210,6 +227,7 @@ class ChatCustomHazardEvidenceMixin:
         *,
         error: bool = False,
         message: str | None = None,
+        retry: bool = False,
     ) -> ChatResponse:
         transition_custom_hazard(session, ChatPhase.ADD_HAZARD_EVIDENCE_INPUT)
         bot_message = message or markdown_to_html(
@@ -222,7 +240,7 @@ class ChatCustomHazardEvidenceMixin:
                 session=session,
                 step="custom_hazard_evidence",
                 bot_message=bot_message,
-                options=HAZARD_EVIDENCE_INPUT_OPTIONS,
+                options=(HAZARD_EVIDENCE_RETRY_OPTIONS if retry else HAZARD_EVIDENCE_INPUT_OPTIONS),
                 input_mode="evidence_only",
                 error=error,
             )
@@ -230,7 +248,7 @@ class ChatCustomHazardEvidenceMixin:
             session_id=session_id,
             step="hazard_evidence",
             bot_message=bot_message,
-            options=HAZARD_EVIDENCE_INPUT_OPTIONS,
+            options=(HAZARD_EVIDENCE_RETRY_OPTIONS if retry else HAZARD_EVIDENCE_INPUT_OPTIONS),
             session=session.summary(),
             input_mode="evidence_only",
             error=error,
@@ -239,11 +257,25 @@ class ChatCustomHazardEvidenceMixin:
     async def _capture_hazard_evidence(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
-        exact_label = exact_option_label(message, HAZARD_EVIDENCE_INPUT_OPTIONS)
+        exact_label = exact_option_label(
+            message, [*HAZARD_EVIDENCE_INPUT_OPTIONS, *HAZARD_EVIDENCE_RETRY_OPTIONS]
+        )
         if normalize(exact_label or message) == normalize("Go back to list of hazards"):
             return self._hazard_evidence_decision_step(session_id, session)
         if normalize(exact_label or message) == normalize("Skip"):
             return await self._validate_staged_custom_hazard(session_id, session, "")
+        if normalize(exact_label or message) == normalize("Provide evidence again"):
+            return self._hazard_evidence_input_step(session_id, session)
+        if normalize(exact_label or message) == normalize("Clarify relevance"):
+            return self._hazard_evidence_input_step(
+                session_id,
+                session,
+                retry=True,
+                message=markdown_to_html(
+                    "Explain which finding in the supplied evidence supports the hazard, "
+                    "or attach a replacement source."
+                ),
+            )
 
         evidence = normalize_evidence_message(message)
         if not evidence:
@@ -256,7 +288,7 @@ class ChatCustomHazardEvidenceMixin:
         evidence_url = self._evidence_url(evidence)
         has_document_marker = bool(
             re.search(
-                r"Temporary evidence document ID:\s*\S+",
+                r"(?:Temporary|Reused) evidence document ID:\s*\S+",
                 evidence,
                 flags=re.IGNORECASE,
             )
@@ -268,9 +300,13 @@ class ChatCustomHazardEvidenceMixin:
                     self.user_id,
                     scope=TEMPORARY_KB_SCOPE,
                     session_key=session.session_key,
+                    country_id=session.country_id,
+                    region_id=session.region_id,
+                    sector_id=session.sector_id,
                 ).ingest_url(
                     evidence_url,
                     allow_lexical_only=True,
+                    reuse_existing=True,
                 )
             except Exception as exc:
                 logger.exception("Failed to extract custom-hazard evidence URL")
@@ -292,7 +328,14 @@ class ChatCustomHazardEvidenceMixin:
                 )
             document_id = str(ingestion.get("document_id") or "").strip()
             if document_id:
-                evidence = f"{evidence}\nTemporary evidence document ID: {document_id}"
+                reused_scope = str(ingestion.get("scope") or "").strip()
+                if ingestion.get("reused") and reused_scope != TEMPORARY_KB_SCOPE:
+                    evidence = (
+                        f"{evidence}\nReused evidence document ID: {document_id}"
+                        f"\nReused evidence scope: {reused_scope}"
+                    )
+                else:
+                    evidence = f"{evidence}\nTemporary evidence document ID: {document_id}"
         return await self._validate_staged_custom_hazard(session_id, session, evidence)
 
     async def _validate_staged_custom_hazard(
@@ -305,12 +348,45 @@ class ChatCustomHazardEvidenceMixin:
             state["evidence"] = evidence
             session.pending_hazard_evidence = evidence
             if not evidence:
+                state["evidence_relevance_checked"] = True
+                state["evidence_relevant"] = False
                 return await self._route_custom_hazard_next_action(
                     session_id,
                     session,
                 )
+            evidence_context = await self._user_evidence_context_for_contradiction_check(
+                session, evidence
+            )
+            relevance = await validate_hazard_evidence_relevance(
+                str(state.get("resolved_hazard_text") or state.get("raw_text") or ""),
+                evidence_context,
+            )
+            state["evidence_relevance_checked"] = True
+            state["evidence_relevant"] = bool(relevance.get("relevant"))
+            if not relevance.get("relevant"):
+                state["evidence"] = ""
+                session.pending_hazard_evidence = ""
+                return self._hazard_evidence_input_step(
+                    session_id,
+                    session,
+                    error=True,
+                    message=markdown_to_html(
+                        "## Evidence needs clarification\n\n"
+                        f"{relevance.get('reason') or 'The supplied evidence does not clearly support the hazard.'}\n\n"
+                        "Explain how the evidence supports the hazard, or provide another URL/file."
+                    ),
+                    retry=True,
+                )
+            state["linkage_analysis"] = {
+                **(state.get("linkage_analysis") if isinstance(state.get("linkage_analysis"), dict) else {}),
+                "evidence_hazard_linkage": {
+                    "supported": True,
+                    "reason": relevance.get("reason") or "",
+                    "causal_linkage": relevance.get("causal_linkage") or "",
+                },
+            }
             state["show_evidence_linkages"] = True
-            return await self._run_custom_hazard_dimension_check(session_id, session)
+            return await self._route_custom_hazard_next_action(session_id, session)
         if not reason:
             return self._hazard_reason_step(
                 session_id,

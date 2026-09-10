@@ -95,9 +95,10 @@ def deterministic_custom_hazard_input_review(
         )
 
     if len(normalized.split()) <= 2:
-        return _reject_input(
-            "This is only a keyword or broad topic, so it is too short to validate as a hazard. Please state who is affected, what negative consequence occurs, and which transition measure causes it.",
+        return _clarify_input(
+            "This is a broad topic rather than a specific hazard.",
             validation_code="too_short",
+            clarification_question="What concrete negative harm or risk occurs?",
         )
 
     if _is_request_or_meta_input(normalized):
@@ -134,9 +135,10 @@ def deterministic_custom_hazard_input_review(
             ),
         )
     if not _has_negative_hazard_signal(normalized):
-        return _reject_input(
+        return _clarify_input(
             _missing_negative_hazard_reason(normalized),
             validation_code="missing_negative_consequence",
+            clarification_question="What concrete negative harm or risk occurs?",
         )
 
     if not _has_transition_policy_signal(normalized):

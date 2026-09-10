@@ -1772,6 +1772,90 @@ class CustomHazardValidationTests(unittest.TestCase):
             )
         )
 
+    def test_hazard_free_text_edits_use_the_common_ambiguity_gate(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_group_review",
+        )
+
+        self.assertTrue(
+            service._should_check_common_user_input_quality(
+                session,
+                "Add vulnerable households",
+            )
+        )
+
+        session.phase = "custom_hazard_summary_review"
+        self.assertTrue(
+            service._should_check_common_user_input_quality(
+                session,
+                "Make the causal impact clearer",
+            )
+        )
+
+    def test_evidence_url_skips_prose_gate_but_accompanying_explanation_does_not(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_input",
+        )
+
+        self.assertFalse(
+            service._should_check_common_user_input_quality(
+                session,
+                "Evidence URL: https://example.com/report.pdf",
+            )
+        )
+        self.assertTrue(
+            service._should_check_common_user_input_quality(
+                session,
+                "https://example.com/report.pdf It documents the household credit barrier.",
+            )
+        )
+        self.assertEqual(
+            service._custom_hazard_quality_text(
+                session,
+                "https://example.com/report.pdf It documents the household credit barrier.",
+            ),
+            "It documents the household credit barrier.",
+        )
+
+    def test_custom_hazard_ambiguity_gate_remains_strict_in_easy_mode(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="custom_hazard_group_review",
+            validation_mode="easy",
+        )
+        model_response = (
+            '{"valid": false, "reason": "Affected population input is too general; '
+            'name the specific household group."}'
+        )
+
+        with patch(
+            "app.services.validation_service.ask_llm_chat",
+            AsyncMock(return_value=model_response),
+        ):
+            review = _run(
+                service._check_user_input_quality(
+                    session=session,
+                    purpose="an affected population edit",
+                    user_input_text="Add vulnerable people",
+                    strict=True,
+                )
+            )
+
+        self.assertIsNotNone(review)
+        self.assertFalse(review["valid"])
+        self.assertIn("specific household group", review["reason"])
+
     def test_evaluation_score_only_skips_common_quality_gate(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -2715,29 +2799,34 @@ class CustomHazardValidationTests(unittest.TestCase):
             phase="custom_hazard_input",
         )
 
-        with patch(
-            "app.services.chat_custom_hazard_input.deterministic_custom_hazard_input_review",
-            return_value=None,
-        ):
-            response = _run(
-                service._capture_custom_hazard(
-                    "session-1",
-                    session,
-                    "Digital energy services leave people behind",
-                )
+        response = _run(
+            service._capture_custom_hazard(
+                "session-1",
+                session,
+                "Digital energy services leave people behind",
             )
+        )
 
         self.assertFalse(response.error)
         self.assertEqual(response.step, "custom_hazard_title_clarification")
-        self.assertEqual(response.input_mode, "text")
+        self.assertEqual(response.input_mode, "textarea")
         self.assertEqual(session.phase, "custom_hazard_title_clarification")
         self.assertEqual(session.custom_hazard["title_validation_status"], "needs_clarification")
         self.assertEqual(session.custom_hazard["title_clarification_round"], 1)
         self.assertIn("Which digital energy service", response.bot_message)
 
-    def test_deterministic_unclear_custom_hazard_title_asks_for_clarification(self):
+    def test_unclear_custom_hazard_title_always_uses_llm_clarity_review(self):
         service = ChatService.__new__(ChatService)
-        service._review_custom_hazard_input = AsyncMock()
+        service._review_custom_hazard_input = AsyncMock(
+            return_value={
+                "status": "needs_clarification",
+                "valid": False,
+                "reason": "The affected group is too general.",
+                "validation_code": "unclear_affected_group",
+                "normalized_hazard": "Digital energy services leave people behind",
+                "clarification_question": "Which specific population group is affected?",
+            }
+        )
         session = ChatSession(
             country="Germany",
             region="Saxony",
@@ -2755,10 +2844,129 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         self.assertFalse(response.error)
         self.assertEqual(response.step, "custom_hazard_title_clarification")
-        self.assertEqual(response.input_mode, "text")
+        self.assertEqual(response.input_mode, "textarea")
         self.assertEqual(session.phase, "custom_hazard_title_clarification")
         self.assertEqual(session.custom_hazard["title_validation_status"], "needs_clarification")
-        service._review_custom_hazard_input.assert_not_called()
+        service._review_custom_hazard_input.assert_awaited_once_with(
+            session,
+            "Digital energy services leave people behind",
+            use_llm_for_title=True,
+        )
+
+    def test_hazard_context_is_extracted_before_duplicate_and_objective_checks(self):
+        service = ChatService.__new__(ChatService)
+        raw_context = (
+            "Capital Access Gap: Current initiatives assume access to credit. "
+            "Female-led households lack funds for clean-energy upgrades without grants."
+        )
+        extracted = (
+            "Female-led households risk exclusion from clean-energy upgrades due to limited capital"
+        )
+        service._validate_text_meaning = AsyncMock(
+            return_value=SimpleNamespace(classification="MEANINGFUL", reason="")
+        )
+        service._review_custom_hazard_input = AsyncMock(
+            return_value={
+                "status": "valid",
+                "valid": True,
+                "normalized_hazard": extracted,
+                "reason": "A concrete hazard was extracted.",
+                "validation_code": "valid_hazard",
+            }
+        )
+        expected = ChatResponse(
+            session_id="session-1",
+            step="custom_hazard_dimension_check",
+            bot_message="checking",
+            options=[],
+            session={},
+        )
+        service._continue_valid_custom_hazard = AsyncMock(return_value=expected)
+        session = ChatSession(
+            country="Germany",
+            region="Saxony",
+            sector="Energy",
+            phase="custom_hazard_input",
+        )
+
+        response = _run(service._capture_custom_hazard("session-1", session, raw_context))
+
+        self.assertIs(response, expected)
+        self.assertEqual(session.custom_hazard["raw_text"], raw_context)
+        self.assertEqual(session.custom_hazard["resolved_hazard_text"], extracted)
+        self.assertEqual(session.pending_hazard, extracted)
+        service._continue_valid_custom_hazard.assert_awaited_once_with(
+            "session-1",
+            session,
+            extracted,
+        )
+
+    def test_initial_llm_review_is_explicitly_instructed_to_extract_the_hazard(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            country="Germany",
+            region="Saxony",
+            sector="Energy",
+        )
+        extracted = "Female-led households face exclusion from clean-energy upgrades"
+        model = AsyncMock(
+            return_value=(
+                '{"status":"valid","is_valid":true,"validation_code":"valid_hazard",'
+                '"confidence":0.95,"normalized_hazard":"'
+                + extracted
+                + '","reason":"Concrete hazard extracted."}'
+            )
+        )
+
+        with patch("app.services.validation_service.ask_llm_chat", model):
+            review = _run(
+                service._review_custom_hazard_input(
+                    session,
+                    "Capital gap: policy background followed by the household impact.",
+                    use_llm_for_title=True,
+                )
+            )
+
+        self.assertIsNotNone(review)
+        self.assertEqual(review["normalized_hazard"], extracted)
+        prompt = model.await_args.kwargs["messages"][0]["content"]
+        self.assertIn("Extraction requirement", prompt)
+        self.assertIn("Do not copy the full input", prompt)
+
+    def test_what_is_the_hazard_displays_extracted_text_not_raw_context(self):
+        service = ChatService.__new__(ChatService)
+        raw_context = (
+            "Capital Access Gap: Existing initiatives assume household credit. "
+            "Female-led households cannot afford clean-energy upgrades without grants."
+        )
+        extracted = (
+            "Female-led households risk exclusion from clean-energy upgrades due to limited capital"
+        )
+        state = validator.default_custom_hazard_state()
+        state.update(
+            {
+                "raw_text": raw_context,
+                "resolved_hazard_text": extracted,
+                "dimension_scores": {
+                    "policy_objective_fit": {
+                        "reason": "Limited capital can obstruct renewable-energy adoption."
+                    }
+                },
+            }
+        )
+        session = ChatSession(
+            country="Germany",
+            region="Saxony",
+            sector="Energy",
+            phase="custom_hazard_dimension_check",
+            pending_hazard=extracted,
+            custom_hazard=state,
+        )
+
+        response = service._hazard_evidence_decision_step("session-1", session)
+
+        self.assertIn(extracted, response.bot_message)
+        self.assertNotIn("Existing initiatives assume household credit", response.bot_message)
 
     def test_reason_context_review_clarification_stays_unsaved(self):
         service = ChatService.__new__(ChatService)
@@ -3067,7 +3275,7 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         self.assertTrue(response.error)
         self.assertEqual(response.step, "custom_hazard_title_clarification")
-        self.assertEqual(response.input_mode, "text")
+        self.assertEqual(response.input_mode, "textarea")
         self.assertEqual(session.phase, "custom_hazard_title_clarification")
         self.assertEqual(session.pending_hazard, "Digital energy services leave people behind")
         self.assertEqual(session.pending_hazard_title_clarification_answers, [])

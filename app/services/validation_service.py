@@ -490,7 +490,7 @@ class ChatValidationServiceMixin:
             "merely states a fact",
         )
         if any(term in lowered for term in policy_terms):
-            return "twin_transition_policy_fit"
+            return "mechanism_fit"
         if "selected sector" in lowered or any(
             term in lowered for term in ("wrong sector", "sector mismatch", "unrelated to the selected sector")
         ):
@@ -501,7 +501,7 @@ class ChatValidationServiceMixin:
             return "affected_groups_fit"
         if any(term in lowered for term in ("sector", "housing", "transport", "energy")):
             return "selected_sector_fit"
-        return "twin_transition_policy_fit"
+        return "mechanism_fit"
 
     async def _validate_custom_hazard(
         self, session_id: str, session: ChatSession, message: str
@@ -777,7 +777,7 @@ class ChatValidationServiceMixin:
 
         if isinstance(session.custom_hazard, dict):
             state = self._custom_hazard_state(session)
-            state["raw_text"] = hazard
+            state["raw_text"] = str(state.get("raw_text") or hazard).strip()
             state["normalized_text"] = normalize_for_match(hazard)
             state["reason"] = reason
             state["evidence"] = evidence or ""
@@ -1007,6 +1007,20 @@ class ChatValidationServiceMixin:
                 "faithful to the provided facts, do not invent details, and keep it under "
                 "100 characters.\n"
             )
+        elif use_llm_for_title:
+            clarification_block = (
+                "\nExtraction requirement:\n"
+                "First decide whether the submitted text states one sufficiently specific "
+                "hazard. If it is ambiguous or only general, return needs_clarification "
+                "with one targeted clarification question. If it is sufficient, return "
+                "status valid and set normalized_hazard to the concise hazard extracted "
+                "from the full user context. Include the affected subject when stated, "
+                "the concrete harm or risk, and its causal condition when stated. Exclude "
+                "background narrative, policy commentary, evidence discussion, and proposed "
+                "solutions. Do not copy the full input merely because it is valid. Preserve "
+                "the user's meaning, invent no facts, and keep normalized_hazard under 100 "
+                "characters where that does not lose essential meaning.\n"
+            )
         messages = [
             {
                 "role": "user",
@@ -1029,7 +1043,67 @@ class ChatValidationServiceMixin:
         if is_llm_unavailable_response(response):
             return None
 
-        return self._parse_custom_hazard_classifier_response(response)
+        review = self._parse_custom_hazard_classifier_response(response)
+        if (
+            isinstance(review, dict)
+            and not review.get("valid")
+            and self._title_review_only_missing_mechanism(review)
+            and self._title_has_negative_hazard_signal(hazard)
+        ):
+            return {
+                "status": "valid",
+                "valid": True,
+                "normalized_hazard": (
+                    str(review.get("normalized_hazard") or "").strip()
+                    or hazard.strip()
+                ),
+                "reason": "The title states a concrete harm; mechanism fit is checked later.",
+                "validation_code": "valid_short_hazard",
+                "confidence": review.get("confidence") or 0.7,
+            }
+        return review
+
+    @staticmethod
+    def _title_review_only_missing_mechanism(review: dict[str, object]) -> bool:
+        text = normalize_for_match(
+            " ".join(
+                str(review.get(key) or "")
+                for key in ("reason", "clarification_question", "validation_code")
+            )
+        )
+        mechanism_terms = (
+            "mechanism",
+            "transition measure",
+            "transition policy",
+            "policy link",
+            "policy context",
+        )
+        ambiguity_terms = (
+            "ambiguous",
+            "general",
+            "broad",
+            "too short",
+            "affected group",
+            "who is affected",
+            "negative consequence",
+            "harm or risk",
+            "unclear hazard",
+        )
+        return any(term in text for term in mechanism_terms) and not any(
+            term in text for term in ambiguity_terms
+        )
+
+    @staticmethod
+    def _title_has_negative_hazard_signal(hazard: str) -> bool:
+        text = normalize_for_match(hazard)
+        return any(
+            term in text
+            for term in (
+                "risk", "harm", "loss", "higher", "increase", "cost", "burden",
+                "exclusion", "unaffordable", "shortage", "disruption", "barrier",
+                "lack of access", "unsafe", "delay", "outage", "unemployment",
+            )
+        )
 
     def _custom_hazard_classifier_existing_hazards(self, session: ChatSession) -> str:
         """Return duplicate-scope hazards for the hazard-name classifier prompt."""
@@ -1482,6 +1556,7 @@ class ChatValidationServiceMixin:
         fields: dict[str, str] | None = None,
         user_input_text: str | None = None,
         user_input_label: str = "User input",
+        strict: bool = False,
     ) -> dict[str, str | bool] | None:
         quality_fields = dict(fields or {})
         if user_input_text is not None:
@@ -1525,7 +1600,8 @@ class ChatValidationServiceMixin:
             return None
         parsed = parse_validation_response(response)
         if (
-            session.validation_mode == "easy"
+            not strict
+            and session.validation_mode == "easy"
             and self._fields_are_locally_meaningful(cleaned_fields)
             and (
                 not parsed.get("valid")
@@ -1539,7 +1615,8 @@ class ChatValidationServiceMixin:
                 "reason": "Easy validation accepted locally meaningful input.",
             }
         if (
-            not parsed.get("valid")
+            not strict
+            and not parsed.get("valid")
             and self._is_style_only_validation_rejection(str(parsed.get("reason") or ""))
             and self._fields_are_locally_meaningful(cleaned_fields)
         ):
@@ -1548,7 +1625,8 @@ class ChatValidationServiceMixin:
                 "reason": "The text is understandable despite minor wording issues.",
             }
         if (
-            not parsed.get("valid")
+            not strict
+            and not parsed.get("valid")
             and session.validation_mode == "easy"
             and self._fields_are_locally_meaningful(cleaned_fields)
             and not self._is_hard_validation_rejection(str(parsed.get("reason") or ""))

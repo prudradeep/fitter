@@ -10,8 +10,8 @@ Rules:
 - Do not infer unsupported target groups.
 - A valid hazard must describe a possible negative impact, risk, harm, burden, exclusion, vulnerability, or disruption.
 - A fact, statistic, trend, or observation is NOT a hazard unless it clearly explains a negative impact.
-- Judge hazard definition separately from twin-transition policy fit.
-- Judge sector fit separately from twin-transition policy fit.
+- Judge hazard definition separately from mechanism fit.
+- Judge sector fit separately from mechanism fit.
 - The selected sector must be one of: Energy, Housing, Transport.
 - Validate only against the selected sector.
 - Do not assume Energy when the sector is Housing or Transport.

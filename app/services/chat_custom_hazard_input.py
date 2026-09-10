@@ -208,7 +208,7 @@ class ChatCustomHazardInputMixin:
         question = str(
             review.get("clarification_question")
             or review.get("reason")
-            or "What transition measure causes the harm, and who or what is affected?"
+            or "What specific negative harm or risk does this hazard describe?"
         ).strip()
         state = self._custom_hazard_state(session)
         existing_question = session.pending_hazard_title_clarification_question
@@ -252,12 +252,12 @@ class ChatCustomHazardInputMixin:
         if self._is_invalid_user_text(answer) or len(compact) < 8:
             return (
                 "That does not provide enough information to clarify the hazard. "
-                "Please name the affected group and the concrete harm or risk."
+                "Please describe the concrete negative harm or risk."
             )
         if match_option_label(answer, HAZARD_ENTRY_OPTIONS, threshold=0.72) is not None:
             return (
                 "That looks like a navigation option, not a clarification. Please answer "
-                "with the affected group, the concrete harm, and the transition measure causing it."
+                "with the concrete negative harm or risk."
             )
         non_answer_phrases = {
             "yes",
@@ -301,8 +301,8 @@ class ChatCustomHazardInputMixin:
         non_answer_compacts = {compact_for_match(phrase) for phrase in non_answer_phrases}
         if normalized in non_answer_phrases or compact in non_answer_compacts:
             return (
-                "That does not clarify the hazard. Please identify who is affected, "
-                "what harm they face, and how the transition measure causes or worsens it."
+                "That does not clarify the hazard. Please identify the concrete negative "
+                "harm or risk."
             )
         non_clarifying_patterns = (
             r"^(?:what|how|why|where|when|who)\b",
@@ -323,7 +323,7 @@ class ChatCustomHazardInputMixin:
         ):
             return (
                 "That is a question or request, not a clarification. Please answer "
-                "with the affected group, the concrete harm, and the transition measure causing it."
+                "with the concrete negative harm or risk."
             )
         return None
 
@@ -337,7 +337,7 @@ class ChatCustomHazardInputMixin:
     ) -> ChatResponse:
         question = (
             session.pending_hazard_title_clarification_question
-            or "What transition measure causes the harm, and who or what is affected?"
+            or "What specific negative harm or risk does this hazard describe?"
         )
         return self._custom_hazard_response(
             session_id=session_id,
@@ -361,7 +361,12 @@ class ChatCustomHazardInputMixin:
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
-        hazard = str(state.get("raw_text") or session.pending_hazard or "New hazard").strip()
+        hazard = str(
+            state.get("resolved_hazard_text")
+            or session.pending_hazard
+            or state.get("raw_text")
+            or "New hazard"
+        ).strip()
         groups = state.get("confirmed_affected_groups") or state.get("affected_groups") or []
         profiles = []
         for group in groups:
@@ -478,10 +483,59 @@ class ChatCustomHazardInputMixin:
             )
 
         self._initialize_custom_hazard_title_state(session, hazard)
-        # Semantic fit belongs to the ordered dimension workflow. At this point
-        # only basic text quality has passed; policy-objective fit must be the
-        # first substantive validation performed.
-        return await self._continue_valid_custom_hazard(session_id, session, hazard)
+        review = await self._review_custom_hazard_input(
+            session,
+            hazard,
+            use_llm_for_title=True,
+        )
+        if review is None:
+            return self._custom_hazard_response(
+                session_id=session_id,
+                session=session,
+                step="custom_hazard_input",
+                bot_message=(
+                    "I could not extract and review the hazard because the local "
+                    "validation model is unavailable. Please try again."
+                ),
+                options=HAZARD_ENTRY_OPTIONS,
+                input_mode="textarea",
+                error=True,
+            )
+
+        title_status = self._custom_hazard_title_status(review)
+        if title_status == "needs_clarification":
+            self._store_custom_hazard_title_review(
+                session,
+                review,
+                fallback_hazard=hazard,
+            )
+            return self._custom_hazard_title_clarification_step(
+                session_id,
+                session,
+                hazard=hazard,
+                review=review,
+            )
+        if title_status == "invalid":
+            return self._custom_hazard_title_rejection_response(
+                session_id,
+                session,
+                hazard=hazard,
+                review=review,
+            )
+
+        extracted_hazard = self._store_custom_hazard_title_review(
+            session,
+            review,
+            fallback_hazard=hazard,
+        )
+        session.pending_hazard = extracted_hazard
+        # Objective fit remains the first workflow dimension. Extraction and
+        # ambiguity review prepare the hazard statement used by every dimension.
+        return await self._continue_valid_custom_hazard(
+            session_id,
+            session,
+            extracted_hazard,
+        )
 
     async def _handle_custom_hazard_title_clarification(
         self, session_id: str, session: ChatSession, message: str
@@ -636,7 +690,7 @@ class ChatCustomHazardInputMixin:
     ) -> None:
         dimensions = state.get("dimension_scores")
         if isinstance(dimensions, dict):
-            dimensions.pop("twin_transition_policy_fit", None)
+            dimensions.pop("mechanism_fit", None)
 
         removed_answers: set[str] = set()
         retained_clarifications: list[object] = []
@@ -654,7 +708,7 @@ class ChatCustomHazardInputMixin:
                 str(question) for question in clarification.get("questions") or []
             )
             is_policy_clarification = (
-                clarification.get("dimension") == "twin_transition_policy_fit"
+                clarification.get("dimension") == "mechanism_fit"
                 or any(
                     marker in normalize_for_match(questions)
                     for marker in policy_question_markers
@@ -672,8 +726,9 @@ class ChatCustomHazardInputMixin:
             state["reason"] = ""
             session.pending_hazard_reason = None
         state["linkage_analysis"] = {}
-        state["active_validation_dimension"] = "twin_transition_policy_fit"
-        state["active_validation_dimensions"] = ["twin_transition_policy_fit"]
+        state["active_validation_dimension"] = "mechanism_fit"
+        state["active_validation_dimensions"] = ["mechanism_fit"]
+        state["causal_linkage_confirmed"] = False
         state["pending_clarification_questions"] = []
 
     def _discard_submitted_policy_reference(
@@ -719,19 +774,27 @@ class ChatCustomHazardInputMixin:
         answer = message.strip()
         if session.phase == "custom_hazard_clarification":
             state = self._custom_hazard_state(session)
-            if (
-                normalize(exact_label or answer) == normalize("Add a Policy Reference")
-                and state.get("policy_reference_available")
-                and state.get("active_validation_dimension")
-                == "twin_transition_policy_fit"
-            ):
-                state["replacing_policy_reference"] = True
+            if normalize(exact_label or answer) == normalize("Revise mechanism"):
+                state["awaiting_policy_reference"] = False
+                return self._custom_hazard_mechanism_input_step(
+                    session_id,
+                    session,
+                    detail="Revise the mechanism, then I will check it against the available source text.",
+                )
+            if normalize(exact_label or answer) == normalize("Add a Policy Reference"):
+                replacing = bool(
+                    state.get("policy_reference_available")
+                    and state.get("active_validation_dimension") == "mechanism_fit"
+                )
+                state["replacing_policy_reference"] = replacing
                 return self._custom_hazard_policy_reference_step(
                     session_id,
                     session,
                     detail=(
                         "Provide a new policy URL or file. The current reference will be "
                         "discarded after the replacement is successfully read."
+                        if replacing
+                        else "Paste the policy URL or attach the policy file below."
                     ),
                 )
             if state.get("awaiting_policy_reference"):
@@ -831,8 +894,11 @@ class ChatCustomHazardInputMixin:
                 state["policy_reference_available"] = True
                 state["awaiting_policy_reference"] = False
                 state["replacing_policy_reference"] = False
-                state["show_policy_hazard_causal_linkage"] = True
-                state["message"] = "Twin-transition policy fit was analysed against the supplied policy document."
+                state["message"] = "Mechanism fit will be analysed against the supplied policy document."
+                if str(state.get("selected_mechanism") or "").strip():
+                    return await self._validate_current_custom_hazard_mechanism_source(
+                        session_id, session
+                    )
                 transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
                 return await self._run_custom_hazard_dimension_check(session_id, session)
             if not answer:

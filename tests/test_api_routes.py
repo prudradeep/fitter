@@ -62,7 +62,12 @@ class FakeKnowledgeBaseService:
             "chunks": 2,
         }
 
-    async def ingest_url(self, url: str, title: str | None = None) -> dict[str, object]:
+    async def ingest_url(
+        self,
+        url: str,
+        title: str | None = None,
+        **kwargs,
+    ) -> dict[str, object]:
         return {
             "error": False,
             "id": 12,

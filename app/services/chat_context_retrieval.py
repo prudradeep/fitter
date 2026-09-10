@@ -39,6 +39,7 @@ class ChatContextRetrievalMixin:
         evidence: str,
     ) -> str:
         temporary_context = await self._temporary_evidence_context(session)
+        reused_context = self._reused_evidence_context(session, evidence)
         inline_evidence = self._inline_evidence_content(evidence)
         if inline_evidence:
             inline_context = self._format_full_knowledge_results(
@@ -54,8 +55,47 @@ class ChatContextRetrievalMixin:
         else:
             inline_context = ""
         return "\n".join(
-            part for part in (temporary_context, inline_context) if part.strip()
+            part
+            for part in (reused_context, temporary_context, inline_context)
+            if part.strip()
         ).strip()
+
+    def _reused_evidence_context(
+        self,
+        session: ChatSession,
+        evidence: str | None = None,
+    ) -> str:
+        text = str(evidence or "")
+        document_ids = re.findall(
+            r"^Reused evidence document ID:\s*(\S+)",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        scope_match = re.search(
+            r"^Reused evidence scope:\s*(\S+)",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        scope = str(scope_match.group(1) if scope_match else "").strip()
+        if not document_ids or scope not in {
+            TEMPORARY_KB_SCOPE,
+            VALIDATED_EVIDENCE_SCOPE,
+            MAIN_KB_SCOPE,
+        }:
+            return ""
+        service = KnowledgeBaseService(
+            self.db,
+            self.user_id if scope == TEMPORARY_KB_SCOPE else None,
+            scope=scope,
+            session_key=session.session_key,
+            country_id=session.country_id,
+            region_id=session.region_id,
+            sector_id=session.sector_id,
+        )
+        results: list[dict[str, object]] = []
+        for document_id in document_ids:
+            results.extend(service.document_results(document_id))
+        return self._format_full_knowledge_results(results)
 
     async def _mitigation_evidence_context(
         self,

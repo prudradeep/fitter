@@ -62,6 +62,9 @@ class CustomHazardStateMachineTests(unittest.TestCase):
             ChatPhase.ADD_HAZARD_CLARIFICATION: CustomHazardHandler.CLARIFY_HAZARD,
             ChatPhase.CUSTOM_HAZARD_CLARIFICATION: CustomHazardHandler.CLARIFY_HAZARD,
             ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK: CustomHazardHandler.CHECK_DIMENSIONS,
+            ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION: CustomHazardHandler.CONFIRM_MECHANISM,
+            ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT: CustomHazardHandler.CAPTURE_MECHANISM,
+            ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION: CustomHazardHandler.CONFIRM_CAUSAL_LINKAGE,
             ChatPhase.ADD_HAZARD_REASON: CustomHazardHandler.CAPTURE_REASON,
             ChatPhase.ADD_HAZARD_EVIDENCE_DECISION: CustomHazardHandler.DECIDE_EVIDENCE,
             ChatPhase.ADD_HAZARD_EVIDENCE_INPUT: CustomHazardHandler.CAPTURE_EVIDENCE,
@@ -89,12 +92,11 @@ class CustomHazardStateMachineTests(unittest.TestCase):
         ungated_phases = {
             ChatPhase.ADD_HAZARD,
             ChatPhase.CUSTOM_HAZARD_INPUT,
-            ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
-            ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW,
             ChatPhase.CUSTOM_HAZARD_PROFILE_REASON,
-            ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW,
             ChatPhase.CUSTOM_HAZARD_DUPLICATE_CONFIRMATION,
             ChatPhase.HAZARD_DUPLICATE_SUGGESTION,
+            ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
+            ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION,
         }
         self.assertEqual(
             {

@@ -1472,21 +1472,37 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
     if evidence_url:
         evidence_parts.append(f"Evidence URL: {evidence_url}")
         if session_id:
+            evidence_session = session_store.get(session_id)
             temporary_service = KnowledgeBaseService(
                 db,
                 user_id,
                 scope="temporary",
                 session_key=session_id,
+                country_id=(evidence_session.country_id if evidence_session else None),
+                region_id=(evidence_session.region_id if evidence_session else None),
+                sector_id=(evidence_session.sector_id if evidence_session else None),
             )
             try:
                 result = await temporary_service.ingest_url(
                     evidence_url,
                     evidence_url,
                     allow_lexical_only=True,
+                    reuse_existing=True,
                 )
                 document_id = str(result.get("document_id") or "").strip()
                 if document_id:
-                    evidence_parts.append(f"Temporary evidence document ID: {document_id}")
+                    reused_scope = str(result.get("scope") or "").strip()
+                    if result.get("reused") and reused_scope != TEMPORARY_KB_SCOPE:
+                        evidence_parts.extend(
+                            [
+                                f"Reused evidence document ID: {document_id}",
+                                f"Reused evidence scope: {reused_scope}",
+                            ]
+                        )
+                    else:
+                        evidence_parts.append(
+                            f"Temporary evidence document ID: {document_id}"
+                        )
             except (httpx.HTTPError, ValueError):
                 pass
 
