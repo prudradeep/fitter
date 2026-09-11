@@ -103,6 +103,8 @@ class ChatContextRetrievalMixin:
         mitigation_measure: str,
         reason: str,
         evidence: str,
+        *,
+        retrieval_query: str | None = None,
     ) -> str:
         temporary_context = await self._temporary_evidence_context(session)
         inline_evidence = self._inline_evidence_content(evidence)
@@ -117,7 +119,9 @@ class ChatContextRetrievalMixin:
                 }
             )
         if inline_results:
-            query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
+            query = retrieval_query or self._mitigation_retrieval_query(
+                session, mitigation_measure, reason
+            )
             inline_results = await self.grounding_models.ground_results(query, inline_results)
         inline_context = self._format_full_knowledge_results(inline_results)
         return "\n".join(part for part in (temporary_context, inline_context) if part).strip()

@@ -18,6 +18,11 @@ class ChatMitigationCreationStorageMixin:
             row.creation_details_json = self._metadata_to_json(
                 {
                     "mechanisms": list(session.mitigation_mechanisms or []),
+                    "selected_mechanism": session.selected_mitigation_mechanism or "",
+                    "selected_policy": session.selected_mitigation_policy or "",
+                    "mechanism_guidance": session.mitigation_mechanism_guidance or {},
+                    "mechanism_reflection": session.mitigation_mechanism_reflection or "",
+                    "policy_effects": session.mitigation_policy_effects or [],
                     "measure_evidence": session.pending_mitigation_evidence
                     or (evaluated.get("evidence") if isinstance(evaluated, dict) else "")
                     or "",

@@ -116,8 +116,8 @@ class MitigationPolicyFormattingTests(unittest.TestCase):
             content.index("POLICY MODIFICATION"),
             content.index("General considerations to mitigate the negative effects"),
         )
-        self.assertIn("Important points for the mitigation", content)
-        self.assertIn("- Prioritise accessible delivery.", content)
+        self.assertNotIn("Important points for the mitigation", content)
+        self.assertNotIn("- Prioritise accessible delivery.", content)
         self.assertNotIn("NEW POLICY", content)
         self.assertNotIn("CURRENT POLICY", content)
         service._new_policy_suggestions_section.assert_awaited_once_with(session)

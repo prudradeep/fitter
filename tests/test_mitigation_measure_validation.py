@@ -1174,10 +1174,10 @@ class MitigationMeasureValidationTests(unittest.TestCase):
 
         self.assertEqual(panel_items, ["Targeted Mobility Access"])
         self.assertNotIn("Dynamic Theme Heading", markdown)
-        self.assertIn("## Important points for the mitigation", markdown)
-        self.assertIn("- Prioritise accessible delivery.", markdown)
+        self.assertNotIn("## Important points for the mitigation", markdown)
+        self.assertNotIn("- Prioritise accessible delivery.", markdown)
 
-    def test_practical_considerations_use_concerns_when_important_points_are_missing(self):
+    def test_practical_considerations_do_not_duplicate_concerns_as_important_points(self):
         payload = {
             "title": "# Practical Considerations",
             "themes": [
@@ -1193,8 +1193,8 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             json.dumps(payload)
         )
 
-        self.assertIn("## Important points for the mitigation", markdown)
-        self.assertIn("- Provide non-digital application routes.", markdown)
+        self.assertNotIn("## Important points for the mitigation", markdown)
+        self.assertEqual(markdown.count("- Provide non-digital application routes."), 1)
 
     def test_extract_suggested_policy_reason_from_why_this_helps(self):
         markdown = (
@@ -1758,7 +1758,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
         self.assertEqual(response.step, "system_inquiry_intro")
         self.assertEqual(session.phase, "system_inquiry_intro")
         self.assertTrue(session.system_inquiry_observations)
-        self.assertIn("Start system inquiry", [option.label for option in response.options])
+        self.assertIn("Start systems inquiry", [option.label for option in response.options])
         self.assertNotIn("Power outages from grid congestion", response.bot_message)
         self.assertNotIn("selected hazards have no mitigation measure", response.bot_message)
 
@@ -2352,7 +2352,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
 
         self.assertIn("Re-run note", response.bot_message)
         self.assertIn("1 reflection response", response.bot_message)
-        self.assertIn("Start system inquiry", [option.label for option in response.options])
+        self.assertIn("Start systems inquiry", [option.label for option in response.options])
 
     def test_system_inquiry_intro_hides_rerun_note_for_current_reflections(self):
         engine = _MitigationReviewEngine()
@@ -2410,7 +2410,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             engine._handle_system_inquiry_intro(
                 "test-session",
                 session,
-                "Start system inquiry",
+                "Start systems inquiry",
             )
         )
         self.assertEqual(first.step, "system_inquiry_observation")
@@ -2459,7 +2459,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             engine._handle_system_inquiry_intro(
                 "test-session",
                 session,
-                "Start system inquiry",
+                "Start systems inquiry",
             )
         )
 
@@ -2613,7 +2613,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             engine._handle_system_inquiry_intro(
                 "test-session",
                 session,
-                "Start system inquiry",
+                "Start systems inquiry",
             )
         )
         asyncio.run(
@@ -2860,7 +2860,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
 
         self.assertEqual(response.step, "system_inquiry_followup")
         self.assertEqual(response.input_mode, "textarea")
-        self.assertEqual([option.label for option in response.options], ["Skip", "End system inquiry"])
+        self.assertEqual([option.label for option in response.options], ["Skip", "End systems inquiry"])
         self.assertIn("Affected groups not yet covered", response.bot_message)
         self.assertIn("Higher Home problems count", response.bot_message)
         self.assertIn("Utility arrears: Yes, twice or more", response.bot_message)
@@ -3288,7 +3288,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             engine._handle_system_inquiry_intro(
                 "test-session",
                 session,
-                "Skip system inquiry",
+                "Skip systems inquiry",
             )
         )
 
@@ -3329,7 +3329,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             engine._handle_system_inquiry_intro(
                 "test-session",
                 session,
-                "Skip system inquiry",
+                "Skip systems inquiry",
             )
         )
 

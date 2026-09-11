@@ -16,6 +16,7 @@ from app.services.chat_formatters import (
 from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
     CUSTOM_HAZARD_FINAL_OPTIONS,
+    CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
     CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS,
     HAZARD_POPULATION_REVIEW_OPTIONS,
     exact_option_label,
@@ -135,6 +136,21 @@ class ChatCustomHazardPopulationStepsMixin:
         if isinstance(session.custom_hazard, dict):
             state = self._custom_hazard_state(session)
             if session.phase == "custom_hazard_profile_reason":
+                reason_action = exact_option_label(
+                    message, CUSTOM_HAZARD_PROFILE_REASON_OPTIONS
+                )
+                if normalize(reason_action or "") == normalize(
+                    "Back to affected groups"
+                ):
+                    state["pending_profile_reason_group"] = ""
+                    state["pending_profile_reason_queue"] = []
+                    state["awaiting_group_add"] = False
+                    transition_custom_hazard(
+                        session, ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW
+                    )
+                    return self._custom_hazard_population_review_step(
+                        session_id, session
+                    )
                 pending_group = str(state.get("pending_profile_reason_group") or "").strip()
                 reason = message.strip()
                 if not pending_group or not reason:
@@ -143,7 +159,7 @@ class ChatCustomHazardPopulationStepsMixin:
                         session=session,
                         step="custom_hazard_profile_reason",
                         bot_message=f"How does this hazard affect '{pending_group or 'this group'}'?",
-                        options=[],
+                        options=CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
                         input_mode="textarea",
                         error=not bool(reason),
                     )
@@ -162,7 +178,7 @@ class ChatCustomHazardPopulationStepsMixin:
                             f"How does this hazard affect '{pending_group}'?\n\n"
                             f"{reason_review['reason']}"
                         ),
-                        options=[],
+                        options=CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
                         input_mode="textarea",
                         error=True,
                     )
@@ -193,7 +209,7 @@ class ChatCustomHazardPopulationStepsMixin:
                         session=session,
                         step="custom_hazard_profile_reason",
                         bot_message=f"How does this hazard affect '{next_group}'?",
-                        options=[],
+                        options=CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
                         input_mode="textarea",
                         error=False,
                     )
@@ -253,7 +269,7 @@ class ChatCustomHazardPopulationStepsMixin:
                         session=session,
                         step="custom_hazard_profile_reason",
                         bot_message=f"How does this hazard affect '{add_items[0]}'?",
-                        options=[],
+                        options=CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
                         input_mode="textarea",
                         error=False,
                     )
@@ -298,7 +314,7 @@ class ChatCustomHazardPopulationStepsMixin:
                     session=session,
                     step="custom_hazard_profile_reason",
                     bot_message=f"How does this hazard affect '{group}'?",
-                    options=[],
+                    options=CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
                     input_mode="textarea",
                     error=False,
                 )
@@ -417,7 +433,7 @@ class ChatCustomHazardPopulationStepsMixin:
                         session=session,
                         step="custom_hazard_profile_reason",
                         bot_message=f"How does this hazard affect '{group}'?",
-                        options=[],
+                        options=CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
                         input_mode="textarea",
                         error=False,
                     )
@@ -591,6 +607,61 @@ class ChatCustomHazardPopulationStepsMixin:
                 lines.append(f"  - **AI reflection:** {reflection}")
         return "\n".join(lines) or "- No affected population groups identified yet."
 
+    @staticmethod
+    def _is_affected_population_placeholder(value: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+        return normalized in {
+            "matched a known affected-group expression.",
+            "identified during hazard-title validation.",
+            "explicitly named in the hazard or clarification text.",
+        }
+
+    def _affected_population_reflection_fallback(
+        self,
+        session: ChatSession,
+        group: str,
+        reason: str,
+    ) -> str:
+        cleaned_reason = re.sub(r"\s+", " ", str(reason or "")).strip()
+        if cleaned_reason and not self._is_affected_population_placeholder(cleaned_reason):
+            return cleaned_reason[:1200]
+
+        impact = re.sub(
+            r"\s+",
+            " ",
+            self._custom_hazard_user_description(session),
+        ).strip().rstrip(".")
+        label = self._clean_affected_group_label(group) or "this group"
+        if impact:
+            return f"For {label}, the stated hazard impact is: {impact}."[:1200]
+        return f"The specific impact of this hazard on {label} requires review."
+
+    async def _ensure_affected_population_reflections(
+        self,
+        session: ChatSession,
+    ) -> None:
+        """Populate review reflections without replacing meaningful user content."""
+        state = self._custom_hazard_state(session)
+        enriched_groups: list[object] = []
+        for item in state.get("affected_groups") or []:
+            if not isinstance(item, dict):
+                enriched_groups.append(item)
+                continue
+            group = dict(item)
+            label = self._clean_affected_group_label(str(group.get("group") or ""))
+            reason = str(group.get("reason") or "").strip()
+            reflection = str(group.get("reflection") or "").strip()
+            if label and (
+                not reflection or self._is_affected_population_placeholder(reflection)
+            ):
+                group["reflection"] = await self._generate_affected_population_reflection(
+                    session,
+                    label,
+                    "" if self._is_affected_population_placeholder(reason) else reason,
+                )
+            enriched_groups.append(group)
+        state["affected_groups"] = enriched_groups
+
     async def _generate_affected_population_reflection(
         self,
         session: ChatSession,
@@ -598,15 +669,14 @@ class ChatCustomHazardPopulationStepsMixin:
         reason: str,
     ) -> str:
         """Turn a validated impact reason into a concise, grounded review reflection."""
-        fallback = re.sub(r"\s+", " ", str(reason or "")).strip()[:1200]
+        fallback = self._affected_population_reflection_fallback(
+            session,
+            group,
+            reason,
+        )
         state = self._custom_hazard_state(session)
         payload = {
-            "hazard": str(
-                session.accepted_custom_hazard
-                or state.get("generated_title")
-                or state.get("description")
-                or ""
-            ).strip(),
+            "hazard": self._custom_hazard_user_description(session),
             "affected_group": self._clean_affected_group_label(group),
             "validated_impact_reason": fallback,
             "confirmed_mechanism": str(state.get("selected_mechanism") or "").strip(),
@@ -1201,7 +1271,7 @@ class ChatCustomHazardPopulationStepsMixin:
         accepted_hazard = self._prepare_custom_hazard_added_profiles(session_id, session)
         added_message = render_message(
             "hazard_added.md",
-            hazard=accepted_hazard,
+            hazard=session.generated_custom_hazard_title or accepted_hazard,
             original_hazard=accepted_hazard,
             summary=session.accepted_custom_hazard_summary or "",
             reason=session.accepted_custom_hazard_reason or "Not provided",
@@ -1240,12 +1310,6 @@ class ChatCustomHazardPopulationStepsMixin:
             original_hazard,
             generated_hazard,
         )
-        if generated_hazard and generated_hazard != original_hazard:
-            if session.hazard_profiles and original_hazard in session.hazard_profiles:
-                session.hazard_profiles[generated_hazard] = session.hazard_profiles.pop(
-                    original_hazard
-                )
-            session.accepted_custom_hazard = generated_hazard
         accepted_hazard = self._prepare_custom_hazard_added_profiles(session_id, session)
         profiles = self._stored_hazard_profiles(session, accepted_hazard)
         enriched_profiles = await self._additional_profiles_with_population_context(
@@ -1259,8 +1323,8 @@ class ChatCustomHazardPopulationStepsMixin:
             session.hazard_profiles[accepted_hazard] = enriched_profiles
         added_message = render_message(
             "hazard_added.md",
-            hazard=accepted_hazard,
-            original_hazard=original_hazard,
+            hazard=generated_hazard or accepted_hazard,
+            original_hazard=accepted_hazard,
             summary=session.accepted_custom_hazard_summary or "",
             reason=session.accepted_custom_hazard_reason or "Not provided",
             evidence=evidence_for_display(session.accepted_custom_hazard_evidence),

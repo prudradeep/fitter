@@ -66,7 +66,7 @@ from app.services.mitigation_policy_formatting import (
     simplify_mitigation_implementation_summary,
 )
 from app.services.mitigation_text_rules import local_mitigation_clarification_error
-from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
+from app.services.prompt_loader import load_nested_prompt_file, load_prompt_file, render_prompt_template
 from app.services.system_inquiry_probe_library import (
     system_inquiry_library_version,
     system_inquiry_probe_library,

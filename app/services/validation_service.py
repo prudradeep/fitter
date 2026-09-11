@@ -374,21 +374,65 @@ class ChatValidationServiceMixin:
         )
         if local_error:
             return {"valid": False, "reason": local_error}
-
-        review = await self._validate_input_quality(
-            session=session,
-            purpose=(
-                f"an impact reason explaining how the custom hazard affects "
-                f"the affected population group '{group}'"
-            ),
-            fields={
-                "affected group": group,
-                "impact reason": reason,
-            },
+        return await self._validate_custom_affected_group_link(
+            session, group, reason
         )
-        if review is None:
-            return {"valid": True, "reason": "The impact reason is locally meaningful."}
-        return review
+
+    async def _validate_custom_affected_group_link(
+        self,
+        session: ChatSession,
+        group: str,
+        reason: str,
+    ) -> dict[str, str | bool]:
+        state = session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
+        hazard = self._custom_hazard_user_description(session)
+        payload = {
+            "hazard": hazard,
+            "hazard_reason": str(state.get("reason") or "").strip(),
+            "affected_group": self._clean_affected_group_label(group),
+            "proposed_impact_reason": re.sub(r"\s+", " ", reason).strip(),
+            "confirmed_mechanism": str(state.get("selected_mechanism") or "").strip(),
+            "causal_linkage": str(state.get("mechanism_causal_linkage") or "").strip(),
+        }
+        response = await ask_llm_chat(
+            context=load_nested_prompt_file(
+                "llm/custom_affected_group_reason_validation.txt"
+            ),
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            temperature=0.0,
+            max_tokens=350,
+        )
+        if is_llm_unavailable_response(response):
+            return {
+                "valid": True,
+                "reason": "The impact reason passed the local meaningful-text checks.",
+            }
+        parsed = parse_json_object(response)
+        required = (
+            "group_is_identifiable",
+            "hazard_link_is_plausible",
+            "concrete_disadvantage_is_clear",
+        )
+        if not isinstance(parsed, dict) or any(key not in parsed for key in required):
+            return {
+                "valid": True,
+                "reason": "The impact reason passed the local meaningful-text checks.",
+            }
+
+        def is_true(value: object) -> bool:
+            return value is True or str(value or "").strip().casefold() == "true"
+
+        valid = is_true(parsed.get("valid")) and all(
+            is_true(parsed.get(key)) for key in required
+        )
+        reason_text = re.sub(r"\s+", " ", str(parsed.get("reason") or "")).strip()
+        return {
+            "valid": valid,
+            "reason": reason_text or (
+                "Please explain the plausible pathway from the hazard to a concrete "
+                "disadvantage for this group."
+            ),
+        }
 
     def _custom_affected_group_reason_local_error(
         self,
@@ -419,51 +463,6 @@ class ChatValidationServiceMixin:
         if normalize_for_match(reason_text) in weak_reasons:
             return "Please explain the mechanism, such as the cost, job, access, exposure, or exclusion impact for this group."
 
-        hazard_text = " ".join(
-            str(value or "")
-            for value in [
-                session.accepted_custom_hazard,
-                session.pending_hazard,
-                (session.custom_hazard or {}).get("raw_text")
-                if isinstance(session.custom_hazard, dict)
-                else "",
-                (session.custom_hazard or {}).get("reason")
-                if isinstance(session.custom_hazard, dict)
-                else "",
-            ]
-        )
-        reason_words = self._profile_similarity_words(normalize_for_match(reason_text))
-        group_words = self._profile_similarity_words(normalize_for_match(group_label))
-        hazard_words = self._profile_similarity_words(normalize_for_match(hazard_text))
-        mechanism_words = {
-            "cost",
-            "costs",
-            "income",
-            "job",
-            "jobs",
-            "employment",
-            "unemployment",
-            "access",
-            "exposure",
-            "health",
-            "housing",
-            "energy",
-            "poverty",
-            "arrears",
-            "exclusion",
-            "training",
-            "retraining",
-            "mobility",
-            "tax",
-            "prices",
-            "bills",
-            "wages",
-            "livelihood",
-        }
-        if not (reason_words & group_words) and not (reason_words & hazard_words):
-            return "Please connect the reason to this affected group or to the custom hazard."
-        if not (reason_words & mechanism_words):
-            return "Please explain the concrete impact mechanism, such as costs, jobs, access, exposure, or exclusion."
         return None
 
     @staticmethod

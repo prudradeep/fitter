@@ -34,8 +34,13 @@ from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_navigation_steps import ChatNavigationStepsMixin
 from app.services.chat_options import (
     CUSTOM_HAZARD_FINAL_OPTIONS,
+    CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
+    CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS,
     DG_REASON_EVIDENCE_OPTIONS,
     HAZARD_EVIDENCE_DECISION_OPTIONS,
+    HAZARD_EVIDENCE_INPUT_OPTIONS,
+    HAZARD_EVIDENCE_RETRY_OPTIONS,
+    HAZARD_POPULATION_REVIEW_OPTIONS,
     IMPLEMENTATION_READINESS_OPTIONS,
     MITIGATION_EVIDENCE_DECISION_OPTIONS,
     MITIGATION_EVIDENCE_INPUT_OPTIONS,
@@ -425,6 +430,19 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
+        mitigation_dialogue_handlers = {
+            "mitigation_mechanism_selection": self._handle_mitigation_mechanism_selection,
+            "mitigation_mechanism_reflection_review": self._handle_mitigation_mechanism_reflection_review,
+            "mitigation_mechanism_reflection_input": self._handle_mitigation_mechanism_reflection_input,
+            "mitigation_policy_effect_review": self._handle_mitigation_policy_effect_review,
+            "mitigation_policy_effect_mitigation": self._handle_mitigation_policy_effect_mitigation,
+            "mitigation_policy_effect_disagreement": self._handle_mitigation_policy_effect_disagreement,
+        }
+        if session.phase in mitigation_dialogue_handlers:
+            return await mitigation_dialogue_handlers[session.phase](
+                current_session_id, session, clean_message
+            )
+
         if (
             session.phase
             not in {
@@ -519,6 +537,10 @@ class ChatService(
         mitigation_creation_handlers = {
             "mitigation_mechanism_confirmation": self._handle_mitigation_mechanism_confirmation,
             "mitigation_mechanism_input": self._handle_mitigation_mechanism_input,
+            "mitigation_policy_confirmation": self._handle_mitigation_policy_confirmation,
+            "mitigation_policy_reference": self._handle_mitigation_policy_reference,
+            "mitigation_policy_retry": self._handle_mitigation_policy_retry,
+            "mitigation_policy_clarification": self._handle_mitigation_policy_clarification,
             "mitigation_summary_review": self._handle_mitigation_summary_review,
             "mitigation_summary_revision": self._handle_mitigation_summary_revision,
             "mitigation_inspiration_review": self._handle_mitigation_inspiration_review,
@@ -707,6 +729,24 @@ class ChatService(
             return False
         if self._could_be_fuzzy_selection(session, clean_message):
             return False
+        if session.phase in {
+            "custom_hazard_population_review",
+            "custom_hazard_group_review",
+        }:
+            population_edits = self._parse_custom_affected_group_edit_message(
+                clean_message
+            )
+            if population_edits.get("add") or population_edits.get("remove"):
+                # The population-review handler validates parsed group labels and
+                # routes additions to the group-specific impact-reason step.
+                return False
+            state = (
+                session.custom_hazard
+                if isinstance(session.custom_hazard, dict)
+                else {}
+            )
+            if state.get("awaiting_group_add"):
+                return False
         if session.phase in {
             "add_hazard_evidence_input",
             "add_hazard_evidence",
@@ -1906,6 +1946,15 @@ class ChatService(
             labels = [option.label for option in STATS_DEEP_DIVE_OPTIONS]
         elif session.phase == "hazard_profile_selection":
             labels = hazard_names(session)
+        elif session.phase in {
+            "custom_hazard_population_review",
+            "custom_hazard_group_review",
+        }:
+            labels = [option.label for option in HAZARD_POPULATION_REVIEW_OPTIONS]
+        elif session.phase == "custom_hazard_summary_review":
+            labels = [option.label for option in CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS]
+        elif session.phase == "custom_hazard_profile_reason":
+            labels = [option.label for option in CUSTOM_HAZARD_PROFILE_REASON_OPTIONS]
         elif session.phase == "socio_demographic_review":
             labels = [option.label for option in SOCIO_DEMOGRAPHIC_OPTIONS]
         elif session.phase == "reason_confirmation":
@@ -1914,6 +1963,12 @@ class ChatService(
             labels = [option.label for option in MITIGATION_EVIDENCE_DECISION_OPTIONS]
         elif session.phase == "mitigation_evidence_input":
             labels = [option.label for option in MITIGATION_EVIDENCE_INPUT_OPTIONS]
+        elif session.phase == "mitigation_policy_confirmation":
+            labels = ["Yes, use this policy", "No, provide another policy"]
+        elif session.phase == "mitigation_policy_retry":
+            labels = ["Clarify the relevance", "Provide policy again"]
+        elif session.phase == "mitigation_equity":
+            labels = ["Skip this"]
         elif session.phase == "mitigation_review":
             labels = [option.label for option in MITIGATION_REVIEW_OPTIONS]
         elif session.phase == "implementation_readiness_assessment":
@@ -1954,10 +2009,27 @@ class ChatService(
             return [region.name for region in self._population_comparison_regions(session)]
         if session.phase == "add_hazard_evidence_decision":
             return [option.label for option in HAZARD_EVIDENCE_DECISION_OPTIONS]
+        if session.phase == "add_hazard_evidence_input":
+            return [
+                option.label
+                for option in [
+                    *HAZARD_EVIDENCE_INPUT_OPTIONS,
+                    *HAZARD_EVIDENCE_RETRY_OPTIONS,
+                ]
+            ]
         if session.phase == "stats_deep_dive":
             return [option.label for option in STATS_DEEP_DIVE_OPTIONS]
         if session.phase == "hazard_profile_selection":
             return [option.label for option in self._hazard_options(session)]
+        if session.phase in {
+            "custom_hazard_population_review",
+            "custom_hazard_group_review",
+        }:
+            return [option.label for option in HAZARD_POPULATION_REVIEW_OPTIONS]
+        if session.phase == "custom_hazard_summary_review":
+            return [option.label for option in CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS]
+        if session.phase == "custom_hazard_profile_reason":
+            return [option.label for option in CUSTOM_HAZARD_PROFILE_REASON_OPTIONS]
         if session.phase == "socio_demographic_review":
             return [option.label for option in SOCIO_DEMOGRAPHIC_OPTIONS]
         if session.phase == "reason_confirmation":
@@ -1970,6 +2042,12 @@ class ChatService(
             return [option.label for option in MITIGATION_EVIDENCE_DECISION_OPTIONS]
         if session.phase == "mitigation_evidence_input":
             return [option.label for option in MITIGATION_EVIDENCE_INPUT_OPTIONS]
+        if session.phase == "mitigation_policy_confirmation":
+            return ["Yes, use this policy", "No, provide another policy"]
+        if session.phase == "mitigation_policy_retry":
+            return ["Clarify the relevance", "Provide policy again"]
+        if session.phase == "mitigation_equity":
+            return ["Skip this"]
         if session.phase == "mitigation_target_population_review":
             return [
                 option.label

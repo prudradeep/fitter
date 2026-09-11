@@ -64,14 +64,29 @@ The current mitigation-measure flow is:
 
 ```text
 Start mitigation planning
--> choose manual entry or adopt suggested proposal
--> preserve proposal, reason, and target-group mechanisms
+-> show general considerations, hazard mechanisms, and general mitigation suggestions
+-> choose a mechanism leading to the hazard or enter one in free text
+-> search linked custom-hazard references plus the core and validated-evidence KB for a supporting policy
+-> show the policy details and policy-to-mechanism-to-hazard linkage for confirmation
+-> if no supported policy is found or the user rejects it, request a policy URL/file
+-> validate the supplied policy's relevance and causal linkage; clarify or upload again until supported
+-> show policy-linked considerations and mitigation suggestions for that mechanism
+-> describe the mitigation measure
+-> preserve the selected mechanism and its policy-to-hazard causal linkage
 -> validate mitigation measure
--> ask clarification / reason
--> reject reason or clarification if it repeats existing input
+-> reflect on how the measure changes the chosen mechanism
+-> clarify the reflection until it is specific, then confirm it
 -> ask evidence decision
--> accept open-chat Yes / No / URL evidence
--> validate grounded mitigation
+-> accept open-chat Yes / No / URL evidence; evidence remains optional
+-> require supplied evidence to be relevant to both the measure and mechanism
+-> identify grounded unintended effects on other aspects of the mapped policy
+-> for each effect, ask whether the measure could create the problem
+-> if Yes, clarify and record an additional mitigation
+-> if No, clarify and record the reason for disagreement
+-> summarize the cumulative understanding and confirm or revise it
+-> show related FITTER Open Labs proposals and policy adjustments
+-> use an inspiration fully, adopt parts, or discard it
+-> re-run reflection, evidence, policy-effect, and summary checks after adoption
 -> if support is missing, return to clarification textarea
 -> identify all target populations from measure, reason, and target-group mechanisms
 -> review target population
@@ -101,6 +116,16 @@ Key behavior in the new flow:
 9. Open conversation action text is accepted for mitigation entry, evidence
    decisions, and mitigation-measure creation when it clearly expresses the
    intended workflow action.
+10. The chosen hazard mechanism is explicitly reflected against the proposed
+    measure before evidence is requested.
+11. Supplied evidence must support both the measure and its chosen mechanism;
+    ambiguous or irrelevant evidence returns to clarification and can be skipped.
+12. Plausible effects on other policy aspects are reviewed one by one. Agreement
+    requires an additional mitigation; disagreement requires a concrete reason.
+13. Free-text reflection, policy-effect, disagreement, and revision answers are
+    clarified without a fixed turn cap, and summaries repeat until confirmed.
+14. Adopting an Open Labs proposal or adjustment re-runs the checks for the
+    revised measure before the workflow advances.
 ```
 
 Seeded mitigation-policy suggestions depend on two reference-data steps:
@@ -156,28 +181,43 @@ ChatService._create_mitigation_measure_step(session_id, session)
 The app enters:
 
 ```text
-session.phase = reason_confirmation
+session.phase = mitigation_mechanism_selection
 ```
 
-Before asking the user to write a measure, the app generates practical policy
-considerations:
+Before asking the user to write a measure, the app generates general practical
+considerations, mechanisms leading to the hazard, and general mitigation
+suggestions. Each generated mechanism is linked to the relevant mapped policy
+and its causal relationship with the selected hazard.
 
 ```python
 ChatService._practical_policy_recommendations(session)
+ChatService._mitigation_mechanism_planning_overview(session)
 ```
 
-This uses:
+This uses the policy-hazard mapping and:
 
 ```text
 llm/practical_policy_recommendations_user.txt
+mitigation_mechanism_planning.txt
 ```
 
-The response uses:
+The response uses selectable mechanism options while retaining textarea input
+for a user-defined mechanism:
 
 ```text
-step = reason_confirmation
-options = Yes / Adopt mitigation proposal suggested above / No
+step = mitigation_mechanism_selection
+input_mode = textarea
 ```
+
+After selection, the app first searches linked custom-hazard policy references and
+the shared core and validated-evidence knowledge bases. A supported match is shown
+with its policy details and policy-to-mechanism-to-hazard linkage for confirmation.
+If no supported policy is found, or the user rejects the match, the app requests a
+policy URL/file. Supplied policy text must pass relevance and causal-linkage checks;
+otherwise the user can clarify the relevance or provide the policy again. Only after
+policy confirmation does the app show mechanism-specific considerations and
+mitigation suggestions and ask the user to describe the measure. The selected
+mechanism and confirmed policy are carried into validation.
 
 **2. Reason Confirmation Choices**
 

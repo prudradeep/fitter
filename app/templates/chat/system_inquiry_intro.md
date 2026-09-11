@@ -1,4 +1,4 @@
-## System Inquiry
+## Systems Inquiry
 
 Your evaluation has been recorded.
 

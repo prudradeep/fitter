@@ -102,14 +102,20 @@ class ChatMitigationCreationSystemFlowMixin:
             if fuzzy_label is not None:
                 exact_label = fuzzy_label
         action = normalize(exact_label or message)
-        if action == normalize("Skip system inquiry"):
+        if action in {
+            normalize("Skip systems inquiry"),
+            normalize("Skip system inquiry"),
+        }:
             session.system_inquiry_skipped = True
             return self._system_inquiry_complete_step(
                 session_id,
                 session,
                 skipped=True,
             )
-        if action == normalize("Start system inquiry"):
+        if action in {
+            normalize("Start systems inquiry"),
+            normalize("Start system inquiry"),
+        }:
             if not session.system_inquiry_observations:
                 return self._system_inquiry_complete_step(session_id, session)
             return self._system_inquiry_observation_step(session_id, session)
@@ -143,7 +149,7 @@ class ChatMitigationCreationSystemFlowMixin:
             "system_inquiry_observation.md",
             current=index + 1,
             total=len(observations),
-            title=str(observation.get("title") or "System inquiry"),
+            title=str(observation.get("title") or "Systems inquiry"),
             corpus_label=str(observation.get("corpus_label") or "unproven"),
             observation=str(observation.get("observation") or "").strip(),
             why_it_matters=str(observation.get("why_it_matters") or "").strip(),
@@ -177,7 +183,10 @@ class ChatMitigationCreationSystemFlowMixin:
             if fuzzy_label is not None:
                 exact_label = fuzzy_label
         action = normalize(exact_label or message)
-        if action == normalize("End system inquiry"):
+        if action in {
+            normalize("End systems inquiry"),
+            normalize("End system inquiry"),
+        }:
             return self._system_inquiry_complete_step(session_id, session)
 
         observations = session.system_inquiry_observations or []
@@ -313,7 +322,7 @@ class ChatMitigationCreationSystemFlowMixin:
             session_id=session_id,
             step="system_inquiry_followup",
             bot_message=message,
-            options=[Option(id=1, label="Skip"), Option(id=2, label="End system inquiry")],
+            options=[Option(id=1, label="Skip"), Option(id=2, label="End systems inquiry")],
             session=session.summary(),
             input_mode="textarea",
             error=bool(error_reason),
@@ -350,7 +359,12 @@ class ChatMitigationCreationSystemFlowMixin:
         followup_type = str(adjudication.get("followup_type") or "").strip()
 
         if followup_type == "coverage_completion":
-            if action in {normalize("Skip"), normalize("Skip follow-up"), normalize("End system inquiry")}:
+            if action in {
+                normalize("Skip"),
+                normalize("Skip follow-up"),
+                normalize("End systems inquiry"),
+                normalize("End system inquiry"),
+            }:
                 session.system_inquiry_coverage_completion_done = True
                 session.system_inquiry_pending_followup = None
                 return self._system_inquiry_complete_step(session_id, session)
@@ -373,7 +387,10 @@ class ChatMitigationCreationSystemFlowMixin:
             session.system_inquiry_pending_followup = None
             return self._system_inquiry_complete_step(session_id, session)
 
-        if action == normalize("End system inquiry"):
+        if action in {
+            normalize("End systems inquiry"),
+            normalize("End system inquiry"),
+        }:
             self._append_system_inquiry_annotation(
                 session,
                 observation,
@@ -392,7 +409,7 @@ class ChatMitigationCreationSystemFlowMixin:
         if action in {normalize("Skip follow-up"), normalize("Skip")}:
             final_evaluation = (
                 final_evaluation
-                or "The original response did not fully resolve the system inquiry."
+                or "The original response did not fully resolve the systems inquiry."
             )
         else:
             if self._is_invalid_user_text(message) or len(compact_for_match(message)) < 4:
@@ -447,7 +464,7 @@ class ChatMitigationCreationSystemFlowMixin:
         session.phase = "system_inquiry_complete"
         annotations = session.system_inquiry_annotations or []
         if skipped:
-            summary = "System inquiry was skipped."
+            summary = "Systems inquiry was skipped."
         elif annotations:
             state_counts: dict[str, int] = {}
             for item in annotations:
@@ -466,7 +483,7 @@ class ChatMitigationCreationSystemFlowMixin:
                 f"and {open_count} open."
             )
         else:
-            summary = "No system inquiry reflections were recorded."
+            summary = "No systems inquiry reflections were recorded."
         session.system_inquiry_profile = self._system_inquiry_profile(session)
         self._persist_system_inquiry_result(session, summary)
         return ChatResponse(
@@ -695,7 +712,7 @@ class ChatMitigationCreationSystemFlowMixin:
             return ""
         return (
             "Re-run note: this mitigation context has changed since the previous "
-            f"system inquiry, so {count} reflection response"
+            f"systems inquiry, so {count} reflection response"
             f"{'' if count == 1 else 's'} may no longer apply. Start system "
             "inquiry to revisit them, or skip this optional step."
         )
@@ -1213,8 +1230,8 @@ class ChatMitigationCreationSystemFlowMixin:
         response = str(user_response or "").strip()
         normalized = normalize_for_match(response)
         compacted = compact_for_match(response)
-        question = str(observation.get("question") or "this system inquiry").strip()
-        title = str(observation.get("title") or "system inquiry").strip()
+        question = str(observation.get("question") or "this systems inquiry").strip()
+        title = str(observation.get("title") or "systems inquiry").strip()
         groups = " / ".join(self._system_inquiry_group_labels(session)) or "the target group"
         followup_type = self._system_inquiry_followup_type(observation)
 

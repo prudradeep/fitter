@@ -1104,6 +1104,34 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
         self.assertEqual(session.custom_hazard["evidence"], "")
 
+    def test_hazard_evidence_input_clarify_routes_to_retry_prompt(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_input",
+            custom_hazard={"raw_text": "Regional employment shock"},
+        )
+
+        response = _run(
+            service._capture_hazard_evidence(
+                "session-1", session, "Clarify the relevance"
+            )
+        )
+
+        self.assertEqual(response.step, "custom_hazard_evidence")
+        self.assertEqual(session.phase, "add_hazard_evidence_input")
+        self.assertIn("Explain which finding", response.bot_message)
+        self.assertEqual(
+            [option.label for option in response.options],
+            [
+                "Go back to list of hazards",
+                "Provide evidence again",
+                "Clarify the relevance",
+            ],
+        )
+
     def test_evidence_revalidation_preserves_existing_affected_groups(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -1559,7 +1587,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             "Coal phase-out employment shock",
         )
 
-    def test_generated_title_is_saved_only_after_hazard_is_finalized(self):
+    def test_generated_title_remains_display_only_after_hazard_is_finalized(self):
         service = ChatService.__new__(ChatService)
         original_name = "Regional employment shock"
         generated_name = "Coal phase-out employment shock"
@@ -1613,10 +1641,10 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertIn("Generated title", response.bot_message)
         self.assertIn(generated_name, response.bot_message)
         self.assertIn("Coal phase-out may concentrate job losses", response.bot_message)
-        self.assertEqual(session.accepted_custom_hazard, generated_name)
-        self.assertEqual(saved_names, [generated_name])
-        self.assertNotIn(original_name, session.hazard_profiles)
-        self.assertIn(generated_name, session.hazard_profiles)
+        self.assertEqual(session.accepted_custom_hazard, original_name)
+        self.assertEqual(saved_names, [original_name])
+        self.assertIn(original_name, session.hazard_profiles)
+        self.assertNotIn(generated_name, session.hazard_profiles)
         service._generate_custom_hazard_title.assert_awaited_once_with(
             session,
             original_name,
@@ -1773,7 +1801,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             )
         )
 
-    def test_hazard_free_text_edits_use_the_common_ambiguity_gate(self):
+    def test_hazard_population_edit_commands_use_phase_specific_validation(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
             sector="Energy",
@@ -1782,12 +1810,26 @@ class CustomHazardValidationTests(unittest.TestCase):
             phase="custom_hazard_group_review",
         )
 
-        self.assertTrue(
+        self.assertFalse(
             service._should_check_common_user_input_quality(
                 session,
                 "Add vulnerable households",
             )
         )
+        self.assertTrue(
+            service._should_check_common_user_input_quality(
+                session,
+                "Please reconsider these results",
+            )
+        )
+
+        self.assertFalse(
+            service._should_check_common_user_input_quality(
+                session,
+                "Confirm affected groups",
+            )
+        )
+        self.assertTrue(service._could_be_fuzzy_selection(session, "Confirm affected groups"))
 
         session.phase = "custom_hazard_summary_review"
         self.assertTrue(
@@ -1795,6 +1837,9 @@ class CustomHazardValidationTests(unittest.TestCase):
                 session,
                 "Make the causal impact clearer",
             )
+        )
+        self.assertFalse(
+            service._should_check_common_user_input_quality(session, "Continue")
         )
 
     def test_evidence_url_skips_prose_gate_but_accompanying_explanation_does_not(self):
@@ -1825,6 +1870,34 @@ class CustomHazardValidationTests(unittest.TestCase):
             ),
             "It documents the household credit barrier.",
         )
+
+    def test_hazard_evidence_actions_skip_common_quality_gate(self):
+        service = ChatService.__new__(ChatService)
+        service._check_user_input_quality = AsyncMock(
+            return_value={"valid": False, "reason": "Too short."}
+        )
+        session = ChatSession(
+            sector="Energy",
+            country="Germany",
+            region="Baden-Württemberg",
+            phase="add_hazard_evidence_input",
+        )
+
+        for action in ("Skip", "Clarify the relevance"):
+            with self.subTest(action=action):
+                self.assertTrue(service._matches_current_step_option(session, action))
+                self.assertFalse(
+                    service._should_check_common_user_input_quality(session, action)
+                )
+                self.assertIsNone(
+                    _run(
+                        service._common_user_input_quality_response(
+                            "session-1", session, action
+                        )
+                    )
+                )
+
+        service._check_user_input_quality.assert_not_awaited()
 
     def test_custom_hazard_ambiguity_gate_remains_strict_in_easy_mode(self):
         service = ChatService.__new__(ChatService)
@@ -3725,6 +3798,78 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertIn("Closure of coal-dependent facilities", prompt_payload)
         self.assertIn("A closure timetable applies", prompt_payload)
 
+    def test_automatic_population_placeholders_are_replaced_with_reflections(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            accepted_custom_hazard=(
+                "Female-led households face capital access gaps preventing "
+                "investment in private clean-energy solutions"
+            ),
+            custom_hazard={
+                "affected_groups": [
+                    {
+                        "group": "Women",
+                        "reason": "Matched a known affected-group expression.",
+                    },
+                    {
+                        "group": "Female-led households",
+                        "reason": "Identified during hazard-title validation.",
+                    },
+                    {
+                        "group": "Low-income renters",
+                        "reason": "Higher upfront costs can prevent access to clean energy.",
+                        "reflection": "Existing meaningful reflection.",
+                    },
+                ]
+            },
+        )
+        service._generate_affected_population_reflection = AsyncMock(
+            side_effect=[
+                "Capital constraints can prevent women from investing in clean energy.",
+                "Capital constraints can prevent female-led households from investing in clean energy.",
+            ]
+        )
+
+        _run(service._ensure_affected_population_reflections(session))
+
+        groups = session.custom_hazard["affected_groups"]
+        self.assertIn("Capital constraints", groups[0]["reflection"])
+        self.assertIn("Capital constraints", groups[1]["reflection"])
+        self.assertEqual(groups[2]["reflection"], "Existing meaningful reflection.")
+        calls = service._generate_affected_population_reflection.await_args_list
+        self.assertEqual(calls[0].args[2], "")
+        self.assertEqual(calls[1].args[2], "")
+        response = service._custom_hazard_population_review_step("session-1", session)
+        self.assertIn("Capital constraints", response.bot_message)
+        self.assertNotIn("Matched a known affected-group expression", response.bot_message)
+        self.assertNotIn("Identified during hazard-title validation", response.bot_message)
+
+    def test_population_reflection_fallback_does_not_show_extraction_placeholder(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            accepted_custom_hazard=(
+                "Female-led households face capital access gaps preventing "
+                "investment in private clean-energy solutions"
+            ),
+            custom_hazard={"affected_groups": []},
+        )
+
+        with patch(
+            "app.services.chat_custom_hazard_population_steps.ask_llm_chat",
+            AsyncMock(return_value="LLM unavailable"),
+        ):
+            reflection = _run(
+                service._generate_affected_population_reflection(
+                    session,
+                    "Female-led households",
+                    "Identified during hazard-title validation.",
+                )
+            )
+
+        self.assertIn("Female-led households", reflection)
+        self.assertIn("capital access gaps", reflection)
+        self.assertNotIn("hazard-title validation", reflection)
+
     def test_generated_title_is_injected_when_db_template_is_stale(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -4103,7 +4248,7 @@ class CustomHazardValidationTests(unittest.TestCase):
                 "added_affected_groups": [],
             },
         )
-        service._validate_input_quality = AsyncMock(
+        service._validate_custom_affected_group_link = AsyncMock(
             return_value={"valid": True, "reason": "Reason is meaningful."}
         )
         service._generate_affected_population_reflection = AsyncMock(
@@ -4135,6 +4280,156 @@ class CustomHazardValidationTests(unittest.TestCase):
             "Coal plant closures can remove employment and reduce income for coal workers.",
         )
 
+    def test_affected_group_reason_uses_semantic_link_without_keyword_overlap(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            accepted_custom_hazard="Generated rooftop participation title",
+            generated_custom_hazard_title="Generated rooftop participation title",
+            accepted_custom_hazard_summary="Generated display summary.",
+            custom_hazard={
+                "raw_text": "Apartment residents excluded from rooftop solar upgrades",
+                "generated_title": "Generated rooftop participation title",
+                "generated_summary": "Generated display summary.",
+                "selected_mechanism": "Shared-building decisions control installations.",
+            },
+        )
+        model_response = (
+            '{"valid": true, "group_is_identifiable": true, '
+            '"hazard_link_is_plausible": true, '
+            '"concrete_disadvantage_is_clear": true, '
+            '"reason": "The approval pathway can prevent participation."}'
+        )
+
+        with patch(
+            "app.services.validation_service.ask_llm_chat",
+            AsyncMock(return_value=model_response),
+        ) as mocked_llm:
+            review = _run(
+                service._validate_custom_affected_group_reason(
+                    session,
+                    "home owners in apartment blocks",
+                    (
+                        "They require collective building approval before participating, "
+                        "which can prevent adoption."
+                    ),
+                )
+            )
+
+        self.assertTrue(review["valid"])
+        payload = mocked_llm.await_args.kwargs["messages"][0]["content"]
+        self.assertIn("home owners in apartment blocks", payload)
+        self.assertIn("Apartment residents excluded", payload)
+        self.assertNotIn("Generated rooftop participation title", payload)
+        self.assertNotIn("Generated display summary", payload)
+
+    def test_affected_group_semantic_rejection_returns_one_targeted_reason(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            accepted_custom_hazard="Coal phase-out job shock",
+            custom_hazard={"raw_text": "Coal phase-out job shock"},
+        )
+        model_response = (
+            '{"valid": false, "group_is_identifiable": true, '
+            '"hazard_link_is_plausible": false, '
+            '"concrete_disadvantage_is_clear": false, '
+            '"reason": "Explain what disadvantage the hazard creates for this group."}'
+        )
+
+        with patch(
+            "app.services.validation_service.ask_llm_chat",
+            AsyncMock(return_value=model_response),
+        ):
+            review = _run(
+                service._validate_custom_affected_group_reason(
+                    session,
+                    "Older adults",
+                    "This situation concerns older adults in the selected region.",
+                )
+            )
+
+        self.assertFalse(review["valid"])
+        self.assertEqual(
+            review["reason"],
+            "Explain what disadvantage the hazard creates for this group.",
+        )
+
+    def test_affected_group_reflection_uses_only_user_hazard_description(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            accepted_custom_hazard="Generated concise title",
+            generated_custom_hazard_title="Generated concise title",
+            accepted_custom_hazard_summary="Generated display summary.",
+            custom_hazard={
+                "raw_text": "User description of apartment retrofit approval barriers",
+                "generated_title": "Generated concise title",
+                "generated_summary": "Generated display summary.",
+            },
+        )
+        model_response = '{"reflection": "Owners can face an approval barrier."}'
+
+        with patch(
+            "app.services.chat_custom_hazard_population_steps.ask_llm_chat",
+            AsyncMock(return_value=model_response),
+        ) as mocked_llm:
+            reflection = _run(
+                service._generate_affected_population_reflection(
+                    session,
+                    "home owners in apartment blocks",
+                    "Collective approval can prevent participation.",
+                )
+            )
+
+        self.assertEqual(reflection, "Owners can face an approval barrier.")
+        payload = mocked_llm.await_args.kwargs["messages"][0]["content"]
+        self.assertIn("User description of apartment retrofit approval barriers", payload)
+        self.assertNotIn("Generated concise title", payload)
+        self.assertNotIn("Generated display summary", payload)
+
+    def test_back_from_affected_group_reason_preserves_completed_groups(self):
+        service = ChatService.__new__(ChatService)
+        completed = {
+            "group": "Coal workers",
+            "reason": "Mine closures reduce employment income.",
+        }
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            phase="custom_hazard_profile_reason",
+            accepted_custom_hazard="Coal phase-out job shock",
+            custom_hazard={
+                "raw_text": "Coal phase-out job shock",
+                "pending_profile_reason_group": "home owners in apartment blocks",
+                "pending_profile_reason_queue": ["older adults"],
+                "affected_groups": [completed],
+                "added_affected_groups": [completed],
+            },
+        )
+
+        self.assertTrue(
+            service._matches_current_step_option(
+                session, "Back to affected groups"
+            )
+        )
+        self.assertTrue(
+            service._could_be_fuzzy_selection(
+                session, "Back to affected groups"
+            )
+        )
+
+        response = _run(
+            service._handle_custom_hazard_population_review(
+                "session-1", session, "Back to affected groups"
+            )
+        )
+
+        self.assertFalse(response.error)
+        self.assertEqual(response.step, "custom_hazard_group_review")
+        self.assertEqual(session.phase, "custom_hazard_group_review")
+        self.assertEqual(session.custom_hazard["pending_profile_reason_group"], "")
+        self.assertEqual(session.custom_hazard["pending_profile_reason_queue"], [])
+        self.assertEqual(session.custom_hazard["affected_groups"], [completed])
+
     def test_open_text_add_affected_groups_prompts_for_first_reason(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -4158,11 +4453,55 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(response.step, "custom_hazard_profile_reason")
         self.assertIn("low-income renters", response.bot_message)
         self.assertEqual(
+            [option.label for option in response.options],
+            ["Back to affected groups"],
+        )
+        self.assertEqual(
             session.custom_hazard["pending_profile_reason_group"],
             "low-income renters",
         )
         self.assertEqual(session.custom_hazard["pending_profile_reason_queue"], ["older adults"])
         self.assertEqual(session.custom_hazard["affected_groups"], [])
+
+    def test_open_text_add_homeowners_routes_to_group_reason(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            phase="custom_hazard_group_review",
+            accepted_custom_hazard="Apartment retrofit cost burden",
+            custom_hazard={
+                "raw_text": "Apartment retrofit cost burden",
+                "affected_groups": [],
+                "added_affected_groups": [],
+            },
+        )
+        service._check_user_input_quality = AsyncMock(
+            return_value={"valid": False, "reason": "Too short."}
+        )
+        message = "add home owners in apartment blocks"
+
+        quality_response = _run(
+            service._common_user_input_quality_response(
+                "session-1", session, message
+            )
+        )
+        response = _run(
+            service._handle_custom_hazard_population_review(
+                "session-1", session, message
+            )
+        )
+
+        self.assertIsNone(quality_response)
+        service._check_user_input_quality.assert_not_awaited()
+        self.assertEqual(response.step, "custom_hazard_profile_reason")
+        self.assertFalse(response.error)
+        self.assertIn("home owners in apartment blocks", response.bot_message)
+        self.assertEqual(
+            session.custom_hazard["pending_profile_reason_group"],
+            "home owners in apartment blocks",
+        )
 
     def test_open_text_add_rejects_non_population_group(self):
         service = ChatService.__new__(ChatService)
@@ -4204,7 +4543,7 @@ class CustomHazardValidationTests(unittest.TestCase):
                 "added_affected_groups": [],
             },
         )
-        service._validate_input_quality = AsyncMock(
+        service._validate_custom_affected_group_link = AsyncMock(
             return_value={"valid": True, "reason": "Reason is meaningful."}
         )
         service._generate_affected_population_reflection = AsyncMock(
@@ -4247,7 +4586,7 @@ class CustomHazardValidationTests(unittest.TestCase):
                 ],
             },
         )
-        service._validate_input_quality = AsyncMock(
+        service._validate_custom_affected_group_link = AsyncMock(
             return_value={"valid": True, "reason": "Reason is meaningful."}
         )
         service._generate_affected_population_reflection = AsyncMock(

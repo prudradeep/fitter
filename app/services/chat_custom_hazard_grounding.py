@@ -76,6 +76,29 @@ class ChatCustomHazardGroundingMixin:
             ]
         return session.custom_hazard
 
+    @staticmethod
+    def _custom_hazard_user_description(session: ChatSession) -> str:
+        """Return user-authored hazard text, excluding generated display fields."""
+        state = session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
+        raw_text = str(state.get("raw_text") or "").strip()
+        if raw_text:
+            return raw_text
+
+        generated_title = str(
+            session.generated_custom_hazard_title
+            or state.get("generated_title")
+            or ""
+        ).strip()
+        for candidate in (
+            session.pending_hazard,
+            state.get("resolved_hazard_text"),
+            session.accepted_custom_hazard,
+        ):
+            text = str(candidate or "").strip()
+            if text and normalize_for_match(text) != normalize_for_match(generated_title):
+                return text
+        return ""
+
     def _custom_hazard_response(
         self,
         *,
@@ -169,12 +192,14 @@ class ChatCustomHazardGroundingMixin:
         ):
             item = analysis.get(key)
             supported = isinstance(item, dict) and bool(item.get("supported"))
-            linkage = str(item.get("causal_linkage") or "").strip() if isinstance(item, dict) else ""
+            relationship = str(item.get("relationship") or "").strip() if isinstance(item, dict) else ""
             reason = str(item.get("reason") or "").strip() if isinstance(item, dict) else ""
-            if supported and linkage:
-                body = ChatCustomHazardGroundingMixin._short_linkage_bullets(linkage)
+            if supported:
+                body = ChatCustomHazardGroundingMixin._short_linkage_bullets(
+                    relationship or reason or "The supplied evidence is relevant to the stated hazard."
+                )
             else:
-                summary_items = ["No supported causal linkage found."]
+                summary_items = ["Evidence relevance was not established."]
                 if reason:
                     summary_items.append(reason)
                 body = ChatCustomHazardGroundingMixin._short_linkage_bullets(
@@ -628,6 +653,7 @@ class ChatCustomHazardGroundingMixin:
                 str(state.get("evidence") or "").strip() or "Not provided"
             )
             await self._ensure_custom_hazard_generated_title(session, hazard)
+            await self._ensure_affected_population_reflections(session)
             return self._custom_hazard_population_review_step(session_id, session)
         if (
             action == CustomHazardAction.ASK_CLARIFICATION
@@ -652,6 +678,7 @@ class ChatCustomHazardGroundingMixin:
                 str(state.get("evidence") or "").strip() or "Not provided"
             )
             await self._ensure_custom_hazard_generated_title(session, hazard)
+            await self._ensure_affected_population_reflections(session)
             return self._custom_hazard_population_review_step(session_id, session)
         if action == CustomHazardAction.VALIDATE:
             return await self._finalize_custom_hazard_from_grounding(session_id, session)

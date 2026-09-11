@@ -860,7 +860,9 @@ class ChatMitigationCreationWorkflowMixin:
         session.pending_mitigation_measure = mitigation_measure
         session.pending_mitigation_reason = reason
         session.pending_mitigation_evidence = evidence_text
-        if session.mitigation_equity and session.mitigation_target_population:
+        if (
+            session.mitigation_equity or session.mitigation_equity_skipped
+        ) and session.mitigation_target_population:
             return await self._finalize_validated_mitigation(session_id, session)
         if session.mitigation_target_population is None:
             inferred = await self._infer_mitigation_target_population_from_inputs(
@@ -1766,13 +1768,21 @@ class ChatMitigationCreationWorkflowMixin:
             "mitigation_measure_validated",
             session.mitigation_measure or "",
         )
-        if session.mitigation_equity:
+        if session.mitigation_equity or session.mitigation_equity_skipped:
             return self._start_evaluation_questions(session_id, session)
         return await self._mitigation_review_step(session_id, session)
 
     def _mitigation_target_population_labels(self, session: ChatSession) -> list[str]:
-        if session.sector_id is None or not session.selected_hazard:
+        if not session.selected_hazard:
             return []
+        if session.sector_id is None:
+            stored_profile_labels = self._target_population_labels_from_stored_profiles(
+                session
+            )
+            if stored_profile_labels:
+                return stored_profile_labels
+            selected_labels = self._selected_target_population_labels(session)
+            return selected_labels or self._selected_hazard_profile_names_for_venn(session)
         rows = self.db.execute(
             select(
                 SystemHazardSocioDemographic.profile,

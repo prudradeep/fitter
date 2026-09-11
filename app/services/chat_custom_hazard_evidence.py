@@ -573,7 +573,7 @@ class ChatCustomHazardEvidenceMixin:
                         else ""
                     )
                     + str(relevance.get("reason") or ""),
-                    "causal_linkage": relevance.get("causal_linkage") or "",
+                    "relationship": relevance.get("relationship") or "",
                 },
             }
             state["show_evidence_linkages"] = True

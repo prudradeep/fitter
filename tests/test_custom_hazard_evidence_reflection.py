@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, Mock, patch
 from app.schemas import ChatResponse
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
-from app.services.custom_hazard_validation import default_custom_hazard_state
+from app.services.custom_hazard_validation import (
+    default_custom_hazard_state,
+    validate_hazard_evidence_relevance,
+)
 
 
 def _run(coro):
@@ -248,7 +251,7 @@ class CustomHazardEvidenceReflectionTests(unittest.TestCase):
                 return_value={
                     "relevant": True,
                     "reason": "The report supports the claim.",
-                    "causal_linkage": "Closure -> local job losses -> shock.",
+                    "relationship": "The report documents local job losses following mine closure.",
                 }
             ),
         ) as relevance:
@@ -259,6 +262,26 @@ class CustomHazardEvidenceReflectionTests(unittest.TestCase):
         self.assertIn("The shock is concentrated near mine closures", validation_target)
         linkage = session.custom_hazard["linkage_analysis"]["evidence_hazard_linkage"]
         self.assertIn("supports your reflection", linkage["reason"])
+        self.assertIn("documents local job losses", linkage["relationship"])
+
+    def test_unavailable_relevance_validator_does_not_accept_topic_overlap(self):
+        async def unavailable(*args, **kwargs):
+            raise RuntimeError("validator unavailable")
+
+        with patch(
+            "app.services.custom_hazard_validation.ask_llm_chat",
+            unavailable,
+        ):
+            result = _run(
+                validate_hazard_evidence_relevance(
+                    "Coal transition employment shock",
+                    "A general report about coal transition employment.",
+                )
+            )
+
+        self.assertFalse(result["relevant"])
+        self.assertIn("could not be established", result["reason"])
+        self.assertNotIn("causal_linkage", result)
 
     def test_unclear_user_evidence_explains_mismatch_and_offers_both_retries(self):
         service = _service()
@@ -273,7 +296,7 @@ class CustomHazardEvidenceReflectionTests(unittest.TestCase):
                 return_value={
                     "relevant": False,
                     "reason": "The source discusses employment but not mine closures.",
-                    "causal_linkage": "",
+                    "relationship": "",
                 }
             ),
         ):

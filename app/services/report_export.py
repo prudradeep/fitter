@@ -229,7 +229,7 @@ def _measure_creation_lines(index: int, measure: UserMitigationMeasure) -> list[
     payload = _json_object(measure.system_inquiry_json)
     summary = str(payload.get("summary") or "").strip()
     if summary:
-        lines.append(f"  System inquiry: {summary}")
+        lines.append(f"  Systems inquiry: {summary}")
     return lines
 
 
@@ -426,12 +426,12 @@ def _system_inquiry_summary_lines(measures: list[UserMitigationMeasure]) -> list
         for annotation in annotations:
             if not isinstance(annotation, dict):
                 continue
-            lens = str(annotation.get("lens_title") or annotation.get("lens_id") or "System inquiry").strip()
+            lens = str(annotation.get("lens_title") or annotation.get("lens_id") or "Systems inquiry").strip()
             state = str(annotation.get("resolution_state") or "open").replace("_", " ")
             response = _clean(str(annotation.get("user_response") or annotation.get("evaluation") or ""))
             lines.append(f"  - {lens}: {state}. {response}")
     if not found:
-        lines.append("- No system inquiry annotations were recorded for the selected report scope.")
+        lines.append("- No systems inquiry annotations were recorded for the selected report scope.")
     return lines
 
 
@@ -1048,7 +1048,7 @@ def _draw_measure_card(commands: list[str], card: dict[str, object], y: int) -> 
     _draw_cell(commands, str(card.get("reason") or "Not available"), 130, y - 32, 75, 2)
     commands.append(_text(62, y - 58, "Target groups", "/F2", 7, 0.40, 0.46, 0.55))
     _draw_cell(commands, targets, 130, y - 58, 75, 2)
-    commands.append(_text(62, y - 84, "System inquiry", "/F2", 7, 0.40, 0.46, 0.55))
+    commands.append(_text(62, y - 84, "Systems inquiry", "/F2", 7, 0.40, 0.46, 0.55))
     _draw_cell(commands, system_inquiry, 130, y - 84, 75, 2)
     y -= 128
     population_venn = card.get("population_venn")

@@ -186,7 +186,7 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
             "linkage_analysis": {
                 "evidence_hazard_linkage": {
                     "supported": True,
-                    "causal_linkage": "Evidence finding -> adverse impact -> hazard",
+                    "relationship": "The evidence finding supports the adverse impact in the hazard.",
                     "reason": "The evidence supports the hazard.",
                 },
                 "policy_evidence_linkage": {
@@ -683,8 +683,8 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
         self.assertTrue(analysis["evidence_hazard_linkage"]["supported"])
         self.assertTrue(analysis["policy_evidence_linkage"]["supported"])
         self.assertIn(
-            "evidence finding",
-            analysis["evidence_hazard_linkage"]["causal_linkage"].lower(),
+            "supports the stated hazard",
+            analysis["evidence_hazard_linkage"]["relationship"].lower(),
         )
 
     def test_unrelated_evidence_does_not_create_causal_linkages(self) -> None:
@@ -716,8 +716,8 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
                 "linkage_analysis": {
                     "evidence_hazard_linkage": {
                         "supported": True,
-                        "causal_linkage": "Survey finding -> increased costs -> hazard",
-                        "reason": "Supported.",
+                        "relationship": "The survey documents the increased costs described by the hazard.",
+                        "reason": "The evidence is materially relevant.",
                     },
                     "policy_evidence_linkage": {
                         "supported": False,
@@ -744,12 +744,39 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
         )
 
         self.assertIn("Evidence-to-hazard linkage", first.bot_message)
-        self.assertIn("Survey finding", first.bot_message)
-        self.assertIn("Policy-to-evidence causal linkage", first.bot_message)
-        self.assertIn("No supported causal linkage found", first.bot_message)
-        self.assertGreaterEqual(first.bot_message.count("<ul>"), 2)
-        self.assertGreaterEqual(first.bot_message.count("<li>"), 3)
+        self.assertIn("survey documents", first.bot_message)
+        self.assertNotIn("No supported causal linkage found", first.bot_message)
+        self.assertNotIn("causal linkage", first.bot_message.lower())
+        self.assertGreaterEqual(first.bot_message.count("<ul>"), 1)
+        self.assertGreaterEqual(first.bot_message.count("<li>"), 1)
         self.assertNotIn("Evidence-to-hazard linkage", second.bot_message)
+
+    def test_supported_evidence_without_relationship_uses_relevance_reason(self) -> None:
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            custom_hazard={
+                "show_evidence_linkages": True,
+                "linkage_analysis": {
+                    "evidence_hazard_linkage": {
+                        "supported": True,
+                        "relationship": "",
+                        "reason": "The report materially supports the stated hazard.",
+                    }
+                },
+            }
+        )
+
+        response = service._custom_hazard_response(
+            session_id="session-1",
+            session=session,
+            step="custom_hazard_mechanism_confirmation",
+            bot_message="<p>Continue.</p>",
+            options=[],
+        )
+
+        self.assertIn("materially supports", response.bot_message)
+        self.assertNotIn("causal linkage", response.bot_message.lower())
+        self.assertNotIn("not established", response.bot_message.lower())
 
     def test_linkage_summary_is_limited_to_short_bullets(self) -> None:
         summary = ChatService._short_linkage_bullets(

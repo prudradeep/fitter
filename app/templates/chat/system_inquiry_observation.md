@@ -1,4 +1,4 @@
-## System Inquiry {{ current }} of {{ total }}
+## Systems Inquiry {{ current }} of {{ total }}
 
 **{{ title }}** — {{ corpus_label }}
 

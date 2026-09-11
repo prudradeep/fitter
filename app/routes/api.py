@@ -118,7 +118,7 @@ def _session_data_needs_message_recovery(
 
 
 def _recoverable_phase_from_bot_text(text: str) -> str:
-    if "System Inquiry Recorded" in text:
+    if "Systems Inquiry Recorded" in text or "System Inquiry Recorded" in text:
         return "system_inquiry_complete"
     return ""
 
@@ -134,6 +134,7 @@ def _message_indicates_later_phase(content: str) -> bool:
         "Target population",
         "Concept Comparision",
         "Concept Comparison",
+        "Systems Inquiry Recorded",
         "System Inquiry Recorded",
     )
     return any(indicator in text for indicator in indicators)
@@ -193,7 +194,7 @@ def _recover_session_data_from_messages(
         return recovered
 
     latest_text = _plain_message_text(latest_bot.content)
-    if "System Inquiry Recorded" in latest_text:
+    if "Systems Inquiry Recorded" in latest_text or "System Inquiry Recorded" in latest_text:
         recovered.update(
             {
                 "phase": "system_inquiry_complete",
@@ -274,6 +275,19 @@ def _recover_mitigation_record_details(
             details = {}
         if isinstance(details, dict):
             recovered["mitigation_mechanisms"] = list(details.get("mechanisms") or [])
+            recovered["selected_mitigation_mechanism"] = (
+                str(details.get("selected_mechanism") or "") or None
+            )
+            recovered["selected_mitigation_policy"] = (
+                str(details.get("selected_policy") or "") or None
+            )
+            recovered["mitigation_mechanism_guidance"] = (
+                details.get("mechanism_guidance") or None
+            )
+            recovered["mitigation_mechanism_reflection"] = (
+                str(details.get("mechanism_reflection") or "") or None
+            )
+            recovered["mitigation_policy_effects"] = details.get("policy_effects") or None
             recovered["mitigation_creation_summary"] = str(details.get("summary") or "") or None
             recovered["mitigation_inspiration_decision"] = details.get("open_labs_inspiration") or None
             recovered["mitigation_dg_evidence"] = details.get("disadvantaged_group_evidence") or None

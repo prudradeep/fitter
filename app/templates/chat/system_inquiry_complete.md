@@ -1,4 +1,4 @@
-## System Inquiry Recorded
+## Systems Inquiry Recorded
 
 {{ summary }}
 

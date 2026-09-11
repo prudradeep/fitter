@@ -1118,7 +1118,7 @@ class ChatMitigationCreationSystemObservationsMixin:
         candidate: dict[str, object],
         prior_response: str,
     ) -> str:
-        title = str(candidate.get("title") or "this system inquiry").strip()
+        title = str(candidate.get("title") or "this systems inquiry").strip()
         excerpt = self._truncate_system_inquiry_text(prior_response, 220)
         current = str(candidate.get("observation") or "").strip()
         return (

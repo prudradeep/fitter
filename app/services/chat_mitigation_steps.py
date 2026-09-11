@@ -46,16 +46,16 @@ class ChatMitigationStepsMixin:
             }
         ):
             session.mitigation_target_population = None
+        mechanism_step = getattr(self, "_mitigation_mechanism_selection_step", None)
+        if mechanism_step is not None:
+            return await mechanism_step(session_id, session)
+
         session.phase = "reason_confirmation"
         recommendations = await self._practical_policy_recommendations(session)
         return ChatResponse(
             session_id=session_id,
             step="reason_confirmation",
-            bot_message=(
-                markdown_to_html(recommendations)
-                + "\n"
-                + render_message("reason_confirmation.md")
-            ),
+            bot_message=(markdown_to_html(recommendations) + "\n" + render_message("reason_confirmation.md")),
             options=REASON_CONFIRMATION_OPTIONS,
             session=session.summary(),
             error=False,
@@ -888,7 +888,7 @@ class ChatMitigationStepsMixin:
                     system_inquiry_report=(
                         self._suggested_mitigation_system_inquiry_report(session)
                         if hasattr(self, "_suggested_mitigation_system_inquiry_report")
-                        else "- No system inquiry reflections were found for this mitigation measure."
+                        else "- No systems inquiry reflections were found for this mitigation measure."
                     ),
                 ),
                 options=self._mitigation_existing_report_options(),

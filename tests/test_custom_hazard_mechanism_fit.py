@@ -19,6 +19,7 @@ async def _json_response(*args, **kwargs):
             "supported": True,
             "clear": True,
             "reason": "Supported by the supplied source.",
+            "relationship": "The supplied source documents the harm described by the hazard.",
             "causal_linkage": "policy requirement -> higher delivery costs -> higher user prices",
         }
     )

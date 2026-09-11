@@ -604,7 +604,7 @@ The source PDFs are held in a **separate, small index**, used **only** for on-de
 
 Runs only if the measure passed validation (not abstained, not rejected). Abstained and rejected measures are not probed: a measure the platform could not validate should not then be critiqued, as the user would receive two negative signals for one submission.
 
-**Re-submission rule.** If an abstained measure is later edited, re-submitted, and receives a validation pass, it is treated as a new frozen measure and enters System Inquiry normally. The earlier abstention is retained in validation provenance but does not suppress probing after a later pass. Rejected measures follow the same rule only after the rejected content has been materially revised and passes validation.
+**Re-submission rule.** If an abstained measure is later edited, re-submitted, and receives a validation pass, it is treated as a new frozen measure and enters Systems Inquiry normally. The earlier abstention is retained in validation provenance but does not suppress probing after a later pass. Rejected measures follow the same rule only after the rejected content has been materially revised and passes validation.
 
 ### 8.3 Stage 2 — Probe triggering
 
@@ -650,7 +650,7 @@ Requires: a background job scheduler with clean cancellation, so that a user lea
 
 | Boundary | Budget |
 | --- | --- |
-| System Inquiry intro after self-evaluation | p50 ≤ 3 seconds, p95 ≤ 8 seconds |
+| Systems Inquiry intro after self-evaluation | p50 ≤ 3 seconds, p95 ≤ 8 seconds |
 | First observation after user starts inquiry | p50 ≤ 2 seconds, p95 ≤ 5 seconds |
 | Interactive response adjudication | p50 ≤ 4 seconds, p95 ≤ 10 seconds |
 | Per-measure pre-dialogue LLM output | ≤ 3,600 tokens across P1–P4 |
@@ -1049,7 +1049,7 @@ Telemetry accumulates centrally (§18). Each library version is frozen, versione
 }
 ```
 
-**Retention.** Anonymised System Inquiry telemetry/profile events are retained for 365 days by default, configurable as `SYSTEM_INQUIRY_PROFILE_RETENTION_DAYS`. Retention cleanup deletes expired aggregate telemetry events from the local or central telemetry table. Measure-attached local annotations follow the user's normal project/session data retention policy and are not governed by this aggregate-telemetry limit.
+**Retention.** Anonymised Systems Inquiry telemetry/profile events are retained for 365 days by default, configurable as `SYSTEM_INQUIRY_PROFILE_RETENTION_DAYS`. Retention cleanup deletes expired aggregate telemetry events from the local or central telemetry table. Measure-attached local annotations follow the user's normal project/session data retention policy and are not governed by this aggregate-telemetry limit.
 
 ### 18.3 What never goes central
 
@@ -1325,8 +1325,8 @@ Phase 1 is shippable on its own and worth shipping on its own: a user who is tol
 | --- | --- |
 | Per-session latency and token budget on the reference machine | Use the v1 budget in §8.6; degrade rather than block when p95 budgets are missed |
 | Confirmation of the T1 corpus | Use the frozen T1 corpus v1.0 in §6.1 |
-| Retention period for the anonymised session profile | Retain aggregate System Inquiry telemetry/profile events for 365 days by default (§18.2) |
-| Whether abstained measures should be probed if re-submitted and passed | Yes; a later validation pass enters System Inquiry as a new frozen measure (§8.2) |
+| Retention period for the anonymised session profile | Retain aggregate Systems Inquiry telemetry/profile events for 365 days by default (§18.2) |
+| Whether abstained measures should be probed if re-submitted and passed | Yes; a later validation pass enters Systems Inquiry as a new frozen measure (§8.2) |
 
 ---
 

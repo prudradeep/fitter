@@ -96,6 +96,10 @@ HAZARD_POPULATION_REVIEW_OPTIONS = [
     Option(id=1, label="Confirm affected groups"),
 ]
 
+CUSTOM_HAZARD_PROFILE_REASON_OPTIONS = [
+    Option(id=1, label="Back to affected groups"),
+]
+
 CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS = [
     Option(id=1, label="Continue"),
     Option(id=2, label="Regenerate summary"),
@@ -137,18 +141,18 @@ IMPLEMENTATION_READINESS_OPTIONS = [
 ]
 
 SYSTEM_INQUIRY_INTRO_OPTIONS = [
-    Option(id=1, label="Start system inquiry"),
-    Option(id=2, label="Skip system inquiry"),
+    Option(id=1, label="Start systems inquiry"),
+    Option(id=2, label="Skip systems inquiry"),
 ]
 
 SYSTEM_INQUIRY_OBSERVATION_OPTIONS = [
     Option(id=1, label="Skip this question"),
-    Option(id=2, label="End system inquiry"),
+    Option(id=2, label="End systems inquiry"),
 ]
 
 SYSTEM_INQUIRY_FOLLOWUP_OPTIONS = [
     Option(id=1, label="Skip follow-up"),
-    Option(id=2, label="End system inquiry"),
+    Option(id=2, label="End systems inquiry"),
 ]
 
 SYSTEM_INQUIRY_COMPLETE_OPTIONS = [

@@ -122,7 +122,7 @@ async def validate_hazard_evidence_relevance(
     payload = {
         "hazard": str(hazard or "").strip(),
         "evidence_content": content[:24000],
-        "required_output_schema": {"relevant": False, "reason": "", "causal_linkage": ""},
+        "required_output_schema": {"relevant": False, "reason": "", "relationship": ""},
     }
     try:
         response = await ask_llm_chat(
@@ -138,23 +138,17 @@ async def validate_hazard_evidence_relevance(
         return {
             "relevant": result["relevant"],
             "reason": re.sub(r"\s+", " ", str(result.get("reason") or "")).strip()[:600],
-            "causal_linkage": re.sub(
-                r"\s+", " ", str(result.get("causal_linkage") or "")
+            "relationship": re.sub(
+                r"\s+", " ", str(result.get("relationship") or "")
             ).strip()[:1200],
         }
-    hazard_terms = set(normalize_for_match(hazard).split()) - {
-        "the", "and", "for", "with", "from"
-    }
-    evidence_terms = set(normalize_for_match(content).split())
-    overlap = hazard_terms & evidence_terms
     return {
-        "relevant": len(overlap) >= 2,
+        "relevant": False,
         "reason": (
-            "The evidence shares material hazard concepts."
-            if len(overlap) >= 2
-            else "The evidence does not clearly address the stated hazard."
+            "The evidence relevance could not be established. Please clarify which "
+            "finding supports the stated hazard or provide the evidence again."
         ),
-        "causal_linkage": "",
+        "relationship": "",
     }
 
 
@@ -903,10 +897,10 @@ Validation order and application-context rules:
 - For mechanism fit, assess the confirmed mechanism against knowledge-base excerpts or the supplied policy-reference content. Identify the causal linkage from the mechanism to the hazard and explicitly describe any mismatch.
 - Populate mechanism_fit.causal_linkage only when the supplied source supports a defensible chain in the form "source finding or policy provision -> mechanism -> hazard impact"; otherwise leave it empty.
 - The policy reference is context for this dimension only. Never treat it as evidence that the hazard occurred, is prevalent, or affects a population.
-- When evidence content is supplied, separately assess whether it supports the hazard and whether the policy document has a defensible causal connection to that evidence.
-- Populate evidence_hazard_linkage only for a chain grounded in the evidence content: "evidence finding -> supported impact -> hazard".
+- When evidence content is supplied, separately assess whether it is materially relevant to and supports the hazard, and whether the policy document has a defensible causal connection to that evidence.
+- Populate evidence_hazard_linkage.relationship with a concise explanation of how a finding in the evidence supports the stated hazard. Do not require or produce a causal linkage for this evidence-to-hazard relevance check.
 - Populate policy_evidence_linkage only for a chain grounded across both documents: "policy provision -> intermediate mechanism -> evidence finding".
-- Do not infer support from filenames, URLs, topic similarity, or the user's assertion alone. If a chain is not supported, set supported to false, leave causal_linkage empty, and briefly explain the missing link.
+- Do not infer support from filenames, URLs, topic similarity, or the user's assertion alone. If evidence relevance is not supported, set supported to false, leave relationship empty, and briefly explain what is missing. For policy_evidence_linkage, leave causal_linkage empty when its causal chain is unsupported.
 - A policy document is required only for a user-provided mechanism when no supporting knowledge-base text is available.
 - A hazard need not repeat the policy objective verbatim, but its causal mechanism must be compatible with that objective.
 - The selected country and sector are application context. Do not ask the user to reconfirm them merely because their names are absent from the hazard text. The selected region may inform other regional context, but it must not affect country_region_fit.
@@ -937,7 +931,7 @@ Validation order and application-context rules:
             "linkage_analysis": {
                 "evidence_hazard_linkage": {
                     "supported": False,
-                    "causal_linkage": "",
+                    "relationship": "",
                     "reason": "",
                 },
                 "policy_evidence_linkage": {
@@ -1266,16 +1260,17 @@ def _heuristic_linkage_analysis(
     if evidence_hazard_supported:
         evidence_hazard_linkage = {
             "supported": True,
-            "causal_linkage": (
-                f"Evidence finding concerning {', '.join(shared_hazard_terms[:5])} -> "
-                f"documented adverse impact -> {hazard_statement}"
+            "relationship": (
+                f"The evidence documents an adverse impact concerning "
+                f"{', '.join(shared_hazard_terms[:5])}, which supports the stated hazard: "
+                f"{hazard_statement}."
             ),
-            "reason": "The evidence and hazard share a specific adverse-impact mechanism.",
+            "reason": "The evidence contains a specific adverse-impact finding relevant to the hazard.",
         }
     else:
         evidence_hazard_linkage = {
             "supported": False,
-            "causal_linkage": "",
+            "relationship": "",
             "reason": (
                 "The supplied evidence does not state a sufficiently specific finding "
                 "that supports the hazard's adverse impact."
@@ -1336,7 +1331,7 @@ def _enforce_linkage_content_guardrails(
     if not has_evidence:
         analysis["evidence_hazard_linkage"] = {
             "supported": False,
-            "causal_linkage": "",
+            "relationship": "",
             "reason": "No readable evidence content was supplied.",
         }
         analysis["policy_evidence_linkage"] = {
@@ -1443,6 +1438,24 @@ def _coerce_validation_result(
         for key in ("evidence_hazard_linkage", "policy_evidence_linkage"):
             item = linkage_analysis.get(key)
             if not isinstance(item, dict):
+                continue
+            if key == "evidence_hazard_linkage":
+                relationship = re.sub(
+                    r"\s+",
+                    " ",
+                    str(item.get("relationship") or ""),
+                ).strip()[:1600]
+                reason = re.sub(
+                    r"\s+",
+                    " ",
+                    str(item.get("reason") or ""),
+                ).strip()[:800]
+                supported = bool(item.get("supported")) and bool(relationship or reason)
+                coerced["linkage_analysis"][key] = {
+                    "supported": supported,
+                    "relationship": relationship if supported else "",
+                    "reason": reason,
+                }
                 continue
             causal_linkage = re.sub(
                 r"\s+",

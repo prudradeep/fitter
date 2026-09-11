@@ -560,7 +560,6 @@ class ChatMitigationCreationPolicyMixin:
         sections: list[str] = [title]
         panel_items: list[str] = []
         seen_panel_items: set[str] = set()
-        theme_concerns: list[str] = []
         themes = payload.get("themes")
         if not isinstance(themes, list):
             themes = []
@@ -592,35 +591,8 @@ class ChatMitigationCreationPolicyMixin:
                 cleaned_concerns = [concern for concern in cleaned_concerns if concern]
                 if cleaned_concerns:
                     block.extend(["", *cleaned_concerns])
-                    theme_concerns.extend(cleaned_concerns)
 
             sections.append("\n".join(block).strip())
-
-        important_points = payload.get("important_points")
-        cleaned_important_points = (
-            [
-                cls._clean_practical_json_bullet(point)
-                for point in important_points
-            ]
-            if isinstance(important_points, list)
-            else []
-        )
-        cleaned_important_points = [
-            point for point in cleaned_important_points if point
-        ]
-        if not cleaned_important_points:
-            cleaned_important_points = theme_concerns[:5]
-        cleaned_important_points = list(dict.fromkeys(cleaned_important_points))
-        if cleaned_important_points:
-            sections.append(
-                "\n".join(
-                    [
-                        "## Important points for the mitigation",
-                        "",
-                        *cleaned_important_points,
-                    ]
-                )
-            )
 
         return "\n\n".join(section for section in sections if section.strip()), panel_items
 
@@ -1665,12 +1637,12 @@ class ChatMitigationCreationPolicyMixin:
     def _suggested_mitigation_system_inquiry_report(self, session: ChatSession) -> str:
         record = self._suggested_mitigation_record(session)
         if record is None:
-            return "- No system inquiry reflections were found for this mitigation measure."
+            return "- No systems inquiry reflections were found for this mitigation measure."
         payload = self._system_inquiry_existing_payload(record.system_inquiry_json)
         if not payload:
-            return "- No system inquiry reflections were found for this mitigation measure."
+            return "- No systems inquiry reflections were found for this mitigation measure."
         if bool(payload.get("skipped")):
-            return "- System inquiry was skipped for this mitigation measure."
+            return "- Systems inquiry was skipped for this mitigation measure."
 
         annotations = [
             item
@@ -1678,7 +1650,7 @@ class ChatMitigationCreationPolicyMixin:
             if isinstance(item, dict) and str(item.get("status") or "current") == "current"
         ]
         if not annotations:
-            return "- No current system inquiry reflections were found for this mitigation measure."
+            return "- No current systems inquiry reflections were found for this mitigation measure."
 
         profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
         completion = profile.get("completion_score")
@@ -1723,7 +1695,7 @@ class ChatMitigationCreationPolicyMixin:
             title = (
                 str(annotation.get("title") or "").strip()
                 or str(annotation.get("lens_id") or "").strip()
-                or str(annotation.get("probe_id") or "System inquiry").strip()
+                or str(annotation.get("probe_id") or "Systems inquiry").strip()
             )
             state = str(annotation.get("resolution_state") or "open").strip()
             corpus_label = str(annotation.get("corpus_label") or "unproven").strip()

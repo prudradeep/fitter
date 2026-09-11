@@ -272,7 +272,7 @@ uv run python scripts/cleanup_retained_data.py
 ```
 
 This removes expired rate-limit rows, old temporary knowledge documents, and old
-LLM exchange logs, plus anonymised System Inquiry telemetry events, according to
+LLM exchange logs, plus anonymised Systems Inquiry telemetry events, according to
 `RATE_LIMIT_RETENTION_DAYS`, `TEMPORARY_KNOWLEDGE_RETENTION_HOURS`,
 `LLM_LOG_RETENTION_DAYS`, and `SYSTEM_INQUIRY_PROFILE_RETENTION_DAYS`.
 

@@ -106,7 +106,7 @@ def _short_explanation(family_key: str) -> str:
         return "This lens asks how distribution, recognition, and procedural access affect justice."
     if family_key == "D":
         return "This lens asks how the current measure interacts with the wider measure portfolio."
-    return "This lens explains why the system inquiry question is being asked."
+    return "This lens explains why the systems inquiry question is being asked."
 
 
 def dump_system_inquiry_corpus_index(path: str | Path) -> None:

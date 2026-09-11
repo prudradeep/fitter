@@ -178,11 +178,15 @@ class ChatNavigationStepsMixin:
             session.mitigation_reason = None
             session.mitigation_target_population = None
             session.mitigation_mechanisms = None
+            session.mitigation_mechanism_reflection = None
+            session.mitigation_policy_effects = None
+            session.mitigation_policy_effect_index = 0
             session.mitigation_creation_summary = None
             session.mitigation_inspiration_decision = None
             session.mitigation_dg_evidence = None
             session.mitigation_dg_evidence_index = 0
             session.mitigation_equity = None
+            session.mitigation_equity_skipped = False
             session.mitigation_revision_stage = None
             session.mitigation_record_id = None
             self._clear_mitigation_validation_state(session)
@@ -293,12 +297,23 @@ class ChatNavigationStepsMixin:
         session.mitigation_measure = None
         session.mitigation_reason = None
         session.mitigation_target_population = None
+        session.mitigation_mechanism_candidates = None
+        session.selected_mitigation_mechanism = None
+        session.selected_mitigation_policy = None
+        session.pending_mitigation_policy = None
+        session.pending_mitigation_policy_context = None
+        session.pending_mitigation_policy_document_ids = None
+        session.mitigation_mechanism_guidance = None
         session.mitigation_mechanisms = None
+        session.mitigation_mechanism_reflection = None
+        session.mitigation_policy_effects = None
+        session.mitigation_policy_effect_index = 0
         session.mitigation_creation_summary = None
         session.mitigation_inspiration_decision = None
         session.mitigation_dg_evidence = None
         session.mitigation_dg_evidence_index = 0
         session.mitigation_equity = None
+        session.mitigation_equity_skipped = False
         session.mitigation_revision_stage = None
         session.mitigation_record_id = None
         cls._clear_mitigation_validation_state(session)
@@ -819,7 +834,29 @@ class ChatNavigationStepsMixin:
                 error=error,
             )
 
+        if session.phase == "mitigation_mechanism_selection":
+            options = self._mitigation_mechanism_selection_options(session)
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_mechanism_selection",
+                bot_message=message,
+                options=options,
+                session=session.summary(),
+                input_mode="textarea",
+                error=error,
+            )
+
         guided_option_phases = {
+            "mitigation_policy_confirmation": self._guided_options(
+                "Yes, use this policy", "No, provide another policy"
+            ),
+            "mitigation_policy_retry": self._guided_options(
+                "Clarify the relevance", "Provide policy again"
+            ),
+            "mitigation_mechanism_reflection_review": self._guided_options(
+                "Confirm reflection", "Clarify reflection"
+            ),
+            "mitigation_policy_effect_review": self._guided_options("Yes", "No"),
             "mitigation_mechanism_confirmation": self._guided_options(
                 "Confirm mechanisms", "Provide different mechanisms"
             ),
@@ -846,6 +883,33 @@ class ChatNavigationStepsMixin:
                 bot_message=message,
                 options=guided_option_phases[session.phase],
                 session=session.summary(),
+                error=error,
+            )
+
+        if session.phase in {
+            "mitigation_policy_clarification",
+            "mitigation_mechanism_reflection_input",
+            "mitigation_policy_effect_mitigation",
+            "mitigation_policy_effect_disagreement",
+        }:
+            return ChatResponse(
+                session_id=session_id,
+                step=session.phase,
+                bot_message=message,
+                options=[],
+                session=session.summary(),
+                input_mode="textarea",
+                error=error,
+            )
+
+        if session.phase == "mitigation_policy_reference":
+            return ChatResponse(
+                session_id=session_id,
+                step=session.phase,
+                bot_message=message,
+                options=[],
+                session=session.summary(),
+                input_mode="policy_reference",
                 error=error,
             )
 
