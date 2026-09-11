@@ -267,6 +267,17 @@ def _recover_mitigation_record_details(
         "mitigation_measure": row.measure,
         "mitigation_reason": row.reason,
     }
+    if row.creation_details_json:
+        try:
+            details = json.loads(row.creation_details_json)
+        except (TypeError, json.JSONDecodeError):
+            details = {}
+        if isinstance(details, dict):
+            recovered["mitigation_mechanisms"] = list(details.get("mechanisms") or [])
+            recovered["mitigation_creation_summary"] = str(details.get("summary") or "") or None
+            recovered["mitigation_inspiration_decision"] = details.get("open_labs_inspiration") or None
+            recovered["mitigation_dg_evidence"] = details.get("disadvantaged_group_evidence") or None
+            recovered["mitigation_equity"] = str(details.get("equity") or "") or None
     target_population = _json_string_list(row.target_population)
     if target_population:
         recovered["mitigation_target_population"] = target_population

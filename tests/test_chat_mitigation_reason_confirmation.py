@@ -1,12 +1,14 @@
 import asyncio
 import unittest
+from unittest.mock import patch
 
-from app.schemas import ChatResponse
+from app.schemas import ChatResponse, Option
 from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_options import REASON_CONFIRMATION_OPTIONS
 from app.services.chat_selection_steps import ChatSelectionStepsMixin
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
+from app.services.message_renderer import render_message
 
 
 class _ReasonConfirmationEngine(ChatMitigationStepsMixin):
@@ -23,6 +25,12 @@ class _ReasonConfirmationEngine(ChatMitigationStepsMixin):
 
     def _mitigation_measure_examples(self, sector_id):
         return ""
+
+    async def _other_actions_message_from_llm(self, session):
+        return "Choose another action."
+
+    def _primary_other_nav_options(self, session, step):
+        return [Option(id=1, label="Start over")]
 
 
 class _ReasonSelectionEngine(_ReasonConfirmationEngine, ChatSelectionStepsMixin):
@@ -49,15 +57,60 @@ class _ReasonSelectionEngine(_ReasonConfirmationEngine, ChatSelectionStepsMixin)
 
 
 class ReasonConfirmationOpenConversationTests(unittest.TestCase):
-    def test_reason_confirmation_has_three_policy_creation_options(self):
+    def test_reason_confirmation_has_yes_no_options(self):
         self.assertEqual(
             [option.label for option in REASON_CONFIRMATION_OPTIONS],
-            [
-                "Modify existing policy",
-                "Adopt mitigation proposal suggested above",
-                "Create new proposal",
-            ],
+            ["Yes", "No"],
         )
+
+    def test_reason_confirmation_copy_does_not_offer_hidden_proposal(self):
+        content = render_message("reason_confirmation.md")
+
+        self.assertNotIn("Adopt mitigation proposal suggested above", content)
+        self.assertIn("<strong>Yes</strong>", content)
+        self.assertIn("<strong>No</strong>", content)
+
+    def test_stale_database_copy_cannot_restore_hidden_proposal(self):
+        stale_copy = (
+            "Are you ready to create a mitigation measure?\n\n"
+            "Choose **Adopt mitigation proposal suggested above** to use the "
+            "suggested mitigation proposal as the starting mitigation measure."
+        )
+
+        with patch(
+            "app.services.message_renderer.load_prompt_from_db",
+            return_value=stale_copy,
+        ):
+            content = render_message("reason_confirmation.md")
+
+        self.assertNotIn("Adopt mitigation proposal suggested above", content)
+        self.assertIn("<strong>Yes</strong>", content)
+        self.assertIn("<strong>No</strong>", content)
+
+    def test_yes_continues_to_mitigation_measure_entry(self):
+        engine = _ReasonConfirmationEngine()
+        session = ChatSession(selected_hazard="Heat stress")
+
+        response = asyncio.run(
+            engine._handle_reason_confirmation("test-session", session, "Yes")
+        )
+
+        self.assertEqual(response.step, "mitigation_measure")
+        self.assertEqual(session.phase, "mitigation_measure")
+        self.assertEqual(response.input_mode, "mitigation_measure")
+
+    def test_no_shows_other_actions(self):
+        engine = _ReasonConfirmationEngine()
+        session = ChatSession(selected_hazard="Heat stress")
+
+        response = asyncio.run(
+            engine._handle_reason_confirmation("test-session", session, "No")
+        )
+
+        self.assertEqual(response.step, "complete")
+        self.assertEqual(session.phase, "other_actions")
+        self.assertEqual(response.bot_message, "Choose another action.")
+        self.assertEqual([option.label for option in response.options], ["Start over"])
 
     def test_reason_confirmation_keeps_other_options_menu(self):
         engine = ChatService.__new__(ChatService)

@@ -1,5 +1,3 @@
-Choose how you want to create the mitigation measure:
+Are you ready to create a mitigation measure based on these current points?
 
-- **Modify existing policy** uses the suggested amendment to the policy associated with the hazard.
-- **Adopt mitigation proposal suggested above** uses the displayed proposal as the starting mitigation measure.
-- **Create new proposal** lets you write your own mitigation proposal.
+Choose **Yes** to continue. Choose **No** to view other available actions.

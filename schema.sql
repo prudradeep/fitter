@@ -361,6 +361,7 @@ CREATE TABLE IF NOT EXISTS user_mitigation_measures (
   target_population TEXT NULL,
   conclusion TEXT NULL,
   target_groups_json TEXT NULL,
+  creation_details_json TEXT NULL,
   system_inquiry_json TEXT NULL,
   validation_mode VARCHAR(16) NOT NULL DEFAULT 'strict',
   is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,

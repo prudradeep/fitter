@@ -477,12 +477,12 @@ class ChatService(
             )
 
         if session.phase == "mitigation_duplicate_suggestion":
-            return self._handle_mitigation_duplicate_suggestion(
+            return await self._handle_mitigation_duplicate_suggestion(
                 current_session_id, session, clean_message
             )
 
         if session.phase == "mitigation_duplicate_report":
-            return self._handle_mitigation_duplicate_report(
+            return await self._handle_mitigation_duplicate_report(
                 current_session_id, session, clean_message
             )
 
@@ -513,6 +513,26 @@ class ChatService(
 
         if session.phase == "mitigation_target_population_review":
             return await self._handle_mitigation_target_population_review(
+                current_session_id, session, clean_message
+            )
+
+        mitigation_creation_handlers = {
+            "mitigation_mechanism_confirmation": self._handle_mitigation_mechanism_confirmation,
+            "mitigation_mechanism_input": self._handle_mitigation_mechanism_input,
+            "mitigation_summary_review": self._handle_mitigation_summary_review,
+            "mitigation_summary_revision": self._handle_mitigation_summary_revision,
+            "mitigation_inspiration_review": self._handle_mitigation_inspiration_review,
+            "mitigation_inspiration_parts": self._handle_mitigation_inspiration_parts,
+            "mitigation_dg_review": self._handle_mitigation_dg_review,
+            "mitigation_dg_input": self._handle_mitigation_dg_input,
+            "mitigation_dg_evidence_decision": self._handle_mitigation_dg_evidence_decision,
+            "mitigation_dg_evidence_input": self._handle_mitigation_dg_evidence_input,
+            "mitigation_dg_summary_review": self._handle_mitigation_dg_summary_review,
+            "mitigation_equity": self._handle_mitigation_equity,
+            "mitigation_final_summary_review": self._handle_mitigation_final_summary_review,
+        }
+        if session.phase in mitigation_creation_handlers:
+            return await mitigation_creation_handlers[session.phase](
                 current_session_id, session, clean_message
             )
 
@@ -1089,7 +1109,6 @@ class ChatService(
                 co_created_policy_sections,
                 practical_considerations,
                 current_policy,
-                new_policy_suggestions,
             )
             if section and section.strip()
         )

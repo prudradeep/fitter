@@ -96,7 +96,10 @@ class ChatMitigationStepsMixin:
         if exact_label is None and open_action is not None:
             action = open_action
 
-        if action == normalize("Create new proposal"):
+        if action in {
+            normalize("Yes"),
+            normalize("Create new proposal"),
+        }:
             session.phase = "mitigation_measure"
             session.pending_mitigation_measure = None
             self._clear_mitigation_clarity_state(session)
@@ -122,9 +125,20 @@ class ChatMitigationStepsMixin:
             return await self._adopt_suggested_mitigation_response(session_id, session)
 
         if action == normalize("Modify existing policy"):
-            return self._adopt_existing_policy_modification_response(
+            return await self._adopt_existing_policy_modification_response(
                 session_id,
                 session,
+            )
+
+        if action == normalize("No"):
+            session.phase = "other_actions"
+            return ChatResponse(
+                session_id=session_id,
+                step="complete",
+                bot_message=await self._other_actions_message_from_llm(session),
+                options=self._primary_other_nav_options(session, "complete"),
+                session=session.summary(),
+                error=False,
             )
 
         return ChatResponse(
@@ -161,14 +175,14 @@ class ChatMitigationStepsMixin:
             session,
             mitigation_measure,
         )
-        return self._mitigation_initial_clarification_step(
+        return await self._start_mitigation_clarification_step(
             session_id,
             session,
             mitigation_measure,
             reason,
         )
 
-    def _adopt_existing_policy_modification_response(
+    async def _adopt_existing_policy_modification_response(
         self,
         session_id: str,
         session: ChatSession,
@@ -183,7 +197,7 @@ class ChatMitigationStepsMixin:
                 step="reason_confirmation",
                 bot_message=(
                     "I could not find a grounded existing-policy modification to use. "
-                    "Choose **Create new proposal** to write one manually."
+                    "Choose **Yes** to write one manually."
                 ),
                 options=REASON_CONFIRMATION_OPTIONS,
                 session=session.summary(),
@@ -197,7 +211,7 @@ class ChatMitigationStepsMixin:
             "This measure modifies the existing policy associated with the selected "
             f"hazard{f' ({hazard})' if hazard else ''}."
         )
-        return self._mitigation_initial_clarification_step(
+        return await self._start_mitigation_clarification_step(
             session_id,
             session,
             mitigation_measure,
@@ -845,7 +859,7 @@ class ChatMitigationStepsMixin:
             error=False,
         )
 
-    def _handle_mitigation_duplicate_suggestion(
+    async def _handle_mitigation_duplicate_suggestion(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         options = self._mitigation_duplicate_confirmation_options()
@@ -886,11 +900,11 @@ class ChatMitigationStepsMixin:
             normalize("No"),
             normalize("No, continue with my proposal"),
         }:
-            return self._continue_pending_mitigation_reason_step(session_id, session)
+            return await self._continue_pending_mitigation_reason_step(session_id, session)
 
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
-    def _handle_mitigation_duplicate_report(
+    async def _handle_mitigation_duplicate_report(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         options = self._mitigation_existing_report_options()
@@ -903,7 +917,7 @@ class ChatMitigationStepsMixin:
             normalize("Yes"),
             normalize("Yes, continue with my proposed mitigation"),
         }:
-            return self._continue_pending_mitigation_reason_step(session_id, session)
+            return await self._continue_pending_mitigation_reason_step(session_id, session)
 
         if action in {
             normalize("No"),
@@ -931,13 +945,13 @@ class ChatMitigationStepsMixin:
 
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
-    def _continue_pending_mitigation_reason_step(
+    async def _continue_pending_mitigation_reason_step(
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         self._clear_mitigation_clarity_state(session)
         session.suggested_mitigation_measure_id = None
         session.suggested_mitigation_measure_name = None
-        return self._mitigation_initial_clarification_step(
+        return await self._start_mitigation_clarification_step(
             session_id,
             session,
             session.pending_mitigation_measure
@@ -958,6 +972,14 @@ class ChatMitigationStepsMixin:
         session.pending_mitigation_evidence = ""
         session.mitigation_evidence_declined = False
         session.mitigation_frozen_inputs = None
+        guided_runner = getattr(self, "_start_guided_mitigation_flow", None)
+        if guided_runner is not None:
+            return await guided_runner(
+                session_id,
+                session,
+                mitigation_measure,
+                session.pending_mitigation_reason or "",
+            )
         clarity_runner = getattr(self, "_run_mitigation_clarity_track", None)
         if clarity_runner is not None:
             response = await clarity_runner(

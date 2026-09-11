@@ -409,6 +409,7 @@ class UserMitigationMeasure(Base):
     target_population: Mapped[str | None] = mapped_column(Text)
     conclusion: Mapped[str | None] = mapped_column(Text)
     target_groups_json: Mapped[str | None] = mapped_column(Text)
+    creation_details_json: Mapped[str | None] = mapped_column(Text)
     system_inquiry_json: Mapped[str | None] = mapped_column(Text)
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict", server_default="strict")
     is_crowd_sourced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")

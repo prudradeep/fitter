@@ -77,7 +77,7 @@ class MitigationPolicyFormattingTests(unittest.TestCase):
         )
         self.assertEqual(content, "")
 
-    def test_co_created_sections_precede_general_and_new_policy_sections(self) -> None:
+    def test_initial_considerations_hide_new_policy_section(self) -> None:
         service = ChatService.__new__(ChatService)
         service._matched_mitigation_measure_examples = MagicMock(return_value="")
         service._mitigation_policy_reference_results = MagicMock(return_value=[])
@@ -99,6 +99,7 @@ class MitigationPolicyFormattingTests(unittest.TestCase):
         practical_response = (
             '{"title":"# Practical Considerations","hazard":"A co-created hazard",'
             '"context":"European twin-transition policy implementation",'
+            '"important_points":["- Prioritise accessible delivery."],'
             '"themes":[{"heading":"## Delivery",'
             '"summary":"GENERAL CONSIDERATIONS",'
             '"concerns":["- Check access barriers."]}]}'
@@ -115,11 +116,11 @@ class MitigationPolicyFormattingTests(unittest.TestCase):
             content.index("POLICY MODIFICATION"),
             content.index("General considerations to mitigate the negative effects"),
         )
-        self.assertLess(
-            content.index("General considerations to mitigate the negative effects"),
-            content.index("NEW POLICY"),
-        )
+        self.assertIn("Important points for the mitigation", content)
+        self.assertIn("- Prioritise accessible delivery.", content)
+        self.assertNotIn("NEW POLICY", content)
         self.assertNotIn("CURRENT POLICY", content)
+        service._new_policy_suggestions_section.assert_awaited_once_with(session)
         service._current_policy_implementations_section.assert_not_called()
 
     def test_new_policy_candidates_are_rendered_as_separate_bullets(self) -> None:

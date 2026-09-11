@@ -3,6 +3,36 @@ from app.services.chat_mitigation_creation_common import *
 
 
 class ChatMitigationCreationStorageMixin:
+    def _update_mitigation_creation_details(self, session: ChatSession) -> None:
+        if session.mitigation_record_id is None:
+            return
+        try:
+            row = self.db.get(UserMitigationMeasure, session.mitigation_record_id)
+            if row is None:
+                return
+            evaluated = (
+                session.mitigation_validation.get("evaluated_inputs", {})
+                if isinstance(session.mitigation_validation, dict)
+                else {}
+            )
+            row.creation_details_json = self._metadata_to_json(
+                {
+                    "mechanisms": list(session.mitigation_mechanisms or []),
+                    "measure_evidence": session.pending_mitigation_evidence
+                    or (evaluated.get("evidence") if isinstance(evaluated, dict) else "")
+                    or "",
+                    "summary": session.mitigation_creation_summary or "",
+                    "open_labs_inspiration": session.mitigation_inspiration_decision or {},
+                    "disadvantaged_groups": list(session.mitigation_target_population or []),
+                    "disadvantaged_group_evidence": session.mitigation_dg_evidence or {},
+                    "equity": session.mitigation_equity or "",
+                }
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("Failed to persist mitigation creation details")
+
     def _store_mitigation_measure(
         self,
         *,
@@ -134,6 +164,7 @@ class ChatMitigationCreationStorageMixin:
                 return
             row.conclusion = conclusion.strip() or None
             row.target_groups_json = self._metadata_to_json(target_groups)
+            self._update_mitigation_creation_details(session)
             self.db.commit()
         except Exception:
             self.db.rollback()

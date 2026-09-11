@@ -1153,6 +1153,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
     def test_practical_considerations_ignore_schema_placeholder_heading(self):
         payload = {
             "title": "# Practical Considerations",
+            "important_points": ["- Prioritise accessible delivery."],
             "themes": [
                 {
                     "heading": "## <Dynamic Theme Heading>",
@@ -1173,6 +1174,27 @@ class MitigationMeasureValidationTests(unittest.TestCase):
 
         self.assertEqual(panel_items, ["Targeted Mobility Access"])
         self.assertNotIn("Dynamic Theme Heading", markdown)
+        self.assertIn("## Important points for the mitigation", markdown)
+        self.assertIn("- Prioritise accessible delivery.", markdown)
+
+    def test_practical_considerations_use_concerns_when_important_points_are_missing(self):
+        payload = {
+            "title": "# Practical Considerations",
+            "themes": [
+                {
+                    "heading": "## Accessible Delivery",
+                    "summary": "Delivery must account for access barriers.",
+                    "concerns": ["- Provide non-digital application routes."],
+                }
+            ],
+        }
+
+        markdown, _ = ChatMitigationCreationMixin._practical_considerations_json_to_markdown(
+            json.dumps(payload)
+        )
+
+        self.assertIn("## Important points for the mitigation", markdown)
+        self.assertIn("- Provide non-digital application routes.", markdown)
 
     def test_extract_suggested_policy_reason_from_why_this_helps(self):
         markdown = (

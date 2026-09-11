@@ -8,6 +8,9 @@ from app.services.chat_mitigation_creation_evaluation import (
 from app.services.chat_mitigation_creation_implementation import (
     ChatMitigationCreationImplementationMixin,
 )
+from app.services.chat_mitigation_creation_guided import (
+    ChatMitigationCreationGuidedMixin,
+)
 from app.services.chat_mitigation_creation_policy import (
     ChatMitigationCreationPolicyMixin,
 )
@@ -27,6 +30,7 @@ def _d23_conceptual_review_page_texts() -> tuple[tuple[int, str], ...]:
 
 
 class ChatMitigationCreationMixin(
+    ChatMitigationCreationGuidedMixin,
     ChatMitigationCreationWorkflowMixin,
     ChatMitigationCreationImplementationMixin,
     ChatMitigationCreationEvaluationMixin,

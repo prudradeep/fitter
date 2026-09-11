@@ -176,6 +176,14 @@ class ChatNavigationStepsMixin:
             self._clear_mitigation_clarity_state(session)
             session.mitigation_measure = None
             session.mitigation_reason = None
+            session.mitigation_target_population = None
+            session.mitigation_mechanisms = None
+            session.mitigation_creation_summary = None
+            session.mitigation_inspiration_decision = None
+            session.mitigation_dg_evidence = None
+            session.mitigation_dg_evidence_index = 0
+            session.mitigation_equity = None
+            session.mitigation_revision_stage = None
             session.mitigation_record_id = None
             self._clear_mitigation_validation_state(session)
             session.evaluation_questions = None
@@ -285,6 +293,13 @@ class ChatNavigationStepsMixin:
         session.mitigation_measure = None
         session.mitigation_reason = None
         session.mitigation_target_population = None
+        session.mitigation_mechanisms = None
+        session.mitigation_creation_summary = None
+        session.mitigation_inspiration_decision = None
+        session.mitigation_dg_evidence = None
+        session.mitigation_dg_evidence_index = 0
+        session.mitigation_equity = None
+        session.mitigation_revision_stage = None
         session.mitigation_record_id = None
         cls._clear_mitigation_validation_state(session)
         session.evaluation_questions = None
@@ -355,7 +370,7 @@ class ChatNavigationStepsMixin:
             "clarification_questions": clarification_questions or [],
             "metrics": {
                 "clarification_turn": session.mitigation_clarity_turns,
-                "clarification_turn_cap": self.mitigation_clarity_turn_cap,
+                "clarification_turn_cap": None,
             },
             "checks": {
                 "groundedness": "PENDING_INPUT_FREEZE",
@@ -800,6 +815,55 @@ class ChatNavigationStepsMixin:
                 step="mitigation_target_population_review",
                 bot_message=message,
                 options=self._mitigation_target_population_review_options(),
+                session=session.summary(),
+                error=error,
+            )
+
+        guided_option_phases = {
+            "mitigation_mechanism_confirmation": self._guided_options(
+                "Confirm mechanisms", "Provide different mechanisms"
+            ),
+            "mitigation_summary_review": self._guided_options(
+                "Confirm summary", "Modify summary inputs"
+            ),
+            "mitigation_dg_review": self._guided_options(
+                "Confirm disadvantaged groups", "Provide different groups"
+            ),
+            "mitigation_dg_evidence_decision": self._guided_options(
+                "Yes, add DG evidence", "No DG evidence"
+            ),
+            "mitigation_dg_summary_review": self._guided_options(
+                "Confirm DG summary", "Modify disadvantaged groups"
+            ),
+            "mitigation_final_summary_review": self._guided_options(
+                "Confirm final summary", "Modify final inputs"
+            ),
+        }
+        if session.phase in guided_option_phases:
+            return ChatResponse(
+                session_id=session_id,
+                step=session.phase,
+                bot_message=message,
+                options=guided_option_phases[session.phase],
+                session=session.summary(),
+                error=error,
+            )
+
+        if session.phase == "mitigation_inspiration_review":
+            candidates = self._guided_open_labs_candidates(session)
+            usable_count = len(candidates) + (
+                1 if session.suggested_existing_policy_modification else 0
+            )
+            labels = [
+                f"Use inspiration {index} fully"
+                for index in range(1, usable_count + 1)
+            ]
+            labels.extend(["Adopt selected parts", "Discard inspirations"])
+            return ChatResponse(
+                session_id=session_id,
+                step=session.phase,
+                bot_message=message,
+                options=self._guided_options(*labels),
                 session=session.summary(),
                 error=error,
             )

@@ -20,6 +20,10 @@ Use the following JSON schema exactly:
   "title": "# Practical Considerations",
   "hazard": "<selected hazard>",
   "context": "European twin-transition policy implementation",
+  "important_points": [
+    "- Write one concise, high-priority point to account for when designing the mitigation.",
+    "- Write another concise, high-priority point to account for when designing the mitigation."
+  ],
   "themes": [
     {{
       "heading": "## Targeted Access And Delivery Barriers",
@@ -47,12 +51,15 @@ Instructions:
 - Each theme should contain 2 to 4 concerns.
 - Keep summaries concise (1-2 sentences).
 - Keep each concern concise (1 sentence where possible).
+- Include 3 to 6 concise, evidence-based takeaways in 'important_points'.
+- Make 'important_points' the highest-priority points to account for when designing the mitigation, without introducing a policy proposal or duplicating the theme wording verbatim.
 - Do not invent unsupported concerns.
 - If matched mitigation examples are unavailable, derive themes only from the sector statistical context, selected hazard, and affected profiles, and clearly indicate where evidence is limited.
-- Do NOT generate a mitigation measure, policy proposal, action plan, recommendations, references, conclusion, or any section other than Practical Considerations.
+- Do NOT generate a mitigation measure, policy proposal, action plan, recommendations, references, or conclusion.
 - Preserve Markdown formatting inside all string values:
   - 'title' must start with '# '.
   - 'heading' must start with '## '.
   - 'summary' may contain Markdown formatting such as **bold**, *italic*, inline code, or links when appropriate.
   - Every entry in 'concerns' must begin with '- '.
+  - Every entry in 'important_points' must begin with '- '.
 - Return strictly valid JSON with no trailing commas and no additional text.

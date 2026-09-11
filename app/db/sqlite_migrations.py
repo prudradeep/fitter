@@ -228,6 +228,15 @@ def _011_custom_hazard_policy_references(connection: Connection) -> None:
     """))
 
 
+def _012_mitigation_creation_details(connection: Connection) -> None:
+    _add_column(
+        connection,
+        "user_mitigation_measures",
+        "creation_details_json",
+        "creation_details_json TEXT NULL",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -240,6 +249,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("009_custom_hazard_summary", _009_custom_hazard_summary),
     ("010_policy_reference_custom_hazard", _010_policy_reference_custom_hazard),
     ("011_custom_hazard_policy_references", _011_custom_hazard_policy_references),
+    ("012_mitigation_creation_details", _012_mitigation_creation_details),
 )
 
 

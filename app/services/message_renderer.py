@@ -87,6 +87,14 @@ def get_message_environment() -> Environment:
 
 def render_message(template_name: str, **context: object) -> str:
     prompt = load_prompt_from_db(f"chat/{template_name}")
+    if (
+        template_name == "reason_confirmation.md"
+        and prompt
+        and "Adopt mitigation proposal suggested above" in prompt
+    ):
+        # Older databases can retain this superseded template and override the
+        # packaged Yes/No copy. Fall back to the current file in that case.
+        prompt = None
     template = (
         get_message_environment().from_string(prompt)
         if prompt is not None

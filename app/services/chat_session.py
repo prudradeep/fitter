@@ -54,6 +54,13 @@ class ChatSession:
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
     mitigation_target_population: list[str] | None = None
+    mitigation_mechanisms: list[str] | None = None
+    mitigation_creation_summary: str | None = None
+    mitigation_inspiration_decision: dict[str, object] | None = None
+    mitigation_dg_evidence: dict[str, str] | None = None
+    mitigation_dg_evidence_index: int = 0
+    mitigation_equity: str | None = None
+    mitigation_revision_stage: str | None = None
     mitigation_record_id: str | None = None
     mitigation_validation: dict[str, object] | None = None
     mitigation_grounded_synthesis: str | None = None

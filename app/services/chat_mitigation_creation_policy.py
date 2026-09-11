@@ -560,6 +560,7 @@ class ChatMitigationCreationPolicyMixin:
         sections: list[str] = [title]
         panel_items: list[str] = []
         seen_panel_items: set[str] = set()
+        theme_concerns: list[str] = []
         themes = payload.get("themes")
         if not isinstance(themes, list):
             themes = []
@@ -591,8 +592,35 @@ class ChatMitigationCreationPolicyMixin:
                 cleaned_concerns = [concern for concern in cleaned_concerns if concern]
                 if cleaned_concerns:
                     block.extend(["", *cleaned_concerns])
+                    theme_concerns.extend(cleaned_concerns)
 
             sections.append("\n".join(block).strip())
+
+        important_points = payload.get("important_points")
+        cleaned_important_points = (
+            [
+                cls._clean_practical_json_bullet(point)
+                for point in important_points
+            ]
+            if isinstance(important_points, list)
+            else []
+        )
+        cleaned_important_points = [
+            point for point in cleaned_important_points if point
+        ]
+        if not cleaned_important_points:
+            cleaned_important_points = theme_concerns[:5]
+        cleaned_important_points = list(dict.fromkeys(cleaned_important_points))
+        if cleaned_important_points:
+            sections.append(
+                "\n".join(
+                    [
+                        "## Important points for the mitigation",
+                        "",
+                        *cleaned_important_points,
+                    ]
+                )
+            )
 
         return "\n\n".join(section for section in sections if section.strip()), panel_items
 

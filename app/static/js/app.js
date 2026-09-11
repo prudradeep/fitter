@@ -444,6 +444,7 @@ function stageKeyForStep(step = "", mode = appState.inputMode) {
 function shouldShowHazardContextOnly(step = appState.currentStep, mode = appState.inputMode) {
   return (
     mode === "mitigation_measure"
+    || step.startsWith("mitigation_")
     || [
       "mitigation_measure",
       "mitigation_reason",
@@ -1868,7 +1869,7 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     if (step === "mitigation_reason") {
       return "Enter a mitigation measure and reason below...";
     }
-    if (step === "mitigation_evidence") {
+    if (step === "mitigation_evidence" || step === "mitigation_dg_evidence_input") {
       return "Add evidence or choose Skip...";
     }
     if (step === "mitigation_clarity") {
@@ -1901,6 +1902,11 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     custom_hazard_summary_review: "Describe how the generated summary should be revised...",
     mitigation: "Ask a mitigation question or continue the plan...",
     mitigation_clarity: "Answer all clarification questions...",
+    mitigation_mechanism_input: "Describe the specific causal mechanism...",
+    mitigation_summary_revision: "Describe the precise change...",
+    mitigation_inspiration_parts: "Describe the Open Labs elements to adopt...",
+    mitigation_dg_input: "Name the specific disadvantaged groups...",
+    mitigation_equity: "Explain how the measure is equitable...",
     system_inquiry_observation: "Write your reflection...",
     system_inquiry_followup: "Write your follow-up reflection...",
     evaluation_question: "Use the score slider below...",
@@ -1951,7 +1957,9 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
   if (mode === "evidence_only") {
     evidenceInput.placeholder = step === "mitigation_evidence"
       ? "https://example.org/mitigation-evidence"
-      : "https://example.org/hazard-evidence";
+      : step === "mitigation_dg_evidence_input"
+        ? "https://example.org/disadvantaged-group-evidence"
+        : "https://example.org/hazard-evidence";
     return;
   }
 
@@ -3081,6 +3089,19 @@ function renderSelectedHazardContext(session = {}) {
     "mitigation_target_population",
     "mitigation_target_population_review",
     "mitigation_review",
+    "mitigation_mechanism_confirmation",
+    "mitigation_mechanism_input",
+    "mitigation_summary_review",
+    "mitigation_summary_revision",
+    "mitigation_inspiration_review",
+    "mitigation_inspiration_parts",
+    "mitigation_dg_review",
+    "mitigation_dg_input",
+    "mitigation_dg_evidence_decision",
+    "mitigation_dg_evidence_input",
+    "mitigation_dg_summary_review",
+    "mitigation_equity",
+    "mitigation_final_summary_review",
     "evaluation_question",
     "evaluation_complete",
     "system_inquiry_intro",

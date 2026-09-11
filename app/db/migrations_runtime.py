@@ -744,6 +744,13 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                             "ADD COLUMN system_inquiry_json TEXT NULL AFTER target_groups_json"
                         )
                     )
+                if "creation_details_json" not in mitigation_columns:
+                    connection.execute(
+                        text(
+                            "ALTER TABLE user_mitigation_measures "
+                            "ADD COLUMN creation_details_json TEXT NULL AFTER target_groups_json"
+                        )
+                    )
                 if "validation_mode" not in mitigation_columns:
                     connection.execute(
                         text(

@@ -1,9 +1,9 @@
-[WF1] Current workflow step: the user is deciding how to create a mitigation measure for the selected hazard and affected groups.
+[WF1] Current workflow step: the user is deciding whether to continue creating a mitigation measure for the selected hazard and affected groups.
 
-[WF2] Modify existing policy uses the displayed, grounded amendment to the policy associated with the selected hazard.
+[WF2] Yes continues to the mitigation-measure input step.
 
-[WF3] Adopting the suggested mitigation proposal uses the proposal currently shown by the tool as the mitigation measure. The tool then continues with validation/clarification for that measure.
+[WF3] No opens the other available workflow actions.
 
-[WF4] Create new proposal lets the user enter their own policy action when the displayed choices do not fit or they want to define a different measure.
+[WF4] The separate Other options menu remains available for navigation choices.
 
 [WF5] If the user asks a question at this step, the tool should answer it and keep the user on the mitigation decision step so they can continue afterward.
