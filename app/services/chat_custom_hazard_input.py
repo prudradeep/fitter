@@ -3,6 +3,7 @@ import re
 from app.schemas import ChatResponse
 from app.services.chat_options import (
     CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+    CUSTOM_HAZARD_POLICY_RETRY_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
     compact_for_match,
     exact_option_label,
@@ -14,6 +15,7 @@ from app.services.chat_session import ChatSession
 from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.custom_hazard_validation import (
     default_custom_hazard_state,
+    summarize_custom_hazard_supporting_policy,
     validate_policy_reference_twin_transition,
 )
 from app.services.enums import ChatPhase, CustomHazardStatus
@@ -751,12 +753,18 @@ class ChatCustomHazardInputMixin:
     ) -> ChatResponse:
         exact_label = exact_option_label(
             message,
-            CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+            [
+                *CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+                *CUSTOM_HAZARD_POLICY_RETRY_OPTIONS,
+            ],
         )
         if exact_label is None:
             fuzzy_label = match_option_label(
                 message,
-                CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+                [
+                    *CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+                    *CUSTOM_HAZARD_POLICY_RETRY_OPTIONS,
+                ],
             )
             if fuzzy_label is not None:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
@@ -774,8 +782,32 @@ class ChatCustomHazardInputMixin:
         answer = message.strip()
         if session.phase == "custom_hazard_clarification":
             state = self._custom_hazard_state(session)
+            if normalize(exact_label or answer) == normalize("Provide policy again"):
+                pending_ids = [
+                    str(value).strip()
+                    for value in state.get("pending_policy_reference_document_ids") or []
+                    if str(value).strip()
+                ]
+                self._discard_submitted_policy_reference(session, state, pending_ids)
+                state["pending_policy_reference"] = ""
+                state["pending_policy_reference_document_ids"] = []
+                state["pending_policy_reference_context"] = ""
+                state["policy_reference_relevance_pending"] = False
+                state["awaiting_policy_relevance_clarification"] = False
+                return self._custom_hazard_policy_reference_step(
+                    session_id,
+                    session,
+                    detail="Provide another policy URL or file for the confirmed mechanism.",
+                )
+            if normalize(exact_label or answer) == normalize("Clarify the relevance"):
+                state["awaiting_policy_reference"] = False
+                state["awaiting_policy_relevance_clarification"] = True
+                return self._custom_hazard_policy_relevance_clarification_step(
+                    session_id, session
+                )
             if normalize(exact_label or answer) == normalize("Revise mechanism"):
                 state["awaiting_policy_reference"] = False
+                state["awaiting_policy_relevance_clarification"] = False
                 return self._custom_hazard_mechanism_input_step(
                     session_id,
                     session,
@@ -796,6 +828,50 @@ class ChatCustomHazardInputMixin:
                         if replacing
                         else "Paste the policy URL or attach the policy file below."
                     ),
+                )
+            if state.get("awaiting_policy_relevance_clarification"):
+                hazard = str(
+                    state.get("resolved_hazard_text") or state.get("raw_text") or ""
+                ).strip()
+                mechanism = str(state.get("selected_mechanism") or "").strip()
+                policy_context = str(
+                    state.get("pending_policy_reference_context")
+                    or state.get("policy_reference_context")
+                    or ""
+                ).strip()
+                policy = await summarize_custom_hazard_supporting_policy(
+                    hazard,
+                    mechanism,
+                    policy_context,
+                    relevance_clarification=answer,
+                )
+                if not policy.get("supported") or not policy.get("causal_linkage"):
+                    return self._custom_hazard_policy_reference_step(
+                        session_id,
+                        session,
+                        error=True,
+                        retry=True,
+                        detail=(
+                            f"{policy.get('reason') or 'The clarification does not establish policy support for the mechanism.'}"
+                        ),
+                    )
+                state["awaiting_policy_relevance_clarification"] = False
+                state["awaiting_policy_reference"] = False
+                state["policy_reference_relevance_pending"] = False
+                state["supporting_policy_summary"] = str(policy.get("summary") or "").strip()
+                state["supporting_policy_details"] = str(
+                    policy.get("policy_details") or ""
+                ).strip()
+                state["mechanism_source"] = "policy"
+                self._promote_pending_custom_hazard_policy_reference(session, state)
+                state["policy_summary_notice"] = (
+                    "## Supporting policy accepted\n\n"
+                    "Your clarification establishes how the policy supports the mechanism.\n\n"
+                    f"**Policy summary:** {state.get('supporting_policy_summary') or policy.get('reason')}\n\n"
+                    f"**Relevant policy details:** {state.get('supporting_policy_details') or state.get('supporting_policy_summary')}"
+                )
+                return self._custom_hazard_causal_linkage_step(
+                    session_id, session, policy
                 )
             if state.get("awaiting_policy_reference"):
                 if (
@@ -836,6 +912,18 @@ class ChatCustomHazardInputMixin:
                 policy_relevance = await validate_policy_reference_twin_transition(
                     policy_context
                 )
+                reference_match = re.search(
+                    r"^Policy reference (?:URL|file):\s*(.+)$",
+                    answer,
+                    flags=re.IGNORECASE | re.MULTILINE,
+                )
+                state["pending_policy_reference"] = (
+                    reference_match.group(1).strip()
+                    if reference_match
+                    else "Provided policy document"
+                )
+                state["pending_policy_reference_document_ids"] = document_ids
+                state["pending_policy_reference_context"] = policy_context
                 if policy_relevance is None:
                     self._discard_submitted_policy_reference(
                         session,
@@ -852,53 +940,26 @@ class ChatCustomHazardInputMixin:
                         ),
                     )
                 if not policy_relevance["related"]:
-                    self._discard_submitted_policy_reference(
-                        session,
-                        state,
-                        document_ids,
-                    )
+                    state["policy_reference_relevance_pending"] = True
+                    state["awaiting_policy_reference"] = False
                     return self._custom_hazard_policy_reference_step(
                         session_id,
                         session,
                         error=True,
                         detail=(
                             "This document does not appear to be related to a green, "
-                            "digital, or twin transition. Please provide a different "
-                            "policy URL or file."
+                            "digital, or twin transition. Clarify how its provisions support "
+                            "the mechanism, or provide a different policy URL/file."
                         ),
+                        retry=True,
                     )
-                reference_match = re.search(
-                    r"^Policy reference (?:URL|file):\s*(.+)$",
-                    answer,
-                    flags=re.IGNORECASE | re.MULTILINE,
-                )
-                if state.get("replacing_policy_reference"):
-                    old_document_ids = [
-                        str(document_id).strip()
-                        for document_id in state.get("policy_reference_document_ids") or []
-                        if str(document_id).strip()
-                    ]
-                    obsolete_document_ids = [
-                        document_id
-                        for document_id in old_document_ids
-                        if document_id not in document_ids
-                    ]
-                    if obsolete_document_ids:
-                        state["policy_reference_document_ids"] = obsolete_document_ids
-                        self._discard_temporary_policy_references(session)
-                    self._clear_replaced_policy_reference_validation(session, state)
-                state["policy_reference"] = (
-                    reference_match.group(1).strip() if reference_match else "Provided policy document"
-                )
-                state["policy_reference_document_ids"] = document_ids
-                state["policy_reference_available"] = True
                 state["awaiting_policy_reference"] = False
-                state["replacing_policy_reference"] = False
                 state["message"] = "Mechanism fit will be analysed against the supplied policy document."
                 if str(state.get("selected_mechanism") or "").strip():
                     return await self._validate_current_custom_hazard_mechanism_source(
                         session_id, session
                     )
+                self._promote_pending_custom_hazard_policy_reference(session, state)
                 transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
                 return await self._run_custom_hazard_dimension_check(session_id, session)
             if not answer:

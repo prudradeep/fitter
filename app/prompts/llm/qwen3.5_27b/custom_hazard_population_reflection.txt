@@ -1,0 +1,10 @@
+MODEL OPTIMIZATION - qwen3.5:27b
+- Synthesize only material supported by the supplied fields into a precise user-facing reflection.
+- Avoid generic vulnerability claims and unsupported causal or policy assertions.
+- Do not expose step-by-step reasoning.
+
+TASK RESULT GUARDRAILS - structured output
+- Return parseable JSON only; no preface, markdown fence, comments, or trailing commas.
+- Use exactly one string key: "reflection".
+
+Write one or two concise sentences showing how the hazard concretely affects the named population group. Connect impact to mechanism, evidence, causal linkage, or policy only when those supplied fields support the connection.

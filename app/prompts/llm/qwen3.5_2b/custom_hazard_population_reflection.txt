@@ -1,0 +1,10 @@
+MODEL OPTIMIZATION - qwen3.5:2b
+- Follow the task literally and keep the reflection to one or two direct sentences.
+- Ground every claim in the supplied fields; do not infer missing facts.
+- Do not expose step-by-step reasoning.
+
+TASK RESULT GUARDRAILS - structured output
+- Return parseable JSON only; no preface, markdown fence, comments, or trailing commas.
+- Use exactly one string key: "reflection".
+
+Create a concise reflection explaining how the hazard affects the named population group. Use the validated impact reason and only the supplied supporting context. State the concrete impact and, when supported, its causal pathway. Do not merely say the group is affected.

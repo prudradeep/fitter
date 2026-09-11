@@ -1059,7 +1059,7 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
         self.assertNotIn("evidence", session.custom_hazard)
         self.assertIsNone(session.pending_hazard_evidence)
 
-    def test_unrelated_policy_reference_is_discarded_and_requested_again(self) -> None:
+    def test_unrelated_policy_reference_is_retained_for_relevance_clarification(self) -> None:
         service = ChatService.__new__(ChatService)
         service._policy_reference_context = AsyncMock(
             return_value="A restaurant menu lists desserts and opening hours."
@@ -1093,10 +1093,23 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
         self.assertEqual(response.input_mode, "policy_reference")
         self.assertTrue(response.error)
         self.assertIn("does not appear to be related", response.bot_message)
-        self.assertEqual(discarded_document_ids, ["unrelated-document"])
-        self.assertEqual(session.custom_hazard["policy_reference_document_ids"], [])
+        self.assertEqual(discarded_document_ids, [])
+        self.assertEqual(
+            session.custom_hazard["pending_policy_reference_document_ids"],
+            ["unrelated-document"],
+        )
+        self.assertEqual(session.custom_hazard.get("policy_reference_document_ids", []), [])
         self.assertFalse(session.custom_hazard.get("policy_reference_available", False))
         self.assertTrue(session.custom_hazard["awaiting_policy_reference"])
+        self.assertEqual(
+            [option.label for option in response.options],
+            [
+                "Go back to list of hazards",
+                "Clarify the relevance",
+                "Provide policy again",
+                "Revise mechanism",
+            ],
+        )
 
     def test_unrelated_replacement_preserves_existing_policy_reference(self) -> None:
         service = ChatService.__new__(ChatService)
@@ -1133,11 +1146,15 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
             )
 
         self.assertEqual(response.step, "custom_hazard_policy_reference")
-        self.assertEqual(discarded_document_ids, ["unrelated-document"])
+        self.assertEqual(discarded_document_ids, [])
         self.assertEqual(session.custom_hazard["policy_reference"], "existing-policy.txt")
         self.assertEqual(
             session.custom_hazard["policy_reference_document_ids"],
             ["existing-document"],
+        )
+        self.assertEqual(
+            session.custom_hazard["pending_policy_reference_document_ids"],
+            ["unrelated-document"],
         )
         self.assertTrue(session.custom_hazard["policy_reference_available"])
         self.assertTrue(session.custom_hazard["replacing_policy_reference"])

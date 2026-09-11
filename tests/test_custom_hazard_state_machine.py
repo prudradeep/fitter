@@ -40,13 +40,19 @@ def _handlers(
         clarify_title=async_message,
         clarify_hazard=async_message,
         check_dimensions=async_session,
-        capture_reason=sync_message,
+        capture_reason=async_message,
+        confirm_evidence_reflection=async_message,
+        capture_evidence_reflection=async_message,
         decide_evidence=async_message,
         capture_evidence=async_message,
         validate_hazard=async_message,
         review_population=async_message,
         review_summary=async_message,
         resolve_duplicate=async_message,
+        confirm_mechanism=async_message,
+        capture_mechanism=async_message,
+        confirm_policy_details=async_message,
+        confirm_causal_linkage=async_message,
     )
 
 
@@ -64,8 +70,11 @@ class CustomHazardStateMachineTests(unittest.TestCase):
             ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK: CustomHazardHandler.CHECK_DIMENSIONS,
             ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION: CustomHazardHandler.CONFIRM_MECHANISM,
             ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT: CustomHazardHandler.CAPTURE_MECHANISM,
+            ChatPhase.CUSTOM_HAZARD_POLICY_DETAILS_CONFIRMATION: CustomHazardHandler.CONFIRM_POLICY_DETAILS,
             ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION: CustomHazardHandler.CONFIRM_CAUSAL_LINKAGE,
             ChatPhase.ADD_HAZARD_REASON: CustomHazardHandler.CAPTURE_REASON,
+            ChatPhase.CUSTOM_HAZARD_EVIDENCE_REFLECTION_CONFIRMATION: CustomHazardHandler.CONFIRM_EVIDENCE_REFLECTION,
+            ChatPhase.CUSTOM_HAZARD_EVIDENCE_REFLECTION_INPUT: CustomHazardHandler.CAPTURE_EVIDENCE_REFLECTION,
             ChatPhase.ADD_HAZARD_EVIDENCE_DECISION: CustomHazardHandler.DECIDE_EVIDENCE,
             ChatPhase.ADD_HAZARD_EVIDENCE_INPUT: CustomHazardHandler.CAPTURE_EVIDENCE,
             ChatPhase.ADD_HAZARD_EVIDENCE: CustomHazardHandler.VALIDATE_HAZARD,
@@ -85,10 +94,6 @@ class CustomHazardStateMachineTests(unittest.TestCase):
             CUSTOM_HAZARD_STATES[ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK].handler_kind,
             HandlerKind.ASYNC_SESSION,
         )
-        self.assertEqual(
-            CUSTOM_HAZARD_STATES[ChatPhase.ADD_HAZARD_REASON].handler_kind,
-            HandlerKind.SYNC_MESSAGE,
-        )
         ungated_phases = {
             ChatPhase.ADD_HAZARD,
             ChatPhase.CUSTOM_HAZARD_INPUT,
@@ -96,7 +101,9 @@ class CustomHazardStateMachineTests(unittest.TestCase):
             ChatPhase.CUSTOM_HAZARD_DUPLICATE_CONFIRMATION,
             ChatPhase.HAZARD_DUPLICATE_SUGGESTION,
             ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
+            ChatPhase.CUSTOM_HAZARD_POLICY_DETAILS_CONFIRMATION,
             ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION,
+            ChatPhase.CUSTOM_HAZARD_EVIDENCE_REFLECTION_CONFIRMATION,
         }
         self.assertEqual(
             {
@@ -174,21 +181,21 @@ class CustomHazardStateMachineTests(unittest.TestCase):
         session = ChatSession(phase=ChatPhase.ADD_HAZARD_REASON)
         rejected = _response("session-1", session, "rejected")
         quality = AsyncMock(return_value=rejected)
-        capture_reason = Mock()
+        capture_reason = AsyncMock()
 
         transition = asyncio.run(
             self.machine.dispatch(
                 "session-1",
                 session,
                 "unclear",
-                handlers=_handlers(sync_message=capture_reason),
+                handlers=_handlers(async_message=capture_reason),
                 quality_handler=quality,
             )
         )
 
         self.assertIsNotNone(transition)
         self.assertIs(transition.response, rejected)
-        capture_reason.assert_not_called()
+        capture_reason.assert_not_awaited()
 
     def test_dimension_state_uses_session_handler_and_records_target(self) -> None:
         session = ChatSession(phase=ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)

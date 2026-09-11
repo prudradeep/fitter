@@ -48,6 +48,18 @@ CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS = [
     Option(id=2, label="No, provide a mechanism"),
 ]
 
+CUSTOM_HAZARD_POLICY_DETAILS_CONFIRMATION_OPTIONS = [
+    Option(id=1, label="Confirm policy"),
+    Option(id=2, label="Provide a different policy"),
+]
+
+CUSTOM_HAZARD_POLICY_RETRY_OPTIONS = [
+    *HAZARD_ENTRY_OPTIONS,
+    Option(id=2, label="Clarify the relevance"),
+    Option(id=3, label="Provide policy again"),
+    Option(id=4, label="Revise mechanism"),
+]
+
 CUSTOM_HAZARD_CAUSAL_LINKAGE_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No, revise the linkage"),
@@ -61,12 +73,17 @@ HAZARD_EVIDENCE_INPUT_OPTIONS = [
 HAZARD_EVIDENCE_RETRY_OPTIONS = [
     Option(id=1, label="Go back to list of hazards"),
     Option(id=2, label="Provide evidence again"),
-    Option(id=3, label="Clarify relevance"),
+    Option(id=3, label="Clarify the relevance"),
 ]
 
 HAZARD_EVIDENCE_DECISION_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No"),
+]
+
+CUSTOM_HAZARD_EVIDENCE_REFLECTION_OPTIONS = [
+    Option(id=1, label="Agree"),
+    Option(id=2, label="Disagree"),
 ]
 
 HAZARD_DUPLICATE_OPTIONS = [

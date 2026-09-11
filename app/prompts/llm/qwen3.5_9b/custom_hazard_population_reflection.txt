@@ -1,0 +1,10 @@
+MODEL OPTIMIZATION - qwen3.5:9b
+- Synthesize the validated reason and supporting context into a concise reflection.
+- Distinguish supported causal explanation from unsupported inference.
+- Do not expose step-by-step reasoning.
+
+TASK RESULT GUARDRAILS - structured output
+- Return parseable JSON only; no preface, markdown fence, comments, or trailing commas.
+- Use exactly one string key: "reflection".
+
+Write one or two clear sentences explaining the concrete way the hazard affects the named population group and, when grounded in the supplied fields, the mechanism that produces or worsens the impact.

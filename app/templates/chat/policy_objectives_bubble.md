@@ -14,7 +14,7 @@
     {% for sector in sectors %}
     {% if sector == "Energy" %}<tr><td>Energy</td><td>Transition towards renewable energy</td></tr>{% endif %}
     {% if sector == "Housing" %}<tr><td>Housing &amp; Built Environment</td><td>Adaptation of housing to climate change</td></tr>{% endif %}
-    {% if sector == "Transport" %}<tr><td>Transport &amp; Mobility</td><td>Transition to electric vehicles</td></tr>{% endif %}
+    {% if sector == "Transport" %}<tr><td>Transport &amp; Mobility</td><td>Shift to Sustainable Mobility</td></tr>{% endif %}
     {% endfor %}
   </tbody>
 </table>

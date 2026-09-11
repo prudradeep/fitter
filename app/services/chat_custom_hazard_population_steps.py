@@ -1,4 +1,5 @@
 import html
+import json
 import logging
 import re
 
@@ -62,6 +63,9 @@ class ChatCustomHazardPopulationStepsMixin:
                     "name": self._clean_affected_group_label(str(group.get("group") or "")),
                     "profile": self._clean_affected_group_label(str(group.get("group") or "")),
                     "explanation": str(group.get("reason") or "").strip(),
+                    "reflection": str(
+                        group.get("reflection") or group.get("reason") or ""
+                    ).strip(),
                     "source": str(group.get("source") or "custom_hazard_grounding").strip(),
                 }
                 for group in groups
@@ -163,7 +167,13 @@ class ChatCustomHazardPopulationStepsMixin:
                         error=True,
                     )
                 added = list(state.get("added_affected_groups") or [])
+                reflection = await self._generate_affected_population_reflection(
+                    session,
+                    pending_group,
+                    reason,
+                )
                 added_group = normalize_custom_group(pending_group, reason)
+                added_group["reflection"] = reflection
                 added.append(added_group)
                 state["added_affected_groups"] = added
                 groups = list(state.get("affected_groups") or [])
@@ -335,6 +345,37 @@ class ChatCustomHazardPopulationStepsMixin:
 
             if ":" in message:
                 group_label, reason = [part.strip() for part in message.split(":", 1)]
+                matched_group = next(
+                    (
+                        group
+                        for group in state.get("affected_groups") or []
+                        if isinstance(group, dict)
+                        and self._profiles_are_similar(
+                            str(group.get("group") or ""),
+                            group_label,
+                        )
+                    ),
+                    None,
+                )
+                if matched_group is not None:
+                    reason_review = await self._validate_custom_affected_group_reason(
+                        session,
+                        str(matched_group.get("group") or group_label),
+                        reason,
+                    )
+                    if reason_review is not None and not reason_review["valid"]:
+                        return self._custom_hazard_population_review_step(
+                            session_id,
+                            session,
+                            error_reason=str(reason_review["reason"]),
+                        )
+                    reflection = await self._generate_affected_population_reflection(
+                        session,
+                        str(matched_group.get("group") or group_label),
+                        reason,
+                    )
+                else:
+                    reflection = ""
                 groups = []
                 updated = False
                 for group in state.get("affected_groups") or []:
@@ -344,6 +385,7 @@ class ChatCustomHazardPopulationStepsMixin:
                     ):
                         next_group = dict(group)
                         next_group["reason"] = reason
+                        next_group["reflection"] = reflection
                         next_group["needs_review"] = False
                         groups.append(next_group)
                         updated = True
@@ -539,14 +581,65 @@ class ChatCustomHazardPopulationStepsMixin:
         lines: list[str] = []
         for profile in profiles:
             name = str(profile.get("name") or profile.get("profile") or "").strip()
-            explanation = str(profile.get("explanation") or "").strip()
+            reflection = str(
+                profile.get("reflection") or profile.get("explanation") or ""
+            ).strip()
             if not name:
                 continue
-            line = f"- **{name}**"
-            if explanation:
-                line += f": {explanation}"
-            lines.append(line)
+            lines.append(f"- **{name}**")
+            if reflection:
+                lines.append(f"  - **AI reflection:** {reflection}")
         return "\n".join(lines) or "- No affected population groups identified yet."
+
+    async def _generate_affected_population_reflection(
+        self,
+        session: ChatSession,
+        group: str,
+        reason: str,
+    ) -> str:
+        """Turn a validated impact reason into a concise, grounded review reflection."""
+        fallback = re.sub(r"\s+", " ", str(reason or "")).strip()[:1200]
+        state = self._custom_hazard_state(session)
+        payload = {
+            "hazard": str(
+                session.accepted_custom_hazard
+                or state.get("generated_title")
+                or state.get("description")
+                or ""
+            ).strip(),
+            "affected_group": self._clean_affected_group_label(group),
+            "validated_impact_reason": fallback,
+            "confirmed_mechanism": str(state.get("selected_mechanism") or "").strip(),
+            "causal_linkage": str(state.get("mechanism_causal_linkage") or "").strip(),
+            "evidence_reflection": str(state.get("evidence_reflection") or "").strip(),
+            "supporting_policy": str(
+                state.get("supporting_policy_summary")
+                or state.get("supporting_policy_details")
+                or ""
+            ).strip(),
+            "required_output_schema": {"reflection": ""},
+        }
+        try:
+            response = await ask_llm_chat(
+                context=load_nested_prompt_file(
+                    "llm/custom_hazard_population_reflection.txt"
+                ),
+                messages=[
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}
+                ],
+                temperature=0.0,
+                max_tokens=320,
+            )
+            if not is_llm_unavailable_response(response):
+                parsed = parse_json_object(response) or {}
+                reflection = re.sub(
+                    r"\s+", " ", str(parsed.get("reflection") or "")
+                ).strip()
+                if reflection:
+                    return reflection[:1200]
+        except Exception:
+            logger.exception("Affected-population reflection generation failed")
+        return fallback
 
     def _format_population_profiles_for_final(
         self,

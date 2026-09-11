@@ -5,6 +5,7 @@ import re
 from app.schemas import ChatResponse
 from app.services.chat_hazard_duplicates import hazard_duplicate_payloads
 from app.services.chat_options import (
+    CUSTOM_HAZARD_EVIDENCE_REFLECTION_OPTIONS,
     HAZARD_DUPLICATE_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
     HAZARD_EVIDENCE_DECISION_OPTIONS,
@@ -23,6 +24,8 @@ from app.services.chat_session import ChatSession
 from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.custom_hazard_validation import (
     default_custom_hazard_state,
+    reflect_on_custom_hazard_kb_evidence,
+    validate_custom_hazard_evidence_reflection,
     validate_hazard_evidence_relevance,
 )
 from app.services.enums import ChatPhase, CustomHazardStatus
@@ -100,7 +103,7 @@ class ChatCustomHazardEvidenceMixin:
             error=error,
         )
 
-    def _capture_hazard_reason(
+    async def _capture_hazard_reason(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         exact_label = exact_option_label(message, HAZARD_ENTRY_OPTIONS)
@@ -141,7 +144,7 @@ class ChatCustomHazardEvidenceMixin:
 
         session.pending_hazard_reason = reason
         session.pending_hazard_evidence = ""
-        return self._hazard_evidence_decision_step(session_id, session)
+        return await self._start_hazard_evidence_flow(session_id, session)
 
     def _hazard_evidence_decision_step(
         self,
@@ -192,6 +195,181 @@ class ChatCustomHazardEvidenceMixin:
             session=session.summary(),
             error=error,
         )
+
+    async def _start_hazard_evidence_flow(
+        self, session_id: str, session: ChatSession
+    ) -> ChatResponse:
+        """Prefer existing core/secondary evidence before asking the user for a source."""
+        state = self._custom_hazard_state(session)
+        hazard = str(
+            state.get("resolved_hazard_text") or state.get("raw_text") or session.pending_hazard or ""
+        ).strip()
+        reason = str(state.get("reason") or session.pending_hazard_reason or "").strip()
+        state["evidence_kb_checked"] = True
+        query = " ".join(
+            part
+            for part in (
+                hazard, reason, session.sector or "", session.country or "", session.region or ""
+            )
+            if part
+        )
+        try:
+            results = await self._shared_knowledge_results(
+                session, query, main_limit=8, evidence_limit=6
+            )
+            grounded = await self.grounding_models.ground_results(query, results)
+        except Exception:
+            logger.exception("Knowledge-base lookup failed during hazard evidence reflection")
+            grounded = []
+        context = self._format_knowledge_results(grounded)
+        reflection = await reflect_on_custom_hazard_kb_evidence(hazard, reason, context)
+        if not reflection.get("supported") or not reflection.get("reflection"):
+            state["evidence_kb_context"] = ""
+            state["evidence_kb_sources"] = []
+            return self._hazard_evidence_decision_step(session_id, session)
+
+        state["evidence_kb_context"] = context
+        state["evidence_kb_sources"] = [
+            {
+                "title": str(item.get("title") or "Knowledge source"),
+                "source_uri": str(item.get("source_uri") or ""),
+                "page_number": item.get("page_number"),
+            }
+            for item in grounded[:6]
+        ]
+        state["evidence_reflection"] = str(reflection.get("reflection") or "").strip()
+        state["evidence_relationship"] = str(reflection.get("relationship") or "").strip()
+        return self._hazard_evidence_reflection_step(session_id, session)
+
+    def _hazard_evidence_reflection_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error: bool = False,
+        message: str | None = None,
+    ) -> ChatResponse:
+        state = self._custom_hazard_state(session)
+        transition_custom_hazard(
+            session, ChatPhase.CUSTOM_HAZARD_EVIDENCE_REFLECTION_CONFIRMATION
+        )
+        reflection = str(state.get("evidence_reflection") or "").strip()
+        relationship = str(state.get("evidence_relationship") or "").strip()
+        source_lines = []
+        for source in state.get("evidence_kb_sources") or []:
+            if not isinstance(source, dict):
+                continue
+            title = str(source.get("title") or "Knowledge source").strip()
+            page = source.get("page_number")
+            source_lines.append(f"- {title}" + (f", page {page}" if page else ""))
+        sources = "\n".join(source_lines[:6])
+        body = message or markdown_to_html(
+            "## Hazard evidence\n\n"
+            "I found relevant evidence in the core or validated secondary knowledge base.\n\n"
+            f"**AI reflection:** {reflection}\n\n"
+            + (f"**Evidence-to-hazard relationship:** {relationship}\n\n" if relationship else "")
+            + (f"**Sources considered:**\n{sources}\n\n" if sources else "")
+            + "Do you agree with this reflection?"
+        )
+        return self._custom_hazard_response(
+            session_id=session_id,
+            session=session,
+            step="custom_hazard_evidence_reflection_confirmation",
+            bot_message=body,
+            options=CUSTOM_HAZARD_EVIDENCE_REFLECTION_OPTIONS,
+            error=error,
+        )
+
+    async def _handle_hazard_evidence_reflection_confirmation(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        label = exact_option_label(message, CUSTOM_HAZARD_EVIDENCE_REFLECTION_OPTIONS)
+        if label is None:
+            label = match_option_label(message, CUSTOM_HAZARD_EVIDENCE_REFLECTION_OPTIONS)
+        action = normalize(label or message)
+        if action in {normalize("Disagree"), normalize("No")}:
+            return self._hazard_evidence_reflection_input_step(session_id, session)
+        if action not in {normalize("Agree"), normalize("Yes")}:
+            return self._hazard_evidence_reflection_step(
+                session_id, session, error=True, message=self.invalid_message
+            )
+        state = self._custom_hazard_state(session)
+        state["evidence_reflection_confirmed"] = True
+        state["evidence_decision_asked"] = True
+        state["evidence_relevance_checked"] = True
+        state["evidence_relevant"] = True
+        reflection = str(state.get("evidence_reflection") or "").strip()
+        relationship = str(state.get("evidence_relationship") or "").strip()
+        state["evidence"] = f"Knowledge-base evidence: {reflection}"
+        session.pending_hazard_evidence = str(state["evidence"])
+        state["evidence_relationship_notice"] = (
+            "## Evidence accepted\n\n"
+            "You agreed with the evidence-based reflection.\n\n"
+            f"**Evidence-to-hazard relationship:** {relationship or reflection}"
+        )
+        return await self._route_custom_hazard_next_action(session_id, session)
+
+    def _hazard_evidence_reflection_input_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error: bool = False,
+        detail: str = "",
+    ) -> ChatResponse:
+        transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_EVIDENCE_REFLECTION_INPUT)
+        message = "## Add your reflection\n\nExplain how you interpret the evidence in relation to this hazard."
+        if detail:
+            message = f"{detail}\n\n{message}"
+        return self._custom_hazard_response(
+            session_id=session_id,
+            session=session,
+            step="custom_hazard_evidence_reflection_input",
+            bot_message=markdown_to_html(message),
+            options=HAZARD_ENTRY_OPTIONS,
+            input_mode="textarea",
+            error=error,
+        )
+
+    async def _capture_hazard_evidence_reflection(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        if normalize(message) == normalize("Go back to list of hazards"):
+            return self._hazard_evidence_reflection_step(session_id, session)
+        state = self._custom_hazard_state(session)
+        reflection = str(message or "").strip()
+        state["evidence_user_reflection"] = reflection
+        hazard = str(state.get("resolved_hazard_text") or state.get("raw_text") or "").strip()
+        result = await validate_custom_hazard_evidence_reflection(
+            hazard, reflection, str(state.get("evidence_kb_context") or "")
+        )
+        if not result.get("supported"):
+            state["evidence_decision_asked"] = True
+            return self._hazard_evidence_input_step(
+                session_id,
+                session,
+                error=True,
+                message=markdown_to_html(
+                    "## Evidence needed\n\n"
+                    f"{result.get('reason') or 'The available knowledge base does not support that reflection.'}\n\n"
+                    "Please provide a URL or file that supports both your reflection and the hazard."
+                ),
+            )
+        acknowledgement = str(result.get("acknowledgement") or "").strip()
+        relationship = str(result.get("relationship") or "").strip()
+        state["evidence_user_reflection"] = reflection
+        state["evidence_reflection_confirmed"] = True
+        state["evidence_decision_asked"] = True
+        state["evidence_relevance_checked"] = True
+        state["evidence_relevant"] = True
+        state["evidence"] = f"Knowledge-base evidence supporting user reflection: {reflection}"
+        session.pending_hazard_evidence = str(state["evidence"])
+        state["evidence_relationship_notice"] = (
+            "## Reflection accepted\n\n"
+            f"{acknowledgement or 'Your reflection is supported by the available knowledge-base evidence.'}\n\n"
+            f"**Evidence-to-hazard relationship:** {relationship or reflection}"
+        )
+        return await self._route_custom_hazard_next_action(session_id, session)
 
     async def _handle_hazard_evidence_decision(
         self, session_id: str, session: ChatSession, message: str
@@ -266,7 +444,10 @@ class ChatCustomHazardEvidenceMixin:
             return await self._validate_staged_custom_hazard(session_id, session, "")
         if normalize(exact_label or message) == normalize("Provide evidence again"):
             return self._hazard_evidence_input_step(session_id, session)
-        if normalize(exact_label or message) == normalize("Clarify relevance"):
+        if normalize(exact_label or message) in {
+            normalize("Clarify relevance"),
+            normalize("Clarify the relevance"),
+        }:
             return self._hazard_evidence_input_step(
                 session_id,
                 session,
@@ -357,9 +538,14 @@ class ChatCustomHazardEvidenceMixin:
             evidence_context = await self._user_evidence_context_for_contradiction_check(
                 session, evidence
             )
+            hazard_for_relevance = str(
+                state.get("resolved_hazard_text") or state.get("raw_text") or ""
+            ).strip()
+            user_reflection = str(state.get("evidence_user_reflection") or "").strip()
+            if user_reflection:
+                hazard_for_relevance += f"\nUser reflection to support: {user_reflection}"
             relevance = await validate_hazard_evidence_relevance(
-                str(state.get("resolved_hazard_text") or state.get("raw_text") or ""),
-                evidence_context,
+                hazard_for_relevance, evidence_context
             )
             state["evidence_relevance_checked"] = True
             state["evidence_relevant"] = bool(relevance.get("relevant"))
@@ -381,7 +567,12 @@ class ChatCustomHazardEvidenceMixin:
                 **(state.get("linkage_analysis") if isinstance(state.get("linkage_analysis"), dict) else {}),
                 "evidence_hazard_linkage": {
                     "supported": True,
-                    "reason": relevance.get("reason") or "",
+                    "reason": (
+                        "The supplied evidence supports your reflection and the hazard. "
+                        if user_reflection
+                        else ""
+                    )
+                    + str(relevance.get("reason") or ""),
                     "causal_linkage": relevance.get("causal_linkage") or "",
                 },
             }

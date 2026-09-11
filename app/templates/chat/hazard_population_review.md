@@ -16,11 +16,11 @@ Hazard to be co-created:
 > {{ visibility_notice }}
 
 {% endif %}
-Affected population groups identified:
+Affected population groups identified, with reflections on how the hazard affects each group:
 
 {{ profiles }}
 
-Choose **Confirm affected groups** if this looks right, or type what to add or remove.
+Choose **Confirm affected groups** if the groups and reflections look right, or type what to add, remove, or revise.
 
 Examples:
 

@@ -1,0 +1,10 @@
+MODEL OPTIMIZATION - qwen3.5:4b
+- Follow the task literally and keep the reflection concise.
+- Ground every claim in the supplied fields and do not invent facts.
+- Do not expose step-by-step reasoning.
+
+TASK RESULT GUARDRAILS - structured output
+- Return parseable JSON only; no preface, markdown fence, comments, or trailing commas.
+- Use exactly one string key: "reflection".
+
+Create a one- or two-sentence reflection explaining the concrete impact of the hazard on the named population group and, where supported, the causal pathway. Use only the validated reason and supplied context.

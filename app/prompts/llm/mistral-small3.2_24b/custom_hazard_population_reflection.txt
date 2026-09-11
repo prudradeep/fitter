@@ -1,0 +1,10 @@
+MODEL OPTIMIZATION - mistral-small3.2:24b
+- Integrate the validated impact reason with relevant supplied mechanism, evidence, linkage, or policy context.
+- Keep epistemic boundaries explicit and do not invent missing details.
+- Do not expose step-by-step reasoning.
+
+TASK RESULT GUARDRAILS - structured output
+- Return parseable JSON only; no preface, markdown fence, comments, or trailing commas.
+- Use exactly one string key: "reflection".
+
+Produce a concise one- or two-sentence reflection describing the concrete impact of the hazard on the named population group. Include how the impact occurs only to the extent supported by the supplied fields.

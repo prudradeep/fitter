@@ -135,8 +135,8 @@ Strict mode requires overall score 75 and dimension floor 7. Easy mode requires
 45 and 3. Critical dimensions are hazard definition, mechanism fit,
 policy-objective fit, selected-sector fit, and country/region fit. Policy
 Objective Fit checks the hazard against the selected sector's defined objective:
-renewable-energy transition for Energy, climate adaptation for Housing, and
-electric-vehicle transition for Transport.
+renewable-energy transition for Energy, climate adaptation for Housing, and a
+shift to sustainable mobility for Transport.
 
 The validator routes to:
 
@@ -151,29 +151,67 @@ instead of silently advancing.
 
 ## 5. Evidence and mechanism confirmation
 
-After objective fit is supported, the tool shows the extracted hazard and asks
-whether evidence is available. Supplied evidence is checked for material relevance
-to the hazard. Irrelevant evidence can be clarified or replaced. Before fetching an
+After objective fit is supported, the tool first searches both the core knowledge
+base (`main`) and validated secondary evidence (`validated_evidence`). If relevant
+evidence exists, the AI presents a grounded reflection and evidence-to-hazard
+relationship for user confirmation. Agreement continues to Mechanism Fit. A user
+who disagrees supplies an alternative reflection, which is validated against the
+same evidence. Supported reflections are acknowledged and accepted; unsupported
+reflections require user evidence.
+
+If no relevant knowledge-base evidence exists, the tool asks whether the user has
+evidence. Supplied evidence is checked for material relevance to both the hazard
+and any user reflection. Irrelevant or unclear evidence explains the mismatch and
+offers **Clarify the relevance** and **Provide evidence again**. Before fetching an
 evidence URL, the knowledge base checks for an accessible document with the same
 normalized URL. Existing chunks are reused without downloading, parsing, chunking,
 or embedding the source again.
 
 ```text
-add_hazard_evidence_decision
+custom_hazard_evidence_reflection_confirmation (when KB evidence exists)
+  -> custom_hazard_evidence_reflection_input    (when the user disagrees)
+  -> custom_hazard_mechanism_confirmation
+
+add_hazard_evidence_decision                    (when KB evidence does not exist)
   -> add_hazard_evidence_input (when evidence is available)
   -> custom_hazard_mechanism_confirmation
 ```
 
-The LLM suggests a causal mechanism and asks for confirmation. Confirmed AI
-suggestions are checked against the knowledge base. If no supported suggestion is
-available, or the user rejects it, the tool asks for a specific mechanism. A
-user-provided mechanism is checked for ambiguity and then validated against a
-policy URL or file.
+The LLM suggests one or more causal mechanisms and asks for confirmation. A
+confirmed suggestion is checked against the core and validated-secondary knowledge
+bases specifically for supporting policy details. When a policy is found, the tool
+shows its relevant details, source, and summary using the introduction **As I
+understand it, this is the policy supporting the suggested mechanism**, then asks
+the user to confirm the policy before presenting the causal linkage.
+
+If policy details are not found, or the user rejects the KB policy, the tool asks
+for a policy URL or file supporting the confirmed mechanism. Supplied policy text
+is validated against both the mechanism and hazard. A relevant policy is
+acknowledged and summarized before the causal linkage is shown. An unclear or
+irrelevant policy explains the mismatch and offers **Clarify the relevance**,
+**Provide policy again**, and **Revise mechanism**. A relevance clarification is
+checked against the retained policy text and cannot introduce facts absent from
+the document.
+
+If the suggested mechanism is rejected, or no sufficiently specific mechanism can
+be suggested, the tool asks for the user's mechanism and validates it for clarity
+and specificity.
 
 The supported chain is displayed as `source finding or policy provision ->
 mechanism -> hazard impact`. The user must confirm that linkage before the
 existing affected population group stage begins. A rejected linkage returns to
 mechanism input and is checked against the available KB or policy text.
+
+```text
+custom_hazard_mechanism_confirmation
+  -> custom_hazard_policy_details_confirmation (KB policy found)
+  -> custom_hazard_policy_reference             (KB policy missing/rejected)
+  -> custom_hazard_mechanism_input               (mechanism rejected)
+
+custom_hazard_policy_reference
+  -> custom_hazard_policy_relevance_clarification (unclear relevance)
+  -> custom_hazard_causal_linkage_confirmation    (policy accepted)
+```
 
 Evidence decision:
 

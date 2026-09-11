@@ -15,6 +15,7 @@ from app.services.chat_hazard_duplicates import (
 from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
     CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+    CUSTOM_HAZARD_POLICY_RETRY_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
     compact_for_match,
     normalize,
@@ -568,7 +569,7 @@ class ChatCustomHazardGroundingMixin:
             state["objective_fit_reason"] = str(state.get("reason") or "").strip()
             session.pending_hazard = hazard
             session.pending_hazard_reason = str(state.get("reason") or "").strip()
-            return self._hazard_evidence_decision_step(session_id, session)
+            return await self._start_hazard_evidence_flow(session_id, session)
         if (
             objective_supported
             and evidence_handled
@@ -607,7 +608,7 @@ class ChatCustomHazardGroundingMixin:
             session.pending_hazard_reason = str(
                 state.get("reason") or session.accepted_custom_hazard_reason or ""
             ).strip()
-            return self._hazard_evidence_decision_step(session_id, session)
+            return await self._start_hazard_evidence_flow(session_id, session)
         if action == CustomHazardAction.REVIEW_GROUPS:
             generic_group = self._first_generic_affected_group(
                 state.get("affected_groups") or []
@@ -1035,6 +1036,7 @@ class ChatCustomHazardGroundingMixin:
         *,
         error: bool = False,
         detail: str = "",
+        retry: bool = False,
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
         transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_CLARIFICATION)
@@ -1057,7 +1059,11 @@ class ChatCustomHazardGroundingMixin:
             session=session,
             step="custom_hazard_policy_reference",
             bot_message=markdown_to_html(message),
-            options=CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+            options=(
+                CUSTOM_HAZARD_POLICY_RETRY_OPTIONS
+                if retry
+                else CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS
+            ),
             input_mode="policy_reference",
             error=error,
         )

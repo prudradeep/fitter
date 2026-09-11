@@ -53,7 +53,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
         self.assertEqual(
             validator.policy_objective_for_sector("Transport"),
-            "Transition to electric vehicles",
+            "Shift to Sustainable Mobility",
         )
 
     def test_policy_objective_fit_is_a_mandatory_dimension(self):
@@ -148,7 +148,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(objective["score"], 0)
         self.assertTrue(objective["needs_clarification"])
 
-    def test_transport_hazard_without_ev_objective_link_requests_clarification(self):
+    def test_transport_public_mobility_hazard_supports_policy_objective_fit(self):
         with patch.object(validator, "ask_llm_chat", _unavailable):
             result = _run(
                 validator.validate_custom_hazard_dimensions(
@@ -162,9 +162,8 @@ class CustomHazardValidationTests(unittest.TestCase):
             )
 
         objective = result["dimension_scores"]["policy_objective_fit"]
-        self.assertEqual(objective["score"], validator.SCORE_WEAK)
-        self.assertTrue(objective["needs_clarification"])
-        self.assertIn("Transition to electric vehicles", objective["clarification_question"])
+        self.assertEqual(objective["score"], validator.SCORE_STRONG)
+        self.assertFalse(objective["needs_clarification"])
         self.assertEqual(result["next_action"], "ask_clarification")
         self.assertEqual(
             result["dimension_scores"]["affected_groups_fit"]["status"],
@@ -225,7 +224,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         details = ChatService._custom_hazard_missing_dimension_details(state)
 
         self.assertEqual(details[0][0], "Policy Objective Fit")
-        self.assertIn("Transition to electric vehicles", details[0][1])
+        self.assertIn("Shift to Sustainable Mobility", details[0][1])
 
     def test_affected_groups_are_deferred_until_mandatory_dimensions_are_supported(self):
         hazard = (
@@ -735,10 +734,12 @@ class CustomHazardValidationTests(unittest.TestCase):
             custom_hazard={"raw_text": "Regional employment shock"},
         )
 
-        response = service._capture_hazard_reason(
-            "session-1",
-            session,
-            "Reason: Coal phase-out policy can cause job losses in coal-dependent regions.",
+        response = _run(
+            service._capture_hazard_reason(
+                "session-1",
+                session,
+                "Reason: Coal phase-out policy can cause job losses in coal-dependent regions.",
+            )
         )
 
         self.assertEqual(response.step, "custom_hazard_evidence_decision")
@@ -757,7 +758,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             custom_hazard={"raw_text": "Regional employment shock"},
         )
 
-        response = service._capture_hazard_reason("session-1", session, "asdfghjkl")
+        response = _run(service._capture_hazard_reason("session-1", session, "asdfghjkl"))
 
         self.assertTrue(response.error)
         self.assertIn("keyboard mashing", response.bot_message)
@@ -829,7 +830,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             custom_hazard={"raw_text": "Regional employment shock"},
         )
 
-        response = service._capture_hazard_reason("session-1", session, "Bad")
+        response = _run(service._capture_hazard_reason("session-1", session, "Bad"))
 
         self.assertTrue(response.error)
         self.assertIn("short description is too short", response.bot_message)
@@ -3661,6 +3662,69 @@ class CustomHazardValidationTests(unittest.TestCase):
         )
         self.assertIn("Bavaria, Germany", response.bot_message)
 
+    def test_custom_hazard_review_shows_how_each_population_group_is_affected(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            accepted_custom_hazard="Coal phase-out job shock",
+            custom_hazard={
+                "raw_text": "Coal phase-out job shock",
+                "affected_groups": [
+                    {
+                        "group": "Low-income workers",
+                        "reason": "Plant closures can reduce wages and household income.",
+                    },
+                    {
+                        "group": "Older residents",
+                        "reason": "Reduced local services can make essential travel harder.",
+                    },
+                ],
+            },
+        )
+
+        response = service._custom_hazard_population_review_step("session-1", session)
+
+        self.assertIn("AI reflection", response.bot_message)
+        self.assertIn("Plant closures can reduce wages", response.bot_message)
+        self.assertIn("essential travel harder", response.bot_message)
+        self.assertIn("groups and reflections look right", response.bot_message)
+
+    def test_population_reflection_uses_validated_hazard_context(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            accepted_custom_hazard="Coal phase-out job shock",
+            custom_hazard={
+                "selected_mechanism": "Closure of coal-dependent facilities",
+                "mechanism_causal_linkage": "Policy -> closures -> employment losses",
+                "evidence_reflection": "Employment is concentrated in affected facilities.",
+                "supporting_policy_summary": "A closure timetable applies.",
+            },
+        )
+        llm = AsyncMock(
+            return_value=(
+                '{"reflection":"Facility closures can reduce jobs and income for coal workers."}'
+            )
+        )
+
+        with patch(
+            "app.services.chat_custom_hazard_population_steps.ask_llm_chat",
+            llm,
+        ):
+            reflection = _run(
+                service._generate_affected_population_reflection(
+                    session,
+                    "Coal workers",
+                    "Coal workers can lose jobs and household income.",
+                )
+            )
+
+        self.assertEqual(
+            reflection,
+            "Facility closures can reduce jobs and income for coal workers.",
+        )
+        prompt_payload = llm.await_args.kwargs["messages"][0]["content"]
+        self.assertIn("Closure of coal-dependent facilities", prompt_payload)
+        self.assertIn("A closure timetable applies", prompt_payload)
+
     def test_generated_title_is_injected_when_db_template_is_stale(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -4042,6 +4106,12 @@ class CustomHazardValidationTests(unittest.TestCase):
         service._validate_input_quality = AsyncMock(
             return_value={"valid": True, "reason": "Reason is meaningful."}
         )
+        service._generate_affected_population_reflection = AsyncMock(
+            return_value=(
+                "Coal plant closures can remove employment and reduce income "
+                "for coal workers."
+            )
+        )
 
         response = _run(
             service._handle_custom_hazard_population_review(
@@ -4059,6 +4129,10 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(
             session.custom_hazard["affected_groups"][0]["group"],
             "Coal workers",
+        )
+        self.assertEqual(
+            session.custom_hazard["affected_groups"][0]["reflection"],
+            "Coal plant closures can remove employment and reduce income for coal workers.",
         )
 
     def test_open_text_add_affected_groups_prompts_for_first_reason(self):
@@ -4133,6 +4207,9 @@ class CustomHazardValidationTests(unittest.TestCase):
         service._validate_input_quality = AsyncMock(
             return_value={"valid": True, "reason": "Reason is meaningful."}
         )
+        service._generate_affected_population_reflection = AsyncMock(
+            return_value="Higher energy costs can increase arrears for low-income renters."
+        )
 
         response = _run(
             service._handle_custom_hazard_population_review(
@@ -4153,6 +4230,44 @@ class CustomHazardValidationTests(unittest.TestCase):
             session.custom_hazard["pending_profile_reason_group"],
             "older adults",
         )
+
+    def test_editing_group_reason_regenerates_the_population_reflection(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            phase="custom_hazard_group_review",
+            accepted_custom_hazard="Coal phase-out job shock",
+            custom_hazard={
+                "raw_text": "Coal phase-out job shock",
+                "affected_groups": [
+                    {
+                        "group": "Coal workers",
+                        "reason": "Job losses.",
+                        "reflection": "Coal workers may lose jobs.",
+                    }
+                ],
+            },
+        )
+        service._validate_input_quality = AsyncMock(
+            return_value={"valid": True, "reason": "Reason is meaningful."}
+        )
+        service._generate_affected_population_reflection = AsyncMock(
+            return_value="Mine closures can reduce employment and household income."
+        )
+
+        response = _run(
+            service._handle_custom_hazard_population_review(
+                "session-1",
+                session,
+                "Coal workers: Mine closures reduce coal workers' employment and household income.",
+            )
+        )
+
+        group = session.custom_hazard["affected_groups"][0]
+        self.assertEqual(
+            group["reflection"],
+            "Mine closures can reduce employment and household income.",
+        )
+        self.assertIn("Mine closures can reduce employment", response.bot_message)
 
     def test_open_text_remove_and_add_updates_groups_then_prompts_for_reason(self):
         service = ChatService.__new__(ChatService)

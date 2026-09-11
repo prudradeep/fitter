@@ -34,7 +34,7 @@ EXPECTED_GUARDRAIL_COUNTS = Counter(
         "TASK RESULT GUARDRAILS - simulated user message": 1,
         "TASK RESULT GUARDRAILS - grounding and citations": 5,
         "TASK RESULT GUARDRAILS - validation and classification": 16,
-        "TASK RESULT GUARDRAILS - structured output": 10,
+        "TASK RESULT GUARDRAILS - structured output": 14,
         "TASK RESULT GUARDRAILS - evidence and statistical context": 6,
         "TASK RESULT GUARDRAILS - user-facing response": 6,
     }
@@ -125,7 +125,7 @@ class ModelPromptTests(unittest.TestCase):
         base_dir = Path("app/prompts/llm")
         base_files = {path.name for path in base_dir.glob("*.txt")}
 
-        self.assertEqual(len(base_files), 87)
+        self.assertEqual(len(base_files), 91)
         for model, directory in MODEL_PROMPT_DIRS.items():
             with self.subTest(model=model):
                 model_files = {path.name for path in (base_dir / directory).glob("*.txt")}

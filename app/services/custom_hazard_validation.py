@@ -68,7 +68,7 @@ DIMENSION_TITLES = {
 SECTOR_POLICY_OBJECTIVES = {
     "energy": "Transition towards renewable energy",
     "housing": "Adaptation of housing to climate change",
-    "transport": "Transition to electric vehicles",
+    "transport": "Shift to Sustainable Mobility",
 }
 
 CLARIFICATION_IMPROVEMENT_THRESHOLD = 3
@@ -158,6 +158,102 @@ async def validate_hazard_evidence_relevance(
     }
 
 
+async def reflect_on_custom_hazard_kb_evidence(
+    hazard: str,
+    reason: str,
+    evidence_context: str,
+) -> dict[str, Any]:
+    """Summarize only KB evidence that materially supports the proposed hazard."""
+    content = str(evidence_context or "").strip()
+    if not content:
+        return {"supported": False, "reflection": "", "relationship": "", "reason": ""}
+    payload = {
+        "hazard": str(hazard or "").strip(),
+        "hazard_reason": str(reason or "").strip(),
+        "knowledge_base_evidence": content[:24000],
+        "required_output_schema": {
+            "supported": False,
+            "reflection": "",
+            "relationship": "",
+            "reason": "",
+        },
+    }
+    try:
+        response = await ask_llm_chat(
+            context=load_nested_prompt_file("llm/custom_hazard_evidence_reflection.txt"),
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            temperature=0.0,
+            max_tokens=500,
+        )
+        result = parse_json_object(response)
+    except Exception:
+        result = None
+    if not isinstance(result, dict) or not isinstance(result.get("supported"), bool):
+        return {"supported": False, "reflection": "", "relationship": "", "reason": ""}
+    return {
+        "supported": result["supported"],
+        "reflection": re.sub(r"\s+", " ", str(result.get("reflection") or "")).strip()[:1200],
+        "relationship": re.sub(r"\s+", " ", str(result.get("relationship") or "")).strip()[:1200],
+        "reason": re.sub(r"\s+", " ", str(result.get("reason") or "")).strip()[:600],
+    }
+
+
+async def validate_custom_hazard_evidence_reflection(
+    hazard: str,
+    reflection: str,
+    evidence_context: str,
+) -> dict[str, Any]:
+    """Check whether a user's alternative reflection is supported by retrieved KB evidence."""
+    content = str(evidence_context or "").strip()
+    if not content:
+        return {
+            "supported": False,
+            "acknowledgement": "",
+            "relationship": "",
+            "reason": "No supporting knowledge-base evidence was found for that reflection.",
+        }
+    payload = {
+        "hazard": str(hazard or "").strip(),
+        "user_reflection": str(reflection or "").strip(),
+        "knowledge_base_evidence": content[:24000],
+        "required_output_schema": {
+            "supported": False,
+            "acknowledgement": "",
+            "relationship": "",
+            "reason": "",
+        },
+    }
+    try:
+        response = await ask_llm_chat(
+            context=load_nested_prompt_file(
+                "llm/custom_hazard_evidence_reflection_validation.txt"
+            ),
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            temperature=0.0,
+            max_tokens=450,
+        )
+        result = parse_json_object(response)
+    except Exception:
+        result = None
+    if not isinstance(result, dict) or not isinstance(result.get("supported"), bool):
+        return {
+            "supported": False,
+            "acknowledgement": "",
+            "relationship": "",
+            "reason": "The reflection could not be validated against the available evidence.",
+        }
+    return {
+        "supported": result["supported"],
+        "acknowledgement": re.sub(
+            r"\s+", " ", str(result.get("acknowledgement") or "")
+        ).strip()[:800],
+        "relationship": re.sub(
+            r"\s+", " ", str(result.get("relationship") or "")
+        ).strip()[:1200],
+        "reason": re.sub(r"\s+", " ", str(result.get("reason") or "")).strip()[:600],
+    }
+
+
 async def validate_custom_hazard_mechanism_linkage(
     hazard: str,
     mechanism: str,
@@ -211,6 +307,70 @@ async def validate_custom_hazard_mechanism_linkage(
         "causal_linkage": (
             f"{source_label} finding -> {mechanism} -> {hazard}" if supported else ""
         ),
+    }
+
+
+async def summarize_custom_hazard_supporting_policy(
+    hazard: str,
+    mechanism: str,
+    policy_context: str,
+    *,
+    relevance_clarification: str = "",
+) -> dict[str, Any]:
+    """Validate and summarize policy support for a mechanism-to-hazard pathway."""
+    content = str(policy_context or "").strip()
+    if not content:
+        return {
+            "supported": False,
+            "summary": "",
+            "policy_details": "",
+            "reason": "No readable supporting policy details were found.",
+            "causal_linkage": "",
+        }
+    payload = {
+        "hazard": str(hazard or "").strip(),
+        "mechanism": str(mechanism or "").strip(),
+        "policy_content": content[:24000],
+        "user_relevance_clarification": str(relevance_clarification or "").strip(),
+        "required_output_schema": {
+            "supported": False,
+            "summary": "",
+            "policy_details": "",
+            "reason": "",
+            "causal_linkage": "",
+        },
+    }
+    try:
+        response = await ask_llm_chat(
+            context=load_nested_prompt_file("llm/custom_hazard_policy_support_summary.txt"),
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            temperature=0.0,
+            max_tokens=600,
+        )
+        result = parse_json_object(response)
+    except Exception:
+        result = None
+    if not isinstance(result, dict) or not isinstance(result.get("supported"), bool):
+        linkage = await validate_custom_hazard_mechanism_linkage(
+            hazard, mechanism, content, "policy"
+        )
+        return {
+            "supported": bool(linkage.get("supported")),
+            "summary": str(linkage.get("reason") or "").strip(),
+            "policy_details": "",
+            "reason": str(linkage.get("reason") or "").strip(),
+            "causal_linkage": str(linkage.get("causal_linkage") or "").strip(),
+        }
+    return {
+        "supported": result["supported"],
+        "summary": re.sub(r"\s+", " ", str(result.get("summary") or "")).strip()[:1200],
+        "policy_details": re.sub(
+            r"\s+", " ", str(result.get("policy_details") or "")
+        ).strip()[:1600],
+        "reason": re.sub(r"\s+", " ", str(result.get("reason") or "")).strip()[:700],
+        "causal_linkage": re.sub(
+            r"\s+", " ", str(result.get("causal_linkage") or "")
+        ).strip()[:1400],
     }
 
 
@@ -380,6 +540,9 @@ def default_custom_hazard_state() -> dict[str, Any]:
         "transition_link": None,
         "policy_reference": "",
         "policy_reference_document_ids": [],
+        "pending_policy_reference": "",
+        "pending_policy_reference_document_ids": [],
+        "pending_policy_reference_context": "",
         "policy_reference_available": False,
         "replacing_policy_reference": False,
         "suggested_mechanisms": [],
@@ -389,6 +552,21 @@ def default_custom_hazard_state() -> dict[str, Any]:
         "mechanism_causal_linkage": "",
         "causal_linkage_confirmed": False,
         "mechanism_knowledge_context": "",
+        "supporting_policy_summary": "",
+        "supporting_policy_details": "",
+        "supporting_policy_sources": [],
+        "pending_policy_linkage": {},
+        "policy_reference_context": "",
+        "policy_reference_relevance_pending": False,
+        "awaiting_policy_relevance_clarification": False,
+        "policy_summary_notice": "",
+        "evidence_kb_checked": False,
+        "evidence_kb_context": "",
+        "evidence_kb_sources": [],
+        "evidence_reflection": "",
+        "evidence_reflection_confirmed": False,
+        "evidence_user_reflection": "",
+        "evidence_relationship_notice": "",
         "evidence_relevance_checked": False,
         "evidence_relevant": False,
         "objective_fit_reason": "",
@@ -1724,6 +1902,9 @@ def _sector_policy_objective_terms(sector: str) -> set[str]:
             "electric vehicle", "electric vehicles", "ev", "evs", "charging",
             "charging infrastructure", "vehicle electrification", "electrification",
             "clean vehicle", "low emission zone", "zero emission vehicle",
+            "sustainable mobility", "public transport", "public transit", "transit",
+            "active mobility", "walking", "cycling", "shared mobility", "rail",
+            "bus", "buses", "modal shift", "mobility policy", "digital mobility",
         },
     }
     for sector_key, terms in mapping.items():

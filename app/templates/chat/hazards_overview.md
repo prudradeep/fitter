@@ -1,7 +1,7 @@
 ## {{ sector }}
 {% if sector == "Energy" %}Objective: Transition towards renewable energy{% endif %}
 {% if sector == "Housing" %}Objective: Adaptation of housing to climate change{% endif %}
-{% if sector == "Transport" %}Objective: Transition to electric vehicles{% endif %}
+{% if sector == "Transport" %}Objective: Shift to Sustainable Mobility{% endif %}
 
 
 These are the following hazards as per the sectoral survey carried out across 6 case study countries in Europe. The survey results are augmented with data for **{{ region }}** to show the effects of the hazards at regional level.

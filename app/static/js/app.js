@@ -953,7 +953,7 @@ function sectorPolicyObjective(sector = "") {
     energy: "Policy objective: Transition towards renewable energy",
     housing: "Policy objective: Adaptation of housing to climate change",
     "housing built environment": "Policy objective: Adaptation of housing to climate change",
-    transport: "Policy objective: Transition to electric vehicles",
+    transport: "Policy objective: Shift to Sustainable Mobility",
   };
   return objectives[normalizeForMatch(sector)] || "Policy objective: Not available";
 }

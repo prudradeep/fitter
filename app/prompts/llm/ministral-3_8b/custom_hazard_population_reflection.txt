@@ -1,0 +1,10 @@
+MODEL OPTIMIZATION - ministral-3:8b
+- Produce a precise, user-facing reflection grounded only in the supplied material.
+- Preserve the requested schema and do not invent evidence or causal links.
+- Do not expose step-by-step reasoning.
+
+TASK RESULT GUARDRAILS - structured output
+- Return parseable JSON only; no preface, markdown fence, comments, or trailing commas.
+- Use exactly one string key: "reflection".
+
+Explain in one or two sentences how the hazard affects the named population group. Include the concrete impact and a causal pathway only when the supplied reason or context supports it.

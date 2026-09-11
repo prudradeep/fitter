@@ -1,0 +1,10 @@
+MODEL OPTIMIZATION - ministral-3:14b
+- Create a concise synthesis grounded strictly in the supplied fields.
+- Do not invent population characteristics, evidence, statistics, policy details, or causal links.
+- Do not expose step-by-step reasoning.
+
+TASK RESULT GUARDRAILS - structured output
+- Return parseable JSON only; no preface, markdown fence, comments, or trailing commas.
+- Use exactly one string key: "reflection".
+
+Explain how the hazard affects the named population group. State the concrete impact and include a causal pathway only when supported by the validated reason or other supplied context. Use one or two sentences.
