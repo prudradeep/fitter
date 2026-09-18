@@ -522,3 +522,12 @@ Yes => Then show and save in DB after submitting
 User can alter the summary by providing context, then LLM will regenerate the summary based on the provided context and again confirm. It's a loop.
 
 
+=================================================================================
+Evidence should be checked completely, currently context limited to 24000.
+KB related chunks top 10 => Increase it to top 20 chunks. Check and confirm
+
+
+
+
+For Mechanism Fit
+Suggested mechanism: Use evidence also if provided.

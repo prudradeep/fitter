@@ -792,6 +792,7 @@ class ChatValidationServiceMixin:
             hazard,
             reason,
             evidence or "",
+            evidence_kb_context=await self._temporary_evidence_context(session),
         )
 
     @staticmethod
@@ -1208,6 +1209,8 @@ class ChatValidationServiceMixin:
         evidence: str,
         *,
         clarification: str | None = None,
+        main_kb_context: str | None = None,
+        evidence_kb_context: str | None = None,
     ) -> list[dict[str, str]]:
         option_rows = self._target_population_option_rows()
         option_catalogue = "\n".join(
@@ -1230,6 +1233,10 @@ class ChatValidationServiceMixin:
                         f"Reason: {reason}\n"
                         f"Evidence: {evidence or 'Not provided'}\n"
                         f"Clarification: {clarification or 'Not provided'}\n\n"
+                        "Main knowledge-base text:\n"
+                        f"{main_kb_context or 'No relevant Main knowledge-base text provided.'}\n\n"
+                        "Evidence knowledge-base text:\n"
+                        f"{evidence_kb_context or 'No relevant Evidence knowledge-base text provided.'}\n\n"
                         "Saved target population options:\n"
                         f"{option_catalogue or '- No saved target population options found.'}"
                     ),

@@ -15,6 +15,7 @@ from app.services.chat_hazard_duplicates import (
 from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
     CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+    CUSTOM_HAZARD_POLICY_REFERENCE_OPTIONS,
     CUSTOM_HAZARD_POLICY_RETRY_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
     compact_for_match,
@@ -1053,6 +1054,7 @@ class ChatCustomHazardGroundingMixin:
             state.get("active_validation_dimension") == "mechanism_fit"
             and state.get("mechanism_source") == "user"
             and state.get("selected_mechanism")
+            and not state.get("policy_reference_skipped")
             and not state.get("policy_reference_available")
         )
 
@@ -1086,11 +1088,14 @@ class ChatCustomHazardGroundingMixin:
             session=session,
             step="custom_hazard_policy_reference",
             bot_message=markdown_to_html(message),
-            options=(
-                CUSTOM_HAZARD_POLICY_RETRY_OPTIONS
-                if retry
-                else CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS
-            ),
+            options=[
+                *(
+                    CUSTOM_HAZARD_POLICY_RETRY_OPTIONS
+                    if retry
+                    else CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS
+                ),
+                *CUSTOM_HAZARD_POLICY_REFERENCE_OPTIONS[1:],
+            ],
             input_mode="policy_reference",
             error=error,
         )

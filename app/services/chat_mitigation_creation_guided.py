@@ -492,7 +492,7 @@ class ChatMitigationCreationGuidedMixin:
             session_id=session_id,
             step="mitigation_policy_reference",
             bot_message=markdown_to_html(message),
-            options=[],
+            options=self._guided_options("Skip"),
             session=session.summary(),
             input_mode="policy_reference",
             error=error,
@@ -511,6 +511,19 @@ class ChatMitigationCreationGuidedMixin:
             message,
             flags=re.IGNORECASE | re.MULTILINE,
         )
+        if normalize(message) == normalize("Skip"):
+            session.selected_mitigation_policy = None
+            session.pending_mitigation_policy = None
+            session.pending_mitigation_policy_context = None
+            session.pending_mitigation_policy_document_ids = None
+            guidance = dict(session.mitigation_mechanism_guidance or {})
+            guidance["policy_title"] = ""
+            guidance["causal_linkage"] = ""
+            session.mitigation_mechanism_guidance = guidance
+            session.pending_mitigation_reason = str(
+                session.selected_mitigation_mechanism or ""
+            ).strip()
+            return self._mitigation_selected_mechanism_guidance_step(session_id, session)
         if not document_ids:
             return self._mitigation_policy_reference_step(
                 session_id,

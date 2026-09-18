@@ -1940,8 +1940,8 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
     secondaryReasonInput.closest("label").hidden = true;
     evidenceUrlField.hidden = false;
     evidenceFileField.hidden = false;
-    evidenceUrlField.querySelector("span").innerHTML = "Policy document URL <small>(URL or file required)</small>";
-    evidenceFileField.querySelector("span").innerHTML = "Policy document file <small>(PDF, DOCX, MD, or TXT)</small>";
+    evidenceUrlField.querySelector("span").innerHTML = "Policy document URL <small>(optional when skipped)</small>";
+    evidenceFileField.querySelector("span").innerHTML = "Policy document file <small>(PDF, DOCX, MD, or TXT; optional when skipped)</small>";
     evidenceInput.placeholder = "https://example.org/twin-transition-policy";
     evidenceInput.setAttribute("aria-label", "Policy document URL");
     evidenceFileInput.setAttribute("aria-label", "Policy document file");
@@ -5646,7 +5646,11 @@ chatForm.addEventListener("submit", (event) => {
 
     if (appState.inputMode === "policy_reference") {
       if (!evidenceUrl && !(evidenceFile instanceof File && evidenceFile.size > 0)) {
-        flashRequiredField(evidenceInput);
+        evidenceInput.value = "";
+        evidenceFileInput.value = "";
+        collapseExpandedMessages();
+        addMessage("user", "Skip");
+        sendMessage("Skip", false);
         return;
       }
       const value = [

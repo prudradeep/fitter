@@ -3,6 +3,7 @@ import re
 from app.schemas import ChatResponse
 from app.services.chat_options import (
     CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+    CUSTOM_HAZARD_POLICY_REFERENCE_OPTIONS,
     CUSTOM_HAZARD_POLICY_RETRY_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
     compact_for_match,
@@ -755,6 +756,7 @@ class ChatCustomHazardInputMixin:
             message,
             [
                 *CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+                *CUSTOM_HAZARD_POLICY_REFERENCE_OPTIONS[1:],
                 *CUSTOM_HAZARD_POLICY_RETRY_OPTIONS,
             ],
         )
@@ -763,6 +765,7 @@ class ChatCustomHazardInputMixin:
                 message,
                 [
                     *CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS,
+                    *CUSTOM_HAZARD_POLICY_REFERENCE_OPTIONS[1:],
                     *CUSTOM_HAZARD_POLICY_RETRY_OPTIONS,
                 ],
             )
@@ -874,6 +877,23 @@ class ChatCustomHazardInputMixin:
                     session_id, session, policy
                 )
             if state.get("awaiting_policy_reference"):
+                if normalize(exact_label or answer) == normalize("Skip"):
+                    state["awaiting_policy_reference"] = False
+                    state["awaiting_policy_relevance_clarification"] = False
+                    state["policy_reference_relevance_pending"] = False
+                    state["policy_reference_skipped"] = True
+                    state["pending_policy_reference"] = ""
+                    state["pending_policy_reference_document_ids"] = []
+                    state["pending_policy_reference_context"] = ""
+                    state["replacing_policy_reference"] = False
+                    if state.get("policy_reference_available"):
+                        return self._custom_hazard_clarification_step(session_id, session)
+                    state["message"] = (
+                        "Policy reference was skipped; mechanism fit will continue without "
+                        "a user-provided policy document."
+                    )
+                    transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
+                    return await self._run_custom_hazard_dimension_check(session_id, session)
                 if (
                     "Policy reference error:" in answer
                     and "Policy reference document ID:" not in answer

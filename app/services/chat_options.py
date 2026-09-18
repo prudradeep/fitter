@@ -60,6 +60,11 @@ CUSTOM_HAZARD_POLICY_RETRY_OPTIONS = [
     Option(id=4, label="Revise mechanism"),
 ]
 
+CUSTOM_HAZARD_POLICY_REFERENCE_OPTIONS = [
+    *HAZARD_ENTRY_OPTIONS,
+    Option(id=2, label="Skip"),
+]
+
 CUSTOM_HAZARD_CAUSAL_LINKAGE_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No, revise the linkage"),

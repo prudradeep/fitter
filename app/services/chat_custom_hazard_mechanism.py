@@ -29,10 +29,17 @@ class ChatCustomHazardMechanismMixin:
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
         hazard = str(state.get("resolved_hazard_text") or state.get("raw_text") or "").strip()
+        evidence = str(
+            state.get("evidence")
+            or session.pending_hazard_evidence
+            or session.accepted_custom_hazard_evidence
+            or ""
+        ).strip()
         mechanisms = await suggest_custom_hazard_mechanisms(
             hazard,
             session.sector or "",
             policy_objective_for_sector(session.sector or ""),
+            evidence=evidence,
         )
         state["suggested_mechanisms"] = mechanisms
         if not mechanisms:

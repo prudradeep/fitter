@@ -83,12 +83,14 @@ async def suggest_custom_hazard_mechanisms(
     hazard: str,
     sector: str,
     objective: str,
+    evidence: str = "",
 ) -> list[str]:
     """Return concise candidate causal mechanisms without claiming they are proven."""
     payload = {
         "hazard": str(hazard or "").strip(),
         "selected_sector": str(sector or "").strip(),
         "policy_objective": str(objective or "").strip(),
+        "evidence": str(evidence or "").strip(),
         "required_output_schema": {"mechanisms": ["concise causal mechanism"]},
     }
     try:
@@ -115,32 +117,71 @@ async def suggest_custom_hazard_mechanisms(
 async def validate_hazard_evidence_relevance(
     hazard: str,
     evidence_context: str,
+    raw_hazard: str = "",
 ) -> dict[str, Any]:
     content = str(evidence_context or "").strip()
     if not content:
-        return {"relevant": False, "reason": "No readable evidence content was supplied."}
+        return {
+            "relevant": False,
+            "reason": "No readable evidence content was supplied.",
+            "supporting_excerpts": [],
+        }
     payload = {
         "hazard": str(hazard or "").strip(),
-        "evidence_content": content[:24000],
-        "required_output_schema": {"relevant": False, "reason": "", "relationship": ""},
+        "raw_hazard_text": str(raw_hazard or "").strip(),
+        "evidence_content": content,
+        "required_output_schema": {
+            "relevant": False,
+            "reason": "",
+            "relationship": "",
+            "supporting_excerpts": [],
+        },
     }
     try:
         response = await ask_llm_chat(
             context=load_nested_prompt_file("llm/custom_hazard_evidence_relevance.txt"),
             messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
             temperature=0.0,
-            max_tokens=350,
+            max_tokens=1500,
+            response_format={
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "relevant",
+                    "reason",
+                    "relationship",
+                    "supporting_excerpts",
+                ],
+                "properties": {
+                    "relevant": {"type": "boolean"},
+                    "reason": {"type": "string"},
+                    "relationship": {"type": "string"},
+                    "supporting_excerpts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 5,
+                    },
+                },
+            },
         )
+        print("IN try LLM response for evidence relevance:", response)
         result = parse_json_object(response)
     except Exception:
         result = None
     if isinstance(result, dict) and isinstance(result.get("relevant"), bool):
+        raw_excerpts = result.get("supporting_excerpts")
+        supporting_excerpts = raw_excerpts if isinstance(raw_excerpts, list) else []
         return {
             "relevant": result["relevant"],
             "reason": re.sub(r"\s+", " ", str(result.get("reason") or "")).strip()[:600],
             "relationship": re.sub(
                 r"\s+", " ", str(result.get("relationship") or "")
             ).strip()[:1200],
+            "supporting_excerpts": [
+                re.sub(r"\s+", " ", str(item or "")).strip()[:800]
+                for item in supporting_excerpts
+                if str(item or "").strip()
+            ][:20],
         }
     return {
         "relevant": False,
@@ -149,6 +190,7 @@ async def validate_hazard_evidence_relevance(
             "finding supports the stated hazard or provide the evidence again."
         ),
         "relationship": "",
+        "supporting_excerpts": [],
     }
 
 

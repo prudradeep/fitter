@@ -38,7 +38,15 @@ class ChatContextRetrievalMixin:
         session: ChatSession,
         evidence: str,
     ) -> str:
-        temporary_context = await self._temporary_evidence_context(session)
+        temporary_document_ids = re.findall(
+            r"^Temporary evidence document ID:\s*(\S+)",
+            str(evidence or ""),
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        temporary_context = await self._temporary_evidence_context(
+            session,
+            temporary_document_ids or None,
+        )
         reused_context = self._reused_evidence_context(session, evidence)
         inline_evidence = self._inline_evidence_content(evidence)
         if inline_evidence:

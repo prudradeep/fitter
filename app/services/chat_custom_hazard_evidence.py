@@ -29,7 +29,12 @@ from app.services.custom_hazard_validation import (
     validate_hazard_evidence_relevance,
 )
 from app.services.enums import ChatPhase, CustomHazardStatus
-from app.services.knowledge_base import TEMPORARY_KB_SCOPE, KnowledgeBaseService
+from app.services.knowledge_base import (
+    MAIN_KB_SCOPE,
+    TEMPORARY_KB_SCOPE,
+    VALIDATED_EVIDENCE_SCOPE,
+    KnowledgeBaseService,
+)
 from app.services.message_renderer import markdown_to_html, render_message
 
 logger = logging.getLogger("app.services.chat_hazard_creation")
@@ -214,9 +219,31 @@ class ChatCustomHazardEvidenceMixin:
             if part
         )
         try:
-            results = await self._shared_knowledge_results(
-                session, query, main_limit=8, evidence_limit=6
-            )
+            main_results = await KnowledgeBaseService(
+                self.db,
+                None,
+                scope=MAIN_KB_SCOPE,
+            ).search(query, limit=8)
+            evidence_results = []
+            if session.country_id is not None and session.sector_id is not None:
+                evidence_results = await KnowledgeBaseService(
+                    self.db,
+                    None,
+                    scope=VALIDATED_EVIDENCE_SCOPE,
+                    country_id=session.country_id,
+                    region_id=session.region_id,
+                    sector_id=session.sector_id,
+                ).search(query, limit=6)
+            results = [
+                *[
+                    {**item, "kb_scope": MAIN_KB_SCOPE}
+                    for item in main_results
+                ],
+                *[
+                    {**item, "kb_scope": VALIDATED_EVIDENCE_SCOPE}
+                    for item in evidence_results
+                ],
+            ]
             grounded = await self.grounding_models.ground_results(query, results)
         except Exception:
             logger.exception("Knowledge-base lookup failed during hazard evidence reflection")
@@ -229,6 +256,16 @@ class ChatCustomHazardEvidenceMixin:
             return self._hazard_evidence_decision_step(session_id, session)
 
         state["evidence_kb_context"] = context
+        state["main_kb_context"] = self._format_knowledge_results(
+            [item for item in grounded if item.get("kb_scope") == MAIN_KB_SCOPE]
+        )
+        state["evidence_kb_context"] = self._format_knowledge_results(
+            [
+                item
+                for item in grounded
+                if item.get("kb_scope") == VALIDATED_EVIDENCE_SCOPE
+            ]
+        )
         state["evidence_kb_sources"] = [
             {
                 "title": str(item.get("title") or "Knowledge source"),
@@ -517,6 +554,13 @@ class ChatCustomHazardEvidenceMixin:
                     )
                 else:
                     evidence = f"{evidence}\nTemporary evidence document ID: {document_id}"
+                logger.info(
+                    "Custom hazard evidence URL ingested: url=%s document_id=%s chunks=%s reused=%s",
+                    evidence_url,
+                    document_id,
+                    ingestion.get("chunks"),
+                    ingestion.get("reused", False),
+                )
         return await self._validate_staged_custom_hazard(session_id, session, evidence)
 
     async def _validate_staged_custom_hazard(
@@ -538,14 +582,36 @@ class ChatCustomHazardEvidenceMixin:
             evidence_context = await self._user_evidence_context_for_contradiction_check(
                 session, evidence
             )
+            logger.info(
+                "Custom hazard evidence context prepared: evidence_reference=%s context_chars=%s",
+                evidence[:300],
+                len(evidence_context),
+            )
+            if not evidence_context.strip():
+                state["evidence_relevance_checked"] = True
+                state["evidence_relevant"] = False
+                return self._hazard_evidence_input_step(
+                    session_id,
+                    session,
+                    error=True,
+                    message=markdown_to_html(
+                        "## Evidence could not be reviewed\n\n"
+                        "The URL was received, but no readable extracted text was available. "
+                        "Please provide the URL again or attach the source as a PDF, DOCX, MD, or TXT file."
+                    ),
+                    retry=True,
+                )
             hazard_for_relevance = str(
                 state.get("resolved_hazard_text") or state.get("raw_text") or ""
             ).strip()
+            raw_hazard_text = str(state.get("raw_text") or "").strip()
             user_reflection = str(state.get("evidence_user_reflection") or "").strip()
             if user_reflection:
                 hazard_for_relevance += f"\nUser reflection to support: {user_reflection}"
             relevance = await validate_hazard_evidence_relevance(
-                hazard_for_relevance, evidence_context
+                hazard_for_relevance,
+                evidence_context,
+                raw_hazard=raw_hazard_text,
             )
             state["evidence_relevance_checked"] = True
             state["evidence_relevant"] = bool(relevance.get("relevant"))
@@ -574,6 +640,7 @@ class ChatCustomHazardEvidenceMixin:
                     )
                     + str(relevance.get("reason") or ""),
                     "relationship": relevance.get("relationship") or "",
+                    "supporting_excerpts": relevance.get("supporting_excerpts") or [],
                 },
             }
             state["show_evidence_linkages"] = True
@@ -757,6 +824,8 @@ class ChatCustomHazardEvidenceMixin:
         evidence: str,
         *,
         clarification: str | None = None,
+        main_kb_context: str | None = None,
+        evidence_kb_context: str | None = None,
     ) -> ChatResponse:
         session.pending_hazard = None
         session.pending_hazard_reason = None
@@ -771,12 +840,46 @@ class ChatCustomHazardEvidenceMixin:
 
         await self._ensure_custom_hazard_generated_title(session, hazard)
 
+        state = self._custom_hazard_state(session)
+        main_kb_context = str(
+            main_kb_context or state.get("main_kb_context") or ""
+        ).strip()
+        evidence_kb_context = str(
+            evidence_kb_context or state.get("evidence_kb_context") or ""
+        ).strip()
+        if not evidence_kb_context:
+            evidence_kb_context = await self._temporary_evidence_context(session)
+        if not main_kb_context:
+            query = " ".join(
+                part
+                for part in (
+                    hazard,
+                    reason,
+                    session.sector or "",
+                    session.country or "",
+                    session.region or "",
+                )
+                if part
+            )
+            try:
+                main_results = await KnowledgeBaseService(
+                    self.db,
+                    None,
+                    scope=MAIN_KB_SCOPE,
+                ).search(query, limit=8)
+                main_kb_context = self._format_knowledge_results(main_results)
+            except Exception:
+                logger.exception("Main knowledge-base lookup failed during population extraction")
+                main_kb_context = ""
+
         profiles = await self._extract_custom_hazard_affected_population_profiles(
             session,
             hazard,
             reason,
             evidence,
             clarification=clarification,
+            main_kb_context=main_kb_context,
+            evidence_kb_context=evidence_kb_context,
         )
         if not profiles:
             profiles = self._additional_hazard_profiles_for_custom_hazard(session, hazard)
