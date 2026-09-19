@@ -67,7 +67,13 @@ class ChatMitigationCreationPolicyMixin:
             {**result, "content": str(result.get("content") or "")[:1200]}
             for result in reference_results[:12]
         ]
-        policy_context = self._format_full_knowledge_results(reference_results)
+        policy_context = self._format_bounded_knowledge_results(
+            reference_results,
+            query=(
+                f"Policy provisions causing {session.selected_hazard or 'the selected hazard'} "
+                "and possible amendments"
+            ),
+        )
         custom_state = (
             session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
         )

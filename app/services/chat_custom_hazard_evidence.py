@@ -580,7 +580,19 @@ class ChatCustomHazardEvidenceMixin:
                     session,
                 )
             evidence_context = await self._user_evidence_context_for_contradiction_check(
-                session, evidence
+                session,
+                evidence,
+                query=" ".join(
+                    part
+                    for part in (
+                        str(state.get("resolved_hazard_text") or state.get("raw_text") or ""),
+                        reason,
+                        session.country or "",
+                        session.region or "",
+                        session.sector or "",
+                    )
+                    if part
+                ),
             )
             logger.info(
                 "Custom hazard evidence context prepared: evidence_reference=%s context_chars=%s",

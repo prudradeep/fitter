@@ -602,9 +602,10 @@ class ChatCustomHazardPopulationStepsMixin:
             ).strip()
             if not name:
                 continue
-            lines.append(f"- **{name}**")
             if reflection:
-                lines.append(f"  - **AI reflection:** {reflection}")
+                lines.append(f"- **{name}: {reflection}**")
+            else:
+                lines.append(f"- **{name}**")
         return "\n".join(lines) or "- No affected population groups identified yet."
 
     @staticmethod

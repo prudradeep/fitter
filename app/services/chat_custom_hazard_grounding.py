@@ -254,6 +254,7 @@ class ChatCustomHazardGroundingMixin:
                 for document_id in state.get("policy_reference_document_ids") or []
                 if str(document_id).strip()
             ],
+            query=f"{hazard} {session.sector or ''} {session.country or ''} {session.region or ''}",
         )
         evidence_text = str(state.get("evidence") or "").strip()
         evidence_document_ids = re.findall(
@@ -264,8 +265,13 @@ class ChatCustomHazardGroundingMixin:
         evidence_document_context = await self._temporary_evidence_context(
             session,
             evidence_document_ids or None,
+            query=f"{hazard} {state.get('reason') or ''} {session.sector or ''} {session.country or ''} {session.region or ''}",
         ) if evidence_document_ids else ""
-        reused_evidence_context = self._reused_evidence_context(session, evidence_text)
+        reused_evidence_context = self._reused_evidence_context(
+            session,
+            evidence_text,
+            query=f"{hazard} {state.get('reason') or ''} {session.sector or ''} {session.country or ''} {session.region or ''}",
+        )
         inline_evidence = re.sub(
             r"Temporary evidence document ID:\s*\S+",
             "",

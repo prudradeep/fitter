@@ -3232,6 +3232,7 @@ class ChatValidationServiceMixin:
         evidence_context = await self._user_evidence_context_for_contradiction_check(
             session,
             evidence,
+            query=f"{claim_text} {session.sector or ''} {session.country or ''} {session.region or ''}",
         )
         return await EvidenceContradictionService(
             self.db,

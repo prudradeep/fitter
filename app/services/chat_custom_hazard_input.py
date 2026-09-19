@@ -921,7 +921,11 @@ class ChatCustomHazardInputMixin:
                     answer,
                     flags=re.IGNORECASE | re.MULTILINE,
                 )
-                policy_context = await self._policy_reference_context(session, document_ids)
+                policy_context = await self._policy_reference_context(
+                    session,
+                    document_ids,
+                    query=f"{session.pending_hazard or ''} {session.pending_hazard_reason or ''} {session.sector or ''} {session.country or ''} {session.region or ''}",
+                )
                 if not policy_context.strip():
                     return self._custom_hazard_policy_reference_step(
                         session_id,

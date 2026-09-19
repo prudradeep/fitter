@@ -21,6 +21,9 @@ from app.services.sector_prompt_rag import SectorPromptRagService
 
 logger = logging.getLogger(__name__)
 
+EVIDENCE_CONTEXT_MAX_CHARS = 24000
+EVIDENCE_CONTEXT_MAX_CHUNKS = 24
+
 
 class ChatContextRetrievalMixin:
     async def _mitigation_main_knowledge_context(
@@ -37,6 +40,8 @@ class ChatContextRetrievalMixin:
         self,
         session: ChatSession,
         evidence: str,
+        *,
+        query: str = "",
     ) -> str:
         temporary_document_ids = re.findall(
             r"^Temporary evidence document ID:\s*(\S+)",
@@ -46,8 +51,9 @@ class ChatContextRetrievalMixin:
         temporary_context = await self._temporary_evidence_context(
             session,
             temporary_document_ids or None,
+            query=query,
         )
-        reused_context = self._reused_evidence_context(session, evidence)
+        reused_context = self._reused_evidence_context(session, evidence, query=query)
         inline_evidence = self._inline_evidence_content(evidence)
         if inline_evidence:
             inline_context = self._format_full_knowledge_results(
@@ -72,6 +78,8 @@ class ChatContextRetrievalMixin:
         self,
         session: ChatSession,
         evidence: str | None = None,
+        *,
+        query: str = "",
     ) -> str:
         text = str(evidence or "")
         document_ids = re.findall(
@@ -103,7 +111,7 @@ class ChatContextRetrievalMixin:
         results: list[dict[str, object]] = []
         for document_id in document_ids:
             results.extend(service.document_results(document_id))
-        return self._format_full_knowledge_results(results)
+        return self._format_bounded_knowledge_results(results, query=query)
 
     async def _mitigation_evidence_context(
         self,
@@ -114,7 +122,10 @@ class ChatContextRetrievalMixin:
         *,
         retrieval_query: str | None = None,
     ) -> str:
-        temporary_context = await self._temporary_evidence_context(session)
+        query = retrieval_query or self._mitigation_retrieval_query(
+            session, mitigation_measure, reason
+        )
+        temporary_context = await self._temporary_evidence_context(session, query=query)
         inline_evidence = self._inline_evidence_content(evidence)
         inline_results: list[dict[str, object]] = []
         if inline_evidence:
@@ -127,11 +138,10 @@ class ChatContextRetrievalMixin:
                 }
             )
         if inline_results:
-            query = retrieval_query or self._mitigation_retrieval_query(
-                session, mitigation_measure, reason
-            )
             inline_results = await self.grounding_models.ground_results(query, inline_results)
-        inline_context = self._format_full_knowledge_results(inline_results)
+        inline_context = self._format_bounded_knowledge_results(
+            inline_results, query=query
+        )
         return "\n".join(part for part in (temporary_context, inline_context) if part).strip()
 
     async def _sector_prompt_rag_context(
@@ -277,11 +287,14 @@ class ChatContextRetrievalMixin:
         self,
         session: ChatSession,
         document_ids: list[str] | None = None,
+        *,
+        query: str = "",
+        max_chunks: int = EVIDENCE_CONTEXT_MAX_CHUNKS,
     ) -> str:
         if not session.session_key:
             return ""
         try:
-            query = (
+            db_query = (
                 select(KnowledgeChunk, KnowledgeDocument)
                 .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
                 .where(
@@ -292,8 +305,8 @@ class ChatContextRetrievalMixin:
                 .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
             )
             if document_ids:
-                query = query.where(KnowledgeDocument.id.in_(document_ids))
-            rows = self.db.execute(query).all()
+                db_query = db_query.where(KnowledgeDocument.id.in_(document_ids))
+            rows = self.db.execute(db_query).all()
         except Exception:
             logger.exception("Temporary evidence lookup failed during validation")
             return ""
@@ -309,18 +322,25 @@ class ChatContextRetrievalMixin:
             }
             for chunk, document in rows
         ]
-        return self._format_full_knowledge_results(results)
+        return self._format_bounded_knowledge_results(
+            results,
+            query=query,
+            max_chunks=max_chunks,
+        )
 
     async def _policy_reference_context(
         self,
         session: ChatSession,
         document_ids: list[str] | None = None,
+        *,
+        query: str = "",
+        max_chunks: int = EVIDENCE_CONTEXT_MAX_CHUNKS,
     ) -> str:
         """Return policy-reference text without exposing it to evidence retrieval."""
         if not session.session_key:
             return ""
         try:
-            query = (
+            db_query = (
                 select(KnowledgeChunk, KnowledgeDocument)
                 .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
                 .where(
@@ -331,10 +351,10 @@ class ChatContextRetrievalMixin:
                 .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
             )
             if document_ids:
-                query = query.where(KnowledgeDocument.id.in_(document_ids))
+                db_query = db_query.where(KnowledgeDocument.id.in_(document_ids))
             else:
                 return ""
-            rows = self.db.execute(query).all()
+            rows = self.db.execute(db_query).all()
         except Exception:
             logger.exception("Policy-reference lookup failed during hazard validation")
             return ""
@@ -350,7 +370,47 @@ class ChatContextRetrievalMixin:
             }
             for chunk, document in rows
         ]
-        return self._format_full_knowledge_results(results)
+        return self._format_bounded_knowledge_results(
+            results,
+            query=query,
+            max_chunks=max_chunks,
+        )
+
+    @staticmethod
+    def _format_bounded_knowledge_results(
+        results: list[dict[str, object]],
+        *,
+        query: str = "",
+        max_chunks: int = EVIDENCE_CONTEXT_MAX_CHUNKS,
+        max_chars: int = EVIDENCE_CONTEXT_MAX_CHARS,
+    ) -> str:
+        """Rank all supplied chunks, then bound the context sent to an LLM."""
+        query_terms = set(re.findall(r"[A-Za-z0-9]{3,}", str(query or "").casefold()))
+
+        def rank(item: dict[str, object]) -> int:
+            content = str(item.get("content") or "")
+            content_terms = set(re.findall(r"[A-Za-z0-9]{3,}", content.casefold()))
+            return len(query_terms & content_terms)
+
+        ranked = sorted(
+            enumerate(results),
+            key=lambda pair: (rank(pair[1]), -pair[0]),
+            reverse=True,
+        )
+        selected: list[dict[str, object]] = []
+        used_chars = 0
+        for _, result in ranked:
+            content = str(result.get("content") or "").strip()
+            if not content:
+                continue
+            if len(selected) >= max_chunks or used_chars >= max_chars:
+                break
+            content = content[: max_chars - used_chars].rstrip()
+            if not content:
+                break
+            selected.append({**result, "content": content})
+            used_chars += len(content)
+        return ChatContextRetrievalMixin._format_full_knowledge_results(selected)
 
     @staticmethod
     def _format_full_knowledge_results(results: list[dict[str, object]]) -> str:

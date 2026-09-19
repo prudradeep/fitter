@@ -285,7 +285,11 @@ class ChatCustomHazardMechanismMixin:
         ]
         policy_context = str(state.get("pending_policy_reference_context") or "").strip()
         if not policy_context:
-            policy_context = await self._policy_reference_context(session, document_ids)
+            policy_context = await self._policy_reference_context(
+                session,
+                document_ids,
+                query=f"{hazard} {mechanism} {session.sector or ''} {session.country or ''} {session.region or ''}",
+            )
         state["policy_reference_context"] = policy_context
         policy = await summarize_custom_hazard_supporting_policy(
             hazard, mechanism, policy_context

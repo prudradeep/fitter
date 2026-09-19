@@ -1082,8 +1082,9 @@ class ChatService(
 
     async def _practical_policy_recommendations(self, session: ChatSession) -> str:
         matched_examples = self._matched_mitigation_measure_examples(session)
-        policy_reference_context = self._format_full_knowledge_results(
-            self._mitigation_policy_reference_results(session)
+        policy_reference_context = self._format_bounded_knowledge_results(
+            self._mitigation_policy_reference_results(session),
+            query=f"{session.selected_hazard or ''} policy mitigation recommendations",
         )
         request = render_prompt_template(
             "llm/practical_policy_recommendations_user.txt",

@@ -531,7 +531,11 @@ class ChatMitigationCreationGuidedMixin:
                 detail="Please provide a readable policy URL or file.",
                 error=True,
             )
-        context = await self._policy_reference_context(session, document_ids)
+        context = await self._policy_reference_context(
+            session,
+            document_ids,
+            query=f"{session.pending_mitigation_measure or ''} {session.pending_mitigation_reason or ''} {session.selected_mitigation_mechanism or ''} {session.sector or ''}",
+        )
         if not context:
             return self._mitigation_policy_reference_step(
                 session_id,
@@ -1680,6 +1684,10 @@ class ChatMitigationCreationGuidedMixin:
             session.pending_mitigation_measure or "",
             "; ".join(session.mitigation_mechanisms or []),
             evidence_text,
+            retrieval_query=(
+                f"{session.pending_mitigation_measure or ''} "
+                f"{'; '.join(session.mitigation_mechanisms or [])} {group}"
+            ),
         )
         response = await ask_llm_chat(
             context=load_nested_prompt_file("llm/mitigation_dg_evidence_relevance.txt"),
