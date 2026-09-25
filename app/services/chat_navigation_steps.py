@@ -260,6 +260,9 @@ class ChatNavigationStepsMixin:
     def _clear_sector_context(cls, session: ChatSession) -> None:
         session.sector_id = None
         session.sector = None
+        session.selected_context_policy_id = None
+        session.selected_context_policy = None
+        session.selected_context_policy_summary = None
         session.hazards = None
         session.hazard_profiles = None
         session.custom_hazards = None

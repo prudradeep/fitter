@@ -15,6 +15,9 @@ class ChatSession:
     region: str | None = None
     sector_id: str | None = None
     sector: str | None = None
+    selected_context_policy_id: str | None = None
+    selected_context_policy: str | None = None
+    selected_context_policy_summary: str | None = None
     phase: str = ChatPhase.WIZARD.value
     hazards: list[str] | None = None
     hazard_profiles: dict[str, list[dict[str, str] | str] | str] | None = None
@@ -519,6 +522,13 @@ class ChatSessionStore:
         field_names = {field.name for field in fields(ChatSession)}
         values = {key: value for key, value in data.items() if key in field_names}
         values["phase"] = normalize_chat_phase(values.get("phase"))
+        # Recover sessions saved before policy phases were added to ChatPhase.
+        if values["phase"] == ChatPhase.WIZARD.value and values.get("current_step") in {
+            ChatPhase.POLICY.value,
+            ChatPhase.POLICY_REFERENCE.value,
+            ChatPhase.POLICY_SUMMARY.value,
+        }:
+            values["phase"] = str(values["current_step"])
         session = ChatSession(**values)
         self._sessions[session_id] = session
         return session

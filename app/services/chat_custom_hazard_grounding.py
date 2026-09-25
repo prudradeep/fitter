@@ -313,6 +313,7 @@ class ChatCustomHazardGroundingMixin:
                     "policy_objective_fit",
                 )
                 and not bool(state.get("evidence_decision_asked"))
+                and not bool(state.get("causal_linkage_confirmed"))
             ):
                 break
             if (
@@ -596,17 +597,9 @@ class ChatCustomHazardGroundingMixin:
         objective_supported = self._custom_hazard_dimension_is_supported(
             session, "policy_objective_fit"
         )
-        if objective_supported and not evidence_handled:
+        if objective_supported and not bool(state.get("causal_linkage_confirmed")):
             state["reason"] = str(state.get("reason") or self._custom_hazard_dimension_reason(state)).strip()
             state["objective_fit_reason"] = str(state.get("reason") or "").strip()
-            session.pending_hazard = hazard
-            session.pending_hazard_reason = str(state.get("reason") or "").strip()
-            return await self._start_hazard_evidence_flow(session_id, session)
-        if (
-            objective_supported
-            and evidence_handled
-            and not bool(state.get("causal_linkage_confirmed"))
-        ):
             return await self._custom_hazard_mechanism_suggestion_step(session_id, session)
         if (
             action == CustomHazardAction.ASK_CLARIFICATION
@@ -631,16 +624,6 @@ class ChatCustomHazardGroundingMixin:
             action = CustomHazardAction.REVIEW_GROUPS
         if not str(state.get("reason") or "").strip():
             state["reason"] = self._custom_hazard_dimension_reason(state)
-        if (
-            action in {CustomHazardAction.REVIEW_GROUPS, CustomHazardAction.VALIDATE}
-            and not bool(state.get("evidence_decision_asked"))
-            and not str(state.get("evidence") or session.pending_hazard_evidence or "").strip()
-        ):
-            session.pending_hazard = hazard
-            session.pending_hazard_reason = str(
-                state.get("reason") or session.accepted_custom_hazard_reason or ""
-            ).strip()
-            return await self._start_hazard_evidence_flow(session_id, session)
         if action == CustomHazardAction.REVIEW_GROUPS:
             generic_group = self._first_generic_affected_group(
                 state.get("affected_groups") or []
@@ -688,6 +671,18 @@ class ChatCustomHazardGroundingMixin:
             await self._ensure_affected_population_reflections(session)
             return self._custom_hazard_population_review_step(session_id, session)
         if action == CustomHazardAction.VALIDATE:
+            if state.get("affected_groups") and not bool(state.get("affected_groups_reviewed")):
+                session.accepted_custom_hazard = hazard
+                session.accepted_custom_hazard_reason = (
+                    str(state.get("reason") or "").strip()
+                    or self._custom_hazard_dimension_reason(state)
+                )
+                session.accepted_custom_hazard_evidence = (
+                    str(state.get("evidence") or "").strip() or "Not provided"
+                )
+                await self._ensure_custom_hazard_generated_title(session, hazard)
+                await self._ensure_affected_population_reflections(session)
+                return self._custom_hazard_population_review_step(session_id, session)
             return await self._finalize_custom_hazard_from_grounding(session_id, session)
         if action == CustomHazardAction.REJECT:
             return self._custom_hazard_clarification_step(

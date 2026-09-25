@@ -270,7 +270,7 @@ class ChatSelectionStepsMixin:
             self._filter_session_hazards_without_profiles(session)
             self._ensure_user_session(session_id, session)
             self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
-            return self._hazards_step(session_id, session)
+            return self._policy_step(session_id, session)
 
         self._normalize_stored_sdp_variable_names(session)
         hazard_items = self._stored_hazard_items_for_context(session_id, session)
@@ -310,7 +310,7 @@ class ChatSelectionStepsMixin:
         self._store_hazard_listing_cache(session)
         self._ensure_user_session(session_id, session)
         self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
-        return self._hazards_step(session_id, session)
+        return self._policy_step(session_id, session)
 
     async def _maybe_apply_conversational_selection(
         self,

@@ -60,6 +60,7 @@ ALLOWED_ATTRIBUTES = {
         "aria-label",
     ],
     "details": ["class", "open"],
+    "summary": ["class"],
     "div": [
         "class", "data-affected", "data-categories", "data-labels",
         "data-mitigation", "data-series", "data-value", "data-values", "role", "aria-label",

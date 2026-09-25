@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS custom_hazards (
   id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   country_id CHAR(36) NOT NULL,
   sector_id CHAR(36) NOT NULL,
+  mitigation_measure_policy_id CHAR(36) NULL,
   region_id CHAR(36) NULL,
   region_scope_key CHAR(36) NOT NULL DEFAULT '',
   name VARCHAR(255) NOT NULL,
@@ -229,6 +230,7 @@ CREATE TABLE IF NOT EXISTS custom_hazards (
   CONSTRAINT uq_custom_hazard_scope_name UNIQUE (country_id, sector_id, region_scope_key, name_key),
   INDEX ix_custom_hazards_country_id (country_id),
   INDEX ix_custom_hazards_sector_id (sector_id),
+  INDEX ix_custom_hazards_mitigation_measure_policy_id (mitigation_measure_policy_id),
   INDEX ix_custom_hazards_region_id (region_id),
   INDEX ix_custom_hazards_visibility (validation_mode, is_crowd_sourced),
   INDEX ix_custom_hazards_created_by_user_id (created_by_user_id)

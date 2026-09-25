@@ -619,6 +619,7 @@ def default_custom_hazard_state() -> dict[str, Any]:
         "clarifications": [],
         "affected_groups": [],
         "confirmed_affected_groups": [],
+        "affected_groups_reviewed": False,
         "removed_affected_groups": [],
         "added_affected_groups": [],
         "duplicate_candidates": [],

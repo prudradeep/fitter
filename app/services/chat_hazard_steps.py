@@ -1,4 +1,17 @@
-from app.schemas import ChatResponse
+import re
+
+from sqlalchemy import or_, select
+
+from app.models import (
+    AdditionalHazard,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    MitigationMeasurePolicy,
+    MitigationMeasurePolicyAdditionalHazard,
+    MitigationMeasurePolicySystemHazard,
+    SystemHazard,
+)
+from app.schemas import ChatResponse, Option
 from app.llm import ask_llm_chat
 from app.services.chat_formatters import format_hazards
 from app.services.chat_json import parse_json_object
@@ -8,6 +21,7 @@ from app.services.chat_options import (
     REGIONAL_POPULATION_COMPARISON_LABEL,
     SOCIO_DEMOGRAPHIC_OPTIONS,
     STATS_DEEP_DIVE_OPTIONS,
+    best_fuzzy_label,
     exact_option_label,
     match_option_label,
     normalize,
@@ -15,11 +29,14 @@ from app.services.chat_options import (
 )
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.chat_session import ChatSession
-from app.services.custom_hazard_validation import default_custom_hazard_state
+from app.services.custom_hazard_validation import (
+    default_custom_hazard_state,
+    validate_policy_reference_twin_transition,
+)
 from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.enums import ChatPhase
 from app.services.hazard_salience import survey_respondent_count
-from app.services.message_renderer import render_message
+from app.services.message_renderer import markdown_to_html, render_message
 
 
 def is_hazard_action_label(label: str) -> bool:
@@ -31,6 +48,242 @@ def is_hazard_action_label(label: str) -> bool:
 
 
 class ChatHazardStepsMixin:
+    def _policy_rows_for_selected_context(
+        self, session: ChatSession
+    ) -> list[tuple[str, str]]:
+        """Return policy IDs and titles scoped to the selected country and sector."""
+        if not (hasattr(self, "db") and session.country_id and session.sector_id):
+            return []
+
+        rows = self.db.execute(
+            select(MitigationMeasurePolicy.id, MitigationMeasurePolicy.policy_title)
+            .where(
+                MitigationMeasurePolicy.sector_id == session.sector_id,
+                or_(
+                    MitigationMeasurePolicy.country_id == session.country_id,
+                    MitigationMeasurePolicy.country_id.is_(None),
+                ),
+            )
+            .order_by(MitigationMeasurePolicy.policy_title, MitigationMeasurePolicy.id)
+        ).all()
+        policies: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for policy_id, title_value in rows:
+            title = str(title_value or "").strip()
+            key = " ".join(title.casefold().split())
+            if title and key not in seen:
+                seen.add(key)
+                policies.append((str(policy_id), title))
+        return policies
+
+    def _policies_for_selected_context(self, session: ChatSession) -> list[str]:
+        """Return the reference policies available for the current policy context."""
+        return [title for _, title in self._policy_rows_for_selected_context(session)]
+
+    def _policy_step(self, session_id: str, session: ChatSession) -> ChatResponse:
+        policies = self._policy_rows_for_selected_context(session)
+        session.phase = "policy"
+        if not policies:
+            return ChatResponse(
+                session_id=session_id,
+                step="policy",
+                bot_message=(
+                    f"No policies are available for **{session.country}**, "
+                    f"**{session.region}**, and **{session.sector}**."
+                ),
+                session=session.summary(),
+                error=False,
+            )
+        return ChatResponse(
+            session_id=session_id,
+            step="policy",
+            bot_message=render_message(
+                "policy_selection.md",
+                country=session.country,
+                region=session.region,
+                sector=session.sector,
+                policies=[title for _, title in policies],
+            ),
+            options=[
+                Option(id=index, label=title)
+                for index, (_, title) in enumerate(policies, start=1)
+            ],
+            session=session.summary(),
+            error=False,
+        )
+
+    async def _select_context_policy(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        policies = self._policy_rows_for_selected_context(session)
+        matched: tuple[str, str] | None = None
+        cleaned = normalize_for_match(message)
+        selected_number = re.search(r"\b(\d+)\b", str(message or ""))
+        if selected_number:
+            index = int(selected_number.group(1))
+            if 1 <= index <= len(policies):
+                matched = policies[index - 1]
+        for index, policy in enumerate(policies, start=1):
+            title = normalize_for_match(policy[1])
+            if matched is None and (
+                message.strip() == str(index)
+                or normalize(message) == normalize(policy[1])
+                or (cleaned and (cleaned in title or title in cleaned))
+            ):
+                matched = policy
+                break
+        if matched is None and cleaned:
+            fuzzy_title = best_fuzzy_label(cleaned, [title for _, title in policies], threshold=0.35)
+            if fuzzy_title:
+                matched = next(policy for policy in policies if policy[1] == fuzzy_title)
+        if matched is None:
+            return self._policy_step(session_id, session)
+        session.selected_context_policy_id, session.selected_context_policy = matched
+        return await self._context_policy_details_step(session_id, session)
+
+    def _context_policy_document_context(
+        self, session: ChatSession, document_ids: list[str]
+    ) -> str:
+        if not document_ids:
+            return ""
+        rows = self.db.scalars(
+            select(KnowledgeChunk.content)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(KnowledgeDocument.id.in_(document_ids))
+            .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index)
+        ).all()
+        return "\n\n".join(str(row).strip() for row in rows if str(row).strip())[:24000]
+
+    def _stored_context_policy_document_ids(self, session: ChatSession) -> list[str]:
+        if not (session.selected_context_policy and session.country_id and session.sector_id):
+            return []
+        return list(self.db.scalars(
+            select(KnowledgeDocument.id).where(
+                KnowledgeDocument.user_id == self.user_id,
+                KnowledgeDocument.scope == "policy_reference",
+                KnowledgeDocument.title == f"Policy: {session.selected_context_policy}",
+                KnowledgeDocument.country_id == session.country_id,
+                KnowledgeDocument.sector_id == session.sector_id,
+            )
+        ).all())
+
+    async def _context_policy_details_step(
+        self, session_id: str, session: ChatSession, document_ids: list[str] | None = None
+    ) -> ChatResponse:
+        policy = self.db.get(MitigationMeasurePolicy, session.selected_context_policy_id)
+        document_context = self._context_policy_document_context(
+            session, document_ids or self._stored_context_policy_document_ids(session)
+        )
+        details = str(policy.short_description or "").strip() if policy else ""
+        if not details and not document_context:
+            session.phase = "policy_reference"
+            return ChatResponse(
+                session_id=session_id,
+                step="policy_reference",
+                bot_message=markdown_to_html(
+                    "## Policy details needed\n\n"
+                    "No policy details or reusable document were found for this policy. "
+                    "Please provide the policy URL or attach a PDF, DOCX, MD, or TXT file."
+                ),
+                session=session.summary(),
+                input_mode="policy_reference",
+                error=False,
+            )
+
+        source_text = document_context or details
+        summary = await self._summarize_context_policy(session, source_text, details)
+        session.selected_context_policy_summary = summary
+        session.phase = "policy_summary"
+        return ChatResponse(
+            session_id=session_id,
+            step="policy_summary",
+            bot_message=markdown_to_html(
+                f"## {session.selected_context_policy}\n\n{summary}\n\n"
+                "Choose **Continue to hazards** when you are ready."
+            ),
+            options=[Option(id=1, label="Continue to hazards")],
+            session=session.summary(),
+            error=False,
+        )
+
+    async def _summarize_context_policy(
+        self, session: ChatSession, source_text: str, catalog_details: str
+    ) -> str:
+        prompt = (
+            "Summarize this policy using only the supplied text. Use concise headings: "
+            "Policy details, Mechanism, and Intended benefits. State when a detail is not available.\n\n"
+            f"Policy: {session.selected_context_policy}\nContext: {session.country}, {session.region}, {session.sector}\n\n"
+            f"Source text:\n{source_text[:12000]}"
+        )
+        response = await ask_llm_chat(
+            context="You are a careful policy analyst. Do not invent policy details.",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=450,
+        )
+        if not is_llm_unavailable_response(response) and response.strip():
+            return response.strip()
+        return (
+            f"**Policy details:** {catalog_details or source_text[:1200]}\n\n"
+            "**Mechanism:** Not separately stated in the available policy material.\n\n"
+            "**Intended benefits:** Not separately stated in the available policy material."
+        )
+
+    async def _handle_context_policy_reference(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        document_ids = re.findall(
+            r"^Policy reference document ID:\s*(\S+)", message, re.IGNORECASE | re.MULTILINE
+        )
+        if not document_ids:
+            return await self._context_policy_details_step(session_id, session)
+        context = await self._policy_reference_context(session, document_ids, query=session.selected_context_policy or "")
+        verification = await validate_policy_reference_twin_transition(context)
+        if not verification or not verification.get("related"):
+            session.phase = "policy_reference"
+            return ChatResponse(
+                session_id=session_id, step="policy_reference",
+                bot_message=markdown_to_html(
+                    "## Policy document could not be verified\n\n"
+                    f"{(verification or {}).get('reason') or 'Please provide a relevant policy document.'}"
+                ), session=session.summary(), input_mode="policy_reference", error=True,
+            )
+        documents = self.db.scalars(select(KnowledgeDocument).where(KnowledgeDocument.id.in_(document_ids))).all()
+        for document in documents:
+            document.scope = "policy_reference"
+            document.title = f"Policy: {session.selected_context_policy}"
+            document.country_id = session.country_id
+            document.region_id = session.region_id
+            document.sector_id = session.sector_id
+        self.db.commit()
+        return await self._context_policy_details_step(session_id, session, document_ids)
+
+    def _limit_hazards_to_selected_policy(self, session: ChatSession) -> None:
+        """Keep only hazards explicitly mapped to the selected policy."""
+        policy_id = str(session.selected_context_policy_id or "").strip()
+        if not policy_id:
+            return
+        system_hazards = set(self.db.scalars(
+            select(SystemHazard.name)
+            .join(
+                MitigationMeasurePolicySystemHazard,
+                MitigationMeasurePolicySystemHazard.system_hazard_id == SystemHazard.id,
+            )
+            .where(MitigationMeasurePolicySystemHazard.mitigation_measure_policy_id == policy_id)
+        ).all())
+        additional_hazards = set(self.db.scalars(
+            select(AdditionalHazard.name)
+            .join(
+                MitigationMeasurePolicyAdditionalHazard,
+                MitigationMeasurePolicyAdditionalHazard.additional_hazard_id == AdditionalHazard.id,
+            )
+            .where(MitigationMeasurePolicyAdditionalHazard.mitigation_measure_policy_id == policy_id)
+        ).all())
+        session.hazards = [hazard for hazard in (session.hazards or []) if hazard in system_hazards]
+        session.additional_hazards = [
+            hazard for hazard in (session.additional_hazards or []) if hazard in additional_hazards
+        ]
+
     def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         if (
             (
@@ -43,6 +296,7 @@ class ChatHazardStepsMixin:
         ):
             session.custom_hazards = self._saved_custom_hazards_for_context(session)
         self._hydrate_custom_hazard_profiles(session)
+        self._limit_hazards_to_selected_policy(session)
         self._filter_session_hazards_without_profiles(session)
         session.phase = "hazards"
         return ChatResponse(
@@ -53,6 +307,7 @@ class ChatHazardStepsMixin:
                 country=session.country,
                 region=session.region,
                 sector=session.sector,
+                policies=self._policies_for_selected_context(session),
                 survey_count=survey_respondent_count(sector=session.sector or ""),
                 hazards=format_hazards(
                     session,

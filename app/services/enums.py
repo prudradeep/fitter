@@ -67,6 +67,9 @@ class CustomHazardDimension(AppStrEnum):
 
 class ChatPhase(AppStrEnum):
     WIZARD = "wizard"
+    POLICY = "policy"
+    POLICY_REFERENCE = "policy_reference"
+    POLICY_SUMMARY = "policy_summary"
     HAZARDS = "hazards"
     STATS_DEEP_DIVE = "stats_deep_dive"
     TARGET_POPULATION_QUESTION = "target_population_question"

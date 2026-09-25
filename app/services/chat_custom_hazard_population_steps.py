@@ -235,6 +235,7 @@ class ChatCustomHazardPopulationStepsMixin:
                         ),
                     )
                 state["confirmed_affected_groups"] = list(state.get("affected_groups") or [])
+                state["affected_groups_reviewed"] = True
                 state["status"] = CustomHazardStatus.READY.value
                 state["next_action"] = CustomHazardAction.VALIDATE.value
                 return await self._route_custom_hazard_next_action(session_id, session)
@@ -603,7 +604,7 @@ class ChatCustomHazardPopulationStepsMixin:
             if not name:
                 continue
             if reflection:
-                lines.append(f"- **{name}: {reflection}**")
+                lines.append(f"- **{name}:** {reflection}")
             else:
                 lines.append(f"- **{name}**")
         return "\n".join(lines) or "- No affected population groups identified yet."

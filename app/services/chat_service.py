@@ -344,6 +344,13 @@ class ChatService(
                 await self._intro_message_from_llm(current_session_id),
             )
 
+        # A policy title is valid domain data, even if the general conversational
+        # quality checker regards it as a short or incomplete sentence.
+        if session.phase == "policy":
+            return await self._select_context_policy(
+                current_session_id, session, clean_message
+            )
+
         if clean_message and not self._could_be_fuzzy_selection(session, clean_message):
             meaning_check = await self._validate_text_meaning(clean_message)
         else:
@@ -387,6 +394,14 @@ class ChatService(
         )
         if open_selection_response is not None:
             return open_selection_response
+
+        if session.phase == "policy_reference":
+            return await self._handle_context_policy_reference(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "policy_summary":
+            return self._hazards_step(current_session_id, session)
 
         if session.phase == "hazards":
             return await self._handle_hazards_action(current_session_id, session, clean_message)
@@ -1189,12 +1204,9 @@ class ChatService(
                     f"Last visit label: {stats['last_visit_label']}\n"
                     f"User type: {stats['user_type']}\n\n"
                     "Required content:\n"
-                    "- Begin with: Welcome back to **Dr Transition**.\n"
-                    "- Invite the user to select a country to continue their analysis.\n"
-                    "- Keep it to exactly 2 short sentences.\n"
-                    "- Use formal, professional wording.\n"
-                    "- Do not ask about the user's feelings or use journey metaphors.\n"
-                    "- Do not include a name, country, or placeholder for either."
+                    "- Return this exact message, without Markdown or additional text: "
+                    "Welcome back to Dr Transition. Let's start by setting a policy context. "
+                    "Select your country"
                 ),
             }
         ]
@@ -1266,8 +1278,8 @@ class ChatService(
         previous_sessions = int(stats.get("previous_sessions") or 0)
         if previous_sessions:
             message = (
-                "Welcome back to **Dr Transition**. "
-                "Please select a country to continue your Twin-Transition analysis."
+                "Welcome back to Dr Transition. "
+                "Let's start by setting a policy context. Select your country"
             )
         else:
             message = render_message("welcome.md")
@@ -1934,6 +1946,10 @@ class ChatService(
             ]
         elif session.sector is None:
             labels = [sector.name for sector in self._sectors_for_country(session.country_id)]
+        elif session.phase == "policy":
+            labels = [title for _, title in self._policy_rows_for_selected_context(session)]
+        elif session.phase == "policy_summary":
+            labels = ["Continue to hazards"]
         elif session.phase == "hazards":
             options = (
                 CUSTOM_HAZARD_FINAL_OPTIONS
@@ -1999,6 +2015,10 @@ class ChatService(
         return best_fuzzy_label(cleaned, labels) is not None
 
     def _current_step_option_labels(self, session: ChatSession) -> list[str]:
+        if session.phase == "policy":
+            return [title for _, title in self._policy_rows_for_selected_context(session)]
+        if session.phase == "policy_summary":
+            return ["Continue to hazards"]
         if session.phase == "hazards":
             options = (
                 CUSTOM_HAZARD_FINAL_OPTIONS

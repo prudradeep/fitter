@@ -1,6 +1,7 @@
 import re
 
 from app.schemas import ChatResponse
+from app.llm import ask_llm_chat
 from app.services.chat_options import (
     CUSTOM_HAZARD_CAUSAL_LINKAGE_OPTIONS,
     CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS,
@@ -11,6 +12,7 @@ from app.services.chat_options import (
     normalize,
 )
 from app.services.custom_hazard_state_machine import transition_custom_hazard
+from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.custom_hazard_validation import (
     assess_custom_hazard_mechanism_clarity,
     custom_hazard_dimension_floor,
@@ -21,6 +23,11 @@ from app.services.custom_hazard_validation import (
 )
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.message_renderer import markdown_to_html
+from app.services.knowledge_base import (
+    MAIN_KB_SCOPE,
+    VALIDATED_EVIDENCE_SCOPE,
+    KnowledgeBaseService,
+)
 
 
 class ChatCustomHazardMechanismMixin:
@@ -56,25 +63,71 @@ class ChatCustomHazardMechanismMixin:
         state["selected_mechanism"] = mechanisms[0]
         state["mechanism_source"] = "ai_suggestion"
         transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION)
-        alternatives = ""
-        if len(mechanisms) > 1:
-            alternatives = "\n\nOther candidates considered:\n" + "\n".join(
-                f"- {item}" for item in mechanisms[1:]
-            )
+        reflection = await self._custom_hazard_ai_reflection(
+            session,
+            hazard,
+            str(state.get("reason") or state.get("objective_fit_reason") or "").strip(),
+        )
+        state["ai_reflection"] = reflection
         evidence_notice = str(state.pop("evidence_relationship_notice", "") or "").strip()
         evidence_prefix = f"{evidence_notice}\n\n" if evidence_notice else ""
+        objective = (state.get("dimension_scores") or {}).get("policy_objective_fit", {})
+        objective_reason = (
+            str(objective.get("reason") or "").strip()
+            if isinstance(objective, dict)
+            else ""
+        )
+        objective_score = objective.get("score") if isinstance(objective, dict) else None
+        objective_prefix = (
+            "## Policy Objective Fit\n\n"
+            "**Supported**"
+            + (f" (score: {objective_score}/10)" if objective_score is not None else "")
+            + f"\n\n{objective_reason or 'The hazard is compatible with the selected policy objective.'}\n\n"
+        )
         return self._custom_hazard_response(
             session_id=session_id,
             session=session,
             step="custom_hazard_mechanism_confirmation",
             bot_message=markdown_to_html(
                 evidence_prefix
-                + "## Mechanism Fit\n\n"
-                "Suggested mechanism:\n\n"
-                f"**{mechanisms[0]}**{alternatives}\n\n"
-                "Does the suggested mechanism correctly explain how the hazard could arise?"
+                + objective_prefix
+                + "## AI reflection\n\n"
+                f"{reflection}\n\n"
+                "Does this reflection accurately represent the information you provided?"
             ),
             options=CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS,
+        )
+
+    async def _custom_hazard_ai_reflection(
+        self, session, hazard: str, reason: str
+    ) -> str:
+        """Summarize user-provided policy/hazard information without adding facts."""
+        objective = policy_objective_for_sector(session.sector or "")
+        response = await ask_llm_chat(
+            context=(
+                "You are a careful policy facilitator. Summarize only the information "
+                "provided by the user and stated policy objective. Do not invent facts, "
+                "evidence, statistics, laws, or affected groups. Write one concise reflective paragraph."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Selected policy objective: {objective}\n"
+                    f"User hazard: {hazard}\n"
+                    f"User explanation: {reason or 'No separate explanation provided.'}\n\n"
+                    "Reflect on how the user's description frames a possible adverse consequence "
+                    "of the objective."
+                ),
+            }],
+            temperature=0.0,
+            max_tokens=240,
+        )
+        if response.strip() and not is_llm_unavailable_response(response):
+            return response.strip()
+        return (
+            f"You described **{hazard}** as a possible adverse consequence of pursuing "
+            f"the objective **{objective}**. "
+            f"{reason or 'Please confirm or refine the causal explanation in the next step.'}"
         )
 
     async def _handle_custom_hazard_mechanism_confirmation(
@@ -96,51 +149,71 @@ class ChatCustomHazardMechanismMixin:
             f"{hazard} {mechanism} policy regulation provision requirement programme "
             f"{session.sector or ''} {session.country or ''}"
         )
-        results = await self._shared_knowledge_results(
-            session, query, main_limit=8, evidence_limit=6
-        )
-        grounded = await self.grounding_models.ground_results(query, results)
-        if not grounded:
-            state["message"] = "No supporting mechanism details were found in the knowledge base."
-            return self._custom_hazard_policy_reference_step(
-                session_id,
-                session,
-                detail=(
-                    "The available knowledge base does not contain policy details that support "
-                    "the confirmed mechanism. Please provide a supporting policy URL or file."
-                ),
+        # Source priority is deliberate: a policy reference is the most direct
+        # authority for the mechanism; main KB and validated evidence are fallbacks.
+        document_ids = [str(value) for value in state.get("policy_reference_document_ids") or []]
+        policy_context = str(state.get("policy_reference_context") or "").strip()
+        if not policy_context and document_ids:
+            policy_context = await self._policy_reference_context(session, document_ids, query=query)
+        if not policy_context and session.selected_context_policy_id:
+            policy_context = self._context_policy_document_context(
+                session, self._stored_context_policy_document_ids(session)
             )
-        context = self._format_knowledge_results(grounded)
+        if policy_context:
+            policy = await summarize_custom_hazard_supporting_policy(hazard, mechanism, policy_context)
+            if policy.get("supported") and policy.get("causal_linkage"):
+                return self._accept_mechanism_policy_source(
+                    session_id, session, policy, "policy_reference", [], policy_context
+                )
+
+        source_queries = [
+            ("main_knowledge_base", KnowledgeBaseService(self.db, None, scope=MAIN_KB_SCOPE), 8),
+            (
+                "validated_evidence",
+                KnowledgeBaseService(
+                    self.db, None, scope=VALIDATED_EVIDENCE_SCOPE,
+                    country_id=session.country_id, region_id=session.region_id, sector_id=session.sector_id,
+                ),
+                6,
+            ),
+        ]
+        for source_name, service, limit in source_queries:
+            try:
+                results = await service.search(query, limit=limit)
+            except Exception:
+                results = []
+            grounded = await self.grounding_models.ground_results(query, results)
+            if not grounded:
+                continue
+            context = self._format_knowledge_results(grounded)
+            policy = await summarize_custom_hazard_supporting_policy(hazard, mechanism, context)
+            if policy.get("supported") and policy.get("causal_linkage"):
+                return self._accept_mechanism_policy_source(
+                    session_id, session, policy, source_name, grounded, context
+                )
+        state["message"] = "No policy, main knowledge-base, or validated-evidence source supported the mechanism."
+        return self._custom_hazard_policy_reference_step(
+            session_id, session,
+            detail="Please provide a supporting policy URL or file for the confirmed mechanism.",
+        )
+
+    def _accept_mechanism_policy_source(
+        self, session_id, session, policy: dict, source: str,
+        grounded: list[dict], context: str,
+    ) -> ChatResponse:
+        state = self._custom_hazard_state(session)
         state["mechanism_knowledge_context"] = context
-        policy = await summarize_custom_hazard_supporting_policy(
-            hazard, mechanism, context
-        )
-        if not policy.get("supported") or not policy.get("causal_linkage"):
-            state["message"] = str(
-                policy.get("reason")
-                or "No supporting mechanism details were found in the knowledge base."
-            )
-            return self._custom_hazard_policy_reference_step(
-                session_id,
-                session,
-                detail=(
-                    "I could not find a policy in the knowledge base that sufficiently supports "
-                    "the confirmed mechanism. Please provide a supporting policy URL or file."
-                ),
-            )
         state["supporting_policy_summary"] = str(policy.get("summary") or "").strip()
         state["supporting_policy_details"] = str(policy.get("policy_details") or "").strip()
         state["supporting_policy_sources"] = [
-            {
-                "title": str(item.get("title") or "Knowledge source"),
-                "source_uri": str(item.get("source_uri") or ""),
-                "page_number": item.get("page_number"),
-            }
+            {"title": str(item.get("title") or "Knowledge source"), "source_uri": str(item.get("source_uri") or ""), "page_number": item.get("page_number")}
             for item in grounded[:6]
         ]
         state["pending_policy_linkage"] = policy
-        state["mechanism_source"] = "knowledge_base"
-        return self._custom_hazard_policy_details_confirmation_step(session_id, session)
+        state["mechanism_source"] = source
+        # The policy source has already been checked. Do not ask users to
+        # confirm it again; proceed directly to the causal-linkage review.
+        return self._custom_hazard_causal_linkage_step(session_id, session, policy)
 
     def _custom_hazard_policy_details_confirmation_step(
         self, session_id: str, session

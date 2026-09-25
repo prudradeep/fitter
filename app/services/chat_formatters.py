@@ -158,27 +158,41 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
     survey_hazards = [
         hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
     ]
+    if (
+        session.selected_context_policy_id
+        and not survey_hazards
+        and not session.additional_hazards
+        and not session.custom_hazards
+    ):
+        return (
+            '<p class="hazard-group-intro">No hazards are currently linked to the '
+            "selected policy in the reference data.</p>"
+        )
     survey_source_button = (
         '<button class="survey-source-button" type="button" '
         'data-open-survey-results="true">From the survey</button>'
     )
     sections = [
-        '<h3 class="hazard-group-heading hazard-group-heading--top">'
-        f"Top 3 {survey_source_button}</h3>",
+        '<details class="hazard-category">'
+        '<summary class="hazard-group-heading hazard-group-heading--top">'
+        f"Top 3 {survey_source_button}</summary>",
+        '<div class="hazard-category-content">',
         format_system_hazards(
             session,
             survey_hazards[:3],
             show_admin_details=show_admin_details,
         ),
-        "",
-        '<div class="hazard-group-divider" role="separator"></div>',
-        '<h3 class="hazard-group-heading hazard-group-heading--other">'
-        f"Other hazards {survey_source_button}</h3>",
+        "</div></details>",
+        '<details class="hazard-category">'
+        '<summary class="hazard-group-heading hazard-group-heading--other">'
+        f"Other hazards {survey_source_button}</summary>",
+        '<div class="hazard-category-content">',
         format_system_hazards(
             session,
             survey_hazards[3:],
             show_admin_details=show_admin_details,
         ),
+        "</div></details>",
     ]
     if any(
         _hazard_has_profiles(session, hazard)
@@ -186,14 +200,14 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
     ):
         sections.extend(
             [
-                "",
-                '<div class="hazard-group-divider" role="separator"></div>',
-                '<h3 class="hazard-group-heading hazard-group-heading--co-created '
+                '<details class="hazard-category">'
+                '<summary class="hazard-group-heading hazard-group-heading--co-created '
                 'hazard-group-heading--with-info">'
                 "Co-Created hazards "
                 f"{_platform_users_source_button()}"
                 f"{_custom_hazards_info_icon()}"
-                "</h3>",
+                "</summary>",
+                '<div class="hazard-category-content">',
                 '<p class="hazard-group-intro hazard-group-intro--co-created">'
                 "These hazards were created by platform users for this specific region and sector."
                 "</p>",
@@ -201,20 +215,21 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
                     session,
                     show_admin_details=show_admin_details,
                 ),
+                "</div></details>",
             ]
         )
     if session.additional_hazards:
         sections.extend(
             [
-                "",
-                '<div class="hazard-group-divider" role="separator"></div>',
-                '<h3 class="hazard-group-heading hazard-group-heading--additional '
+                '<details class="hazard-category">'
+                '<summary class="hazard-group-heading hazard-group-heading--additional '
                 'hazard-group-heading--with-info">'
                 "Additional hazards "
                 '<span class="additional-hazards-source-label">By experts</span>'
                 f"{_additional_hazards_info_icon()}"
                 f"{_additional_hazards_methodology_cta()}"
-                "</h3>",
+                "</summary>",
+                '<div class="hazard-category-content">',
                 '<p class="hazard-group-intro hazard-group-intro--additional">'
                 "These hazards were identified by policy and subject-matter experts "
                 "during the open labs under WP4."
@@ -223,6 +238,7 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
                     session,
                     show_admin_details=show_admin_details,
                 ),
+                "</div></details>",
             ]
         )
     return "\n".join(sections)
@@ -245,9 +261,9 @@ def format_system_hazards(
             '<div class="hazard-card-heading">'
             '<span class="hazard-alert-icon" aria-hidden="true">!</span>'
             f"<strong>{escape(display_hazard)}</strong>"
+            f"{_hazard_relevance_badge(session, hazard)}"
             "</div>"
         )
-        _append_hazard_ranking(lines, session, hazard)
         _append_hazard_profiles(
             lines,
             session,
@@ -811,7 +827,8 @@ def _population_comparison(regional: object, national: object) -> str:
     return '<span class="population-trend is-down" title="Lower than national" aria-label="lower than national">↓</span>'
 
 
-def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) -> None:
+def _hazard_relevance_badge(session: ChatSession, hazard: str) -> str:
+    """Render only the overall relevance score beside a system-hazard title."""
     rankings = session.hazard_rankings or {}
     ranking = rankings.get(hazard)
     if ranking is None:
@@ -821,53 +838,22 @@ def _append_hazard_ranking(lines: list[str], session: ChatSession, hazard: str) 
                 ranking = stored_ranking
                 break
     if not isinstance(ranking, dict):
-        return
+        return ""
     relevance = _format_score(ranking.get("relevance_score"))
-    salience = _format_score(ranking.get("salience_score"))
-    effect = _format_score(ranking.get("effect_size_score"))
-    reach = _format_score(ranking.get("reach_score"))
-    metrics = (
-        (
-            "Relevance",
-            relevance,
-            "Overall ranking score used to order hazards. Calculation: Salience + "
-            "Effect size + Reach. Higher means the hazard combines stronger concern, "
-            "stronger profile association, and/or broader affected population reach.",
-        ),
-        (
-            "Salience",
-            salience,
-            "How prominent this hazard is in the sectoral survey data. "
-            "Calculation: average concern score × ratio of respondents above "
-            "the high-concern threshold(>12). Higher means more people "
-            "are strongly concerned and/or concern is more intense.",
-        ),
-        (
-            "Effect size",
-            effect,
-            "Average absolute log odds ratio across confirmed positive "
-            "predictors for the hazard. Odds ratio is defined as the odds "
-            "of a person rating a hazard as severe given a set of affected "
-            "population groups.",
-        ),
-        (
-            "Reach",
-            reach,
-            "Average population percentage in the region across all the affected population groups, "
-            "Calculation: average of regional population share of per affected population "
-            "profile, as availbale on Eurostat.",
-        ),
+    return (
+        '<span class="hazard-relevance" '
+        'title="Overall policy relevance score" aria-label="Relevance score">'
+        '<span class="hazard-relevance-label">Relevance'
+        '<span class="hazard-relevance-info" tabindex="0" role="button" '
+        'aria-label="Overall ranking score used to order hazards. It combines salience, '
+        'effect size, and reach; higher values indicate greater overall relevance.">?'
+        '<span class="hazard-relevance-tooltip" role="tooltip">'
+        "Overall ranking score used to order hazards. It combines salience, effect size, "
+        "and reach; higher values indicate greater overall relevance."
+        "</span></span></span>"
+        f"<strong>{relevance}</strong>"
+        "</span>"
     )
-    raw_values = [ranking.get(key) for key in (
-        "relevance_score", "salience_score", "effect_size_score", "reach_score"
-    )]
-    metric_items = "".join(
-        f'<div class="metric-tile" data-value="{escape(str(raw_value), quote=True)}">'
-        f"<dt>{_metric_label_html(label, tooltip)}</dt><dd>{value}"
-        f"{_metric_data_cta(label, hazard, ranking)}</dd></div>"
-        for (label, value, tooltip), raw_value in zip(metrics, raw_values)
-    )
-    lines.append(f'<dl class="hazard-metrics">{metric_items}</dl>')
 
 
 def _metric_label_html(label: str, tooltip: str) -> str:

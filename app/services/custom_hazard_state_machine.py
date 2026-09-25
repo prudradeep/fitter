@@ -254,6 +254,7 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
                 ChatPhase.CUSTOM_HAZARD_DUPLICATE_CONFIRMATION,
                 ChatPhase.CUSTOM_HAZARD_GROUP_REVIEW,
                 ChatPhase.CUSTOM_HAZARD_POPULATION_REVIEW,
+                ChatPhase.CUSTOM_HAZARD_SUMMARY_REVIEW,
                 ChatPhase.ADD_HAZARD_REASON,
                 ChatPhase.CUSTOM_HAZARD_EVIDENCE_REFLECTION_CONFIRMATION,
                 ChatPhase.ADD_HAZARD_EVIDENCE_DECISION,

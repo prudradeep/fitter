@@ -149,6 +149,12 @@ class ChatCustomHazardEvidenceMixin:
 
         session.pending_hazard_reason = reason
         session.pending_hazard_evidence = ""
+        if isinstance(session.custom_hazard, dict):
+            state = self._custom_hazard_state(session)
+            state["reason"] = reason
+            state["evidence"] = ""
+            transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
+            return await self._run_custom_hazard_dimension_check(session_id, session)
         return await self._start_hazard_evidence_flow(session_id, session)
 
     def _hazard_evidence_decision_step(

@@ -696,6 +696,114 @@
   line-height: 1.45;
 }
 
+.bubble .hazard-category {
+  display: block;
+  margin: 0;
+}
+
+.bubble .hazard-category > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.bubble .hazard-category > summary::-webkit-details-marker {
+  display: none;
+}
+
+.bubble .hazard-category > summary::before {
+  content: "›";
+  color: #6d28d9;
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1;
+  transition: transform 150ms ease;
+}
+
+.bubble .hazard-category[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.bubble .hazard-category-content {
+  padding: 0 12px 12px;
+}
+
+.bubble .hazard-relevance {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 12px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: #f3e8ff;
+  color: #5b21b6;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.bubble .hazard-relevance-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.bubble .hazard-relevance-info {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid #c4b5fd;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #6d28d9;
+  cursor: help;
+  font-size: 0.58rem;
+  font-weight: 950;
+  line-height: 1;
+  text-transform: none;
+}
+
+.bubble .hazard-relevance-tooltip {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(260px, 70vw);
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+  background: #111827;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.2);
+  color: #f8fafc;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  line-height: 1.45;
+  opacity: 0;
+  padding: 9px 10px;
+  pointer-events: none;
+  text-align: left;
+  text-transform: none;
+  transition: opacity 150ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.bubble .hazard-relevance-info:hover .hazard-relevance-tooltip,
+.bubble .hazard-relevance-info:focus .hazard-relevance-tooltip,
+.bubble .hazard-relevance-info:focus-visible .hazard-relevance-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.bubble .hazard-relevance > strong {
+  color: #3b0764;
+  font-size: 0.86rem;
+}
+
 .bubble .hazard-card-labels {
   display: flex;
   flex: 0 0 auto;

@@ -272,6 +272,9 @@ class CustomHazard(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     country_id: Mapped[str] = mapped_column(String(36), ForeignKey("countries.id", ondelete="CASCADE"), index=True)
     sector_id: Mapped[str] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    mitigation_measure_policy_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("mitigation_measure_policies.id", ondelete="SET NULL"), index=True
+    )
     region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     region_scope_key: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
     name: Mapped[str] = mapped_column(String(255), nullable=False)

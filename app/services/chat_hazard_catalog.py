@@ -109,6 +109,9 @@ class ChatHazardCatalogMixin:
                 CustomHazard.country_id == session.country_id,
                 CustomHazard.sector_id == session.sector_id,
                 CustomHazard.region_scope_key == (session.region_id or ""),
+                CustomHazard.mitigation_measure_policy_id == session.selected_context_policy_id
+                if session.selected_context_policy_id
+                else CustomHazard.mitigation_measure_policy_id.is_(None),
                 or_(
                     CustomHazard.created_by_user_id == self.user_id,
                     and_(
@@ -1024,6 +1027,9 @@ class ChatHazardCatalogMixin:
                     CustomHazard.country_id == session.country_id,
                     CustomHazard.sector_id == session.sector_id,
                     CustomHazard.region_scope_key == (session.region_id or ""),
+                    CustomHazard.mitigation_measure_policy_id == session.selected_context_policy_id
+                    if session.selected_context_policy_id
+                    else CustomHazard.mitigation_measure_policy_id.is_(None),
                     CustomHazard.name_key == self._custom_hazard_name_key(hazard),
                     or_(
                         CustomHazard.created_by_user_id == self.user_id,
@@ -1059,6 +1065,9 @@ class ChatHazardCatalogMixin:
                     CustomHazard.country_id == session.country_id,
                     CustomHazard.sector_id == session.sector_id,
                     CustomHazard.region_scope_key == (session.region_id or ""),
+                    CustomHazard.mitigation_measure_policy_id == session.selected_context_policy_id
+                    if session.selected_context_policy_id
+                    else CustomHazard.mitigation_measure_policy_id.is_(None),
                     CustomHazard.name_key == name_key,
                     or_(
                         CustomHazard.created_by_user_id == self.user_id,
@@ -1075,6 +1084,7 @@ class ChatHazardCatalogMixin:
                     sector_id=session.sector_id,
                     region_id=session.region_id,
                     region_scope_key=session.region_id or "",
+                    mitigation_measure_policy_id=session.selected_context_policy_id,
                     name=name.strip(),
                     name_key=name_key,
                     source="user",
@@ -1084,6 +1094,7 @@ class ChatHazardCatalogMixin:
             hazard.name = name.strip()
             hazard.region_id = session.region_id
             hazard.region_scope_key = session.region_id or ""
+            hazard.mitigation_measure_policy_id = session.selected_context_policy_id
             if reason is not None:
                 hazard.reason = reason.strip() or None
             if evidence is not None:

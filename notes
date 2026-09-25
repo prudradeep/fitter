@@ -531,3 +531,44 @@ KB related chunks top 10 => Increase it to top 20 chunks. Check and confirm
 
 For Mechanism Fit
 Suggested mechanism: Use evidence also if provided.
+
+Policy context => 
+Country, region, sector
+After sector show the list of policies retlate to that form KB.
+Select the policy to see the negative impact for your region.
+Show the list of hazards of the selected policy
+in hazard creation flow don't show policy or ask about the policy. How is the selected policy creating problem that you described. Verify/clarification
+ask Evidence
+show Potential Disadvantage Groups
+
+
+
+Please select a country to continue your analysis => Let's start by setting a policy context. Select your country
+
+DE_EN_N_1: Abolishing the standard energy supply/the Default system => Don't show policy codes
+
+
+Ask policy Document and details if not in the system after selecting the policy
+
+
+
+Steps
+1. Policy selection
+2. Check for policy details in KB. if not found, ask user for inputs/policy documents.
+    If found show a summary of policy.
+    a. Policy document provided by the user => Summarize it
+3. Describe the hazard (Short description)
+4. Check for ambiguity/clarification.
+5. Check for Policy Objective Fit
+6. Ask user to explain, How is the selected policy creating problem that you described?
+7. Check for Policy/Mechanism Fit
+    if fit not supported: ask user for evidence => clarification | Clarify for evidence
+    if supported: Generate a summary, reflection of the linkage b/w policy and hazard(policy finding). ask Confirmation from user if all ok.
+         No: Ask for clarification/Resummarize => untill supported and user confirmed
+[Continue same flow as it is]
+8. Review Affected Population Groups. Confirm affected groups
+9. Show final review
+
+
+5. Check for relevance with the policy.
+    If not found: Ask user to provide 
