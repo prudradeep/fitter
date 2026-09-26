@@ -1128,12 +1128,6 @@ class ChatCustomHazardGroundingMixin:
             "policy_objective_fit": (
                 f"How could pursuing the policy objective '{policy_objective}' cause or worsen this hazard?"
             ),
-            "selected_sector_fit": (
-                "How does this hazard relate specifically to the selected sector?"
-            ),
-            "country_region_fit": (
-                "Why is this hazard relevant to the selected country?"
-            ),
             "affected_groups_fit": (
                 "Which specific population groups are affected, and what impact do they experience?"
             ),
@@ -1142,16 +1136,12 @@ class ChatCustomHazardGroundingMixin:
             "hazard_definition_fit": "Hazard definition",
             "mechanism_fit": "Mechanism Fit",
             "policy_objective_fit": "Policy Objective Fit",
-            "selected_sector_fit": "Sector fit",
-            "country_region_fit": "Country / region fit",
             "affected_groups_fit": "Affected population groups",
         }
         core_dimensions = (
             "policy_objective_fit",
             "mechanism_fit",
             "hazard_definition_fit",
-            "selected_sector_fit",
-            "country_region_fit",
         )
         objective_item = dimensions.get("policy_objective_fit")
         objective_supported = (
@@ -1428,8 +1418,6 @@ class ChatCustomHazardGroundingMixin:
             "policy_objective_fit",
             "mechanism_fit",
             "hazard_definition_fit",
-            "selected_sector_fit",
-            "country_region_fit",
         )
         return any(
             isinstance(dimensions.get(key), dict)
@@ -1469,8 +1457,6 @@ class ChatCustomHazardGroundingMixin:
                 "policy_objective_fit",
                 "mechanism_fit",
                 "hazard_definition_fit",
-                "selected_sector_fit",
-                "country_region_fit",
             )
         )
 

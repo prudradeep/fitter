@@ -25,13 +25,11 @@ from app.services.prompt_loader import load_nested_prompt_file, render_prompt_te
 
 
 DIMENSION_WEIGHTS = {
-    CustomHazardDimension.POLICY_OBJECTIVE_FIT.value: 0.15,
-    CustomHazardDimension.MECHANISM_FIT.value: 0.20,
+    CustomHazardDimension.POLICY_OBJECTIVE_FIT.value: 0.25,
+    CustomHazardDimension.MECHANISM_FIT.value: 0.30,
     # Hazard definition is the foundation. A policy/sector match is not enough
     # if the input is actually a benefit, mitigation, neutral fact, or question.
-    CustomHazardDimension.HAZARD_DEFINITION_FIT.value: 0.25,
-    CustomHazardDimension.SELECTED_SECTOR_FIT.value: 0.15,
-    CustomHazardDimension.COUNTRY_REGION_FIT.value: 0.10,
+    CustomHazardDimension.HAZARD_DEFINITION_FIT.value: 0.30,
     CustomHazardDimension.AFFECTED_GROUPS_FIT.value: 0.15,
 }
 
@@ -40,11 +38,7 @@ DIMENSION_SEQUENCE = tuple(DIMENSION_WEIGHTS)
 DIMENSION_STAGES = (
     (CustomHazardDimension.POLICY_OBJECTIVE_FIT.value,),
     (CustomHazardDimension.MECHANISM_FIT.value,),
-    (
-        CustomHazardDimension.HAZARD_DEFINITION_FIT.value,
-        CustomHazardDimension.SELECTED_SECTOR_FIT.value,
-        CustomHazardDimension.COUNTRY_REGION_FIT.value,
-    ),
+    (CustomHazardDimension.HAZARD_DEFINITION_FIT.value,),
     (CustomHazardDimension.AFFECTED_GROUPS_FIT.value,),
 )
 
@@ -52,16 +46,12 @@ CRITICAL_DIMENSIONS = (
     CustomHazardDimension.POLICY_OBJECTIVE_FIT.value,
     CustomHazardDimension.MECHANISM_FIT.value,
     CustomHazardDimension.HAZARD_DEFINITION_FIT.value,
-    CustomHazardDimension.SELECTED_SECTOR_FIT.value,
-    CustomHazardDimension.COUNTRY_REGION_FIT.value,
 )
 
 DIMENSION_TITLES = {
     CustomHazardDimension.POLICY_OBJECTIVE_FIT.value: "Policy Objective Fit",
     CustomHazardDimension.MECHANISM_FIT.value: "Mechanism Fit",
     CustomHazardDimension.HAZARD_DEFINITION_FIT.value: "Hazard definition",
-    CustomHazardDimension.SELECTED_SECTOR_FIT.value: "Sector fit",
-    CustomHazardDimension.COUNTRY_REGION_FIT.value: "Country / region fit",
     CustomHazardDimension.AFFECTED_GROUPS_FIT.value: "Affected population groups",
 }
 
@@ -837,8 +827,6 @@ def build_custom_hazard_grounding_status(custom_hazard: dict[str, Any] | None) -
         _dimension_card("policy_objective_fit", dimension_scores, dimension_floor),
         _dimension_card("mechanism_fit", dimension_scores, dimension_floor),
         _dimension_card("hazard_definition_fit", dimension_scores, dimension_floor),
-        _dimension_card("selected_sector_fit", dimension_scores, dimension_floor),
-        _dimension_card("country_region_fit", dimension_scores, dimension_floor),
         _duplicate_card(state),
         _affected_groups_card(state, dimension_floor),
         _clarification_progress_card(state),
@@ -935,7 +923,7 @@ Policy-objective validation stage:
 
 Validation order and application-context rules:
 - Evaluate only these requested dimensions in this call: {requested_labels}. Do not evaluate, score, or comment on any other dimension.
-- Across calls, the workflow evaluates policy objective fit, mechanism fit, hazard definition, selected sector fit, country fit, and affected groups in that order. Keep using the country_region_fit output key, but do not assess regional fit in that dimension.
+- Across calls, the workflow evaluates policy objective fit, mechanism fit, hazard definition, and affected groups in that order.
 - Policy objective fit is distinct from mechanism fit. Determine whether the hazard is a plausible adverse consequence of pursuing the supplied sector policy objective.
 - For mechanism fit, assess the confirmed mechanism against knowledge-base excerpts or the supplied policy-reference content. Identify the causal linkage from the mechanism to the hazard and explicitly describe any mismatch.
 - Populate mechanism_fit.causal_linkage only when the supplied source supports a defensible chain in the form "source finding or policy provision -> mechanism -> hazard impact"; otherwise leave it empty.
@@ -946,9 +934,8 @@ Validation order and application-context rules:
 - Do not infer support from filenames, URLs, topic similarity, or the user's assertion alone. If evidence relevance is not supported, set supported to false, leave relationship empty, and briefly explain what is missing. For policy_evidence_linkage, leave causal_linkage empty when its causal chain is unsupported.
 - A policy document is required only for a user-provided mechanism when no supporting knowledge-base text is available.
 - A hazard need not repeat the policy objective verbatim, but its causal mechanism must be compatible with that objective.
-- The selected country and sector are application context. Do not ask the user to reconfirm them merely because their names are absent from the hazard text. The selected region may inform other regional context, but it must not affect country_region_fit.
-- Use the hazard's meaning and the supplied application context to assess sector and location fit. Ask only when there is a substantive ambiguity or contradiction.
-- Only after all five mandatory dimensions are supported, evaluate and extract affected population groups.
+- The selected country, region, and sector are application context. Do not ask the user to reconfirm them merely because their names are absent from the hazard text.
+- Only after the three mandatory dimensions are supported, evaluate and extract affected population groups.
 - If the mandatory dimensions are supported and no specific affected group can be extracted, ask the user for one.
 """
 
@@ -1000,20 +987,6 @@ Validation order and application-context rules:
                     "clarification_question": "",
                 },
                 "hazard_definition_fit": {
-                    "score": 0,
-                    "reason": "",
-                    "confidence": "low | medium | high",
-                    "needs_clarification": False,
-                    "clarification_question": "",
-                },
-                "selected_sector_fit": {
-                    "score": 0,
-                    "reason": "",
-                    "confidence": "low | medium | high",
-                    "needs_clarification": False,
-                    "clarification_question": "",
-                },
-                "country_region_fit": {
                     "score": 0,
                     "reason": "",
                     "confidence": "low | medium | high",
@@ -1106,9 +1079,6 @@ def _heuristic_dimension_validation(
         ]
     )
     lower = normalize_for_match(combined)
-    sector_terms = _sector_terms(selected_sector)
-    sector_score = SCORE_STRONG if _contains_any_term(lower, sector_terms) else SCORE_WEAK
-
     transition_terms = {
         "green", "digital", "transition", "twin transition", "renewable",
         "decarbonisation", "decarbonization", "carbon", "emission",
@@ -1173,10 +1143,6 @@ def _heuristic_dimension_validation(
     objective_terms = _sector_policy_objective_terms(selected_sector)
     objective_score = SCORE_STRONG if _contains_any_term(lower, objective_terms) else SCORE_WEAK
 
-    # Country is selected application context and need not be repeated in the
-    # hazard text. Region is intentionally excluded from this fit dimension.
-    country_score = SCORE_STRONG if country.strip() else SCORE_WEAK
-
     groups = _extract_affected_groups(combined)
     group_score = SCORE_STRONG if groups else SCORE_WEAK
 
@@ -1239,20 +1205,6 @@ def _heuristic_dimension_validation(
                 if hazard_definition_score >= 5
                 else "The input appears to describe a benefit, mitigation, fact, or observation rather than a hazard.",
                 "Can you describe the negative impact, risk, or harm caused by this issue?",
-            ),
-            "selected_sector_fit": _score_payload(
-                sector_score,
-                "The hazard appears connected to the selected sector."
-                if sector_score >= 5
-                else "The hazard is not clearly connected to the selected sector.",
-                f"Can you explain how this hazard is connected to the selected sector: {selected_sector}?",
-            ),
-            "country_region_fit": _score_payload(
-                country_score,
-                "The selected country provides the application context for this hazard."
-                if country_score >= 5
-                else "A selected country is required to assess where this hazard applies.",
-                "Why is this hazard relevant to the selected country?",
             ),
             "affected_groups_fit": _score_payload(
                 group_score,
@@ -1677,16 +1629,12 @@ def _ensure_dimension_reasons(result: dict[str, Any]) -> None:
         "hazard_definition_fit": "The submitted text describes a negative impact or risk.",
         "mechanism_fit": "The confirmed mechanism has a supported causal link to the hazard.",
         "policy_objective_fit": "The hazard is compatible with the selected sector's policy objective.",
-        "selected_sector_fit": "The hazard is compatible with the selected sector.",
-        "country_region_fit": "The selected country provides the application context for this hazard.",
         "affected_groups_fit": "A specific affected population group was identified.",
     }
     clarification_reasons = {
         "hazard_definition_fit": "The negative impact or risk is not yet explicit.",
         "mechanism_fit": "The causal mechanism producing or worsening the hazard is not yet clear.",
         "policy_objective_fit": "The link to the selected sector's policy objective is not yet clear.",
-        "selected_sector_fit": "The relationship to the selected sector is not yet clear.",
-        "country_region_fit": "The applicability to the selected country is not yet clear.",
         "affected_groups_fit": "No specific affected population group was identified.",
     }
     for key in DIMENSION_WEIGHTS:
@@ -2092,8 +2040,6 @@ def _merge_llm_with_heuristic_guardrails(
     for key in (
         "mechanism_fit",
         "policy_objective_fit",
-        "selected_sector_fit",
-        "country_region_fit",
     ):
         item = dimensions.get(key)
         heuristic_item = heuristic_dimensions.get(key)

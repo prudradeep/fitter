@@ -39,11 +39,13 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
     def test_dimension_checks_and_status_cards_use_requested_order(self) -> None:
         expected_keys = [
             "policy_objective_fit",
-            "twin_transition_policy_fit",
+            "mechanism_fit",
             "hazard_definition_fit",
         ]
         self.assertEqual(list(validator.DIMENSION_WEIGHTS)[:3], expected_keys)
         self.assertEqual(list(validator.CRITICAL_DIMENSIONS)[:3], expected_keys)
+        self.assertNotIn("selected_sector_fit", validator.DIMENSION_SEQUENCE)
+        self.assertNotIn("country_region_fit", validator.DIMENSION_SEQUENCE)
 
         dimension_scores = {
             key: {"score": 8, "needs_clarification": False}
@@ -56,10 +58,12 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
             [card["title"] for card in cards[:3]],
             [
                 "Policy Objective Fit",
-                "Twin transition policy fit",
+                "Mechanism Fit",
                 "Hazard definition",
             ],
         )
+        self.assertNotIn("Sector fit", [card["title"] for card in cards])
+        self.assertNotIn("Country / region fit", [card["title"] for card in cards])
 
     def test_hazard_definition_clarification_follows_objective_and_transition_fit(self) -> None:
         state = {

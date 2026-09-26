@@ -356,6 +356,11 @@ class CustomHazardMechanismFitTests(unittest.TestCase):
         )
         self.assertIn("Supporting policy accepted", response.bot_message)
         self.assertIn("Article 4 requires expanded", response.bot_message)
+        self.assertIn("Possible factors contributing to the hazard", response.bot_message)
+        self.assertIn(
+            "Is the described mechanism appropriately connected to the hazard?",
+            response.bot_message,
+        )
 
 
 if __name__ == "__main__":

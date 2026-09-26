@@ -56,6 +56,48 @@ class OpenConversationFlowActionTests(unittest.TestCase):
         self.assertIsNone(session.pending_affected_population_profiles)
         self.assertEqual(session.custom_hazards, ["Previous hazard"])
 
+    def test_policy_navigation_options_match_the_policy_flow(self):
+        session = ChatSession(sector="Energy", selected_context_policy_id="policy-1")
+
+        selection_options = ChatService._other_nav_options(session, "policy")
+        detail_options = ChatService._other_nav_options(session, "policy_summary")
+        hazard_list_options = ChatService._other_nav_options(session, "hazards")
+        mitigation_creation_options = ChatService._other_nav_options(
+            session, "mitigation_measure"
+        )
+
+        self.assertNotIn("Add a new hazard", selection_options)
+        self.assertNotIn("Add a new hazard", detail_options)
+        self.assertNotIn("Select another policy", selection_options)
+        self.assertIn("Select another policy", detail_options)
+        self.assertIn("Select another policy", hazard_list_options)
+        self.assertIn("Select another policy", mitigation_creation_options)
+
+    def test_select_another_policy_returns_to_policy_selection(self):
+        service = ChatService.__new__(ChatService)
+
+        def policy_step(session_id, workflow_session):
+            workflow_session.phase = "policy"
+            return (session_id, workflow_session.phase)
+
+        service._policy_step = policy_step
+        session = ChatSession(
+            sector="Energy",
+            selected_context_policy_id="policy-1",
+            selected_context_policy="Home retrofit programme",
+            selected_context_policy_summary="Summary",
+        )
+
+        response = _run(
+            service._handle_other_nav_action("test-session", session, "Select another policy")
+        )
+
+        self.assertEqual(response, ("test-session", "policy"))
+        self.assertEqual(session.phase, "policy")
+        self.assertIsNone(session.selected_context_policy_id)
+        self.assertIsNone(session.selected_context_policy)
+        self.assertIsNone(session.selected_context_policy_summary)
+
     def test_write_hazard_again_replaces_an_active_population_review(self):
         service = ChatService.__new__(ChatService)
         session = self._active_custom_hazard_session("custom_hazard_profile_reason")

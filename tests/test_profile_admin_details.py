@@ -103,11 +103,38 @@ class ProfileAdminDetailsTests(unittest.TestCase):
         self.assertIn("hazard-group-heading--co-created", html)
         self.assertIn("hazard-group-heading--additional", html)
         self.assertEqual(html.count('class="hazard-group-divider" role="separator"'), 3)
+        self.assertIn("Most relevant for your region", html)
+        self.assertIn("By Platform users", html)
         self.assertIn('class="additional-hazards-source-label"', html)
         self.assertIn("hazard-group-intro--co-created", html)
         self.assertIn("created by platform users", html)
         self.assertIn("hazard-group-intro--additional", html)
         self.assertIn("identified by policy and subject-matter experts", html)
+        self.assertLess(
+            html.index("hazard-group-heading--additional"),
+            html.index("hazard-group-heading--co-created"),
+        )
+
+    def test_hazard_overview_uses_the_requested_category_labels_and_order(self):
+        session = ChatSession(
+            hazards=["Top hazard"],
+            custom_hazards=["Co-created"],
+            additional_hazards=["Additional"],
+            hazard_profiles={
+                "Top hazard": [PROFILE],
+                "Co-created": [PROFILE],
+                "Additional": [PROFILE],
+            },
+        )
+
+        html = format_hazards(session)
+
+        self.assertIn("Most relevant for your region", html)
+        self.assertIn("By Platform users", html)
+        self.assertLess(
+            html.index("hazard-group-heading--additional"),
+            html.index("hazard-group-heading--co-created"),
+        )
 
     def test_ranked_hazard_keeps_metric_data_ctas_after_sanitizing(self):
         session = ChatSession(

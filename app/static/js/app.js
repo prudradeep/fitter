@@ -94,7 +94,10 @@ const closeKnowledgeButton = document.querySelector("#closeKnowledgeButton");
 const knowledgeUploadForm = document.querySelector("#knowledgeUploadForm");
 const knowledgeUrlForm = document.querySelector("#knowledgeUrlForm");
 const knowledgeSearchForm = document.querySelector("#knowledgeSearchForm");
+const policyDocumentForm = document.querySelector("#policyDocumentForm");
 const knowledgeFileInput = document.querySelector("#knowledgeFileInput");
+const policyDocumentPolicyInput = document.querySelector("#policyDocumentPolicyInput");
+const policyDocumentFileInput = document.querySelector("#policyDocumentFileInput");
 const knowledgeUrlInput = document.querySelector("#knowledgeUrlInput");
 const knowledgeSearchInput = document.querySelector("#knowledgeSearchInput");
 const knowledgeMessage = document.querySelector("#knowledgeMessage");
@@ -1109,9 +1112,9 @@ function renderHazardPopulationTable(session = {}) {
 
   const topHazards = stageHazardTableDetails({
     className: "stage-hazard-table",
-    ariaLabel: "Top three hazard population comparison",
+    ariaLabel: "Most relevant hazards for your region population comparison",
     label: "Population comparison",
-    title: "Top 3 hazards",
+    title: "Most relevant for your region",
     rows: hazards,
   });
   topHazards.querySelector(".stage-hazard-table-heading > div > span")?.appendChild(
@@ -2079,7 +2082,7 @@ chatLog?.addEventListener("click", (event) => {
   }
   const headingLabel = event.target.closest(".hazard-group-heading > span");
   const headingLabelText = normalizeForMatch(headingLabel?.textContent || "");
-  if (headingLabelText === "platform users") {
+  if (headingLabelText === "by platform users") {
     event.preventDefault();
     openPlatformUsersDialog();
     return;
@@ -4673,7 +4676,37 @@ async function openKnowledgeDialog() {
   } else {
     knowledgeDialog.removeAttribute("hidden");
   }
-  await loadKnowledgeDocuments();
+  await Promise.all([loadKnowledgeDocuments(), loadPolicyDocumentOptions()]);
+}
+
+async function loadPolicyDocumentOptions() {
+  if (!policyDocumentPolicyInput) return;
+  if (policyDocumentPolicyInput.options.length > 1) {
+    policyDocumentPolicyInput.disabled = false;
+    return;
+  }
+  policyDocumentPolicyInput.replaceChildren(createElement("option", { text: "Loading policies…", attrs: { value: "" } }));
+  try {
+    const response = await fetch("/api/knowledge/policies");
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    const policies = Array.isArray(data.policies) ? data.policies : [];
+    policyDocumentPolicyInput.replaceChildren(
+      createElement("option", { text: "Select a policy", attrs: { value: "" } }),
+      ...policies.map((policy) => createElement("option", {
+        text: String(policy.label || "Untitled policy"),
+        attrs: { value: String(policy.id || "") },
+      })),
+    );
+    if (!policies.length) {
+      policyDocumentPolicyInput.replaceChildren(createElement("option", { text: "No policies available", attrs: { value: "" } }));
+    }
+    policyDocumentPolicyInput.disabled = policies.length === 0;
+  } catch (error) {
+    policyDocumentPolicyInput.replaceChildren(createElement("option", { text: "Could not load policies", attrs: { value: "" } }));
+    policyDocumentPolicyInput.disabled = true;
+    console.error("Policy document options failed", error);
+  }
 }
 
 function closeKnowledgeDialog() {
@@ -5969,6 +6002,33 @@ knowledgeUrlForm?.addEventListener("submit", async (event) => {
   );
   knowledgeUrlInput.value = "";
   await loadKnowledgeDocuments();
+});
+
+policyDocumentForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const policyId = policyDocumentPolicyInput?.value || "";
+  const file = policyDocumentFileInput?.files?.[0];
+  if (!policyId || !file) return;
+  const formData = new FormData();
+  formData.append("policy_id", policyId);
+  formData.append("file", file);
+  try {
+    const response = await csrfFetch("/api/knowledge/policy-document", { method: "POST", body: formData });
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      showKnowledgeMessage(data.detail || "Could not update the policy document.", true);
+      return;
+    }
+    showKnowledgeMessage(
+      `Updated ${data.policy_title || "the selected policy"} with ${file.name} (${data.chunks || 0} chunks).`,
+      false,
+    );
+    policyDocumentForm.reset();
+    await loadKnowledgeDocuments();
+  } catch (error) {
+    showKnowledgeMessage("Could not update the policy document.", true);
+    console.error("Policy document upload failed", error);
+  }
 });
 
 knowledgeSearchForm?.addEventListener("submit", async (event) => {

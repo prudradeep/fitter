@@ -862,6 +862,30 @@
                   Ingest URLs
                 </button>
               </form>
+              {% if can_manage_main_knowledge %}
+              <div class="knowledge-or"><span>POLICY DOCUMENT</span></div>
+              <form id="policyDocumentForm" class="knowledge-form">
+                <label class="knowledge-field">
+                  <span>Policy</span>
+                  <small>Select the policy this document updates</small>
+                  <select id="policyDocumentPolicyInput" required>
+                    <option value="">Select a policy</option>
+                    {% for policy in policy_document_options %}
+                    <option value="{{ policy.id }}">{{ policy.label }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label class="knowledge-field">
+                  <span>Policy document</span>
+                  <small>Supported files: PDF, DOCX, MD, or TXT</small>
+                  <input id="policyDocumentFileInput" type="file" required accept=".pdf,.docx,.md,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" />
+                </label>
+                <button type="submit">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M17 18a4 4 0 0 0 0-8h-.5A6.5 6.5 0 0 0 4 12a3 3 0 0 0 1 5.83" /><path d="M12 12v7" /><path d="m9 15 3-3 3 3" /></svg>
+                  Update policy document
+                </button>
+              </form>
+              {% endif %}
               <p id="knowledgeMessage" class="dialog-message" hidden></p>
             </section>
             <section id="knowledgeProgressSection" class="knowledge-panel" hidden>

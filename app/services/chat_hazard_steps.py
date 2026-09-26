@@ -1,6 +1,6 @@
 import re
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 
 from app.models import (
     AdditionalHazard,
@@ -36,6 +36,7 @@ from app.services.custom_hazard_validation import (
 from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.enums import ChatPhase
 from app.services.hazard_salience import survey_respondent_count
+from app.services.knowledge_base import MAIN_KB_SCOPE
 from app.services.message_renderer import markdown_to_html, render_message
 
 
@@ -155,15 +156,23 @@ class ChatHazardStepsMixin:
         return "\n\n".join(str(row).strip() for row in rows if str(row).strip())[:24000]
 
     def _stored_context_policy_document_ids(self, session: ChatSession) -> list[str]:
-        if not (session.selected_context_policy and session.country_id and session.sector_id):
+        if not session.selected_context_policy_id:
             return []
         return list(self.db.scalars(
             select(KnowledgeDocument.id).where(
-                KnowledgeDocument.user_id == self.user_id,
-                KnowledgeDocument.scope == "policy_reference",
-                KnowledgeDocument.title == f"Policy: {session.selected_context_policy}",
-                KnowledgeDocument.country_id == session.country_id,
-                KnowledgeDocument.sector_id == session.sector_id,
+                or_(
+                    and_(
+                        KnowledgeDocument.mitigation_measure_policy_id == session.selected_context_policy_id,
+                        KnowledgeDocument.scope == MAIN_KB_SCOPE,
+                    ),
+                    and_(
+                        KnowledgeDocument.user_id == self.user_id,
+                        KnowledgeDocument.scope == "policy_reference",
+                        KnowledgeDocument.title == f"Policy: {session.selected_context_policy}",
+                        KnowledgeDocument.country_id == session.country_id,
+                        KnowledgeDocument.sector_id == session.sector_id,
+                    ),
+                )
             )
         ).all())
 
@@ -199,6 +208,7 @@ class ChatHazardStepsMixin:
             step="policy_summary",
             bot_message=markdown_to_html(
                 f"## {session.selected_context_policy}\n\n{summary}\n\n"
+                "If you would like to know about the hazards related to the policy or create mitigation measures for the hazards, "
                 "Choose **Continue to hazards** when you are ready."
             ),
             options=[Option(id=1, label="Continue to hazards")],

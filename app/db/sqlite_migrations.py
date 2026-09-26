@@ -252,6 +252,21 @@ def _013_custom_hazard_policy_link(connection: Connection) -> None:
     )
 
 
+def _014_policy_knowledge_documents(connection: Connection) -> None:
+    _add_column(
+        connection,
+        "knowledge_documents",
+        "mitigation_measure_policy_id",
+        "mitigation_measure_policy_id CHAR(36) NULL REFERENCES mitigation_measure_policies(id) ON DELETE SET NULL",
+    )
+    _create_index(
+        connection,
+        "knowledge_documents",
+        "ix_knowledge_documents_mitigation_measure_policy_id",
+        "mitigation_measure_policy_id",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -266,6 +281,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("011_custom_hazard_policy_references", _011_custom_hazard_policy_references),
     ("012_mitigation_creation_details", _012_mitigation_creation_details),
     ("013_custom_hazard_policy_link", _013_custom_hazard_policy_link),
+    ("014_policy_knowledge_documents", _014_policy_knowledge_documents),
 )
 
 

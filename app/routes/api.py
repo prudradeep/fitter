@@ -13,7 +13,18 @@ from sqlalchemy.orm import Session
 from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, set_auth_cookie, verify_password
 from app.config import get_settings
 from app.db.session import get_db
-from app.models import AppUser, Country, Prompt, Region, Sector, UserChatMessage, UserMitigationMeasure, UserSession
+from app.models import (
+    AppUser,
+    Country,
+    KnowledgeDocument,
+    MitigationMeasurePolicy,
+    Prompt,
+    Region,
+    Sector,
+    UserChatMessage,
+    UserMitigationMeasure,
+    UserSession,
+)
 from app.routes.request_limits import (
     InvalidJsonPayload,
     RequestTooLarge,
@@ -1084,6 +1095,97 @@ async def knowledge_upload(
         "failures": failures,
         "chunks": total_chunks,
     }
+
+
+@router.get("/knowledge/policies")
+async def knowledge_policies(
+    current_user: AppUser = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """List policies available for an administrator to attach reference documents."""
+    if not await _can_manage_main_knowledge(db, current_user):
+        raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
+    rows = db.execute(
+        select(
+            MitigationMeasurePolicy.id,
+            MitigationMeasurePolicy.policy_code,
+            MitigationMeasurePolicy.policy_title,
+        ).order_by(
+            MitigationMeasurePolicy.policy_title,
+            MitigationMeasurePolicy.policy_code,
+            MitigationMeasurePolicy.id,
+        )
+    ).all()
+    return {
+        "policies": [
+            {
+                "id": str(policy_id),
+                "label": " ".join(
+                    part for part in (str(policy_code or "").strip(), str(policy_title or "").strip()) if part
+                ),
+            }
+            for policy_id, policy_code, policy_title in rows
+        ]
+    }
+
+
+@router.post("/knowledge/policy-document")
+async def knowledge_policy_document_upload(
+    request: Request,
+    current_user: AppUser = Depends(require_admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Ingest an admin-managed main-KB document and link it to one policy."""
+    if not await _can_manage_main_knowledge(db, current_user):
+        raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
+    too_large = payload_too_large_response(request, settings.max_upload_bytes, "Policy document upload")
+    if too_large is not None:
+        return too_large
+
+    form = await request.form()
+    policy_id = str(form.get("policy_id") or "").strip()
+    policy = db.get(MitigationMeasurePolicy, policy_id)
+    if policy is None:
+        return {"error": True, "detail": "Select a valid policy."}
+    file = form.get("file")
+    filename = str(getattr(file, "filename", "") or "").strip()
+    if not filename or not hasattr(file, "read"):
+        return {"error": True, "detail": "Choose a policy document to upload."}
+    if not filename.casefold().endswith((".pdf", ".docx", ".md", ".txt")):
+        return {"error": True, "detail": "Supported file types are PDF, DOCX, MD, and TXT."}
+    too_large = upload_too_large_response(file, settings.max_upload_bytes, "Policy document upload")
+    if too_large is not None:
+        return too_large
+
+    content = await file.read()
+    service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
+    try:
+        result = await service.ingest_file(filename, content)
+    except (httpx.HTTPError, ValueError) as exc:
+        return {"error": True, "detail": str(exc)}
+    if result.get("error"):
+        return result
+
+    document_id = str(result.get("document_id") or "")
+    document = db.get(KnowledgeDocument, document_id)
+    if document is None:
+        return {"error": True, "detail": "Policy document was ingested but could not be linked."}
+    document.mitigation_measure_policy_id = policy.id
+    document.country_id = policy.country_id
+    document.sector_id = policy.sector_id
+    db.commit()
+    record_audit_event(
+        db,
+        user=current_user,
+        action="knowledge.policy_document_upload",
+        request=request,
+        target_type="knowledge_document",
+        target_id=document.id,
+        details={"policy_id": policy.id, "policy_title": policy.policy_title, "filename": filename},
+    )
+    result["policy_id"] = policy.id
+    result["policy_title"] = policy.policy_title
+    return result
 
 
 @router.post("/knowledge/url")

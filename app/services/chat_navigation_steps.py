@@ -142,6 +142,14 @@ class ChatNavigationStepsMixin:
                 error=False,
             )
 
+        if action == normalize("Select another policy"):
+            if session.sector is None:
+                return self._repeat_current_options(session_id, session, self.invalid_message, True)
+            session.selected_context_policy_id = None
+            session.selected_context_policy = None
+            session.selected_context_policy_summary = None
+            return self._policy_step(session_id, session)
+
         if action == normalize("Write hazard again"):
             if session.sector is None:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
@@ -486,14 +494,17 @@ class ChatNavigationStepsMixin:
     @staticmethod
     def _other_nav_options(session: ChatSession, step: str) -> list[str]:
         options: list[str] = []
+        policy_flow_steps = {"policy", "policy_summary", "policy_reference"}
         if session.mitigation_measure or session.pending_mitigation_measure:
             options.append("Write mitigation measure again")
         if session.sector and session.selected_hazard:
             options.append("Analyse another hazard in the same sector")
         if session.sector and step == "hazard_profile_selection":
             options.append("Go back to list of hazards")
-        if session.sector and step != "sector":
+        if session.sector and step not in {"sector", *policy_flow_steps}:
             options.append("Add a new hazard")
+        if session.selected_context_policy_id and step != "policy":
+            options.append("Select another policy")
         if session.sector and (
             session.accepted_custom_hazard
             or session.pending_hazard

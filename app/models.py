@@ -595,6 +595,9 @@ class KnowledgeDocument(Base):
     custom_hazard_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True
     )
+    mitigation_measure_policy_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("mitigation_measure_policies.id", ondelete="SET NULL"), index=True
+    )
     scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="global", server_default="global", index=True)
     country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True)
     region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)

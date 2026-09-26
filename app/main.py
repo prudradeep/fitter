@@ -8,13 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth import AUTH_COOKIE_NAME, CSRF_COOKIE_NAME, get_current_user, require_admin_user
 from app.config import get_settings
 from app.db.migrations_runtime import repair_partial_installer_schema, run_runtime_migrations
 from app.db.session import SessionLocal, get_db, validate_database_connection
-from app.models import AppUser
+from app.models import AppUser, MitigationMeasurePolicy
 from app.observability import (
     configure_logging,
     increment_metric,
@@ -247,6 +248,30 @@ async def index(
     csrf_token = request.cookies.get(CSRF_COOKIE_NAME)
     if not csrf_token_valid(csrf_token, settings):
         csrf_token = create_csrf_token(settings)
+    can_manage_main_knowledge = await _can_manage_main_knowledge(db, current_user)
+    policy_document_options: list[dict[str, str]] = []
+    if can_manage_main_knowledge:
+        policy_document_options = [
+            {
+                "id": str(policy_id),
+                "label": " ".join(
+                    part
+                    for part in (str(policy_code or "").strip(), str(policy_title or "").strip())
+                    if part
+                ),
+            }
+            for policy_id, policy_code, policy_title in db.execute(
+                select(
+                    MitigationMeasurePolicy.id,
+                    MitigationMeasurePolicy.policy_code,
+                    MitigationMeasurePolicy.policy_title,
+                ).order_by(
+                    MitigationMeasurePolicy.policy_title,
+                    MitigationMeasurePolicy.policy_code,
+                    MitigationMeasurePolicy.id,
+                )
+            ).all()
+        ]
     response = templates.TemplateResponse(
         request,
         "index.html",
@@ -256,7 +281,8 @@ async def index(
             "current_user": current_user,
             "csrf_token": csrf_token,
             "sync_enabled": bool(settings.sync_enabled),
-            "can_manage_main_knowledge": await _can_manage_main_knowledge(db, current_user),
+            "can_manage_main_knowledge": can_manage_main_knowledge,
+            "policy_document_options": policy_document_options,
             "can_view_prompt_library": await _can_view_prompt_library(db, current_user),
             "can_manage_prompts": await _can_manage_prompts(db, current_user),
             "can_reindex_sector_prompts": await _can_reindex_sector_prompts(db, current_user),

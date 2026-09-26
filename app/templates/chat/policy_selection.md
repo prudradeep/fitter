@@ -1,6 +1,6 @@
-### Select a policy
+### Select a policy to set a context
 
-Policy context: **{{ country }}** - **{{ region }}** - **{{ sector }}**
+Policies on the platform for **{{ sector }}** sector in **{{ region }}**, **{{ country }}**
 
 {% for policy in policies %}
 {{ loop.index }}. {{ policy }}

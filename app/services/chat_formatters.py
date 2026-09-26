@@ -69,7 +69,7 @@ def _custom_hazards_info_icon() -> str:
         f'aria-label="{tooltip}">'
         '<span aria-hidden="true">i</span>'
         '<span class="additional-hazards-tooltip" aria-hidden="true">'
-        "<strong>Platform users</strong>"
+        "<strong>By Platform users</strong>"
         f"<span>{tooltip}</span>"
         "</span>"
         "</span>"
@@ -79,7 +79,7 @@ def _custom_hazards_info_icon() -> str:
 def _platform_users_source_button() -> str:
     return (
         '<button class="platform-users-source-button" type="button" '
-        'data-open-platform-users="true">Platform users</button>'
+        'data-open-platform-users="true">By Platform users</button>'
     )
 
 
@@ -175,7 +175,7 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
     sections = [
         '<details class="hazard-category">'
         '<summary class="hazard-group-heading hazard-group-heading--top">'
-        f"Top 3 {survey_source_button}</summary>",
+        f"Most relevant for your region {survey_source_button}</summary>",
         '<div class="hazard-category-content">',
         format_system_hazards(
             session,
@@ -194,6 +194,29 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
         ),
         "</div></details>",
     ]
+    if session.additional_hazards:
+        sections.extend(
+            [
+                '<details class="hazard-category">'
+                '<summary class="hazard-group-heading hazard-group-heading--additional '
+                'hazard-group-heading--with-info">'
+                "Additional hazards "
+                '<span class="additional-hazards-source-label">By experts</span>'
+                f"{_additional_hazards_info_icon()}"
+                f"{_additional_hazards_methodology_cta()}"
+                "</summary>",
+                '<div class="hazard-category-content">',
+                '<p class="hazard-group-intro hazard-group-intro--additional">'
+                "These hazards were identified by policy and subject-matter experts "
+                "during the open labs under WP4."
+                "</p>",
+                format_additional_hazards(
+                    session,
+                    show_admin_details=show_admin_details,
+                ),
+                "</div></details>",
+            ]
+        )
     if any(
         _hazard_has_profiles(session, hazard)
         for hazard in (session.custom_hazards or [])
@@ -212,29 +235,6 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
                 "These hazards were created by platform users for this specific region and sector."
                 "</p>",
                 format_custom_hazards(
-                    session,
-                    show_admin_details=show_admin_details,
-                ),
-                "</div></details>",
-            ]
-        )
-    if session.additional_hazards:
-        sections.extend(
-            [
-                '<details class="hazard-category">'
-                '<summary class="hazard-group-heading hazard-group-heading--additional '
-                'hazard-group-heading--with-info">'
-                "Additional hazards "
-                '<span class="additional-hazards-source-label">By experts</span>'
-                f"{_additional_hazards_info_icon()}"
-                f"{_additional_hazards_methodology_cta()}"
-                "</summary>",
-                '<div class="hazard-category-content">',
-                '<p class="hazard-group-intro hazard-group-intro--additional">'
-                "These hazards were identified by policy and subject-matter experts "
-                "during the open labs under WP4."
-                "</p>",
-                format_additional_hazards(
                     session,
                     show_admin_details=show_admin_details,
                 ),

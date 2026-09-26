@@ -470,10 +470,10 @@ class ChatCustomHazardMechanismMixin:
             step="custom_hazard_causal_linkage_confirmation",
             bot_message=markdown_to_html(
                 policy_prefix
-                + "## Confirm causal linkage\n\n"
+                + "## Possible factors contributing to the hazard\n\n"
                 f"**Mechanism:** {state.get('selected_mechanism')}\n\n"
                 f"{self._short_linkage_bullets(causal_linkage)}\n\n"
-                "Does this causal linkage correctly connect the mechanism to the hazard?"
+                "Is the described mechanism appropriately connected to the hazard?"
             ),
             options=CUSTOM_HAZARD_CAUSAL_LINKAGE_OPTIONS,
         )
@@ -526,9 +526,7 @@ class ChatCustomHazardMechanismMixin:
             "status": "SUPPORTED",
         }
         state["active_validation_dimension"] = "hazard_definition_fit"
-        state["active_validation_dimensions"] = [
-            "hazard_definition_fit", "selected_sector_fit", "country_region_fit"
-        ]
+        state["active_validation_dimensions"] = ["hazard_definition_fit"]
         state["next_action"] = CustomHazardAction.VALIDATE.value
         state["status"] = CustomHazardStatus.DRAFT.value
         transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
