@@ -300,7 +300,6 @@ def _recover_mitigation_record_details(
             )
             recovered["mitigation_policy_effects"] = details.get("policy_effects") or None
             recovered["mitigation_creation_summary"] = str(details.get("summary") or "") or None
-            recovered["mitigation_inspiration_decision"] = details.get("open_labs_inspiration") or None
             recovered["mitigation_dg_evidence"] = details.get("disadvantaged_group_evidence") or None
             recovered["mitigation_equity"] = str(details.get("equity") or "") or None
     target_population = _json_string_list(row.target_population)

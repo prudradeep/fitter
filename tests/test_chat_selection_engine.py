@@ -534,11 +534,15 @@ class ChatSelectionEngineTests(unittest.TestCase):
 
         self.assertEqual(
             engine._socio_demographic_label_from_open_text("Create mitigation"),
-            "Create Mitigation Measure",
+            "Create a new mitigation proposal",
         )
         self.assertEqual(
             engine._socio_demographic_label_from_open_text("Please create a mitigation measure"),
-            "Create Mitigation Measure",
+            "Create a new mitigation proposal",
+        )
+        self.assertEqual(
+            engine._socio_demographic_label_from_open_text("Modify the existing policy"),
+            "Propose adaptations in the existing policy",
         )
         self.assertEqual(
             engine._socio_demographic_label_from_open_text("add more DGs"),

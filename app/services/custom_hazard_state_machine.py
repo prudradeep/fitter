@@ -361,6 +361,7 @@ CUSTOM_HAZARD_TRANSITIONS: Mapping[ChatPhase, frozenset[ChatPhase]] = MappingPro
         ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT: frozenset(
             {
                 ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
+                ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
                 ChatPhase.CUSTOM_HAZARD_CLARIFICATION,
                 ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION,
                 ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK,

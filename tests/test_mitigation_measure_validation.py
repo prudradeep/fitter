@@ -1364,7 +1364,7 @@ class MitigationMeasureValidationTests(unittest.TestCase):
             engine._handle_mitigation_review(
                 "test-session",
                 session,
-                "Move to next step",
+                "Start evaluation",
             )
         )
 

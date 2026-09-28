@@ -219,13 +219,6 @@ def _measure_creation_lines(index: int, measure: UserMitigationMeasure) -> list[
         f"  Mechanisms mitigated: {_list_text(creation.get('mechanisms') if isinstance(creation.get('mechanisms'), list) else [])}",
         f"  Equity: {_clean(str(creation.get('equity') or '')) or 'Not available'}",
     ]
-    inspiration = creation.get("open_labs_inspiration")
-    if isinstance(inspiration, dict) and inspiration:
-        lines.append(
-            "  Open Labs inspiration: "
-            + _clean(str(inspiration.get("action") or "Reviewed"))
-            + (f" — {_clean(str(inspiration.get('detail')))}" if inspiration.get("detail") else "")
-        )
     payload = _json_object(measure.system_inquiry_json)
     summary = str(payload.get("summary") or "").strip()
     if summary:
@@ -247,7 +240,6 @@ def _measure_card_payload(
         "target_groups": _json_list(measure.target_population),
         "mechanisms": creation.get("mechanisms") or [],
         "equity": str(creation.get("equity") or "").strip(),
-        "open_labs_inspiration": creation.get("open_labs_inspiration") or {},
         "system_inquiry": str(payload.get("summary") or "").strip(),
         "population_venn": _population_venn_payload(profile_rows, measure),
     }

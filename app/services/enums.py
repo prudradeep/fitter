@@ -103,8 +103,6 @@ class ChatPhase(AppStrEnum):
     MITIGATION_MECHANISM_INPUT = "mitigation_mechanism_input"
     MITIGATION_SUMMARY_REVIEW = "mitigation_summary_review"
     MITIGATION_SUMMARY_REVISION = "mitigation_summary_revision"
-    MITIGATION_INSPIRATION_REVIEW = "mitigation_inspiration_review"
-    MITIGATION_INSPIRATION_PARTS = "mitigation_inspiration_parts"
     MITIGATION_DG_REVIEW = "mitigation_dg_review"
     MITIGATION_DG_INPUT = "mitigation_dg_input"
     MITIGATION_DG_EVIDENCE_DECISION = "mitigation_dg_evidence_decision"

@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, text
@@ -79,6 +81,53 @@ PREDICTOR 1. Age
         self.assertEqual(
             rows,
             ["Heating and cooling costs increase", "Higher electricity bills"],
+        )
+
+    def test_hazard_with_mitigation_documents_seed_once_with_requested_metadata(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            documents = root / "kb" / "additional" / "hazards with mitigation"
+            documents.mkdir(parents=True)
+            (documents / "germany.docx").write_bytes(b"not used by mocked extractor")
+
+            with self.engine.begin() as connection:
+                with (
+                    patch.object(reference_data, "PROJECT_ROOT", root),
+                    patch.object(reference_data, "HAZARD_WITH_MITIGATION_DIRECTORY", documents),
+                    patch.object(
+                        reference_data,
+                        "extract_file_chunks",
+                        return_value=[
+                            type("Chunk", (), {"content": "German energy-sector evidence.", "page_number": 2})()
+                        ],
+                    ),
+                ):
+                    reference_data._seed_hazard_with_mitigation_documents(connection)
+                    reference_data._seed_hazard_with_mitigation_documents(connection)
+
+                documents_rows = connection.execute(
+                    text(
+                        "SELECT title, source_type, source_uri, scope FROM knowledge_documents"
+                    )
+                ).mappings().all()
+                chunk_rows = connection.execute(
+                    text("SELECT content, source_type FROM knowledge_chunks")
+                ).mappings().all()
+
+        self.assertEqual(
+            documents_rows,
+            [
+                {
+                    "title": "Hazards with mitigation — Germany",
+                    "source_type": "hazard_with_mitigation",
+                    "source_uri": "kb/additional/hazards with mitigation/germany.docx",
+                    "scope": "main",
+                }
+            ],
+        )
+        self.assertEqual(
+            chunk_rows,
+            [{"content": "German energy-sector evidence.", "source_type": "hazard_with_mitigation"}],
         )
 
 

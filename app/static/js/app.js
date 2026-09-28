@@ -519,7 +519,7 @@ function sectorStageText(session = {}, options = appState.currentOptions) {
     .filter((item) => item.title);
   if (!sectors.length) return stageVisuals.sector.text;
   return sectors
-    .map((item) => `${item.title}: ${String(item.text || "").replace(/^Policy objective:\s*/i, "")}`)
+    .map((item) => `${item.title}: ${String(item.text || "").replace(/^(?:Policy|Sectoral) objective:\s*/i, "")}`)
     .join("\n");
 }
 
@@ -963,12 +963,12 @@ function sectorItemsForSession(session = {}, options = []) {
 
 function sectorPolicyObjective(sector = "") {
   const objectives = {
-    energy: "Policy objective: Transition towards renewable energy",
-    housing: "Policy objective: Adaptation of housing to climate change",
-    "housing built environment": "Policy objective: Adaptation of housing to climate change",
-    transport: "Policy objective: Shift to Sustainable Mobility",
+    energy: "Sectoral objective: Transition towards renewable energy",
+    housing: "Sectoral objective: Adaptation of housing to climate change",
+    "housing built environment": "Sectoral objective: Adaptation of housing to climate change",
+    transport: "Sectoral objective: Shift to Sustainable Mobility",
   };
-  return objectives[normalizeForMatch(sector)] || "Policy objective: Not available";
+  return objectives[normalizeForMatch(sector)] || "Sectoral objective: Not available";
 }
 
 function hazardSummaryItems(session = {}) {
@@ -1889,7 +1889,7 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
       return "Answer all clarification questions...";
     }
     if (step === "mitigation_review") {
-      return "Ask about this mitigation, or move to next step...";
+      return "Ask about this mitigation, or start evaluation...";
     }
     if (step === "custom_hazard_group_review") {
       return "Type a group to remove, or add/edit an affected group...";
@@ -1900,7 +1900,7 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     if (step === "target_population_question" || step === "add_dgs") {
       return "Choose a socio-demographic option...";
     }
-    if (optionLabels.includes("Move to next step")) {
+    if (optionLabels.includes("Start evaluation")) {
       return "Choose one of the options above...";
     }
     return "Select an option above, or type your answer...";
@@ -1921,7 +1921,6 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     mitigation_policy_effect_mitigation: "Describe an additional mitigation for this problem...",
     mitigation_policy_effect_disagreement: "Explain why this problem would not be created...",
     mitigation_summary_revision: "Describe the precise change...",
-    mitigation_inspiration_parts: "Describe the Open Labs elements to adopt...",
     mitigation_dg_input: "Name the specific disadvantaged groups...",
     mitigation_equity: "Explain how the measure is equitable...",
     system_inquiry_observation: "Write your reflection...",
@@ -2064,7 +2063,10 @@ chatLog?.addEventListener("click", (event) => {
     if (evidenceUrl) {
       window.open(evidenceUrl, "_blank", "noopener,noreferrer");
     } else {
-      openHazardEvidenceDialog(evidenceButton.dataset.evidenceText || "Evidence details are unavailable.");
+      openHazardEvidenceDialog(
+        evidenceButton.dataset.evidenceText || "Evidence details are unavailable.",
+        evidenceButton.dataset.sourceTable || "",
+      );
     }
     return;
   }
@@ -2794,6 +2796,8 @@ function applyCollapsibleBubble(bubble) {
 
 function renderValidationDetails(row, details) {
   if (!row || !details || typeof details !== "object") return;
+  // Grounding remains available to the workflow, but is temporarily hidden from chat.
+  if (details.phase === "grounding") return;
   const content = row.querySelector(".bubble-content");
   if (!content) return;
 
@@ -3120,8 +3124,6 @@ function renderSelectedHazardContext(session = {}) {
     "mitigation_mechanism_input",
     "mitigation_summary_review",
     "mitigation_summary_revision",
-    "mitigation_inspiration_review",
-    "mitigation_inspiration_parts",
     "mitigation_dg_review",
     "mitigation_dg_input",
     "mitigation_dg_evidence_decision",
@@ -3905,9 +3907,31 @@ function closePlatformUsersDialog() {
   messageInput?.focus();
 }
 
-function openHazardEvidenceDialog(evidence) {
+function openHazardEvidenceDialog(evidence, sourceTable = "") {
   if (!hazardEvidenceDialog || !hazardEvidenceDialogBody) return;
-  hazardEvidenceDialogBody.textContent = evidence;
+  let rows = [];
+  try {
+    const parsed = JSON.parse(sourceTable);
+    rows = Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    rows = [];
+  }
+  clearElement(hazardEvidenceDialogBody);
+  if (rows.length) {
+    const table = createElement("table", { className: "source-data-table" }, [
+      createElement("thead", {}, [createElement("tr", {}, [
+        createElement("th", { text: "Field", attrs: { scope: "col" } }),
+        createElement("th", { text: "Source data", attrs: { scope: "col" } }),
+      ])]),
+      createElement("tbody", {}, rows.map((row) => createElement("tr", {}, [
+        createElement("th", { text: String(row.field || ""), attrs: { scope: "row" } }),
+        createElement("td", { text: String(row.value || "") }),
+      ]))),
+    ]);
+    hazardEvidenceDialogBody.appendChild(table);
+  } else {
+    hazardEvidenceDialogBody.textContent = evidence;
+  }
   if (typeof hazardEvidenceDialog.showModal === "function") {
     if (!hazardEvidenceDialog.open) hazardEvidenceDialog.showModal();
   } else {

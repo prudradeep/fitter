@@ -136,7 +136,7 @@ class ChatNavigationStepsMixin:
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
-                bot_message=render_message("add_hazard.md", sector=session.sector),
+                bot_message=render_message("add_hazard.md", selected_policy=session.selected_context_policy),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
                 error=False,
@@ -170,7 +170,7 @@ class ChatNavigationStepsMixin:
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
-                bot_message=render_message("add_hazard.md", sector=session.sector),
+                bot_message=render_message("add_hazard.md", selected_policy=session.selected_context_policy),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
                 error=False,
@@ -185,12 +185,12 @@ class ChatNavigationStepsMixin:
             session.mitigation_measure = None
             session.mitigation_reason = None
             session.mitigation_target_population = None
+            session.pending_mitigation_mechanism_suggestions = None
             session.mitigation_mechanisms = None
             session.mitigation_mechanism_reflection = None
             session.mitigation_policy_effects = None
             session.mitigation_policy_effect_index = 0
             session.mitigation_creation_summary = None
-            session.mitigation_inspiration_decision = None
             session.mitigation_dg_evidence = None
             session.mitigation_dg_evidence_index = 0
             session.mitigation_equity = None
@@ -315,12 +315,12 @@ class ChatNavigationStepsMixin:
         session.pending_mitigation_policy_context = None
         session.pending_mitigation_policy_document_ids = None
         session.mitigation_mechanism_guidance = None
+        session.pending_mitigation_mechanism_suggestions = None
         session.mitigation_mechanisms = None
         session.mitigation_mechanism_reflection = None
         session.mitigation_policy_effects = None
         session.mitigation_policy_effect_index = 0
         session.mitigation_creation_summary = None
-        session.mitigation_inspiration_decision = None
         session.mitigation_dg_evidence = None
         session.mitigation_dg_evidence_index = 0
         session.mitigation_equity = None
@@ -431,6 +431,7 @@ class ChatNavigationStepsMixin:
                 "reranker": self.grounding_models.reranker_status,
                 "entailment": self.grounding_models.nli_status,
                 "evidence_contradiction": validation.get("evidence_contradiction"),
+                "validation_error": validation.get("validation_failure_reason"),
             },
             "reason": str(validation.get("reason") or "").strip(),
         }
@@ -868,9 +869,9 @@ class ChatNavigationStepsMixin:
                 "Clarify the relevance", "Provide policy again"
             ),
             "mitigation_mechanism_reflection_review": self._guided_options(
-                "Confirm reflection", "Clarify reflection"
+                "Confirm reflection", "Modify reflection"
             ),
-            "mitigation_policy_effect_review": self._guided_options("Yes", "No"),
+            "mitigation_policy_effect_review": self._guided_options("Yes", "No", "Skip"),
             "mitigation_mechanism_confirmation": self._guided_options(
                 "Confirm mechanisms", "Provide different mechanisms"
             ),
@@ -878,7 +879,12 @@ class ChatNavigationStepsMixin:
                 "Confirm summary", "Modify summary inputs"
             ),
             "mitigation_dg_review": self._guided_options(
-                "Confirm disadvantaged groups", "Provide different groups"
+                "Confirm disadvantaged groups",
+                "Add disadvantaged group",
+                "Remove disadvantaged group",
+            ),
+            "mitigation_dg_input": self._guided_options(
+                "Back to suggested disadvantaged groups"
             ),
             "mitigation_dg_evidence_decision": self._guided_options(
                 "Yes, add DG evidence", "No DG evidence"
@@ -924,25 +930,6 @@ class ChatNavigationStepsMixin:
                 options=[],
                 session=session.summary(),
                 input_mode="policy_reference",
-                error=error,
-            )
-
-        if session.phase == "mitigation_inspiration_review":
-            candidates = self._guided_open_labs_candidates(session)
-            usable_count = len(candidates) + (
-                1 if session.suggested_existing_policy_modification else 0
-            )
-            labels = [
-                f"Use inspiration {index} fully"
-                for index in range(1, usable_count + 1)
-            ]
-            labels.extend(["Adopt selected parts", "Discard inspirations"])
-            return ChatResponse(
-                session_id=session_id,
-                step=session.phase,
-                bot_message=message,
-                options=self._guided_options(*labels),
-                session=session.summary(),
                 error=error,
             )
 

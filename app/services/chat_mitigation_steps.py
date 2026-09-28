@@ -46,18 +46,35 @@ class ChatMitigationStepsMixin:
             }
         ):
             session.mitigation_target_population = None
-        mechanism_step = getattr(self, "_mitigation_mechanism_selection_step", None)
-        if mechanism_step is not None:
-            return await mechanism_step(session_id, session)
-
-        session.phase = "reason_confirmation"
-        recommendations = await self._practical_policy_recommendations(session)
+        session.phase = "mitigation_measure"
+        factsheet_reference = ""
+        factsheet_provider = getattr(self, "_hazard_with_mitigation_factsheet_reference", None)
+        if factsheet_provider is not None:
+            factsheet_reference = str(factsheet_provider(session) or "")
+        main_kb_reference = ""
+        main_kb_provider = getattr(self, "_hazard_with_mitigation_main_kb_reference", None)
+        if main_kb_provider is not None:
+            main_kb_reference = str(await main_kb_provider(session) or "")
+        prompt = render_message(
+            "mitigation_measure_reason.md",
+            hazard=session.selected_hazard or "the selected hazard",
+            country=session.country or "Not selected",
+            region=session.region or "Not selected",
+            sector=session.sector or "Not selected",
+            selected_policy=session.selected_mitigation_policy or session.selected_context_policy or "",
+            dgs=format_all_dgs(session),
+            mitigation_examples=self._mitigation_measure_examples(session.sector_id),
+        )
         return ChatResponse(
             session_id=session_id,
-            step="reason_confirmation",
-            bot_message=(markdown_to_html(recommendations) + "\n" + render_message("reason_confirmation.md")),
-            options=REASON_CONFIRMATION_OPTIONS,
+            step="mitigation_measure",
+            bot_message=(
+                markdown_to_html("\n\n".join(value for value in (factsheet_reference, main_kb_reference) if value))
+                + prompt
+            ),
+            options=[],
             session=session.summary(),
+            input_mode="mitigation_measure",
             error=False,
         )
 

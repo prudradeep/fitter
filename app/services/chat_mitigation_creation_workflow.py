@@ -660,7 +660,7 @@ class ChatMitigationCreationWorkflowMixin:
         action = normalize(exact_label or open_action or message)
         mitigation_measure = session.pending_mitigation_measure or session.mitigation_measure or ""
         reason = session.pending_mitigation_reason or session.mitigation_reason or ""
-        if not mitigation_measure or not reason:
+        if not mitigation_measure:
             return self._mitigation_initial_clarification_step(
                 session_id,
                 session,
@@ -680,8 +680,8 @@ class ChatMitigationCreationWorkflowMixin:
                     ),
                 )
             session.mitigation_evidence_declined = False
-            if session.mitigation_mechanisms:
-                return await self._guided_after_evidence(
+            if session.mitigation_mechanisms or session.pending_mitigation_mechanism_suggestions is not None:
+                return await self._continue_after_mitigation_evidence(
                     session_id, session, evidence_text
                 )
             return await self._validate_frozen_mitigation_inputs(
@@ -697,8 +697,8 @@ class ChatMitigationCreationWorkflowMixin:
         if action == normalize("No"):
             session.mitigation_evidence_declined = True
             session.pending_mitigation_evidence = ""
-            if session.mitigation_mechanisms:
-                return await self._guided_after_evidence(session_id, session, "")
+            if session.mitigation_mechanisms or session.pending_mitigation_mechanism_suggestions is not None:
+                return await self._continue_after_mitigation_evidence(session_id, session, "")
             return await self._validate_frozen_mitigation_inputs(
                 session_id,
                 session,
@@ -762,7 +762,7 @@ class ChatMitigationCreationWorkflowMixin:
 
         mitigation_measure = session.pending_mitigation_measure or session.mitigation_measure or ""
         reason = session.pending_mitigation_reason or session.mitigation_reason or ""
-        if not mitigation_measure or not reason:
+        if not mitigation_measure:
             return self._mitigation_initial_clarification_step(
                 session_id,
                 session,
@@ -792,8 +792,8 @@ class ChatMitigationCreationWorkflowMixin:
                     ),
                 )
             session.mitigation_evidence_declined = False
-        if session.mitigation_mechanisms:
-            return await self._guided_after_evidence(
+        if session.mitigation_mechanisms or session.pending_mitigation_mechanism_suggestions is not None:
+            return await self._continue_after_mitigation_evidence(
                 session_id, session, evidence_text
             )
         return await self._validate_frozen_mitigation_inputs(
@@ -803,6 +803,24 @@ class ChatMitigationCreationWorkflowMixin:
             reason,
             evidence_text,
         )
+
+    async def _continue_after_mitigation_evidence(
+        self,
+        session_id: str,
+        session: ChatSession,
+        evidence_text: str,
+    ) -> ChatResponse:
+        """Resume the guided flow after evidence collected before mechanism review."""
+        session.pending_mitigation_evidence = evidence_text
+        suggestions = session.pending_mitigation_mechanism_suggestions
+        if suggestions is not None:
+            session.pending_mitigation_mechanism_suggestions = None
+            return await self._mitigation_mechanism_confirmation_step(
+                session_id,
+                session,
+                list(suggestions),
+            )
+        return await self._guided_after_evidence(session_id, session, evidence_text)
 
     def _mitigation_target_population_clarification_step(
         self,
@@ -1768,8 +1786,6 @@ class ChatMitigationCreationWorkflowMixin:
             "mitigation_measure_validated",
             session.mitigation_measure or "",
         )
-        if session.mitigation_equity or session.mitigation_equity_skipped:
-            return self._start_evaluation_questions(session_id, session)
         return await self._mitigation_review_step(session_id, session)
 
     def _mitigation_target_population_labels(self, session: ChatSession) -> list[str]:

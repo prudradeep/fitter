@@ -22,6 +22,22 @@ class MitigationGuidedFlowTests(unittest.TestCase):
             selected_hazard="Low-income households lose access to affordable heat",
         )
 
+    def test_clarification_refers_to_the_mitigation_measure_not_policy(self):
+        response = self.service._guided_clarification_response(
+            "session-1",
+            self.session,
+            "mitigation_mechanism_input",
+            {
+                "clarification_question": (
+                    "Please clarify what specific economic outcome (e.g., utility bills, "
+                    "energy expenses) this policy is intended to reduce."
+                )
+            },
+        )
+
+        self.assertIn("this mitigation measure is intended to reduce", response.bot_message)
+        self.assertNotIn("this policy is intended to reduce", response.bot_message)
+
     def test_mechanism_first_step_shows_general_guidance_and_selectable_mechanisms(self):
         self.service._practical_policy_recommendations = AsyncMock(
             return_value="## General considerations\n\n- Protect affordability."
@@ -392,6 +408,23 @@ class MitigationGuidedFlowTests(unittest.TestCase):
             return_value=({"relevant": True, "reason": "Relevant"}, [])
         )
 
+        response = run(
+            self.service._start_guided_mitigation_flow(
+                "session-1",
+                self.session,
+                "Provide advance means-tested retrofit grants",
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_evidence_decision")
+        self.assertEqual(
+            self.session.mitigation_mechanisms,
+            ["Up-front retrofit costs exclude low-income households"],
+        )
+        self.assertEqual(
+            self.session.pending_mitigation_reason,
+            "Compliance costs arrive before household support.",
+        )
         with patch(
             "app.services.chat_mitigation_creation_guided.ask_llm_chat",
             new=AsyncMock(
@@ -401,22 +434,9 @@ class MitigationGuidedFlowTests(unittest.TestCase):
             ),
         ):
             response = run(
-                self.service._start_guided_mitigation_flow(
-                    "session-1",
-                    self.session,
-                    "Provide advance means-tested retrofit grants",
-                )
+                self.service._handle_mitigation_evidence_decision("session-1", self.session, "No")
             )
-
         self.assertEqual(response.step, "mitigation_mechanism_reflection_review")
-        self.assertEqual(
-            self.session.mitigation_mechanisms,
-            ["Up-front retrofit costs exclude low-income households"],
-        )
-        self.assertEqual(
-            self.session.pending_mitigation_reason,
-            "Compliance costs arrive before household support.",
-        )
 
     def test_confirmed_flow_reaches_self_evaluation_after_equity(self):
         mechanism_result = (
@@ -434,7 +454,7 @@ class MitigationGuidedFlowTests(unittest.TestCase):
                     "Provide means-tested grants for home insulation",
                 )
             )
-        self.assertEqual(response.step, "mitigation_mechanism_confirmation")
+        self.assertEqual(response.step, "mitigation_evidence_decision")
 
         with patch(
             "app.services.chat_mitigation_creation_guided.ask_llm_chat",
@@ -442,56 +462,54 @@ class MitigationGuidedFlowTests(unittest.TestCase):
                 return_value=(
                     '{"reflection":"Means-tested grants remove the cost barrier."}'
                 )
-            ),
+            )
         ):
             response = run(
-                self.service._handle_mitigation_mechanism_confirmation(
-                    "session-1", self.session, "Confirm mechanisms"
-                )
+                self.service._handle_mitigation_evidence_decision("session-1", self.session, "No")
             )
+        self.assertEqual(response.step, "mitigation_mechanism_confirmation")
+
+        response = run(
+            self.service._handle_mitigation_mechanism_confirmation(
+                "session-1", self.session, "Confirm mechanisms"
+            )
+        )
         self.assertEqual(response.step, "mitigation_mechanism_reflection_review")
 
+        self.service._identify_mitigation_policy_effects = AsyncMock(return_value=[])
         response = run(
             self.service._handle_mitigation_mechanism_reflection_review(
                 "session-1", self.session, "Confirm reflection"
             )
         )
-        self.assertEqual(response.step, "mitigation_evidence_decision")
-
-        self.service._identify_mitigation_policy_effects = AsyncMock(return_value=[])
-        response = run(
-            self.service._handle_mitigation_evidence_decision("session-1", self.session, "No")
-        )
         self.assertEqual(response.step, "mitigation_summary_review")
         self.assertIn("Up-front retrofit costs", response.bot_message)
 
+        self.service._mitigation_target_population_labels = MagicMock(
+            return_value=["Low-income households"]
+        )
+        self.session.hazard_profiles = {
+            self.session.selected_hazard: [
+                {
+                    "name": "Households with limited income",
+                    "target_population_labels": ["Low-income households"],
+                    "explanation": "Low-income households have limited capacity to absorb high energy costs.",
+                }
+            ]
+        }
         response = run(
             self.service._handle_mitigation_summary_review(
                 "session-1", self.session, "Confirm summary"
             )
         )
-        self.assertEqual(response.step, "mitigation_inspiration_review")
-
-        self.service._mitigation_target_population_labels = MagicMock(
-            return_value=["Low-income households"]
-        )
-        response = run(
-            self.service._handle_mitigation_inspiration_review(
-                "session-1", self.session, "Discard inspirations"
-            )
-        )
         self.assertEqual(response.step, "mitigation_dg_review")
+        self.assertIn("Low-income households:", response.bot_message)
+        self.assertIn("limited capacity to absorb high energy costs", response.bot_message)
+        self.assertNotIn("Provide means-tested grants", response.bot_message)
 
         response = run(
             self.service._handle_mitigation_dg_review(
                 "session-1", self.session, "Confirm disadvantaged groups"
-            )
-        )
-        self.assertEqual(response.step, "mitigation_dg_evidence_decision")
-
-        response = run(
-            self.service._handle_mitigation_dg_evidence_decision(
-                "session-1", self.session, "No DG evidence"
             )
         )
         self.assertEqual(response.step, "mitigation_dg_summary_review")
@@ -501,47 +519,24 @@ class MitigationGuidedFlowTests(unittest.TestCase):
                 "session-1", self.session, "Confirm DG summary"
             )
         )
-        self.assertEqual(response.step, "mitigation_equity")
-        self.assertIn(
-            "How is the proposed mitigation measure equitable for the different disadvantaged groups?",
-            response.bot_message,
-        )
-        self.assertEqual([option.label for option in response.options], ["Skip this"])
-
-        clarity_result = (
-            '{"clear": true, "normalized_text": '
-            '"Means testing removes up-front costs for low-income households", '
-            '"clarification_question": ""}'
-        )
-        with patch(
-            "app.services.chat_mitigation_creation_guided.ask_llm_chat",
-            new=AsyncMock(return_value=clarity_result),
-        ):
-            response = run(
-                self.service._handle_mitigation_equity(
-                    "session-1",
-                    self.session,
-                    "Means testing removes up-front costs for low-income households",
-                )
-            )
         self.assertEqual(response.step, "mitigation_final_summary_review")
 
         expected = ChatResponse(
             session_id="session-1",
-            step="evaluation_question",
-            bot_message="Self evaluation",
+            step="mitigation_review",
+            bot_message="Final summary with Venn diagram",
             options=[],
             session=self.session.summary(),
             error=False,
         )
-        self.service._validate_frozen_mitigation_inputs = AsyncMock(return_value=expected)
+        self.service._finalize_validated_mitigation = AsyncMock(return_value=expected)
         response = run(
             self.service._handle_mitigation_final_summary_review(
                 "session-1", self.session, "Confirm final summary"
             )
         )
-        self.assertEqual(response.step, "evaluation_question")
-        self.service._validate_frozen_mitigation_inputs.assert_awaited_once()
+        self.assertEqual(response.step, "mitigation_review")
+        self.service._finalize_validated_mitigation.assert_awaited_once()
 
     def test_disadvantaged_groups_come_from_selected_hazard_profiles(self):
         self.session.pending_mitigation_measure = "Upgrade local grid infrastructure"
@@ -703,6 +698,34 @@ class MitigationGuidedFlowTests(unittest.TestCase):
         )
         self.assertIn("Other policy effects reviewed", response.bot_message)
 
+    def test_skipped_policy_effect_advances_to_the_next_effect(self):
+        self.session.mitigation_policy_effects = [
+            {
+                "problem": "First potential problem",
+                "user_position": "pending",
+                "additional_mitigation": "",
+                "disagreement_reason": "",
+            },
+            {
+                "problem": "Second potential problem",
+                "user_position": "pending",
+                "additional_mitigation": "",
+                "disagreement_reason": "",
+            },
+        ]
+        self.session.mitigation_policy_effect_index = 0
+
+        response = run(
+            self.service._handle_mitigation_policy_effect_review(
+                "session-1", self.session, "Skip"
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_policy_effect_review")
+        self.assertEqual(self.session.mitigation_policy_effect_index, 1)
+        self.assertEqual(self.session.mitigation_policy_effects[0]["user_position"], "skipped")
+        self.assertIn("Second potential problem", response.bot_message)
+
     def test_disagreed_policy_effect_requires_specific_reason_with_unlimited_clarification(self):
         self.session.mitigation_policy_effects = [
             {
@@ -755,19 +778,82 @@ class MitigationGuidedFlowTests(unittest.TestCase):
                 self.assertFalse(response.error)
         self.assertEqual(self.session.phase, "mitigation_mechanism_input")
 
-    def test_open_labs_candidates_include_proposals_and_adjustments(self):
-        self.service._ranked_new_policy_suggestions = lambda session, limit: [
-            {"policy_title": "New A", "policy_type": "New policy proposal"},
-            {"policy_title": "New B", "policy_type": "New policy proposal"},
-            {"policy_title": "Adjust A", "policy_type": "Adjustment to existing policy"},
-        ]
-
-        candidates = self.service._guided_open_labs_candidates(self.session)
-
-        self.assertEqual(
-            [candidate["policy_title"] for candidate in candidates],
-            ["New A", "New B", "Adjust A"],
+    def test_clarified_mechanism_is_shown_for_confirmation_again(self):
+        self.session.phase = "mitigation_mechanism_input"
+        self.session.pending_mitigation_measure = "Provide targeted energy-cost support"
+        self.service._guided_text_review = AsyncMock(
+            return_value={
+                "clear": True,
+                "normalized_text": "High energy costs create utility arrears",
+            }
         )
+        self.service._mitigation_mechanism_explanations = AsyncMock(
+            return_value=["The support reduces the arrears caused by high energy costs."]
+        )
+
+        response = run(
+            self.service._handle_mitigation_mechanism_input(
+                "session-1",
+                self.session,
+                "High energy costs create utility arrears",
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_mechanism_confirmation")
+        self.assertIn("High energy costs create utility arrears", response.bot_message)
+        self.assertIn("Confirm mechanisms", [option.label for option in response.options])
+
+    def test_providing_different_mechanisms_returns_updated_confirmation(self):
+        self.session.phase = "mitigation_mechanism_confirmation"
+        self.session.mitigation_mechanisms = ["Original mechanism"]
+        self.session.pending_mitigation_measure = "Provide targeted energy-cost support"
+
+        response = run(
+            self.service._handle_mitigation_mechanism_confirmation(
+                "session-1", self.session, "Provide different mechanisms"
+            )
+        )
+        self.assertEqual(response.step, "mitigation_mechanism_input")
+
+        self.service._guided_text_review = AsyncMock(
+            return_value={
+                "clear": True,
+                "normalized_text": "Unaffordable tariffs create utility arrears",
+            }
+        )
+        self.service._mitigation_mechanism_explanations = AsyncMock(
+            return_value=["The support makes tariffs more affordable before arrears build up."]
+        )
+        response = run(
+            self.service._handle_mitigation_mechanism_input(
+                "session-1",
+                self.session,
+                "Unaffordable tariffs create utility arrears",
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_mechanism_confirmation")
+        self.assertIn("Unaffordable tariffs create utility arrears", response.bot_message)
+        self.assertIn("Confirm mechanisms", [option.label for option in response.options])
+
+    def test_skipping_optional_measure_evidence_moves_to_mechanism_confirmation(self):
+        self.session.phase = "mitigation_evidence_input"
+        self.session.pending_mitigation_measure = "Provide targeted energy-cost support"
+        self.session.pending_mitigation_reason = "Reduce unaffordable energy bills"
+        self.session.pending_mitigation_mechanism_suggestions = [
+            "Unaffordable tariffs create utility arrears"
+        ]
+        self.service._mitigation_mechanism_explanations = AsyncMock(
+            return_value=["The support makes energy bills affordable before arrears build up."]
+        )
+
+        response = run(
+            self.service._capture_mitigation_evidence("session-1", self.session, "Skip")
+        )
+
+        self.assertTrue(self.session.mitigation_evidence_declined)
+        self.assertEqual(response.step, "mitigation_mechanism_confirmation")
+        self.assertIn("Confirm mechanisms", [option.label for option in response.options])
 
     def test_invalid_confirmation_stays_on_guided_step(self):
         self.session.phase = "mitigation_mechanism_confirmation"
@@ -782,7 +868,151 @@ class MitigationGuidedFlowTests(unittest.TestCase):
         self.assertEqual(response.step, "mitigation_mechanism_confirmation")
         self.assertTrue(response.error)
 
-    def test_confirmed_equity_bypasses_legacy_review_and_starts_self_evaluation(self):
+    def test_mechanism_confirmation_explains_how_each_mechanism_is_mitigated(self):
+        self.session.pending_mitigation_measure = "Provide targeted energy-cost support"
+        self.service._mitigation_mechanism_explanations = AsyncMock(
+            return_value=["The support reduces the arrears that trigger service disconnection."]
+        )
+
+        response = run(
+            self.service._mitigation_mechanism_confirmation_step(
+                "session-1", self.session, ["Utility arrears lead to disconnection"]
+            )
+        )
+
+        self.assertIn("Utility arrears lead to disconnection:", response.bot_message)
+        self.assertIn("reduces the arrears", response.bot_message)
+
+    def test_mechanism_reflection_removes_causal_wording(self):
+        self.session.mitigation_mechanisms = ["High energy costs create arrears"]
+        self.session.pending_mitigation_measure = "Provide targeted support"
+
+        with patch(
+            "app.services.chat_mitigation_creation_guided.ask_llm_chat",
+            new=AsyncMock(
+                return_value='{"reflection":"The measure changes the causal mechanism directly."}'
+            ),
+        ):
+            response = run(
+                self.service._mitigation_mechanism_reflection_step(
+                    "session-1", self.session
+                )
+            )
+
+        self.assertNotIn("causal", response.bot_message.casefold())
+        self.assertIn("mechanism directly", response.bot_message)
+
+    def test_reflection_clarification_can_confirm_suggestion_or_return_to_mechanisms(self):
+        self.session.mitigation_mechanisms = ["High energy costs create arrears"]
+        self.session.pending_mitigation_measure = "Provide targeted support"
+        self.session.phase = "mitigation_mechanism_reflection_review"
+
+        response = run(
+            self.service._handle_mitigation_mechanism_reflection_review(
+                "session-1", self.session, "Modify reflection"
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_mechanism_reflection_input")
+        self.assertEqual(
+            [option.label for option in response.options],
+            ["Confirm suggested reflection", "Back to mechanisms"],
+        )
+        expected = ChatResponse(
+            session_id="session-1",
+            step="mitigation_summary_review",
+            bot_message="Next step",
+            options=[],
+            session=self.session.summary(),
+            error=False,
+        )
+        self.service._start_mitigation_policy_effect_review = AsyncMock(return_value=expected)
+
+        response = run(
+            self.service._handle_mitigation_mechanism_reflection_input(
+                "session-1", self.session, "Confirm suggested reflection"
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_summary_review")
+        self.service._start_mitigation_policy_effect_review.assert_awaited_once()
+
+    def test_clarified_reflection_is_shown_for_confirmation_again(self):
+        self.session.phase = "mitigation_mechanism_reflection_input"
+        self.session.mitigation_mechanisms = ["High energy costs create arrears"]
+        self.session.pending_mitigation_measure = "Provide targeted support"
+        self.service._guided_text_review = AsyncMock(
+            return_value={
+                "clear": True,
+                "normalized_text": "The support prevents arrears by making essential energy bills affordable.",
+            }
+        )
+
+        response = run(
+            self.service._handle_mitigation_mechanism_reflection_input(
+                "session-1",
+                self.session,
+                "The support prevents arrears by making essential energy bills affordable.",
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_mechanism_reflection_review")
+        self.assertIn("prevents arrears", response.bot_message)
+        self.assertIn("Confirm reflection", [option.label for option in response.options])
+
+    def test_dg_input_can_return_to_suggested_groups(self):
+        self.session.phase = "mitigation_dg_input"
+        self.session.mitigation_revision_stage = "add_dg"
+        self.session.mitigation_target_population = ["Low-income households"]
+        expected = ChatResponse(
+            session_id="session-1",
+            step="mitigation_dg_review",
+            bot_message="Suggested disadvantaged groups benefited",
+            options=[],
+            session=self.session.summary(),
+            error=False,
+        )
+        self.service._guided_dg_suggestion_step = AsyncMock(return_value=expected)
+
+        response = run(
+            self.service._handle_mitigation_dg_input(
+                "session-1", self.session, "Back to suggested disadvantaged groups"
+            )
+        )
+
+        self.assertIs(response, expected)
+        self.assertIsNone(self.session.mitigation_revision_stage)
+        self.service._guided_dg_suggestion_step.assert_awaited_once_with(
+            "session-1", self.session
+        )
+
+    def test_added_disadvantaged_group_without_kb_evidence_prompts_for_optional_evidence(self):
+        self.session.phase = "mitigation_dg_input"
+        self.session.mitigation_revision_stage = "add_dg"
+        self.session.mitigation_target_population = ["Low-income households"]
+        self.service._guided_text_review = AsyncMock(
+            return_value={"clear": True, "normalized_text": "Older tenants"}
+        )
+        self.service._validate_added_mitigation_dg = AsyncMock(
+            return_value={
+                "clear": True,
+                "relevant": True,
+                "normalized_group": "Older tenants",
+            }
+        )
+        self.service._added_dg_kb_evidence = AsyncMock(return_value="")
+
+        response = run(
+            self.service._handle_mitigation_dg_input(
+                "session-1", self.session, "Older tenants"
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_dg_evidence_decision")
+        self.assertIn("No knowledge-base evidence was found", response.bot_message)
+        self.assertIn("Older tenants", self.session.mitigation_target_population)
+
+    def test_confirmed_equity_shows_final_review_before_self_evaluation(self):
         self.session.mitigation_measure = "Means-tested insulation grants"
         self.session.mitigation_reason = "Reduces up-front retrofit cost exclusion"
         self.session.mitigation_target_population = ["Low-income households"]
@@ -801,20 +1031,20 @@ class MitigationGuidedFlowTests(unittest.TestCase):
         self.service._record_activity = MagicMock()
         expected = ChatResponse(
             session_id="session-1",
-            step="evaluation_question",
-            bot_message="Self evaluation",
+            step="mitigation_review",
+            bot_message="Final summary with Venn diagram",
             options=[],
             session=self.session.summary(),
             error=False,
         )
-        self.service._start_evaluation_questions = MagicMock(return_value=expected)
-        self.service._mitigation_review_step = AsyncMock()
+        self.service._start_evaluation_questions = MagicMock()
+        self.service._mitigation_review_step = AsyncMock(return_value=expected)
 
         response = run(self.service._finalize_validated_mitigation("session-1", self.session))
 
-        self.assertEqual(response.step, "evaluation_question")
-        self.service._start_evaluation_questions.assert_called_once()
-        self.service._mitigation_review_step.assert_not_awaited()
+        self.assertEqual(response.step, "mitigation_review")
+        self.service._start_evaluation_questions.assert_not_called()
+        self.service._mitigation_review_step.assert_awaited_once_with("session-1", self.session)
 
 
 if __name__ == "__main__":

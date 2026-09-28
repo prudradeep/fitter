@@ -14,6 +14,7 @@ from app.db.versioned_migrations import apply_versioned_migrations
 from app.db.sqlite_migrations import apply_sqlite_migrations
 from app.seed.reference_data import (
     ensure_additional_hazards,
+    ensure_hazard_with_mitigation_knowledge,
     ensure_mitigation_measure_examples,
     ensure_system_hazards_from_sector_prompts,
     _ensure_hazards_xlsx_policy_system_hazards,
@@ -671,6 +672,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
             ensure_additional_hazards()
             ensure_system_hazards_from_sector_prompts()
             ensure_mitigation_measure_examples()
+            ensure_hazard_with_mitigation_knowledge()
 
         with engine.begin() as connection:
             _ensure_hazards_xlsx_policy_system_hazards(connection)
@@ -1641,6 +1643,7 @@ def run_runtime_migrations(
             ensure_additional_hazards()
             ensure_system_hazards_from_sector_prompts()
             ensure_mitigation_measure_examples()
+            ensure_hazard_with_mitigation_knowledge()
 
         logger.info(
             "SQLite client database schema initialized%s",
@@ -1656,6 +1659,7 @@ def run_runtime_migrations(
         ensure_additional_hazards()
         ensure_system_hazards_from_sector_prompts()
         ensure_mitigation_measure_examples()
+        ensure_hazard_with_mitigation_knowledge()
         with engine.begin() as connection:
             _ensure_hazards_xlsx_policy_system_hazards(connection)
     logger.info("Runtime database migrations applied")

@@ -222,7 +222,7 @@ class ChatCustomHazardGroundingMixin:
                 session_id=session_id,
                 session=session,
                 step="custom_hazard_input",
-                bot_message=render_message("add_hazard.md", sector=session.sector),
+                bot_message=render_message("add_hazard.md", selected_policy=session.selected_context_policy),
                 options=HAZARD_ENTRY_OPTIONS,
                 input_mode="textarea",
                 error=True,
@@ -1135,7 +1135,7 @@ class ChatCustomHazardGroundingMixin:
         labels = {
             "hazard_definition_fit": "Hazard definition",
             "mechanism_fit": "Mechanism Fit",
-            "policy_objective_fit": "Policy Objective Fit",
+            "policy_objective_fit": "Sectoral Objective Fit",
             "affected_groups_fit": "Affected population groups",
         }
         core_dimensions = (

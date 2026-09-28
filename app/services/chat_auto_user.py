@@ -135,5 +135,5 @@ class ChatAutoUserMixin:
                 "funding and monitoring to reach every affected group."
             )
         if input_mode == "mitigation_review":
-            return "Move to next step"
+            return "Start evaluation"
         return ""

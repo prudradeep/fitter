@@ -49,7 +49,7 @@ CRITICAL_DIMENSIONS = (
 )
 
 DIMENSION_TITLES = {
-    CustomHazardDimension.POLICY_OBJECTIVE_FIT.value: "Policy Objective Fit",
+    CustomHazardDimension.POLICY_OBJECTIVE_FIT.value: "Sectoral Objective Fit",
     CustomHazardDimension.MECHANISM_FIT.value: "Mechanism Fit",
     CustomHazardDimension.HAZARD_DEFINITION_FIT.value: "Hazard definition",
     CustomHazardDimension.AFFECTED_GROUPS_FIT.value: "Affected population groups",

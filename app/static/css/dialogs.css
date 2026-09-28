@@ -62,6 +62,30 @@
   overflow-wrap: anywhere;
 }
 
+.source-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.source-data-table th,
+.source-data-table td {
+  border: 1px solid #dbe4ee;
+  padding: 9px 10px;
+  vertical-align: top;
+}
+
+.source-data-table thead th {
+  background: #f0fdf4;
+  color: #14532d;
+}
+
+.source-data-table tbody th {
+  width: 36%;
+  background: #f8fafc;
+  color: #334155;
+}
+
 .metric-data-dialog {
   width: min(560px, calc(100vw - 32px));
   max-height: min(720px, calc(100vh - 32px));

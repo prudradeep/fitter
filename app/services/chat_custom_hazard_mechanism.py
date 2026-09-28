@@ -5,6 +5,7 @@ from app.llm import ask_llm_chat
 from app.services.chat_options import (
     CUSTOM_HAZARD_CAUSAL_LINKAGE_OPTIONS,
     CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS,
+    CUSTOM_HAZARD_MECHANISM_INPUT_OPTIONS,
     CUSTOM_HAZARD_POLICY_DETAILS_CONFIRMATION_OPTIONS,
     HAZARD_ENTRY_OPTIONS,
     exact_option_label,
@@ -70,6 +71,14 @@ class ChatCustomHazardMechanismMixin:
         )
         state["ai_reflection"] = reflection
         evidence_notice = str(state.pop("evidence_relationship_notice", "") or "").strip()
+        return self._custom_hazard_mechanism_confirmation_step(
+            session_id, session, evidence_notice=evidence_notice
+        )
+
+    def _custom_hazard_mechanism_confirmation_step(
+        self, session_id: str, session, *, evidence_notice: str = ""
+    ) -> ChatResponse:
+        state = self._custom_hazard_state(session)
         evidence_prefix = f"{evidence_notice}\n\n" if evidence_notice else ""
         objective = (state.get("dimension_scores") or {}).get("policy_objective_fit", {})
         objective_reason = (
@@ -79,7 +88,7 @@ class ChatCustomHazardMechanismMixin:
         )
         objective_score = objective.get("score") if isinstance(objective, dict) else None
         objective_prefix = (
-            "## Policy Objective Fit\n\n"
+            "## Sectoral Objective Fit\n\n"
             "**Supported**"
             + (f" (score: {objective_score}/10)" if objective_score is not None else "")
             + f"\n\n{objective_reason or 'The hazard is compatible with the selected policy objective.'}\n\n"
@@ -92,7 +101,7 @@ class ChatCustomHazardMechanismMixin:
                 evidence_prefix
                 + objective_prefix
                 + "## AI reflection\n\n"
-                f"{reflection}\n\n"
+                f"{state.get('ai_reflection') or ''}\n\n"
                 "Does this reflection accurately represent the information you provided?"
             ),
             options=CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS,
@@ -138,6 +147,9 @@ class ChatCustomHazardMechanismMixin:
             label = match_option_label(message, CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS)
         action = normalize(label or message)
         if action == normalize("No, provide a mechanism") or action == normalize("No"):
+            self._custom_hazard_state(session)["mechanism_input_exit_target"] = (
+                "sectoral_objective_fit"
+            )
             return self._custom_hazard_mechanism_input_step(session_id, session)
         if action != normalize("Yes"):
             return await self._custom_hazard_mechanism_suggestion_step(session_id, session)
@@ -297,13 +309,25 @@ class ChatCustomHazardMechanismMixin:
             session=session,
             step="custom_hazard_mechanism_input",
             bot_message=markdown_to_html(message),
-            options=HAZARD_ENTRY_OPTIONS,
+            options=CUSTOM_HAZARD_MECHANISM_INPUT_OPTIONS,
             input_mode="textarea",
         )
 
     async def _handle_custom_hazard_mechanism_input(
         self, session_id: str, session, message: str
     ) -> ChatResponse:
+        if normalize(message) == normalize("Exit from this step"):
+            state = self._custom_hazard_state(session)
+            if state.get("mechanism_input_exit_target") == "sectoral_objective_fit":
+                transition_custom_hazard(
+                    session, ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION
+                )
+                return self._custom_hazard_mechanism_confirmation_step(session_id, session)
+            return self._custom_hazard_causal_linkage_step(
+                session_id,
+                session,
+                {"causal_linkage": state.get("mechanism_causal_linkage") or ""},
+            )
         if normalize(message) == normalize("Go back to list of hazards"):
             self._discard_temporary_policy_references(session)
             session.custom_hazard = None
@@ -486,6 +510,9 @@ class ChatCustomHazardMechanismMixin:
             label = match_option_label(message, CUSTOM_HAZARD_CAUSAL_LINKAGE_OPTIONS)
         action = normalize(label or message)
         if action == normalize("No, revise the linkage") or action == normalize("No"):
+            self._custom_hazard_state(session)["mechanism_input_exit_target"] = (
+                "causal_linkage"
+            )
             return self._custom_hazard_mechanism_input_step(
                 session_id,
                 session,

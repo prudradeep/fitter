@@ -864,6 +864,17 @@
   color: #047857;
 }
 
+.bubble .factsheet-source-tag {
+  border: 2px solid #14532d;
+  border-radius: 5px;
+  background: #ecfdf5;
+  color: #166534;
+  margin-left: 4px;
+  padding: 3px 7px;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
 .bubble .hazard-evidence-label--not-provided {
   border-color: #fde68a;
   background: #fffbeb;

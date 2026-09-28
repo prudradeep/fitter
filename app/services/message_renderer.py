@@ -54,6 +54,7 @@ ALLOWED_ATTRIBUTES = {
         "data-open-platform-users",
         "data-evidence-url",
         "data-evidence-text",
+        "data-source-table",
         "data-metric",
         "data-source-key",
         "data-hazard-name",

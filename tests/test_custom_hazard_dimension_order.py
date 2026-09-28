@@ -57,7 +57,7 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
         self.assertEqual(
             [card["title"] for card in cards[:3]],
             [
-                "Policy Objective Fit",
+                "Sectoral Objective Fit",
                 "Mechanism Fit",
                 "Hazard definition",
             ],
@@ -90,7 +90,7 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
         first_details = ChatService._custom_hazard_missing_dimension_details(state)
         self.assertEqual(
             [detail[0] for detail in first_details],
-            ["Policy Objective Fit"],
+            ["Sectoral Objective Fit"],
         )
 
         for key in ("policy_objective_fit", "twin_transition_policy_fit"):
@@ -559,7 +559,7 @@ class CustomHazardDimensionOrderTests(unittest.TestCase):
                 self.assertTrue(response.custom_hazard_grounding_status)
                 self.assertEqual(
                     response.custom_hazard_grounding_status[0]["title"],
-                    "Policy Objective Fit",
+                    "Sectoral Objective Fit",
                 )
 
     def test_twin_transition_fit_requires_and_uses_policy_document_content(self) -> None:

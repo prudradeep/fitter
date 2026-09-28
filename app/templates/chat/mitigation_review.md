@@ -1,4 +1,4 @@
-## Concept Comparision
+## Concept Comparison
 
 Selected hazard:
 
@@ -52,4 +52,4 @@ Target population:
 
 {{ review }}
 
-Choose **Move to next step** when you are ready to evaluate this mitigation measure.
+Choose **Start evaluation** when you are ready to evaluate this mitigation measure.

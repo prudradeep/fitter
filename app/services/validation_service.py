@@ -2191,16 +2191,23 @@ class ChatValidationServiceMixin:
             evidence=evidence_text,
         )
 
-        if validation is None:
+        validation_failure_reason = (
+            str(validation.get("validation_failure_reason") or "").strip()
+            if isinstance(validation, dict)
+            else ""
+        )
+        if validation is None or validation_failure_reason:
             if not evidence_branch:
                 validation = self._local_mitigation_unavailable_fallback_validation(
                     mitigation_measure,
                     reason,
+                    failure_reason=validation_failure_reason,
                 )
             else:
                 return self._mitigation_validation_unavailable_clarification_step(
                     session_id=session_id,
                     session=session,
+                    failure_reason=validation_failure_reason,
                 )
 
         validation["evaluated_inputs"] = evaluated_inputs.copy()
@@ -2296,7 +2303,12 @@ class ChatValidationServiceMixin:
         self,
         mitigation_measure: str,
         reason: str,
+        *,
+        failure_reason: str = "",
     ) -> dict[str, object]:
+        failure_reason = failure_reason or (
+            "The local LLM did not return a usable validation response."
+        )
         dimensions: dict[str, dict[str, object]] = {}
         critical_dimensions = set(
             getattr(
@@ -2323,11 +2335,11 @@ class ChatValidationServiceMixin:
                 "citation_ids": [],
                 "support_score": None,
                 "explanation": (
-                    "Accepted from clarified user input while the local LLM was "
-                    "unavailable; this dimension was not grounded against the curated "
-                    "knowledge base."
+                    "Accepted from clarified user input because grounded validation "
+                    f"could not run: {failure_reason} This dimension was not grounded "
+                    "against the curated knowledge base."
                     if supported
-                    else "Not checked because the local LLM was unavailable."
+                    else f"Not checked: {failure_reason}"
                 ),
             }
         return {
@@ -2335,8 +2347,8 @@ class ChatValidationServiceMixin:
             "outcome": "PASS",
             "reason": (
                 "Local fallback accepted this mitigation measure because the measure "
-                "and reason were clear enough to continue, but the local LLM was "
-                "unavailable for grounded validation."
+                "and reason were clear enough to continue, but grounded validation "
+                f"could not run. Error: {failure_reason}"
             ),
             "dimensions": dimensions,
             "rubric_coverage": 1.0,
@@ -2347,6 +2359,7 @@ class ChatValidationServiceMixin:
             "support_context": "",
             "support_label": "LOCAL_FALLBACK_NO_LLM",
             "local_llm_unavailable_fallback": True,
+            "validation_failure_reason": failure_reason,
             "evaluated_inputs": {
                 "measure_description": mitigation_measure,
                 "justification": reason,
@@ -2379,13 +2392,17 @@ class ChatValidationServiceMixin:
         *,
         session_id: str,
         session: ChatSession,
+        failure_reason: str = "",
     ) -> ChatResponse:
         session.phase = "mitigation_clarity"
         session.pending_mitigation_clarity_dimension = "justification_clarity"
         return ChatResponse(
             session_id=session_id,
             step="mitigation_clarity",
-            bot_message=render_message("mitigation_validation_unavailable.md"),
+            bot_message=render_message(
+                "mitigation_validation_unavailable.md",
+                reason=failure_reason or "The local LLM did not return a usable validation response.",
+            ),
             options=self._mitigation_clarity_options(),
             session=session.summary(),
             input_mode="textarea",
@@ -2472,7 +2489,9 @@ class ChatValidationServiceMixin:
             }
         ]
 
-        async def sample_validator(sample_count: int) -> list[dict[str, object]]:
+        async def sample_validator(
+            sample_count: int,
+        ) -> tuple[list[dict[str, object]], str]:
             responses = await asyncio.gather(
                 *[
                     ask_llm_chat(
@@ -2484,23 +2503,38 @@ class ChatValidationServiceMixin:
                     for _ in range(max(0, sample_count))
                 ]
             )
-            if any(is_llm_unavailable_response(response) for response in responses):
-                return []
-            return [
+            unavailable_responses = [
+                response.strip()
+                for response in responses
+                if is_llm_unavailable_response(response)
+            ]
+            if unavailable_responses:
+                return [], unavailable_responses[0]
+            parsed_samples = [
                 self._sanitize_grounding_sample(parsed, valid_citation_ids)
                 for response in responses
                 if not (parsed := parse_grounded_validation_response(response)).get("error")
             ]
+            if not parsed_samples:
+                return [], (
+                    "The local LLM responded, but its validation output was not valid "
+                    "JSON in the required format."
+                )
+            return parsed_samples, ""
 
-        parsed_samples = await sample_validator(max(1, self.settings.mitigation_verdict_samples))        
+        parsed_samples, failure_reason = await sample_validator(
+            max(1, self.settings.mitigation_verdict_samples)
+        )
         if not parsed_samples:
-            return None
+            return {"validation_failure_reason": failure_reason}
         contradiction_dimensions = self._dimensions_with_any_status(
             parsed_samples,
             "CONTRADICTED",
         )
         contradiction_samples = (
-            await sample_validator(self.settings.mitigation_contradiction_resamples)
+            (
+                await sample_validator(self.settings.mitigation_contradiction_resamples)
+            )[0]
             if contradiction_dimensions
             else []
         )

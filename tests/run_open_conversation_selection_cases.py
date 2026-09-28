@@ -415,7 +415,11 @@ class _OpenConversationSelectionEngine(
             session_id=session_id,
             step="socio_demographic_review",
             bot_message=f"{hazard} selected. Review affected profiles.",
-            options=[Option(id=1, label="Create Mitigation Measure"), Option(id=2, label="Add more DGs")],
+            options=[
+                Option(id=1, label="Create a new mitigation proposal"),
+                Option(id=2, label="Propose adaptations in the existing policy"),
+                Option(id=3, label="Add more DGs"),
+            ],
             session=session.summary(),
             error=False,
         )

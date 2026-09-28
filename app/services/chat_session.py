@@ -18,6 +18,7 @@ class ChatSession:
     selected_context_policy_id: str | None = None
     selected_context_policy: str | None = None
     selected_context_policy_summary: str | None = None
+    pending_mitigation_policy_selection: bool = False
     phase: str = ChatPhase.WIZARD.value
     hazards: list[str] | None = None
     hazard_profiles: dict[str, list[dict[str, str] | str] | str] | None = None
@@ -57,6 +58,7 @@ class ChatSession:
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
     mitigation_target_population: list[str] | None = None
+    mitigation_proposal_type: str | None = None
     mitigation_mechanism_candidates: list[dict[str, object]] | None = None
     selected_mitigation_mechanism: str | None = None
     selected_mitigation_policy: str | None = None
@@ -64,12 +66,12 @@ class ChatSession:
     pending_mitigation_policy_context: str | None = None
     pending_mitigation_policy_document_ids: list[str] | None = None
     mitigation_mechanism_guidance: dict[str, object] | None = None
+    pending_mitigation_mechanism_suggestions: list[str] | None = None
     mitigation_mechanisms: list[str] | None = None
     mitigation_mechanism_reflection: str | None = None
     mitigation_policy_effects: list[dict[str, object]] | None = None
     mitigation_policy_effect_index: int = 0
     mitigation_creation_summary: str | None = None
-    mitigation_inspiration_decision: dict[str, object] | None = None
     mitigation_dg_evidence: dict[str, str] | None = None
     mitigation_dg_evidence_index: int = 0
     mitigation_equity: str | None = None

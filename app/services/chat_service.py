@@ -558,8 +558,6 @@ class ChatService(
             "mitigation_policy_clarification": self._handle_mitigation_policy_clarification,
             "mitigation_summary_review": self._handle_mitigation_summary_review,
             "mitigation_summary_revision": self._handle_mitigation_summary_revision,
-            "mitigation_inspiration_review": self._handle_mitigation_inspiration_review,
-            "mitigation_inspiration_parts": self._handle_mitigation_inspiration_parts,
             "mitigation_dg_review": self._handle_mitigation_dg_review,
             "mitigation_dg_input": self._handle_mitigation_dg_input,
             "mitigation_dg_evidence_decision": self._handle_mitigation_dg_evidence_decision,

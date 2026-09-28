@@ -140,6 +140,10 @@ class ChatHazardStepsMixin:
         if matched is None:
             return self._policy_step(session_id, session)
         session.selected_context_policy_id, session.selected_context_policy = matched
+        if session.pending_mitigation_policy_selection:
+            session.pending_mitigation_policy_selection = False
+            session.selected_mitigation_policy = session.selected_context_policy
+            return await self._create_mitigation_measure_step(session_id, session)
         return await self._context_policy_details_step(session_id, session)
 
     def _context_policy_document_context(
@@ -221,7 +225,7 @@ class ChatHazardStepsMixin:
     ) -> str:
         prompt = (
             "Summarize this policy using only the supplied text. Use concise headings: "
-            "Policy details, Mechanism, and Intended benefits. State when a detail is not available.\n\n"
+            "Policy details, Mechanisms, and Intended benefits. State when a detail is not available.\n\n"
             f"Policy: {session.selected_context_policy}\nContext: {session.country}, {session.region}, {session.sector}\n\n"
             f"Source text:\n{source_text[:12000]}"
         )
@@ -235,7 +239,7 @@ class ChatHazardStepsMixin:
             return response.strip()
         return (
             f"**Policy details:** {catalog_details or source_text[:1200]}\n\n"
-            "**Mechanism:** Not separately stated in the available policy material.\n\n"
+            "**Mechanisms:** Not separately stated in the available policy material.\n\n"
             "**Intended benefits:** Not separately stated in the available policy material."
         )
 
@@ -317,6 +321,7 @@ class ChatHazardStepsMixin:
                 country=session.country,
                 region=session.region,
                 sector=session.sector,
+                selected_policy=session.selected_context_policy,
                 policies=self._policies_for_selected_context(session),
                 survey_count=survey_respondent_count(sector=session.sector or ""),
                 hazards=format_hazards(
@@ -421,7 +426,7 @@ class ChatHazardStepsMixin:
         return ChatResponse(
             session_id=session_id,
             step="hazards",
-            bot_message=render_message("add_hazard.md", sector=session.sector),
+            bot_message=render_message("add_hazard.md", selected_policy=session.selected_context_policy),
             options=HAZARD_ENTRY_OPTIONS,
             session=session.summary(),
             input_mode="textarea",
@@ -777,7 +782,10 @@ class ChatHazardStepsMixin:
         return ChatResponse(
             session_id=session_id,
             step="hazard_profile_selection",
-            bot_message=render_message("mitigation_next.md"),
+            bot_message=render_message(
+                "mitigation_next.md",
+                selected_policy=session.selected_context_policy,
+            ),
             options=self._hazard_options(session),
             session=session.summary(),
             error=False,
@@ -969,7 +977,16 @@ class ChatHazardStepsMixin:
         if action == normalize("Add more DGs"):
             return self._start_additional_dg_questions(session_id, session)
 
-        if action == normalize("Create Mitigation Measure"):
+        if action == normalize("Create a new mitigation proposal"):
+            session.mitigation_proposal_type = "new_policy"
+            return await self._create_mitigation_measure_step(session_id, session)
+
+        if action == normalize("Propose adaptations in the existing policy"):
+            session.mitigation_proposal_type = "existing_policy"
+            if not session.selected_context_policy:
+                session.pending_mitigation_policy_selection = True
+                return self._policy_step(session_id, session)
+            session.selected_mitigation_policy = session.selected_context_policy
             return await self._create_mitigation_measure_step(session_id, session)
 
         return ChatResponse(
@@ -990,17 +1007,32 @@ class ChatHazardStepsMixin:
             "create a mitigation",
             "create mitigation measure",
             "create a mitigation measure",
+            "create a new mitigation proposal",
+            "new mitigation proposal",
             "start mitigation",
             "start mitigation measure",
             "make mitigation measure",
             "new mitigation measure",
         }:
-            return "Create Mitigation Measure"
+            return "Create a new mitigation proposal"
+        if normalized in {
+            "propose changes in the existing policy",
+            "propose adaptations in the existing policy",
+            "propose changes to the existing policy",
+            "propose policy changes",
+            "change existing policy",
+            "modify existing policy",
+        }:
+            return "Propose adaptations in the existing policy"
         if "mitigation" in normalized and any(
             token in normalized
             for token in ("start", "create", "make", "build", "develop", "prepare")
         ):
-            return "Create Mitigation Measure"
+            return "Create a new mitigation proposal"
+        if "policy" in normalized and any(
+            token in normalized for token in ("change", "modify", "amend", "propose")
+        ):
+            return "Propose adaptations in the existing policy"
         if normalized in {"add dgs", "add more dgs", "add demographic groups"}:
             return "Add more DGs"
         if "dg" in normalized and "add" in normalized:

@@ -93,7 +93,10 @@ class ChatMitigationCreationImplementationMixin:
             if fuzzy_label is not None:
                 exact_label = fuzzy_label
 
-        if normalize(exact_label or "") == normalize("Move to next step"):
+        if normalize(exact_label or message) in {
+            normalize("Start evaluation"),
+            normalize("Move to next step"),
+        }:
             return self._start_evaluation_questions(session_id, session)
 
         local_reason = None

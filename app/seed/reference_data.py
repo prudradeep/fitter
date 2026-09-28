@@ -11,6 +11,7 @@ from app.seed.xlsx_readers import (
     _read_xlsx_first_sheet_rows,
     _xlsx_cell,
 )
+from app.services.knowledge_base import extract_file_chunks
 from app.services.prompt_loader import PROMPT_FILES, load_sector_prompt
 from app.services.sector_prompt_rag import section_five_primary_data, strip_rule_lines
 
@@ -22,6 +23,11 @@ SECTORAL_CHALLENGES_XLSX_PATH = PROJECT_ROOT / "sectoral_challenges.xlsx"
 HAZARDS_XLSX_PATH = PROJECT_ROOT / "hazards.xlsx"
 ADDITIONAL_HAZARDS_CSV_PATH = PROJECT_ROOT / "additionalHazards.csv"
 ADDITIONAL_HAZARD_PROFILES_CSV_PATH = PROJECT_ROOT / "additionalHazardProfiles.csv"
+HAZARD_WITH_MITIGATION_DIRECTORY = (
+    PROJECT_ROOT / "kb" / "additional" / "hazards with mitigation"
+)
+HAZARD_WITH_MITIGATION_SOURCE_TYPE = "hazard_with_mitigation"
+HAZARD_WITH_MITIGATION_SCOPE = "main"
 
 
 def seed_reference_data(*, apply_schema: bool = True) -> None:
@@ -312,6 +318,96 @@ def ensure_additional_hazards() -> None:
 def ensure_system_hazards_from_sector_prompts() -> None:
     with engine.begin() as connection:
         _seed_system_hazards_from_sector_prompts(connection)
+
+
+def ensure_hazard_with_mitigation_knowledge() -> None:
+    """Seed the country-level hazard/mitigation documents into the main KB."""
+    with engine.begin() as connection:
+        _seed_hazard_with_mitigation_documents(connection)
+
+
+def _seed_hazard_with_mitigation_documents(connection) -> None:
+    if not HAZARD_WITH_MITIGATION_DIRECTORY.is_dir():
+        logger.info(
+            "Hazard-with-mitigation knowledge directory is missing; skipped seeding: %s",
+            HAZARD_WITH_MITIGATION_DIRECTORY,
+        )
+        return
+
+    for path in sorted(HAZARD_WITH_MITIGATION_DIRECTORY.glob("*.docx")):
+        source_uri = path.relative_to(PROJECT_ROOT).as_posix()
+        existing_document_id = connection.execute(
+            text(
+                """
+                SELECT id
+                FROM knowledge_documents
+                WHERE scope = :scope
+                  AND source_type = :source_type
+                  AND source_uri = :source_uri
+                LIMIT 1
+                """
+            ),
+            {
+                "scope": HAZARD_WITH_MITIGATION_SCOPE,
+                "source_type": HAZARD_WITH_MITIGATION_SOURCE_TYPE,
+                "source_uri": source_uri,
+            },
+        ).scalar()
+        if existing_document_id is not None:
+            continue
+
+        try:
+            chunks = extract_file_chunks(path.name, path.read_bytes())
+        except OSError:
+            logger.exception("Could not read hazard-with-mitigation document %s", path)
+            continue
+        if not chunks:
+            logger.warning("No readable text found in hazard-with-mitigation document %s", path)
+            continue
+
+        document_id = str(uuid.uuid4())
+        country = path.stem.replace("_", " ").replace("-", " ").title()
+        connection.execute(
+            text(
+                """
+                INSERT INTO knowledge_documents (
+                    id, user_id, title, source_type, source_uri, scope, scope_level
+                ) VALUES (
+                    :id, NULL, :title, :source_type, :source_uri, :scope, 'global'
+                )
+                """
+            ),
+            {
+                "id": document_id,
+                "title": f"Hazards with mitigation — {country}",
+                "source_type": HAZARD_WITH_MITIGATION_SOURCE_TYPE,
+                "source_uri": source_uri,
+                "scope": HAZARD_WITH_MITIGATION_SCOPE,
+            },
+        )
+        for index, chunk in enumerate(chunks):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO knowledge_chunks (
+                        id, document_id, user_id, chunk_index, content, source_type,
+                        source_uri, page_number, scope_level
+                    ) VALUES (
+                        :id, :document_id, NULL, :chunk_index, :content, :source_type,
+                        :source_uri, :page_number, 'global'
+                    )
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "document_id": document_id,
+                    "chunk_index": index,
+                    "content": chunk.content,
+                    "source_type": HAZARD_WITH_MITIGATION_SOURCE_TYPE,
+                    "source_uri": source_uri,
+                    "page_number": chunk.page_number,
+                },
+            )
 
 
 def _seed_system_hazards_from_sector_prompts(connection) -> None:

@@ -570,3 +570,52 @@ Steps
 9. Show final review
 
 
+Mitigation Measure Flow:
+ +Options: Create a new miitgation proposal, Propose changes in the existing policy
+ -options: Create Mitigation measure
+
+Referencing Proposal from "National reports 2nd Lab - Additional Hazards with Mitigation" + KB for proposed mitigation measure and mechanism
+
+Disadvantage groups to consider for this MM.
+
+Ask user: what is the MM, and how do you plan to solve the hazard through this MM.
+User Input: Ambiguity/Relevance/Clarification
+Check for evidence in KB, if not found ask evidence, Check for relevance/clarification
+Create reflection on how MM is solving the hazard/problem
+    extract Possible benefited DG by the MM.
+
+User confirmation
+    User Input: Ambiguity/Relevance/Clarification
+    
+Continue the old flow review/final/graph and then self evaluation
+
+
+New policy:
+Prioritised challenge addressed,
+Policy description,
+Participatory dimension & stakeholders
+Potential risks/barriers
+    Inspiration for New policy proposal
+    show Combined summary of above points 
+
+Some other considerations => Show KB references except D4.2
+
+
+Ask evidence of mitigation measure first, Skippable, Flag evidence not submitted.
+User Input: Ambiguity/Relevance/Clarification
+Check for evidence in KB, if not found ask evidence, Check for relevance/clarification
+Suggested mechanisms to be mitigated
+    Show how this is mitigated explaination
+
+Mechanism to be mitigated(Reflection summary) : Avoid word causal(AI prompt)
+
+Show the benefitted Disadvantage groups with reasoning.
+Ask confirmation. 
+User Input: Ambiguity/Relevance/Clarification
+Check for evidence in KB, if not found ask evidence, Check for relevance/clarification
+
+Show final summary with venn diagram chart as in the previous version. Before evaluation
+Remove FITTER Open Labs inspirations
+
+
+Possible effect on another policy aspect: add option to skip with yes/no the question

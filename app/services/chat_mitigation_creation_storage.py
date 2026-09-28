@@ -27,7 +27,6 @@ class ChatMitigationCreationStorageMixin:
                     or (evaluated.get("evidence") if isinstance(evaluated, dict) else "")
                     or "",
                     "summary": session.mitigation_creation_summary or "",
-                    "open_labs_inspiration": session.mitigation_inspiration_decision or {},
                     "disadvantaged_groups": list(session.mitigation_target_population or []),
                     "disadvantaged_group_evidence": session.mitigation_dg_evidence or {},
                     "equity": session.mitigation_equity or "",

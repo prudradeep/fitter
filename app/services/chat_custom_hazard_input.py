@@ -431,7 +431,7 @@ class ChatCustomHazardInputMixin:
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
-                bot_message=render_message("add_hazard.md", sector=session.sector),
+                bot_message=render_message("add_hazard.md", selected_policy=session.selected_context_policy),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
                 error=True,
@@ -572,7 +572,7 @@ class ChatCustomHazardInputMixin:
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
-                bot_message=render_message("add_hazard.md", sector=session.sector),
+                bot_message=render_message("add_hazard.md", selected_policy=session.selected_context_policy),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
                 error=True,
@@ -1013,7 +1013,7 @@ class ChatCustomHazardInputMixin:
             return ChatResponse(
                 session_id=session_id,
                 step="hazards",
-                bot_message=render_message("add_hazard.md", sector=session.sector),
+                bot_message=render_message("add_hazard.md", selected_policy=session.selected_context_policy),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),
                 error=False,

@@ -21,12 +21,14 @@ STATS_DEEP_DIVE_OPTIONS = [
 ]
 
 SOCIO_DEMOGRAPHIC_OPTIONS = [
-    Option(id=1, label="Create Mitigation Measure"),
-    Option(id=2, label="Add more DGs"),
+    Option(id=1, label="Create a new mitigation proposal"),
+    Option(id=2, label="Propose adaptations in the existing policy"),
+    Option(id=3, label="Add more DGs"),
 ]
 
 ADD_DGS_OPTIONS = [
-    Option(id=1, label="Create Mitigation Measure"),
+    Option(id=1, label="Create a new mitigation proposal"),
+    Option(id=2, label="Propose adaptations in the existing policy"),
 ]
 
 DG_REASON_EVIDENCE_OPTIONS = [
@@ -46,6 +48,11 @@ CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS = [
 CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes"),
     Option(id=2, label="No, provide a mechanism"),
+]
+
+CUSTOM_HAZARD_MECHANISM_INPUT_OPTIONS = [
+    *HAZARD_ENTRY_OPTIONS,
+    Option(id=2, label="Exit from this step"),
 ]
 
 CUSTOM_HAZARD_POLICY_DETAILS_CONFIRMATION_OPTIONS = [
@@ -137,7 +144,7 @@ REASON_CONFIRMATION_OPTIONS = [
 ]
 
 MITIGATION_REVIEW_OPTIONS = [
-    Option(id=1, label="Move to next step"),
+    Option(id=1, label="Start evaluation"),
 ]
 
 IMPLEMENTATION_READINESS_OPTIONS = [

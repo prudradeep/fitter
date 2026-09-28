@@ -14,7 +14,11 @@ class ChatProfileRenderingMixin:
         user_profiles: list[dict[str, str]] | None = None,
         hazard_summary: str = "",
     ) -> str:
-        lines = [f"### Socio-demographic profiles most affected by {hazard}"]
+        lines = [
+            f"### Socio-demographic profiles most affected by {hazard}",
+            "",
+            "Understanding which population groups are most affected, and their regional population share, helps target mitigation measures effectively.",
+        ]
         summary = str(hazard_summary or "").strip()
         if summary:
             lines.extend(

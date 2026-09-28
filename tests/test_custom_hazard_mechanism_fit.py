@@ -167,6 +167,7 @@ class CustomHazardMechanismFitTests(unittest.TestCase):
                 **validator.default_custom_hazard_state(),
                 "raw_text": "Higher charging costs",
                 "selected_mechanism": "Charging mandates increase infrastructure costs",
+                "ai_reflection": "The hazard could follow from the selected objective.",
             },
         )
 
@@ -179,6 +180,45 @@ class CustomHazardMechanismFitTests(unittest.TestCase):
         self.assertEqual(response.step, "custom_hazard_mechanism_input")
         self.assertEqual(response.input_mode, "textarea")
         self.assertIn("specific process", response.bot_message)
+        self.assertEqual(
+            session.custom_hazard["mechanism_input_exit_target"], "sectoral_objective_fit"
+        )
+
+        response = asyncio.run(
+            service._handle_custom_hazard_mechanism_input(
+                "session-1", session, "Exit from this step"
+            )
+        )
+
+        self.assertEqual(response.step, "custom_hazard_mechanism_confirmation")
+        self.assertEqual(session.phase, ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION)
+        self.assertIn("Sectoral Objective Fit", response.bot_message)
+
+    def test_exit_from_mechanism_input_returns_to_causal_linkage_review(self) -> None:
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            phase=ChatPhase.CUSTOM_HAZARD_MECHANISM_INPUT,
+            custom_hazard={
+                **validator.default_custom_hazard_state(),
+                "raw_text": "Higher charging costs",
+                "resolved_hazard_text": "Higher charging costs",
+                "selected_mechanism": "Infrastructure costs are passed to drivers",
+                "mechanism_causal_linkage": (
+                    "charging requirement -> infrastructure costs -> higher charging costs"
+                ),
+                "mechanism_input_exit_target": "causal_linkage",
+            },
+        )
+
+        response = asyncio.run(
+            service._handle_custom_hazard_mechanism_input(
+                "session-1", session, "Exit from this step"
+            )
+        )
+
+        self.assertEqual(response.step, "custom_hazard_causal_linkage_confirmation")
+        self.assertEqual(session.phase, ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION)
+        self.assertIn("Possible factors contributing to the hazard", response.bot_message)
 
     def test_no_suggested_mechanism_informs_user_and_requests_theirs(self) -> None:
         service = ChatService.__new__(ChatService)
