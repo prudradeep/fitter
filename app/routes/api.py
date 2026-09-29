@@ -1109,7 +1109,15 @@ async def knowledge_policies(
             MitigationMeasurePolicy.id,
             MitigationMeasurePolicy.policy_code,
             MitigationMeasurePolicy.policy_title,
-        ).order_by(
+            Country.name.label("country_name"),
+            Sector.name.label("sector_name"),
+        )
+        .outerjoin(Country, Country.id == MitigationMeasurePolicy.country_id)
+        .outerjoin(Sector, Sector.id == MitigationMeasurePolicy.sector_id)
+        .where(MitigationMeasurePolicy.policy_type == "Adjustment to existing policy")
+        .order_by(
+            Country.name.label("country_name"),
+            Sector.name.label("sector_name"),
             MitigationMeasurePolicy.policy_title,
             MitigationMeasurePolicy.policy_code,
             MitigationMeasurePolicy.id,
@@ -1119,11 +1127,17 @@ async def knowledge_policies(
         "policies": [
             {
                 "id": str(policy_id),
-                "label": " ".join(
-                    part for part in (str(policy_code or "").strip(), str(policy_title or "").strip()) if part
+                "label": " · ".join(
+                    part
+                    for part in (
+                        str(country_name or "").strip(),
+                        str(sector_name or "").strip(),
+                        str(policy_title or "").strip() or str(policy_code or "").strip() or "Untitled policy",
+                    )
+                    if part
                 ),
             }
-            for policy_id, policy_code, policy_title in rows
+            for policy_id, policy_code, policy_title, country_name, sector_name in rows
         ]
     }
 
@@ -1148,18 +1162,25 @@ async def knowledge_policy_document_upload(
         return {"error": True, "detail": "Select a valid policy."}
     file = form.get("file")
     filename = str(getattr(file, "filename", "") or "").strip()
-    if not filename or not hasattr(file, "read"):
-        return {"error": True, "detail": "Choose a policy document to upload."}
-    if not filename.casefold().endswith((".pdf", ".docx", ".md", ".txt")):
+    document_url = str(form.get("url") or "").strip()
+    if filename and document_url:
+        return {"error": True, "detail": "Choose either a policy document file or a URL."}
+    if not filename and not document_url:
+        return {"error": True, "detail": "Choose a policy document file or enter a document URL."}
+    if filename and (not hasattr(file, "read") or not filename.casefold().endswith((".pdf", ".docx", ".md", ".txt"))):
         return {"error": True, "detail": "Supported file types are PDF, DOCX, MD, and TXT."}
-    too_large = upload_too_large_response(file, settings.max_upload_bytes, "Policy document upload")
-    if too_large is not None:
-        return too_large
+    if filename:
+        too_large = upload_too_large_response(file, settings.max_upload_bytes, "Policy document upload")
+        if too_large is not None:
+            return too_large
 
-    content = await file.read()
     service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
     try:
-        result = await service.ingest_file(filename, content)
+        if document_url:
+            result = await service.ingest_url(document_url, document_url)
+        else:
+            content = await file.read()
+            result = await service.ingest_file(filename, content)
     except (httpx.HTTPError, ValueError) as exc:
         return {"error": True, "detail": str(exc)}
     if result.get("error"):
@@ -1180,10 +1201,15 @@ async def knowledge_policy_document_upload(
         request=request,
         target_type="knowledge_document",
         target_id=document.id,
-        details={"policy_id": policy.id, "policy_title": policy.policy_title, "filename": filename},
+        details={
+            "policy_id": policy.id,
+            "policy_title": policy.policy_title,
+            "source": document_url or filename,
+        },
     )
     result["policy_id"] = policy.id
     result["policy_title"] = policy.policy_title
+    result["source"] = document_url or filename
     return result
 
 

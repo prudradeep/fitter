@@ -9,6 +9,7 @@ from app.services.hazard_profile_parsing import (
     parse_hazard_profile_items,
     profile_from_predictor_entry,
 )
+from app.services.system_hazard_profile_names import profile_name_for_legacy_label
 
 
 class HazardProfileParsingTests(unittest.TestCase):
@@ -79,6 +80,42 @@ class HazardProfileParsingTests(unittest.TestCase):
         self.assertEqual(profile["variable_name"], "macro_income_level")
         self.assertIn("PREDICTOR 2B", profile["statistical_basis"])
         self.assertEqual(humanize_predictor_label("macro_income_level"), "Income level")
+
+    def test_profile_from_predictor_entry_uses_spreadsheet_profile_name(self):
+        profile = profile_from_predictor_entry(
+            textwrap.dedent("""
+            PREDICTOR 1A: utility_arrears (level: "Yes, twice or more")
+            Direction = Higher concern
+            Plain-English: Repeated arrears increase concern about future bills.
+            """).strip()
+        )
+
+        self.assertEqual(profile["name"], "Households with unpaid utility bills")
+        self.assertEqual(profile["variable_name"], "utility_arrears")
+
+    def test_clean_hazard_profile_item_uses_spreadsheet_profile_name(self):
+        profile = clean_hazard_profile_item(
+            {
+                "profile": "Utility arrears: Yes, twice or more",
+                "variable_name": "utility_arrears",
+            }
+        )
+
+        self.assertEqual(profile["name"], "Households with unpaid utility bills")
+
+    def test_legacy_profile_label_uses_spreadsheet_profile_name(self):
+        self.assertEqual(
+            profile_name_for_legacy_label("Utility arrears: Yes, twice or more"),
+            "Households with unpaid utility bills",
+        )
+        self.assertEqual(
+            profile_name_for_legacy_label("Higher Home problems count"),
+            "Households with Higher Home problems count",
+        )
+        self.assertEqual(
+            profile_name_for_legacy_label("Countries with higher Electricity consumption."),
+            "Households with higher Electricity consumption.",
+        )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 # ruff: noqa: F403,F405
 import json
+import re
 from html import escape
 
 from app.services.chat_mitigation_creation_common import *
@@ -114,6 +115,7 @@ class ChatMitigationCreationGuidedMixin:
                 "role": "user",
                 "content": (
                     f"Selected hazard: {session.selected_hazard or session.accepted_custom_hazard or 'Not selected'}\n"
+                    f"Selected policy: {session.selected_mitigation_policy or session.selected_context_policy or 'Not selected'}\n"
                     f"Country: {session.country or 'Not selected'}\nRegion: {session.region or 'Not selected'}\n"
                     f"Sector: {session.sector or 'Not selected'}\nAffected profiles: {format_all_dgs(session)}\n\n"
                     f"Mapped policy context:\n{policy_context or 'None available'}\n\n"
@@ -128,11 +130,14 @@ class ChatMitigationCreationGuidedMixin:
         if not isinstance(payload, dict):
             return self._fallback_mitigation_mechanism_overview(session, policies)
         normalized: list[dict[str, object]] = []
+        selected_policy = str(
+            session.selected_mitigation_policy or session.selected_context_policy or ""
+        ).strip()
         if isinstance(payload.get("mechanisms"), list):
             for item in payload["mechanisms"][:5]:
                 candidate = self._normalize_mitigation_mechanism_candidate(item)
                 if candidate:
-                    candidate["policy_title"] = self._grounded_mitigation_policy_title(
+                    candidate["policy_title"] = selected_policy or self._grounded_mitigation_policy_title(
                         session,
                         str(candidate.get("policy_title") or ""),
                         policies,
@@ -570,7 +575,12 @@ class ChatMitigationCreationGuidedMixin:
             "I could not verify the policy's relevance. Clarify the connection or provide the policy again.",
         )
 
-    def _hazard_with_mitigation_factsheet_reference(self, session: ChatSession) -> str:
+    def _hazard_with_mitigation_factsheet_reference(
+        self,
+        session: ChatSession,
+        *,
+        mechanism_suggestions: list[dict[str, object]] | None = None,
+    ) -> str:
         if not hasattr(self, "db"):
             return ""
         try:
@@ -582,6 +592,7 @@ class ChatMitigationCreationGuidedMixin:
                 selected_policy=session.selected_context_policy,
                 hazard=session.selected_hazard or session.accepted_custom_hazard,
                 disadvantage_groups=session.socio_demographic_profiles,
+                mechanism_suggestions=mechanism_suggestions,
                 proposal_type=(
                     "existing_policy"
                     if session.mitigation_proposal_type == "existing_policy"
@@ -610,7 +621,7 @@ class ChatMitigationCreationGuidedMixin:
                     )
                     if value
                 ),
-                main_limit=4,
+                main_limit=5,
                 evidence_limit=0,
             )
         except Exception:
@@ -626,11 +637,17 @@ class ChatMitigationCreationGuidedMixin:
                 for field in ("title", "source_uri", "content")
             ).casefold()
         ]
-        context = await self._summarize_other_considerations(main_results)
+        context = await self._summarize_other_considerations(
+            main_results,
+            selected_hazard=session.selected_hazard or session.accepted_custom_hazard,
+        )
         return f"## Some other considerations\n\n{context}" if context else ""
 
     async def _summarize_other_considerations(
-        self, results: list[dict[str, object]]
+        self,
+        results: list[dict[str, object]],
+        *,
+        selected_hazard: str | None = None,
     ) -> str:
         sources = [
             {
@@ -646,11 +663,26 @@ class ChatMitigationCreationGuidedMixin:
             return ""
         response = await ask_llm_chat(
             context=(
-                "Summarize each knowledge-base excerpt in one concise, factual sentence. "
-                "Do not add information not present in the excerpt. Return JSON only: "
+                "Make an understanding from the excerpts about the chosen hazard and provide "
+                "a concise reflection to the user based only on the available information. "
+                "Write one reflection for each excerpt. Do not add information not present in "
+                "the excerpt. Present the understanding directly: do not mention, quote, or "
+                "refer to the excerpt, source, document, evidence, or its wording. Do not use "
+                "lead-ins such as 'The excerpt highlights that'. Return JSON only: "
                 '{"summaries":["..."]}.'
             ),
-            messages=[{"role": "user", "content": json.dumps(sources, ensure_ascii=False)}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "selected_hazard": str(selected_hazard or "").strip(),
+                            "excerpts": sources,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            ],
             temperature=0.0,
             max_tokens=500,
             response_format="json",
@@ -662,7 +694,7 @@ class ChatMitigationCreationGuidedMixin:
         for index, source in enumerate(sources):
             summary = str(summaries[index] or "").strip() if index < len(summaries) else ""
             if not summary:
-                summary = source["content"][:900]
+                continue
             source_rows = [
                 {"field": "Document", "value": source["title"]},
                 *(
@@ -849,6 +881,8 @@ class ChatMitigationCreationGuidedMixin:
         session.mitigation_policy_effect_index = 0
         session.mitigation_creation_summary = None
         session.mitigation_target_population = None
+        session.mitigation_user_added_groups = None
+        session.mitigation_dg_benefit_explanations = None
         session.mitigation_dg_evidence = None
         session.mitigation_dg_evidence_index = 0
         session.mitigation_equity = None
@@ -880,19 +914,39 @@ class ChatMitigationCreationGuidedMixin:
                 or initial_reason.strip()
                 or selected_mechanism
             )
-            return self._mitigation_evidence_decision_step(
-                session_id,
-                session,
-                mitigation_measure,
-                session.pending_mitigation_reason,
-                "",
+            return await self._continue_with_knowledge_base_evidence_or_request_user_evidence(
+                session_id, session, mitigation_measure, session.pending_mitigation_reason
             )
         session.pending_mitigation_mechanism_suggestions = list(mechanisms)
+        return await self._continue_with_knowledge_base_evidence_or_request_user_evidence(
+            session_id, session, mitigation_measure, initial_reason.strip()
+        )
+
+    async def _continue_with_knowledge_base_evidence_or_request_user_evidence(
+        self,
+        session_id: str,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+    ) -> ChatResponse:
+        """Reuse relevant shared evidence before asking the user to supply any."""
+        evidence_reference = await self._shared_mitigation_evidence_reference(
+            session,
+            mitigation_measure,
+            reason,
+        )
+        if evidence_reference:
+            session.mitigation_evidence_declined = False
+            return await self._continue_after_mitigation_evidence(
+                session_id,
+                session,
+                evidence_reference,
+            )
         return self._mitigation_evidence_decision_step(
             session_id,
             session,
             mitigation_measure,
-            initial_reason.strip(),
+            reason,
             "",
         )
 
@@ -1005,7 +1059,7 @@ class ChatMitigationCreationGuidedMixin:
             session_id=session_id,
             step="mitigation_mechanism_reflection_review",
             bot_message=markdown_to_html(
-                "### Mechanism to be mitigated\n\n"
+                "## Reflection on the mitigation measure\n\n"
                 f"{reflection}\n\n"
                 "Confirm this reflection or clarify how the measure will change the chosen mechanism."
             ),
@@ -1092,7 +1146,7 @@ class ChatMitigationCreationGuidedMixin:
                 session_id=session_id,
                 step="mitigation_mechanism_input",
                 bot_message=markdown_to_html(
-                    "### Mechanism to be mitigated\n\n"
+                    "## Reflection on the mitigation measure\n\n"
                     "I could not reliably extract a specific mechanism. Describe how the selected hazard arises and which part of that causal process this measure will change."
                 ),
                 options=[],
@@ -1100,22 +1154,11 @@ class ChatMitigationCreationGuidedMixin:
                 input_mode="textarea",
                 error=False,
             )
-        explanations = await self._mitigation_mechanism_explanations(session, mechanisms)
-        lines = "\n".join(
-            f"- **{mechanism}:** {explanations[index]}"
-            for index, mechanism in enumerate(mechanisms)
-        )
-        session.phase = "mitigation_mechanism_confirmation"
-        return ChatResponse(
-            session_id=session_id,
-            step="mitigation_mechanism_confirmation",
-            bot_message=markdown_to_html(
-                "### Suggested mechanisms to be mitigated\n\n"
-                f"{lines}\n\nConfirm these suggestions or provide your own mechanisms."
-            ),
-            options=self._guided_options("Confirm mechanisms", "Provide different mechanisms"),
-            session=session.summary(),
-            error=False,
+        session.pending_mitigation_reason = "; ".join(mechanisms)
+        return await self._guided_after_evidence(
+            session_id,
+            session,
+            session.pending_mitigation_evidence or "",
         )
 
     async def _mitigation_mechanism_explanations(
@@ -1171,8 +1214,11 @@ class ChatMitigationCreationGuidedMixin:
                     session,
                     session.pending_mitigation_evidence or "",
                 )
-            return self._mitigation_evidence_decision_step(
-                session_id, session, session.pending_mitigation_measure or "", session.pending_mitigation_reason, ""
+            return await self._continue_with_knowledge_base_evidence_or_request_user_evidence(
+                session_id,
+                session,
+                session.pending_mitigation_measure or "",
+                session.pending_mitigation_reason,
             )
         if action == normalize("Provide different mechanisms"):
             session.phase = "mitigation_mechanism_input"
@@ -1227,7 +1273,11 @@ class ChatMitigationCreationGuidedMixin:
         )
 
     async def _guided_after_evidence(self, session_id, session, evidence_text: str) -> ChatResponse:
-        if evidence_text:
+        is_reused_knowledge_base_evidence = (
+            "Reused evidence document ID:" in evidence_text
+            and "Reused evidence scope:" in evidence_text
+        )
+        if evidence_text and not is_reused_knowledge_base_evidence:
             relevant = await self._guided_evidence_relevance(session, evidence_text)
             outcome = normalize_for_match(str(relevant.get("outcome") or ""))
             if not relevant.get("relevant") or outcome in {"irrelevant", "ambiguous", "unavailable"}:
@@ -1292,9 +1342,7 @@ class ChatMitigationCreationGuidedMixin:
         session.mitigation_policy_effects = effects
         session.mitigation_policy_effect_index = 0
         if not effects:
-            return await self._guided_summary_step(
-                session_id, session, "mitigation_summary_review"
-            )
+            return await self._guided_dg_suggestion_step(session_id, session)
         return self._mitigation_policy_effect_review_step(session_id, session)
 
     async def _identify_mitigation_policy_effects(
@@ -1403,9 +1451,7 @@ class ChatMitigationCreationGuidedMixin:
         effects = session.mitigation_policy_effects or []
         index = session.mitigation_policy_effect_index
         if index >= len(effects):
-            return await self._guided_summary_step(
-                session_id, session, "mitigation_summary_review"
-            )
+            return await self._guided_dg_suggestion_step(session_id, session)
         if action == normalize("Yes"):
             effects[index]["user_position"] = "agreed"
             session.phase = "mitigation_policy_effect_mitigation"
@@ -1493,25 +1539,30 @@ class ChatMitigationCreationGuidedMixin:
             session.mitigation_policy_effects or []
         ):
             return self._mitigation_policy_effect_review_step(session_id, session)
-        return await self._guided_summary_step(
-            session_id, session, "mitigation_summary_review"
-        )
+        return await self._guided_dg_suggestion_step(session_id, session)
 
     async def _guided_summary_step(self, session_id, session, phase: str) -> ChatResponse:
         summary = await self._generate_guided_summary(session)
         session.mitigation_creation_summary = summary
         session.phase = phase
+        selected_hazard = session.selected_hazard or session.accepted_custom_hazard or "Not selected"
+        selected_policy = (
+            session.selected_mitigation_policy
+            or session.selected_context_policy
+            or "Not selected"
+        )
         if phase == "mitigation_summary_review":
             options = self._guided_options("Confirm summary", "Modify summary inputs")
-        elif phase == "mitigation_dg_summary_review":
-            options = self._guided_options("Confirm DG summary", "Modify disadvantaged groups")
         else:
             options = self._guided_options("Confirm final summary", "Modify final inputs")
         return ChatResponse(
             session_id=session_id,
             step=phase,
             bot_message=markdown_to_html(
-                f"### Summary of our understanding\n\n{summary}\n\nPlease confirm or modify it."
+                "## Summary of our understanding\n\n"
+                f"Selected hazard: **{selected_hazard}**\n\n"
+                f"Selected policy causing the hazard: **{selected_policy}**\n\n"
+                f"{summary}\n\nPlease confirm or modify it."
             ),
             options=options,
             session=session.summary(),
@@ -1520,26 +1571,56 @@ class ChatMitigationCreationGuidedMixin:
 
     async def _generate_guided_summary(self, session: ChatSession) -> str:
         evidence = "Provided" if session.pending_mitigation_evidence else "Not provided (optional)"
+        evidence_source = self._mitigation_evidence_source_button(
+            session.pending_mitigation_evidence
+        )
+        if evidence_source:
+            evidence = f"{evidence} {evidence_source}"
         groups = ", ".join(session.mitigation_target_population or []) or "Not confirmed yet"
         dg_evidence = session.mitigation_dg_evidence or {}
-        linkage = (
-            str((session.mitigation_mechanism_guidance or {}).get("causal_linkage") or "").strip()
-            if isinstance(session.mitigation_mechanism_guidance, dict)
-            else ""
-        )
         effect_summary = self._mitigation_policy_effect_decisions_markdown(
             session.mitigation_policy_effects or []
         )
         return (
             f"- **Measure:** {session.pending_mitigation_measure or session.mitigation_measure or 'Not provided'}\n"
             f"- **Mechanisms mitigated:** {'; '.join(session.mitigation_mechanisms or []) or 'Not provided'}\n"
-            f"- **Mapped policy:** {session.selected_mitigation_policy or 'Not identified'}\n"
-            f"- **Policy-to-hazard linkage:** {linkage or 'Not available'}\n"
             f"- **How the measure mitigates the mechanism:** {session.mitigation_mechanism_reflection or 'Not confirmed'}\n"
             f"- **Measure evidence:** {evidence}\n"
             f"- **Other policy effects reviewed:**\n{effect_summary or '  - No distinct grounded problem identified'}\n"
             f"- **Disadvantaged groups benefited:** {groups}\n"
             f"- **DG evidence:** {sum(bool(value) for value in dg_evidence.values())} of {len(dg_evidence)} group(s) supplied evidence\n"
+        )
+
+    @staticmethod
+    def _mitigation_evidence_source_button(evidence: str | None) -> str:
+        """Render a source-modal button only for reused knowledge-base evidence."""
+        evidence_text = str(evidence or "")
+
+        def field(label: str) -> str:
+            match = re.search(
+                rf"^{re.escape(label)}:\s*(.+)$",
+                evidence_text,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+            return match.group(1).strip() if match else ""
+
+        title = field("Reused evidence title")
+        excerpt = field("Reused evidence excerpt")
+        if not title or not excerpt:
+            return ""
+        source_uri = field("Reused evidence source URI")
+        page_number = field("Reused evidence page")
+        source_rows = [
+            {"field": "Document", "value": title},
+            *([{"field": "Source", "value": source_uri}] if source_uri else []),
+            *([{"field": "Page", "value": page_number}] if page_number else []),
+            {"field": "Referenced excerpt", "value": excerpt},
+        ]
+        return (
+            '<button class="factsheet-source-tag hazard-evidence-label--provided" '
+            'type="button" '
+            f'data-source-table="{escape(json.dumps(source_rows, ensure_ascii=False), quote=True)}" '
+            f'aria-label="Show source data for {escape(title, quote=True)}">Source</button>'
         )
 
     async def _handle_mitigation_summary_review(self, session_id, session, message):
@@ -1592,8 +1673,9 @@ class ChatMitigationCreationGuidedMixin:
                 error=False,
             )
         session.phase = "mitigation_dg_review"
+        benefit_reasons = await self._mitigation_dg_benefit_reasons(session, groups)
         lines = "\n".join(
-            f"- **{group}:** {self._mitigation_dg_benefit_reason(session, group)}"
+            f"- **{group}:** {benefit_reasons.get(group) or self._mitigation_dg_benefit_reason(session, group)}"
             for group in groups
         )
         return ChatResponse(
@@ -1613,30 +1695,104 @@ class ChatMitigationCreationGuidedMixin:
         )
 
     def _mitigation_dg_benefit_reason(self, session: ChatSession, group: str) -> str:
-        group_key = normalize(group)
+        """Use a safe short fallback when a plain-English reflection is unavailable."""
+        _ = group
+        hazard = session.selected_hazard or session.accepted_custom_hazard or "this hazard"
+        return f"This measure can help reduce the pressure this group faces from {hazard}."
+
+    async def _mitigation_dg_benefit_reasons(
+        self,
+        session: ChatSession,
+        groups: list[str],
+    ) -> dict[str, str]:
+        """Create and retain one short, grounded benefit explanation per group."""
+        existing = dict(session.mitigation_dg_benefit_explanations or {})
+        missing = [group for group in groups if not str(existing.get(group) or "").strip()]
+        if not missing:
+            return existing
+
         profiles = self._stored_hazard_profiles(
             session, session.selected_hazard or session.accepted_custom_hazard or ""
         )
-        for profile in profiles:
-            profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
-            labels = [
-                str(label).strip()
-                for label in profile.get("target_population_labels") or []
-                if str(label).strip()
-            ]
-            matches_group = group_key in {
-                normalize(label) for label in [profile_name, *labels]
-            }
-            if not matches_group:
-                continue
-            reason = str(profile.get("explanation") or "").strip()
-            if reason:
-                return reason
-            statistical_basis = str(profile.get("statistical_basis") or "").strip()
-            if statistical_basis:
-                return statistical_basis
-        hazard = session.selected_hazard or session.accepted_custom_hazard or "the selected hazard"
-        return f"This group is identified in the available profile data as affected by {hazard}."
+        profile_reasons: dict[str, str] = {}
+        for group in missing:
+            group_key = normalize(group)
+            for profile in profiles:
+                profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
+                labels = [
+                    str(label).strip()
+                    for label in profile.get("target_population_labels") or []
+                    if str(label).strip()
+                ]
+                if group_key not in {normalize(label) for label in [profile_name, *labels]}:
+                    continue
+                profile_reasons[group] = str(profile.get("explanation") or "").strip()
+                break
+
+        try:
+            response = await ask_llm_chat(
+                context=(
+                    "Explain how the proposed mitigation measure could benefit each listed "
+                    "disadvantaged group. Use simple English. Write one short sentence of no "
+                    "more than 25 words for each group. Use only the supplied information and "
+                    "do not claim that a benefit is guaranteed. Return JSON only: "
+                    '{"benefits":[{"group":"...","explanation":"..."}]}.'
+                ),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "selected_hazard": session.selected_hazard
+                                or session.accepted_custom_hazard
+                                or "",
+                                "mitigation_measure": session.pending_mitigation_measure
+                                or session.mitigation_measure
+                                or "",
+                                "groups": [
+                                    {
+                                        "group": group,
+                                        "affected_profile_context": profile_reasons.get(group, ""),
+                                    }
+                                    for group in missing
+                                ],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                ],
+                temperature=0.0,
+                max_tokens=350,
+                response_format="json",
+            )
+            payload = (
+                None if is_llm_unavailable_response(response) else parse_json_object(response)
+            )
+            benefits = payload.get("benefits") if isinstance(payload, dict) else []
+            if isinstance(benefits, list):
+                missing_by_key = {normalize(group): group for group in missing}
+                for item in benefits:
+                    if not isinstance(item, dict):
+                        continue
+                    group = missing_by_key.get(normalize(str(item.get("group") or "")))
+                    explanation = re.sub(
+                        r"\s+",
+                        " ",
+                        str(item.get("explanation") or ""),
+                    ).strip()
+                    if group and explanation:
+                        words = explanation.split()
+                        explanation = " ".join(words[:25]).rstrip(" ,;:")
+                        if explanation and explanation[-1] not in ".!?":
+                            explanation += "."
+                        existing[group] = explanation
+        except Exception:
+            logger.exception("Could not generate disadvantaged-group benefit explanations")
+
+        for group in missing:
+            existing.setdefault(group, self._mitigation_dg_benefit_reason(session, group))
+        session.mitigation_dg_benefit_explanations = existing
+        return existing
 
     async def _handle_mitigation_dg_review(self, session_id, session, message):
         action = normalize(
@@ -1651,11 +1807,8 @@ class ChatMitigationCreationGuidedMixin:
             or message
         )
         if action == normalize("Confirm disadvantaged groups"):
-            session.mitigation_dg_evidence = {}
-            session.mitigation_dg_evidence_index = 0
-            return await self._guided_summary_step(
-                session_id, session, "mitigation_dg_summary_review"
-            )
+            session.mitigation_dg_evidence = session.mitigation_dg_evidence or {}
+            return await self._guided_dg_evidence_decision_step(session_id, session)
         if action in {
             normalize("Add disadvantaged group"),
             normalize("Remove disadvantaged group"),
@@ -1706,6 +1859,15 @@ class ChatMitigationCreationGuidedMixin:
                     {"clarification_question": "Name one of the groups shown above to remove."},
                 )
             session.mitigation_target_population = retained
+            session.mitigation_user_added_groups = [
+                item
+                for item in (session.mitigation_user_added_groups or [])
+                if normalize(item) != group_key
+            ]
+            if session.mitigation_dg_evidence:
+                for evidence_group in list(session.mitigation_dg_evidence):
+                    if normalize(evidence_group) == group_key:
+                        session.mitigation_dg_evidence.pop(evidence_group)
             session.mitigation_revision_stage = None
             return await self._guided_dg_suggestion_step(session_id, session)
 
@@ -1733,25 +1895,16 @@ class ChatMitigationCreationGuidedMixin:
             if normalize(group) not in {normalize(item) for item in groups}:
                 groups.append(group)
             session.mitigation_target_population = groups
+            user_added_groups = list(session.mitigation_user_added_groups or [])
+            if normalize(group) not in {normalize(item) for item in user_added_groups}:
+                user_added_groups.append(group)
+            session.mitigation_user_added_groups = user_added_groups
             session.mitigation_revision_stage = None
             kb_evidence = await self._added_dg_kb_evidence(session, group)
             if kb_evidence:
                 session.mitigation_dg_evidence = session.mitigation_dg_evidence or {}
                 session.mitigation_dg_evidence[group] = kb_evidence
-                return await self._guided_dg_suggestion_step(session_id, session)
-            session.mitigation_dg_evidence = session.mitigation_dg_evidence or {}
-            session.mitigation_dg_evidence_index = groups.index(group)
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_dg_evidence_decision",
-                bot_message=markdown_to_html(
-                    f"No knowledge-base evidence was found for **{group}**. "
-                    "You may provide optional URL or document evidence showing how this group benefits."
-                ),
-                options=self._guided_options("Yes, add DG evidence", "No DG evidence"),
-                session=session.summary(),
-                error=False,
-            )
+            return await self._guided_dg_suggestion_step(session_id, session)
 
         groups = await self._match_mitigation_target_population_answer(group)
         if not groups:
@@ -1766,7 +1919,7 @@ class ChatMitigationCreationGuidedMixin:
         session.mitigation_target_population = groups
         session.mitigation_dg_evidence = {}
         session.mitigation_dg_evidence_index = 0
-        return self._guided_dg_evidence_decision_step(session_id, session)
+        return await self._guided_dg_evidence_decision_step(session_id, session)
 
     async def _validate_added_mitigation_dg(self, session: ChatSession, group: str) -> dict[str, object]:
         response = await ask_llm_chat(
@@ -1808,18 +1961,34 @@ class ChatMitigationCreationGuidedMixin:
         evidence = self._format_knowledge_results(results)
         return evidence if evidence else ""
 
-    def _guided_dg_evidence_decision_step(self, session_id, session) -> ChatResponse:
-        groups = session.mitigation_target_population or []
-        if session.mitigation_dg_evidence_index >= len(groups):
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_dg_summary_review",
-                bot_message="Preparing disadvantaged-group summary…",
-                options=[],
-                session=session.summary(),
-                error=False,
-            )
-        group = groups[session.mitigation_dg_evidence_index]
+    def _next_user_added_dg_without_evidence(self, session: ChatSession) -> str:
+        evidence = session.mitigation_dg_evidence or {}
+        evidence_groups = {normalize(group) for group in evidence}
+        current_groups = {
+            normalize(group) for group in (session.mitigation_target_population or [])
+        }
+        return next(
+            (
+                group
+                for group in (session.mitigation_user_added_groups or [])
+                if normalize(group) in current_groups and normalize(group) not in evidence_groups
+            ),
+            "",
+        )
+
+    async def _continue_to_final_mitigation_summary(
+        self, session_id: str, session: ChatSession
+    ) -> ChatResponse:
+        session.mitigation_equity = None
+        session.mitigation_equity_skipped = False
+        return await self._guided_summary_step(
+            session_id, session, "mitigation_final_summary_review"
+        )
+
+    async def _guided_dg_evidence_decision_step(self, session_id, session) -> ChatResponse:
+        group = self._next_user_added_dg_without_evidence(session)
+        if not group:
+            return await self._continue_to_final_mitigation_summary(session_id, session)
         session.phase = "mitigation_dg_evidence_decision"
         return ChatResponse(
             session_id=session_id,
@@ -1839,20 +2008,12 @@ class ChatMitigationCreationGuidedMixin:
             )
             or message
         )
-        groups = session.mitigation_target_population or []
-        if session.mitigation_dg_evidence_index >= len(groups):
-            return await self._guided_summary_step(
-                session_id, session, "mitigation_dg_summary_review"
-            )
-        group = groups[session.mitigation_dg_evidence_index]
+        group = self._next_user_added_dg_without_evidence(session)
+        if not group:
+            return await self._continue_to_final_mitigation_summary(session_id, session)
         if action == normalize("No DG evidence"):
             (session.mitigation_dg_evidence or {})[group] = ""
-            session.mitigation_dg_evidence_index += 1
-            if session.mitigation_dg_evidence_index >= len(groups):
-                return await self._guided_summary_step(
-                    session_id, session, "mitigation_dg_summary_review"
-                )
-            return self._guided_dg_evidence_decision_step(session_id, session)
+            return await self._guided_dg_evidence_decision_step(session_id, session)
         if action == normalize("Yes, add DG evidence"):
             session.phase = "mitigation_dg_evidence_input"
             return ChatResponse(
@@ -1867,12 +2028,9 @@ class ChatMitigationCreationGuidedMixin:
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
     async def _handle_mitigation_dg_evidence_input(self, session_id, session, message):
-        groups = session.mitigation_target_population or []
-        if session.mitigation_dg_evidence_index >= len(groups):
-            return await self._guided_summary_step(
-                session_id, session, "mitigation_dg_summary_review"
-            )
-        group = groups[session.mitigation_dg_evidence_index]
+        group = self._next_user_added_dg_without_evidence(session)
+        if not group:
+            return await self._continue_to_final_mitigation_summary(session_id, session)
         if normalize(message) == normalize("Skip DG evidence"):
             evidence_text = ""
         else:
@@ -1907,12 +2065,7 @@ class ChatMitigationCreationGuidedMixin:
                 provenance="validated_disadvantaged_group_evidence",
             )
         (session.mitigation_dg_evidence or {})[group] = evidence_text
-        session.mitigation_dg_evidence_index += 1
-        if session.mitigation_dg_evidence_index >= len(groups):
-            return await self._guided_summary_step(
-                session_id, session, "mitigation_dg_summary_review"
-            )
-        return self._guided_dg_evidence_decision_step(session_id, session)
+        return await self._guided_dg_evidence_decision_step(session_id, session)
 
     async def _guided_dg_evidence_relevance(self, session, group, evidence_text):
         evidence_context = await self._mitigation_evidence_context(
@@ -1939,32 +2092,6 @@ class ChatMitigationCreationGuidedMixin:
         )
         payload = None if is_llm_unavailable_response(response) else parse_json_object(response)
         return payload if isinstance(payload, dict) else {"relevant": True, "reason": ""}
-
-    async def _handle_mitigation_dg_summary_review(self, session_id, session, message):
-        action = normalize(
-            exact_option_label(
-                message, self._guided_options("Confirm DG summary", "Modify disadvantaged groups")
-            )
-            or message
-        )
-        if action == normalize("Confirm DG summary"):
-            session.mitigation_equity = None
-            session.mitigation_equity_skipped = False
-            return await self._guided_summary_step(
-                session_id, session, "mitigation_final_summary_review"
-            )
-        if action == normalize("Modify disadvantaged groups"):
-            session.phase = "mitigation_dg_input"
-            return ChatResponse(
-                session_id=session_id,
-                step="mitigation_dg_input",
-                bot_message="Provide the revised list of specific disadvantaged groups.",
-                options=[],
-                session=session.summary(),
-                input_mode="textarea",
-                error=False,
-            )
-        return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
     async def _handle_mitigation_equity(self, session_id, session, message):
         action = normalize(

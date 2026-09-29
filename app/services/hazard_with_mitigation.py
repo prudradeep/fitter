@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import KnowledgeChunk, KnowledgeDocument
 from app.services.chat_options import normalize_for_match
+from app.services.system_hazard_profile_names import profile_name_for_legacy_label
 
 
 HAZARD_WITH_MITIGATION_SOURCE_TYPE = "hazard_with_mitigation"
@@ -24,6 +25,7 @@ def country_factsheet_reference(
     hazard: str | None,
     proposal_type: str,
     disadvantage_groups: list[str] | None = None,
+    mechanism_suggestions: list[dict[str, object]] | None = None,
 ) -> str:
     """Render country/sector factsheet material for the chosen proposal path."""
     text = _country_factsheet_text(db, country)
@@ -34,7 +36,14 @@ def country_factsheet_reference(
             text, country, sector, selected_policy, hazard, disadvantage_groups
         )
     return _new_policy_reference(
-        text, country, region, sector, selected_policy, hazard, disadvantage_groups
+        text,
+        country,
+        region,
+        sector,
+        selected_policy,
+        hazard,
+        disadvantage_groups,
+        mechanism_suggestions,
     )
 
 
@@ -150,11 +159,10 @@ def _existing_policy_reference(
     hazard: str | None,
     disadvantage_groups: list[str] | None,
 ) -> str:
-    blocks = _rank_blocks(
+    _ = sector, hazard
+    blocks = _selected_existing_policy_blocks(
         _factsheet_blocks(text, EXISTING_POLICY_FACTSHEET, "Title of the policy (existing)"),
-        sector,
         selected_policy,
-        hazard,
     )
     cards: list[str] = []
     for block in blocks[:3]:
@@ -179,6 +187,21 @@ def _existing_policy_reference(
     )
 
 
+def _selected_existing_policy_blocks(blocks: list[str], selected_policy: str | None) -> list[str]:
+    """Return only fact-sheet entries for the policy selected by the user."""
+    selected_key = normalize_for_match(selected_policy or "")
+    if not selected_key:
+        return []
+    return [
+        block
+        for block in blocks
+        if normalize_for_match(
+            _field(block, "Title of the policy (existing)", _EXISTING_POLICY_FIELDS[1:])
+        )
+        == selected_key
+    ]
+
+
 def _new_policy_reference(
     text: str,
     country: str | None,
@@ -187,6 +210,7 @@ def _new_policy_reference(
     selected_policy: str | None,
     hazard: str | None,
     disadvantage_groups: list[str] | None,
+    mechanism_suggestions: list[dict[str, object]] | None = None,
 ) -> str:
     blocks = _rank_blocks(
         _factsheet_blocks(text, NEW_POLICY_FACTSHEET, "Title of the policy (new proposal)"),
@@ -196,32 +220,105 @@ def _new_policy_reference(
     )
     if not blocks:
         return ""
-    summaries: list[str] = []
-    for block in blocks[:3]:
-        summary = _new_policy_summary(block)
-        if summary:
-            summaries.append(
-                f"{summary} "
-                '<button class="factsheet-source-tag hazard-evidence-label--provided" '
-                'type="button" '
-                f'data-source-table="{escape(_new_policy_source_table(block), quote=True)}" '
-                'aria-label="Show the referenced factsheet data">Source</button>'
-            )
-    if not summaries:
-        return ""
     context = ", ".join(value for value in (country, region, sector) if value)
     mitigation_context = (
-        f"Selected policy: {selected_policy or 'Not provided'}\n\n"
-        f"Selected hazard: {hazard or 'Not provided'}\n\n"
-        f"Selected context: {context or 'Not provided'}\n\n"
+        f"**Selected policy**: {selected_policy or 'Not provided'}\n\n"
+        f"**Selected hazard**: {hazard or 'Not provided'}\n\n"
+        f"**Selected context**: {context or 'Not provided'}\n\n"
     )
     groups = _disadvantage_group_section(blocks[:3], disadvantage_groups)
     return (
-        "## Inspiration for New policy proposal\n\n"
+        "# Inspiration for New policy proposal\n\n"
         + mitigation_context
-        + "\n\n".join(summaries)
+        + _policy_mechanisms_section(mechanism_suggestions)
+        + _important_new_proposal_concepts_section(blocks, hazard)
         + groups
     )
+
+
+def _policy_mechanisms_section(mechanism_suggestions: list[dict[str, object]] | None) -> str:
+    """Format early, policy-level mechanism suggestions for the proposal context."""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for suggestion in mechanism_suggestions or []:
+        mechanism = str(suggestion.get("mechanism") or "").strip()
+        mechanism_key = normalize_for_match(mechanism)
+        if not mechanism or mechanism_key in seen:
+            continue
+        seen.add(mechanism_key)
+        linkage = str(suggestion.get("causal_linkage") or "").strip()
+        if linkage:
+            lines.append(
+                f"- **{mechanism}:** {linkage}"
+            )
+        else:
+            lines.append(f"- **{mechanism}**")
+    if not lines:
+        return ""
+    return (
+        "## Policy mechanisms to be considered for mitigation\n\n"
+        + "\n".join(lines)
+        + "\n\n"
+    )
+
+
+def _important_new_proposal_concepts_section(blocks: list[str], hazard: str | None) -> str:
+    """Present key concepts from the fact sheet most relevant to the selected hazard."""
+    hazard_key = normalize_for_match(hazard or "")
+    hazard_tokens = set(hazard_key.split())
+
+    def relevance(block: str) -> tuple[int, int]:
+        challenge = _new_policy_fields(block).get("Prioritised challenge addressed", "")
+        challenge_key = normalize_for_match(challenge)
+        return (
+            int(bool(hazard_key and (hazard_key in challenge_key or challenge_key in hazard_key))),
+            len(hazard_tokens & set(challenge_key.split())),
+        )
+
+    ranked = sorted(blocks, key=relevance, reverse=True)
+    if not ranked:
+        return ""
+    top_score = relevance(ranked[0])
+    relevant_blocks = [
+        block for block in ranked[:3] if relevance(block) == top_score and top_score != (0, 0)
+    ] or ranked[:1]
+
+    values = [_new_policy_fields(block) for block in relevant_blocks]
+
+    def field_values(label: str) -> list[str]:
+        seen: set[str] = set()
+        items: list[str] = []
+        for fields in values:
+            value = str(fields.get(label) or "").strip()
+            key = normalize_for_match(value)
+            if value and key not in seen:
+                seen.add(key)
+                items.append(value)
+        return items
+
+    challenges = field_values("Prioritised challenge addressed")
+    descriptions = field_values("Policy description")
+    stakeholders = field_values("Participatory dimension & stakeholders")
+    if not any((challenges, descriptions, stakeholders)):
+        return ""
+
+    sections: list[str] = ["# Important concepts for your new proposal"]
+    if challenges:
+        sections.extend([
+            "### Challenges to be addressed",
+            "\n".join(f"- {value}" for value in challenges),
+        ])
+    if descriptions:
+        sections.extend([
+            "### Possible ways to address the challenges",
+            "\n".join(f"- {value}" for value in descriptions),
+        ])
+    if stakeholders:
+        sections.extend([
+            "### Possible stakeholders to involve",
+            "\n".join(f"- {value}" for value in stakeholders),
+        ])
+    return "\n\n".join(sections) + "\n\n"
 
 
 _NEW_POLICY_FIELDS = (
@@ -327,7 +424,7 @@ def _disadvantage_group_section(
     groups: list[str] = []
     seen: set[str] = set()
     for group in session_groups or []:
-        _append_group(groups, seen, group)
+        _append_group(groups, seen, profile_name_for_legacy_label(group))
     for block in blocks:
         target_match = re.search(
             r"Target population[^\n]*\n(.*?)(?=\nSystemic focus\s*\n|\Z)",

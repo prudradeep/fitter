@@ -562,7 +562,6 @@ class ChatService(
             "mitigation_dg_input": self._handle_mitigation_dg_input,
             "mitigation_dg_evidence_decision": self._handle_mitigation_dg_evidence_decision,
             "mitigation_dg_evidence_input": self._handle_mitigation_dg_evidence_input,
-            "mitigation_dg_summary_review": self._handle_mitigation_dg_summary_review,
             "mitigation_equity": self._handle_mitigation_equity,
             "mitigation_final_summary_review": self._handle_mitigation_final_summary_review,
         }

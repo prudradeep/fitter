@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 
 from app.services.chat_session import ChatSession
 from app.services.profile_indicator_mapping import proposed_indicator_details
+from app.services.system_hazard_profile_names import profile_name_for_variable
 
 
 ADDITIONAL_HAZARDS_INFO_TOOLTIP = (
@@ -389,7 +390,12 @@ def _append_hazard_profiles(
     ranking = (session.hazard_rankings or {}).get(hazard, {})
     ranked_profiles = ranking.get("profiles", []) if isinstance(ranking, dict) else []
     population_by_profile = {
-        normalize_markdown_text(str(item.get("name") or item.get("profile") or "")).casefold(): item
+        normalize_markdown_text(
+            profile_name_for_variable(
+                item.get("variable_name") or item.get("variable") or "",
+                item.get("name") or item.get("profile") or "",
+            )
+        ).casefold(): item
         for item in ranked_profiles
         if isinstance(item, dict)
     }
@@ -399,6 +405,7 @@ def _append_hazard_profiles(
             name = str(profile.get("name") or profile.get("profile") or "").strip()
             explanation = str(profile.get("explanation") or "").strip()
             variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
+            name = profile_name_for_variable(variable_name, name)
             variable_type = str(profile.get("variable_type") or "").strip()
             statistical_basis = str(profile.get("statistical_basis") or "").strip()
             source = str(profile.get("source") or "").strip()
@@ -910,16 +917,22 @@ def format_additional_dgs(session: ChatSession) -> str:
 
 
 def format_all_dgs(session: ChatSession) -> str:
+    from app.services.system_hazard_profile_names import profile_name_for_legacy_label
+
+    assistant_profiles = [
+        profile_name_for_legacy_label(profile)
+        for profile in (session.socio_demographic_profiles or [])
+    ]
     sections: list[str] = []
     assistant_profile_keys = {
         _normalize_key(profile)
-        for profile in (session.socio_demographic_profiles or [])
+        for profile in assistant_profiles
         if str(profile or "").strip()
     }
-    if session.socio_demographic_profiles:
+    if assistant_profiles:
         sections.append(
             "Socio-demographic profiles identified by the assistant:\n"
-            + "\n".join(f"- {profile}." for profile in session.socio_demographic_profiles)
+            + "\n".join(f"- {profile}." for profile in assistant_profiles)
         )
     elif session.socio_demographic_findings:
         sections.append(session.socio_demographic_findings.strip())

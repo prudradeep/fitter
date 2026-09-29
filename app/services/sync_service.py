@@ -42,7 +42,12 @@ INTERNAL_TABLES = {
 DEFAULT_EXCLUDED_TABLES = {"app_rate_limits"}
 LOG_TABLES = {"audit_logs", "llm_exchange_logs"}
 KNOWLEDGE_TABLES = {"knowledge_documents", "knowledge_chunks"}
-SERVER_OWNED_TABLES = {"prompts"}
+SERVER_OWNED_TABLES = {
+    "prompts",
+    "system_hazard_socio_demographics",
+    "system_hazard_socio_demographic_target_populations",
+    "system_hazard_socio_demographic_population_matches",
+}
 ENCRYPTED_SYNC_TABLES = {"app_users"}
 USER_DATA_TABLES = {
     "app_users",

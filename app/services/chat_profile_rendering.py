@@ -3,6 +3,7 @@ from html import escape
 
 from app.services.chat_options import normalize_for_match
 from app.services.profile_indicator_mapping import proposed_indicator_details
+from app.services.system_hazard_profile_names import profile_name_for_variable
 
 
 class ChatProfileRenderingMixin:
@@ -69,6 +70,7 @@ class ChatProfileRenderingMixin:
             if not name:
                 continue
             variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
+            name = profile_name_for_variable(variable_name, name)
             variable_type = str(profile.get("variable_type") or "").strip()
             target_population_labels = cls._list_from_profile_or_metadata(
                 profile,

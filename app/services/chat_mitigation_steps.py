@@ -1,3 +1,5 @@
+import logging
+
 from app.schemas import ChatResponse, Option
 from app.llm import ask_llm_chat
 from app.services.chat_formatters import format_all_dgs
@@ -17,6 +19,9 @@ from app.services.chat_parsers import (
 )
 from app.services.chat_session import ChatSession
 from app.services.message_renderer import markdown_to_html, render_message
+
+
+logger = logging.getLogger(__name__)
 
 
 class ChatMitigationStepsMixin:
@@ -47,10 +52,24 @@ class ChatMitigationStepsMixin:
         ):
             session.mitigation_target_population = None
         session.phase = "mitigation_measure"
+        mechanism_suggestions: list[dict[str, object]] = []
+        mechanism_planning = getattr(self, "_mitigation_mechanism_planning_overview", None)
+        if mechanism_planning is not None:
+            try:
+                overview = await mechanism_planning(session)
+                candidates = overview.get("mechanisms") if isinstance(overview, dict) else []
+                if isinstance(candidates, list):
+                    mechanism_suggestions = [
+                        candidate for candidate in candidates if isinstance(candidate, dict)
+                    ]
+            except Exception:
+                logger.exception("Could not load policy mechanism suggestions")
         factsheet_reference = ""
         factsheet_provider = getattr(self, "_hazard_with_mitigation_factsheet_reference", None)
         if factsheet_provider is not None:
-            factsheet_reference = str(factsheet_provider(session) or "")
+            factsheet_reference = str(
+                factsheet_provider(session, mechanism_suggestions=mechanism_suggestions) or ""
+            )
         main_kb_reference = ""
         main_kb_provider = getattr(self, "_hazard_with_mitigation_main_kb_reference", None)
         if main_kb_provider is not None:
@@ -260,9 +279,14 @@ class ChatMitigationStepsMixin:
         if target_population:
             parts.append(f"It targets the selected mitigation population: {target_population}.")
         elif session.socio_demographic_profiles:
+            from app.services.system_hazard_profile_names import profile_name_for_legacy_label
+
             parts.append(
                 "It is targeted to the affected socio-demographic profiles: "
-                + ", ".join(session.socio_demographic_profiles)
+                + ", ".join(
+                    profile_name_for_legacy_label(profile)
+                    for profile in session.socio_demographic_profiles
+                )
                 + "."
             )
         if session.practical_considerations:

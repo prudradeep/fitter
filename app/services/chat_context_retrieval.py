@@ -125,6 +125,7 @@ class ChatContextRetrievalMixin:
         query = retrieval_query or self._mitigation_retrieval_query(
             session, mitigation_measure, reason
         )
+        reused_context = self._reused_evidence_context(session, evidence, query=query)
         temporary_context = await self._temporary_evidence_context(session, query=query)
         inline_evidence = self._inline_evidence_content(evidence)
         inline_results: list[dict[str, object]] = []
@@ -142,7 +143,58 @@ class ChatContextRetrievalMixin:
         inline_context = self._format_bounded_knowledge_results(
             inline_results, query=query
         )
-        return "\n".join(part for part in (temporary_context, inline_context) if part).strip()
+        return "\n".join(
+            part for part in (reused_context, temporary_context, inline_context) if part
+        ).strip()
+
+    async def _shared_mitigation_evidence_reference(
+        self,
+        session: ChatSession,
+        mitigation_measure: str,
+        reason: str,
+    ) -> str:
+        """Return a reusable KB-evidence reference when a relevant source is available."""
+        query = self._mitigation_retrieval_query(session, mitigation_measure, reason)
+        results = await self._shared_knowledge_results(
+            session,
+            query,
+            main_limit=5,
+            evidence_limit=4,
+        )
+        if not results:
+            return ""
+
+        grounded = await self.grounding_models.ground_results(query, results)
+        candidates = [
+            result
+            for result in grounded
+            if str(result.get("document_id") or "").strip()
+            and str(result.get("knowledge_scope") or "").strip()
+            in {MAIN_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE}
+            and str(result.get("content") or "").strip()
+        ]
+        if not candidates:
+            return ""
+
+        # When NLI is available, accept only directly entailed material. Retrieval
+        # remains the fallback for deployments that intentionally run without NLI.
+        nli_was_run = any("nli_entailed" in result for result in candidates)
+        entailed = [result for result in candidates if result.get("nli_entailed") is True]
+        if nli_was_run and not entailed:
+            return ""
+        selected = entailed[0] if entailed else candidates[0]
+        source_title = str(selected.get("title") or "Knowledge-base evidence").strip()
+        source_uri = str(selected.get("source_uri") or "").strip()
+        page_number = str(selected.get("page_number") or "").strip()
+        excerpt = str(selected.get("content") or "").strip()
+        return (
+            f"Reused evidence document ID: {str(selected['document_id']).strip()}\n"
+            f"Reused evidence scope: {str(selected['knowledge_scope']).strip()}\n"
+            f"Reused evidence title: {source_title}\n"
+            f"Reused evidence source URI: {source_uri}\n"
+            f"Reused evidence page: {page_number}\n"
+            f"Reused evidence excerpt: {excerpt[:4000]}"
+        )
 
     async def _sector_prompt_rag_context(
         self,
@@ -266,7 +318,13 @@ class ChatContextRetrievalMixin:
                 ).search(query, limit=evidence_limit)
             except Exception:
                 logger.exception("Validated evidence lookup failed")
-        return [*main_results, *validated_results]
+        return [
+            *[{**result, "knowledge_scope": MAIN_KB_SCOPE} for result in main_results],
+            *[
+                {**result, "knowledge_scope": VALIDATED_EVIDENCE_SCOPE}
+                for result in validated_results
+            ],
+        ]
 
     def _mitigation_retrieval_query(
         self,

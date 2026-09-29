@@ -69,6 +69,9 @@ CLIENT_ONLY
 
 SERVER_TO_CLIENT
   prompts
+  system_hazard_socio_demographics
+  system_hazard_socio_demographic_target_populations
+  system_hazard_socio_demographic_population_matches
   knowledge_documents scope=main
   knowledge_documents scope=sector_prompt
   knowledge_chunks belonging to those scopes

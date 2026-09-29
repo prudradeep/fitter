@@ -1,16 +1,4 @@
-## Concept Comparison
-
-Selected hazard:
-
-- **{{ hazard }}**
-
-Mitigation measure:
-
-- **{{ mitigation_measure }}**
-
-Reason:
-
-{{ reason }}
+## Population groups affected vs benefited
 
 {% if visibility_notice %}
 > {{ visibility_notice }}

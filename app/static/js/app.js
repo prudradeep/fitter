@@ -98,6 +98,7 @@ const policyDocumentForm = document.querySelector("#policyDocumentForm");
 const knowledgeFileInput = document.querySelector("#knowledgeFileInput");
 const policyDocumentPolicyInput = document.querySelector("#policyDocumentPolicyInput");
 const policyDocumentFileInput = document.querySelector("#policyDocumentFileInput");
+const policyDocumentUrlInput = document.querySelector("#policyDocumentUrlInput");
 const knowledgeUrlInput = document.querySelector("#knowledgeUrlInput");
 const knowledgeSearchInput = document.querySelector("#knowledgeSearchInput");
 const knowledgeMessage = document.querySelector("#knowledgeMessage");
@@ -4703,12 +4704,51 @@ async function openKnowledgeDialog() {
   await Promise.all([loadKnowledgeDocuments(), loadPolicyDocumentOptions()]);
 }
 
+function uploadPolicyDocument(formData, row, isUrl) {
+  return new Promise((resolve) => {
+    const csrfToken = cookieValue("dr_transition_csrf");
+    if (csrfToken) formData.append("csrf_token", csrfToken);
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/knowledge/policy-document");
+    if (csrfToken) request.setRequestHeader("X-CSRF-Token", csrfToken);
+    request.upload.addEventListener("progress", (event) => {
+      if (isUrl || !event.lengthComputable) return;
+      const percent = Math.round((event.loaded / event.total) * 60);
+      updateKnowledgeProgressRow(row, `Uploading ${Math.max(1, percent)}%`, percent);
+    });
+    request.upload.addEventListener("load", () => {
+      updateKnowledgeProgressRow(
+        row,
+        isUrl ? "Fetching and indexing document..." : "Embedding and indexing document...",
+        isUrl ? 45 : 75,
+      );
+    });
+    request.addEventListener("load", () => {
+      let data = { error: true, detail: "Could not update the policy document." };
+      try {
+        data = JSON.parse(request.responseText || "{}");
+      } catch (error) {
+        console.error("Policy document response parse failed", error);
+      }
+      if (request.status >= 400) {
+        data = {
+          ...data,
+          error: true,
+          detail: data.detail || `Update failed with status ${request.status}.`,
+        };
+      }
+      resolve(data);
+    });
+    request.addEventListener("error", () => {
+      resolve({ error: true, detail: "Policy document update failed before ingestion started." });
+    });
+    updateKnowledgeProgressRow(row, isUrl ? "Fetching document..." : "Uploading document...", 8);
+    request.send(formData);
+  });
+}
+
 async function loadPolicyDocumentOptions() {
   if (!policyDocumentPolicyInput) return;
-  if (policyDocumentPolicyInput.options.length > 1) {
-    policyDocumentPolicyInput.disabled = false;
-    return;
-  }
   policyDocumentPolicyInput.replaceChildren(createElement("option", { text: "Loading policies…", attrs: { value: "" } }));
   try {
     const response = await fetch("/api/knowledge/policies");
@@ -6032,26 +6072,42 @@ policyDocumentForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const policyId = policyDocumentPolicyInput?.value || "";
   const file = policyDocumentFileInput?.files?.[0];
-  if (!policyId || !file) return;
+  const url = policyDocumentUrlInput?.value.trim() || "";
+  if (!policyId || (!file && !url)) return;
+  if (file && url) {
+    showKnowledgeMessage("Choose either a file or a document URL.", true);
+    return;
+  }
   const formData = new FormData();
   formData.append("policy_id", policyId);
-  formData.append("file", file);
+  if (file) formData.append("file", file);
+  if (url) formData.append("url", url);
+  resetKnowledgeProgress();
+  const source = file?.name || url;
+  const row = addKnowledgeProgressRow(source, "Preparing document...");
+  const submitButton = policyDocumentForm.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
   try {
-    const response = await csrfFetch("/api/knowledge/policy-document", { method: "POST", body: formData });
-    const data = await response.json();
-    if (!response.ok || data.error) {
-      showKnowledgeMessage(data.detail || "Could not update the policy document.", true);
+    const data = await uploadPolicyDocument(formData, row, Boolean(url));
+    if (data.error) {
+      const detail = data.detail || "Could not update the policy document.";
+      updateKnowledgeProgressRow(row, detail, 100, "failed");
+      showKnowledgeMessage(detail, true);
       return;
     }
+    updateKnowledgeProgressRow(row, `Done · ${data.chunks || 0} chunks`, 100, "done");
     showKnowledgeMessage(
-      `Updated ${data.policy_title || "the selected policy"} with ${file.name} (${data.chunks || 0} chunks).`,
+      `Updated ${data.policy_title || "the selected policy"} with ${data.source || source} (${data.chunks || 0} chunks).`,
       false,
     );
     policyDocumentForm.reset();
     await loadKnowledgeDocuments();
   } catch (error) {
+    updateKnowledgeProgressRow(row, "Could not update the policy document.", 100, "failed");
     showKnowledgeMessage("Could not update the policy document.", true);
     console.error("Policy document upload failed", error);
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
 });
 

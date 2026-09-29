@@ -4,6 +4,10 @@ from uuid import uuid4
 
 from app.schemas import SessionSummary
 from app.services.enums import ChatPhase
+from app.services.system_hazard_profile_names import (
+    profile_name_for_legacy_label,
+    profile_name_for_variable,
+)
 
 
 @dataclass
@@ -72,6 +76,8 @@ class ChatSession:
     mitigation_policy_effects: list[dict[str, object]] | None = None
     mitigation_policy_effect_index: int = 0
     mitigation_creation_summary: str | None = None
+    mitigation_user_added_groups: list[str] | None = None
+    mitigation_dg_benefit_explanations: dict[str, str] | None = None
     mitigation_dg_evidence: dict[str, str] | None = None
     mitigation_dg_evidence_index: int = 0
     mitigation_equity: str | None = None
@@ -235,8 +241,12 @@ class ChatSession:
             for profile in profile_values:
                 if isinstance(profile, dict):
                     name = str(profile.get("name") or profile.get("profile") or "").strip()
+                    name = profile_name_for_variable(
+                        profile.get("variable_name") or profile.get("variable") or "",
+                        name,
+                    )
                 else:
-                    name = str(profile or "").strip()
+                    name = profile_name_for_legacy_label(profile)
                 if name:
                     unique_profiles.add(name.casefold())
         return len(unique_profiles)
@@ -283,9 +293,10 @@ class ChatSession:
                 if isinstance(profile, dict):
                     name = str(profile.get("name") or profile.get("profile") or "").strip()
                     variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
+                    name = profile_name_for_variable(variable_name, name)
                     variable_type = str(profile.get("variable_type") or "").strip()
                 else:
-                    name = str(profile or "").strip()
+                    name = profile_name_for_legacy_label(profile)
                     variable_name = ""
                     variable_type = ""
                 if name:

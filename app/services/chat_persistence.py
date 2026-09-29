@@ -14,6 +14,7 @@ from app.services.custom_hazard_validation import (
     custom_hazard_validation_details,
     frontend_custom_hazard_payload,
 )
+from app.services.system_hazard_profile_names import profile_name_for_legacy_label
 
 logger = logging.getLogger(__name__)
 
@@ -215,9 +216,36 @@ class ChatPersistenceMixin:
     def _chat_message_display_content(self, content: str) -> str:
         if content.strip().startswith("TARGET_POPULATION_BATCH:"):
             return "Quick Select Affected Population Group"
+        content = self._display_canonical_system_profile_names(content)
         if not bool(getattr(self, "is_admin", False)):
             return self._strip_profile_admin_details(content)
         return content
+
+    @staticmethod
+    def _display_canonical_system_profile_names(content: str) -> str:
+        """Keep historical chat cards aligned with the current profile names."""
+        def replace_name(match: re.Match[str]) -> str:
+            return (
+                f"{match.group(1)}"
+                f"{profile_name_for_legacy_label(match.group(2))}"
+                f"{match.group(3)}"
+            )
+
+        content = re.sub(
+            r"(<strong>)(.*?)(</strong>)",
+            replace_name,
+            content,
+            flags=re.DOTALL,
+        )
+
+        def replace_bullet(match: re.Match[str]) -> str:
+            return f"{match.group(1)}{profile_name_for_legacy_label(match.group(2))}"
+
+        return re.sub(
+            r"(?m)^(\s*[-*+]\s+)([^\n]+)$",
+            replace_bullet,
+            content,
+        )
 
     @staticmethod
     def _strip_profile_admin_details(content: str) -> str:

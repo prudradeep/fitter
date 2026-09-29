@@ -655,16 +655,25 @@ class ChatHazardProfilesMixin:
 
     @classmethod
     def _selected_hazard_profile_names(cls, session: ChatSession) -> list[str]:
+        from app.services.system_hazard_profile_names import profile_name_for_legacy_label
+
         profiles: list[str] = []
         if session.socio_demographic_profiles:
-            profiles.extend(session.socio_demographic_profiles)
+            profiles.extend(
+                profile_name_for_legacy_label(profile)
+                for profile in session.socio_demographic_profiles
+            )
         elif session.socio_demographic_findings:
             profiles.extend(cls._extract_socio_demographic_profiles(session.socio_demographic_findings))
 
         selected_hazard = session.selected_hazard or session.accepted_custom_hazard
         if selected_hazard:
             stored_profiles = cls._stored_hazard_profiles(session, selected_hazard)
-            profiles.extend(profile["name"] for profile in stored_profiles if profile.get("name"))
+            profiles.extend(
+                profile_name_for_legacy_label(profile["name"])
+                for profile in stored_profiles
+                if profile.get("name")
+            )
 
         profiles.extend(session.additional_dgs or [])
 

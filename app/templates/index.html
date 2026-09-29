@@ -877,8 +877,9 @@
                 </label>
                 <label class="knowledge-field">
                   <span>Policy document</span>
-                  <small>Supported files: PDF, DOCX, MD, or TXT</small>
-                  <input id="policyDocumentFileInput" type="file" required accept=".pdf,.docx,.md,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" />
+                  <small>Upload a PDF, DOCX, MD, or TXT file, or enter a public URL to one.</small>
+                  <input id="policyDocumentFileInput" type="file" accept=".pdf,.docx,.md,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" />
+                  <input id="policyDocumentUrlInput" type="url" placeholder="https://example.org/policy.pdf" aria-label="Policy document URL" />
                 </label>
                 <button type="submit">
                   <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true"><path d="M17 18a4 4 0 0 0 0-8h-.5A6.5 6.5 0 0 0 4 12a3 3 0 0 0 1 5.83" /><path d="M12 12v7" /><path d="m9 15 3-3 3 3" /></svg>

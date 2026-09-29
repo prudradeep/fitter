@@ -191,6 +191,7 @@ class ChatNavigationStepsMixin:
             session.mitigation_policy_effects = None
             session.mitigation_policy_effect_index = 0
             session.mitigation_creation_summary = None
+            session.mitigation_user_added_groups = None
             session.mitigation_dg_evidence = None
             session.mitigation_dg_evidence_index = 0
             session.mitigation_equity = None
@@ -321,6 +322,7 @@ class ChatNavigationStepsMixin:
         session.mitigation_policy_effects = None
         session.mitigation_policy_effect_index = 0
         session.mitigation_creation_summary = None
+        session.mitigation_user_added_groups = None
         session.mitigation_dg_evidence = None
         session.mitigation_dg_evidence_index = 0
         session.mitigation_equity = None
@@ -888,9 +890,6 @@ class ChatNavigationStepsMixin:
             ),
             "mitigation_dg_evidence_decision": self._guided_options(
                 "Yes, add DG evidence", "No DG evidence"
-            ),
-            "mitigation_dg_summary_review": self._guided_options(
-                "Confirm DG summary", "Modify disadvantaged groups"
             ),
             "mitigation_final_summary_review": self._guided_options(
                 "Confirm final summary", "Modify final inputs"

@@ -6,6 +6,7 @@ from app.services.chat_options import normalize
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.profile_metadata import compact_profile_metadata
 from app.services.sector_prompt_rag import strip_rule_lines
+from app.services.system_hazard_profile_names import profile_name_for_variable
 
 
 def extract_socio_demographic_profiles(
@@ -93,6 +94,7 @@ def parse_hazard_profile_items(response: str) -> list[dict[str, object]]:
             source = str(item.get("source") or "sector_prompt").strip().strip("`*_ ")
         else:
             continue
+        name = profile_name_for_variable(variable_name, name)
         if not name:
             continue
         key = normalize(name)
@@ -144,6 +146,7 @@ def clean_hazard_profile_item(value: object) -> dict[str, str]:
     variable_token = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", variable_name)
     if variable_token:
         variable_name = variable_token.group(1)
+    name = profile_name_for_variable(variable_name, name)
     return {
         "name": name[:120],
         "profile": name[:120],
@@ -166,7 +169,10 @@ def profile_from_predictor_entry(entry: str) -> dict[str, str]:
     variable_name = variable_text.split("(", 1)[0].strip()
     level_match = re.search(r'\blevel:\s*"([^"]+)"', variable_text, flags=re.IGNORECASE)
     variable_label = humanize_predictor_label(variable_name)
-    if level_match:
+    profile_name = profile_name_for_variable(variable_name)
+    if profile_name:
+        pass
+    elif level_match:
         profile_name = f"{variable_label}: {level_match.group(1).strip()}"
     elif "country-level" in variable_text.casefold():
         profile_name = f"Countries with higher {variable_label}"

@@ -39,6 +39,7 @@ from app.services.knowledge_base import (
     TEMPORARY_KB_SCOPE,
     KnowledgeBaseService,
 )
+from app.services.system_hazard_profile_names import profile_name_for_variable
 
 logger = logging.getLogger("app.services.chat_hazard_creation")
 
@@ -466,7 +467,10 @@ class ChatHazardCatalogMixin:
             if profile_row is None or not str(profile_row.profile or "").strip():
                 continue
             seen = seen_profiles.setdefault(hazard.id, set())
-            profile_name = str(profile_row.profile).strip()
+            profile_name = profile_name_for_variable(
+                profile_row.variable_name,
+                profile_row.profile,
+            )
             key = normalize(profile_name)
             if key in seen:
                 continue
@@ -936,6 +940,10 @@ class ChatHazardCatalogMixin:
                     row.variable_name = normalized
                     changed = True
                 if isinstance(row, SystemHazardSocioDemographic):
+                    profile_name = profile_name_for_variable(row.variable_name, row.profile)
+                    if profile_name and row.profile != profile_name:
+                        row.profile = profile_name
+                        changed = True
                     variable_type = self._profile_variable_type(row.variable_name)
                     if row.variable_type != variable_type:
                         row.variable_type = variable_type
@@ -1477,26 +1485,31 @@ class ChatHazardCatalogMixin:
         system_hazard_id: str,
         profile: dict[str, object],
     ) -> None:
-        profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
-        if not profile_name:
-            return
         variable_name = self._valid_sdp_variable_name(
             session,
             str(profile.get("variable_name") or profile.get("variable") or "").strip(),
         )
+        profile_name = profile_name_for_variable(
+            variable_name,
+            profile.get("name") or profile.get("profile") or "",
+        )
+        if not profile_name:
+            return
         explanation = str(profile.get("explanation") or "").strip()
         statistical_basis = str(
             profile.get("statistical_basis") or profile.get("basis") or ""
         ).strip()
         source = str(profile.get("source") or "sector_prompt").strip()[:40] or "sector_prompt"
         try:
-            row = self.db.scalar(
-                select(SystemHazardSocioDemographic).where(
-                    SystemHazardSocioDemographic.system_hazard_id == system_hazard_id,
-                    SystemHazardSocioDemographic.sector_id == session.sector_id,
-                    func.lower(SystemHazardSocioDemographic.profile) == profile_name.casefold(),
-                )
-            )
+            conditions = [
+                SystemHazardSocioDemographic.system_hazard_id == system_hazard_id,
+                SystemHazardSocioDemographic.sector_id == session.sector_id,
+            ]
+            if variable_name:
+                conditions.append(SystemHazardSocioDemographic.variable_name == variable_name)
+            else:
+                conditions.append(func.lower(SystemHazardSocioDemographic.profile) == profile_name.casefold())
+            row = self.db.scalar(select(SystemHazardSocioDemographic).where(*conditions))
             if row is None:
                 row = SystemHazardSocioDemographic(
                     system_hazard_id=system_hazard_id,
@@ -1632,9 +1645,7 @@ class ChatHazardCatalogMixin:
     ) -> SystemHazardSocioDemographic | None:
         if session.sector_id is None:
             return None
-        profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
-        if not profile_name:
-            return None
+        raw_profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
         system_hazard = self.db.scalar(
             select(SystemHazard).where(
                 SystemHazard.sector_id == session.sector_id,
@@ -1643,12 +1654,23 @@ class ChatHazardCatalogMixin:
         )
         if system_hazard is None:
             return None
+        variable_name = self._valid_sdp_variable_name(
+            session,
+            str(profile.get("variable_name") or profile.get("variable") or "").strip(),
+        )
+        profile_name = profile_name_for_variable(variable_name, raw_profile_name)
+        if not profile_name:
+            return None
+        conditions = [
+            SystemHazardSocioDemographic.system_hazard_id == system_hazard.id,
+            SystemHazardSocioDemographic.sector_id == session.sector_id,
+        ]
+        if variable_name:
+            conditions.append(SystemHazardSocioDemographic.variable_name == variable_name)
+        else:
+            conditions.append(func.lower(SystemHazardSocioDemographic.profile) == profile_name.casefold())
         return self.db.scalar(
-            select(SystemHazardSocioDemographic).where(
-                SystemHazardSocioDemographic.system_hazard_id == system_hazard.id,
-                SystemHazardSocioDemographic.sector_id == session.sector_id,
-                func.lower(SystemHazardSocioDemographic.profile) == profile_name.casefold(),
-            )
+            select(SystemHazardSocioDemographic).where(*conditions)
         )
 
     def _ensure_system_socio_demographic_row(
@@ -1659,9 +1681,6 @@ class ChatHazardCatalogMixin:
     ) -> SystemHazardSocioDemographic | None:
         if session.sector_id is None:
             return None
-        profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
-        if not profile_name:
-            return None
         system_hazard = self._ensure_system_hazard(session, hazard)
         if system_hazard is None:
             return None
@@ -1669,14 +1688,22 @@ class ChatHazardCatalogMixin:
             session,
             str(profile.get("variable_name") or profile.get("variable") or "").strip(),
         )
+        profile_name = profile_name_for_variable(
+            variable_name,
+            profile.get("name") or profile.get("profile") or "",
+        )
+        if not profile_name:
+            return None
         try:
-            row = self.db.scalar(
-                select(SystemHazardSocioDemographic).where(
-                    SystemHazardSocioDemographic.system_hazard_id == system_hazard.id,
-                    SystemHazardSocioDemographic.sector_id == session.sector_id,
-                    func.lower(SystemHazardSocioDemographic.profile) == profile_name.casefold(),
-                )
-            )
+            conditions = [
+                SystemHazardSocioDemographic.system_hazard_id == system_hazard.id,
+                SystemHazardSocioDemographic.sector_id == session.sector_id,
+            ]
+            if variable_name:
+                conditions.append(SystemHazardSocioDemographic.variable_name == variable_name)
+            else:
+                conditions.append(func.lower(SystemHazardSocioDemographic.profile) == profile_name.casefold())
+            row = self.db.scalar(select(SystemHazardSocioDemographic).where(*conditions))
             if row is None:
                 row = SystemHazardSocioDemographic(
                     system_hazard_id=system_hazard.id,

@@ -60,6 +60,7 @@ class ChatHazardStepsMixin:
             select(MitigationMeasurePolicy.id, MitigationMeasurePolicy.policy_title)
             .where(
                 MitigationMeasurePolicy.sector_id == session.sector_id,
+                MitigationMeasurePolicy.policy_type == "Adjustment to existing policy",
                 or_(
                     MitigationMeasurePolicy.country_id == session.country_id,
                     MitigationMeasurePolicy.country_id.is_(None),
@@ -81,6 +82,38 @@ class ChatHazardStepsMixin:
         """Return the reference policies available for the current policy context."""
         return [title for _, title in self._policy_rows_for_selected_context(session)]
 
+    @staticmethod
+    def _policy_description_preview(description: object) -> str:
+        """Keep policy-list descriptions compact enough to scan beside a title."""
+        text = re.sub(r"\s+", " ", str(description or "")).strip()
+        if len(text) <= 260:
+            return text
+        return f"{text[:257].rsplit(' ', 1)[0]}…"
+
+    @classmethod
+    def _policy_description_from_chunks(
+        cls, policy_title: str, policy_code: str, chunks: list[object]
+    ) -> str:
+        """Extract a concise description from the matching policy fact sheet."""
+        normalized_title = normalize_for_match(policy_title)
+        code_pattern = r"\s*_\s*".join(re.escape(part) for part in policy_code.split("_") if part)
+        for chunk in chunks:
+            text = str(chunk or "")
+            normalized_chunk = normalize_for_match(text)
+            code_match = re.search(code_pattern, text, flags=re.IGNORECASE) if code_pattern else None
+            if normalized_title not in normalized_chunk and code_match is None:
+                continue
+            start_at = code_match.end() if code_match else 0
+            match = re.search(
+                r"(?:Policy description|Description of (?:the )?Proposal|Proposed Adjustment|Proposed adaptations?)\s*(.*?)"
+                r"(?=\s*(?:Policy code:|Transformative Category|Transformative scoring|Feasibility scoring|$))",
+                text[start_at:],
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if match:
+                return cls._policy_description_preview(match.group(1))
+        return ""
+
     def _policy_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         policies = self._policy_rows_for_selected_context(session)
         session.phase = "policy"
@@ -95,6 +128,59 @@ class ChatHazardStepsMixin:
                 session=session.summary(),
                 error=False,
             )
+        policy_metadata = {
+            str(policy_id): (short_description, policy_code)
+            for policy_id, short_description, policy_code in self.db.execute(
+                select(
+                    MitigationMeasurePolicy.id,
+                    MitigationMeasurePolicy.short_description,
+                    MitigationMeasurePolicy.policy_code,
+                ).where(
+                    MitigationMeasurePolicy.id.in_([policy_id for policy_id, _ in policies])
+                )
+            ).all()
+        }
+        missing_titles = [
+            title
+            for policy_id, title in policies
+            if not str((policy_metadata.get(policy_id) or ("", ""))[0] or "").strip()
+        ]
+        descriptions = {
+            policy_id: str((policy_metadata.get(policy_id) or ("", ""))[0] or "").strip()
+            for policy_id, _ in policies
+        }
+        policy_document_ids = {
+            str(policy_id)
+            for policy_id in self.db.scalars(
+                select(KnowledgeDocument.mitigation_measure_policy_id).where(
+                    KnowledgeDocument.mitigation_measure_policy_id.in_(
+                        [policy_id for policy_id, _ in policies]
+                    ),
+                    KnowledgeDocument.scope == MAIN_KB_SCOPE,
+                )
+            ).all()
+            if policy_id
+        }
+        if missing_titles:
+            policy_chunks = list(
+                self.db.scalars(
+                    select(KnowledgeChunk.content).where(
+                        or_(
+                            KnowledgeChunk.content.contains("Title of the policy"),
+                            KnowledgeChunk.content.contains("Policy code:"),
+                            KnowledgeChunk.content.contains("Policy Code:"),
+                        )
+                    )
+                ).all()
+            )
+            # Prefer the structured policy factsheets over report-summary chunks.
+            policy_chunks.sort(key=lambda chunk: "title of the policy" not in str(chunk or "").casefold())
+            for policy_id, title in policies:
+                if not str(descriptions.get(policy_id) or "").strip():
+                    policy_code = str((policy_metadata.get(policy_id) or ("", ""))[1] or "").strip()
+                    descriptions[policy_id] = self._policy_description_from_chunks(
+                        title, policy_code, policy_chunks
+                    )
         return ChatResponse(
             session_id=session_id,
             step="policy",
@@ -103,7 +189,14 @@ class ChatHazardStepsMixin:
                 country=session.country,
                 region=session.region,
                 sector=session.sector,
-                policies=[title for _, title in policies],
+                policies=[
+                    {
+                        "title": title,
+                        "description": self._policy_description_preview(descriptions.get(policy_id)),
+                        "document_available": policy_id in policy_document_ids,
+                    }
+                    for policy_id, title in policies
+                ],
             ),
             options=[
                 Option(id=index, label=title)
