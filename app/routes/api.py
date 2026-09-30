@@ -17,7 +17,7 @@ from app.models import (
     AppUser,
     Country,
     KnowledgeDocument,
-    MitigationMeasurePolicy,
+    Policy,
     Prompt,
     Region,
     Sector,
@@ -1106,21 +1106,18 @@ async def knowledge_policies(
         raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
     rows = db.execute(
         select(
-            MitigationMeasurePolicy.id,
-            MitigationMeasurePolicy.policy_code,
-            MitigationMeasurePolicy.policy_title,
+            Policy.id,
+            Policy.policy,
             Country.name.label("country_name"),
             Sector.name.label("sector_name"),
         )
-        .outerjoin(Country, Country.id == MitigationMeasurePolicy.country_id)
-        .outerjoin(Sector, Sector.id == MitigationMeasurePolicy.sector_id)
-        .where(MitigationMeasurePolicy.policy_type == "Adjustment to existing policy")
+        .join(Country, Country.id == Policy.country_id)
+        .join(Sector, Sector.id == Policy.sector_id)
         .order_by(
             Country.name.label("country_name"),
             Sector.name.label("sector_name"),
-            MitigationMeasurePolicy.policy_title,
-            MitigationMeasurePolicy.policy_code,
-            MitigationMeasurePolicy.id,
+            Policy.policy,
+            Policy.id,
         )
     ).all()
     return {
@@ -1137,7 +1134,7 @@ async def knowledge_policies(
                     if part
                 ),
             }
-            for policy_id, policy_code, policy_title, country_name, sector_name in rows
+            for policy_id, policy_title, country_name, sector_name in rows
         ]
     }
 
@@ -1157,7 +1154,7 @@ async def knowledge_policy_document_upload(
 
     form = await request.form()
     policy_id = str(form.get("policy_id") or "").strip()
-    policy = db.get(MitigationMeasurePolicy, policy_id)
+    policy = db.get(Policy, policy_id)
     if policy is None:
         return {"error": True, "detail": "Select a valid policy."}
     file = form.get("file")
@@ -1190,7 +1187,7 @@ async def knowledge_policy_document_upload(
     document = db.get(KnowledgeDocument, document_id)
     if document is None:
         return {"error": True, "detail": "Policy document was ingested but could not be linked."}
-    document.mitigation_measure_policy_id = policy.id
+    document.policy_id = policy.id
     document.country_id = policy.country_id
     document.sector_id = policy.sector_id
     db.commit()
@@ -1203,12 +1200,12 @@ async def knowledge_policy_document_upload(
         target_id=document.id,
         details={
             "policy_id": policy.id,
-            "policy_title": policy.policy_title,
+            "policy_title": policy.policy,
             "source": document_url or filename,
         },
     )
     result["policy_id"] = policy.id
-    result["policy_title"] = policy.policy_title
+    result["policy_title"] = policy.policy
     result["source"] = document_url or filename
     return result
 

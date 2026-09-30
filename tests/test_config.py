@@ -83,6 +83,16 @@ class SettingsSafetyTests(unittest.TestCase):
         self.assertEqual(settings.database_pool_timeout_seconds, 5)
         self.assertEqual(settings.database_connect_timeout_seconds, 3)
 
+    def test_knowledge_chunk_settings_are_configurable(self) -> None:
+        settings = Settings(knowledge_chunk_size=1600, knowledge_chunk_overlap=240)
+
+        self.assertEqual(settings.knowledge_chunk_size, 1600)
+        self.assertEqual(settings.knowledge_chunk_overlap, 240)
+
+    def test_knowledge_chunk_overlap_must_be_smaller_than_chunk_size(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(knowledge_chunk_size=200, knowledge_chunk_overlap=200)
+
     def test_prompt_source_accepts_auto_db_and_file(self) -> None:
         self.assertEqual(Settings(prompt_source="auto").prompt_source, "auto")
         self.assertEqual(Settings(prompt_source="DB").prompt_source, "db")

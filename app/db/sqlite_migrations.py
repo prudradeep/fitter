@@ -292,6 +292,76 @@ def _015_policies(connection: Connection) -> None:
         _create_index(connection, "policies", name, cols)
 
 
+def _016_policy_context_links(connection: Connection) -> None:
+    """Link policy-context records to the canonical policies table."""
+    _add_column(
+        connection,
+        "custom_hazards",
+        "policy_id",
+        "policy_id CHAR(36) NULL REFERENCES policies(id) ON DELETE SET NULL",
+    )
+    _create_index(connection, "custom_hazards", "ix_custom_hazards_policy_id", "policy_id")
+    _add_column(
+        connection,
+        "knowledge_documents",
+        "policy_id",
+        "policy_id CHAR(36) NULL REFERENCES policies(id) ON DELETE SET NULL",
+    )
+    _create_index(connection, "knowledge_documents", "ix_knowledge_documents_policy_id", "policy_id")
+    # Preserve legacy links only when the legacy title exactly identifies one
+    # canonical policy in the same country and sector. Ambiguous links remain
+    # unset and can be reattached by an administrator.
+    if (
+        _table_exists(connection, "mitigation_measure_policies")
+        and "mitigation_measure_policy_id" in _columns(connection, "knowledge_documents")
+        and "mitigation_measure_policy_id" in _columns(connection, "custom_hazards")
+    ):
+        connection.execute(text("""
+            UPDATE knowledge_documents
+            SET policy_id = (
+                SELECT policies.id
+                FROM mitigation_measure_policies legacy
+                JOIN policies
+                  ON policies.country_id = legacy.country_id
+                 AND policies.sector_id = legacy.sector_id
+                 AND LOWER(TRIM(policies.policy)) = LOWER(TRIM(legacy.policy_title))
+                WHERE legacy.id = knowledge_documents.mitigation_measure_policy_id
+                  AND 1 = (
+                      SELECT COUNT(*)
+                      FROM policies candidates
+                      WHERE candidates.country_id = legacy.country_id
+                        AND candidates.sector_id = legacy.sector_id
+                        AND LOWER(TRIM(candidates.policy)) = LOWER(TRIM(legacy.policy_title))
+                  )
+                LIMIT 1
+            )
+            WHERE policy_id IS NULL
+              AND mitigation_measure_policy_id IS NOT NULL
+        """))
+        connection.execute(text("""
+            UPDATE custom_hazards
+            SET policy_id = (
+                SELECT policies.id
+                FROM mitigation_measure_policies legacy
+                JOIN policies
+                  ON policies.country_id = legacy.country_id
+                 AND policies.sector_id = legacy.sector_id
+                 AND LOWER(TRIM(policies.policy)) = LOWER(TRIM(legacy.policy_title))
+                WHERE legacy.id = custom_hazards.mitigation_measure_policy_id
+                  AND 1 = (
+                      SELECT COUNT(*)
+                      FROM policies candidates
+                      WHERE candidates.country_id = legacy.country_id
+                        AND candidates.sector_id = legacy.sector_id
+                        AND LOWER(TRIM(candidates.policy)) = LOWER(TRIM(legacy.policy_title))
+                  )
+                LIMIT 1
+            )
+            WHERE policy_id IS NULL
+              AND mitigation_measure_policy_id IS NOT NULL
+        """))
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -308,6 +378,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("013_custom_hazard_policy_link", _013_custom_hazard_policy_link),
     ("014_policy_knowledge_documents", _014_policy_knowledge_documents),
     ("015_policies", _015_policies),
+    ("016_policy_context_links", _016_policy_context_links),
 )
 
 

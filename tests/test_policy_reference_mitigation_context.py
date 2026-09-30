@@ -12,6 +12,7 @@ from app.models import (
     CustomHazardPolicyReference,
     KnowledgeChunk,
     KnowledgeDocument,
+    Policy,
 )
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
@@ -36,7 +37,7 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         Base.metadata.drop_all(bind=self.engine)
         self.engine.dispose()
 
-    def test_selected_policy_loads_its_mapped_hazard_not_only_existing_session_hazards(self) -> None:
+    def test_selected_policy_keeps_country_sector_hazards_without_mitigation_mappings(self) -> None:
         self.service.db = MagicMock()
         self.service.db.scalars.side_effect = [
             MagicMock(all=MagicMock(return_value=["Mapped hazard"])),
@@ -58,10 +59,39 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
 
         self.service._limit_hazards_to_selected_policy(session)
 
-        self.assertEqual(session.hazards, ["Mapped hazard"])
+        self.assertEqual(session.hazards, ["Previously loaded hazard"])
         self.assertEqual(
-            session.hazard_profiles["Mapped hazard"],
-            [{"name": "Low-income households"}],
+            session.hazard_profiles["Previously loaded hazard"],
+            [{"name": "Older people"}],
+        )
+
+    def test_policy_context_uses_policies_and_its_knowledge_document_link(self) -> None:
+        policy = Policy(
+            country_id="country-1",
+            sector_id="sector-1",
+            policy="Clean electricity support",
+        )
+        self.db.add(policy)
+        self.db.flush()
+        document = KnowledgeDocument(
+            title="Clean electricity policy",
+            source_type="txt",
+            scope="main",
+            policy_id=policy.id,
+        )
+        self.db.add(document)
+        self.db.commit()
+
+        session = ChatSession(country_id="country-1", sector_id="sector-1")
+
+        self.assertEqual(
+            self.service._policy_rows_for_selected_context(session),
+            [(policy.id, "Clean electricity support")],
+        )
+        session.selected_context_policy_id = policy.id
+        self.assertEqual(
+            self.service._stored_context_policy_document_ids(session),
+            [document.id],
         )
 
     def test_associates_only_owned_session_policy_references(self) -> None:

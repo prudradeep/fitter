@@ -32,8 +32,6 @@ except ModuleNotFoundError:
     np = None
 
 
-CHUNK_SIZE = 1200
-CHUNK_OVERLAP = 180
 FAISS_LOCK = Lock()
 LEXICAL_WEIGHT = 0.55
 SCOPE_MATCH_WEIGHT = 0.35
@@ -1105,16 +1103,19 @@ def is_index_page_text(text: str) -> bool:
 
 
 def chunk_text(text: str, page_number: int | None = None) -> list[ChunkDraft]:
+    settings = get_settings()
+    chunk_size = settings.knowledge_chunk_size
+    chunk_overlap = settings.knowledge_chunk_overlap
     chunks: list[ChunkDraft] = []
     start = 0
     while start < len(text):
-        end = min(len(text), start + CHUNK_SIZE)
+        end = min(len(text), start + chunk_size)
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(ChunkDraft(chunk, page_number))
         if end == len(text):
             break
-        start = max(0, end - CHUNK_OVERLAP)
+        start = max(0, end - chunk_overlap)
     return chunks
 
 

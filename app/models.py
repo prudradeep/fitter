@@ -272,8 +272,8 @@ class CustomHazard(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     country_id: Mapped[str] = mapped_column(String(36), ForeignKey("countries.id", ondelete="CASCADE"), index=True)
     sector_id: Mapped[str] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
-    mitigation_measure_policy_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("mitigation_measure_policies.id", ondelete="SET NULL"), index=True
+    policy_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("policies.id", ondelete="SET NULL"), index=True
     )
     region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     region_scope_key: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
@@ -610,8 +610,8 @@ class KnowledgeDocument(Base):
     custom_hazard_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True
     )
-    mitigation_measure_policy_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("mitigation_measure_policies.id", ondelete="SET NULL"), index=True
+    policy_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("policies.id", ondelete="SET NULL"), index=True
     )
     scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="global", server_default="global", index=True)
     country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True)

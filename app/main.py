@@ -15,7 +15,7 @@ from app.auth import AUTH_COOKIE_NAME, CSRF_COOKIE_NAME, get_current_user, requi
 from app.config import get_settings
 from app.db.migrations_runtime import repair_partial_installer_schema, run_runtime_migrations
 from app.db.session import SessionLocal, get_db, validate_database_connection
-from app.models import AppUser, MitigationMeasurePolicy
+from app.models import AppUser, Policy
 from app.observability import (
     configure_logging,
     increment_metric,
@@ -254,21 +254,15 @@ async def index(
         policy_document_options = [
             {
                 "id": str(policy_id),
-                "label": " ".join(
-                    part
-                    for part in (str(policy_code or "").strip(), str(policy_title or "").strip())
-                    if part
-                ),
+                "label": str(policy_title or "").strip() or "Untitled policy",
             }
-            for policy_id, policy_code, policy_title in db.execute(
+            for policy_id, policy_title in db.execute(
                 select(
-                    MitigationMeasurePolicy.id,
-                    MitigationMeasurePolicy.policy_code,
-                    MitigationMeasurePolicy.policy_title,
+                    Policy.id,
+                    Policy.policy,
                 ).order_by(
-                    MitigationMeasurePolicy.policy_title,
-                    MitigationMeasurePolicy.policy_code,
-                    MitigationMeasurePolicy.id,
+                    Policy.policy,
+                    Policy.id,
                 )
             ).all()
         ]

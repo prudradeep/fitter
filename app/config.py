@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     max_session_import_bytes: int = 10 * 1024 * 1024
     max_url_ingest_bytes: int = 10 * 1024 * 1024
     max_json_bytes: int = 1 * 1024 * 1024
+    knowledge_chunk_size: int = Field(default=1200, ge=1)
+    knowledge_chunk_overlap: int = Field(default=180, ge=0)
     reranker_url: str = ""
     reranker_timeout_seconds: int = 60
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -162,6 +164,8 @@ class Settings(BaseSettings):
         self.prompt_source = self.prompt_source.strip().casefold()
         if self.prompt_source not in {"auto", "db", "file"}:
             raise ValueError("PROMPT_SOURCE must be one of: auto, db, file")
+        if self.knowledge_chunk_overlap >= self.knowledge_chunk_size:
+            raise ValueError("KNOWLEDGE_CHUNK_OVERLAP must be smaller than KNOWLEDGE_CHUNK_SIZE")
         if not str(self.database_url or "").strip() or (
             self.is_client_mode and self.database_url == DEFAULT_MYSQL_DATABASE_URL
         ):
