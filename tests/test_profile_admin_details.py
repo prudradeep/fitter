@@ -81,9 +81,57 @@ class ProfileAdminDetailsTests(unittest.TestCase):
         self.assertIn("Low-income households", html)
         self.assertIn("Proposed Eurostat dataset: edat_lfse_22 (mocked)", html)
         self.assertIn("Proposed indicator label: Mock indicator for Low-income households", html)
+        self.assertIn("<strong><em>Proposed Eurostat dataset:", html)
+        self.assertIn("<strong><em>Proposed indicator label:", html)
         self.assertNotIn("Reference:", html)
         self.assertNotIn("Mapped target population:", html)
         self.assertNotIn("Eurostat population lookup:", html)
+
+    def test_hazard_overview_matches_population_by_predictor_key(self):
+        session = ChatSession(
+            hazards=["Heating and cooling costs increase"],
+            hazard_profiles={
+                "Heating and cooling costs increase": [
+                    {
+                        "name": "Households with unpaid utility bills",
+                        "variable_name": "utility_arrears",
+                    }
+                ]
+            },
+            hazard_rankings={
+                "Heating and cooling costs increase": {
+                    "profiles": [
+                        {
+                            "name": "Utility Arrears: Yes, twice or more",
+                            "predictor": "utility_arrears__Yes, twice or more",
+                            "population_pct": 23.4,
+                            "national_population_pct": 18.1,
+                        }
+                    ]
+                }
+            },
+        )
+
+        html = format_hazards(session)
+
+        self.assertIn("23.4%", html)
+        self.assertIn("18.1%", html)
+
+    def test_hazard_overview_hides_protective_profiles(self):
+        session = ChatSession(
+            hazards=["Heating and cooling costs increase"],
+            hazard_profiles={
+                "Heating and cooling costs increase": [
+                    {
+                        "name": "Religious minority",
+                        "variable_name": "religious_minority",
+                        "explanation": "Protective predictor with lower odds of concern.",
+                    }
+                ]
+            },
+        )
+
+        self.assertNotIn("Religious minority", format_hazards(session))
 
     def test_hazard_overview_marks_each_category_for_distinct_styling(self):
         session = ChatSession(

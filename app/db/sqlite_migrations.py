@@ -267,6 +267,31 @@ def _014_policy_knowledge_documents(connection: Connection) -> None:
     )
 
 
+def _015_policies(connection: Connection) -> None:
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS policies (
+          id CHAR(36) PRIMARY KEY,
+          country_id CHAR(36) NOT NULL,
+          sector_id CHAR(36) NOT NULL,
+          policy TEXT NOT NULL,
+          policy_url TEXT NULL,
+          language VARCHAR(120) NULL,
+          policy_type VARCHAR(120) NULL,
+          source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+          excel_row_number INTEGER NULL,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE CASCADE,
+          FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE
+        )
+    """))
+    for name, cols in (
+        ("ix_policies_country_id", "country_id"),
+        ("ix_policies_sector_id", "sector_id"),
+        ("ix_policies_source", "source"),
+    ):
+        _create_index(connection, "policies", name, cols)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -282,6 +307,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("012_mitigation_creation_details", _012_mitigation_creation_details),
     ("013_custom_hazard_policy_link", _013_custom_hazard_policy_link),
     ("014_policy_knowledge_documents", _014_policy_knowledge_documents),
+    ("015_policies", _015_policies),
 )
 
 

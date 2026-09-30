@@ -455,6 +455,21 @@ class MitigationMeasureExample(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class Policy(Base):
+    __tablename__ = "policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    country_id: Mapped[str] = mapped_column(String(36), ForeignKey("countries.id", ondelete="CASCADE"), index=True)
+    sector_id: Mapped[str] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="CASCADE"), index=True)
+    policy: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_url: Mapped[str | None] = mapped_column(Text)
+    language: Mapped[str | None] = mapped_column(String(120))
+    policy_type: Mapped[str | None] = mapped_column(String(120))
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="xlsx", server_default="xlsx")
+    excel_row_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class MitigationMeasurePolicy(Base):
     __tablename__ = "mitigation_measure_policies"
     __table_args__ = (

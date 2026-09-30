@@ -24,6 +24,7 @@ SECTORAL_CHALLENGES_XLSX_PATH = PROJECT_ROOT / "sectoral_challenges.xlsx"
 HAZARDS_XLSX_PATH = PROJECT_ROOT / "hazards.xlsx"
 ADDITIONAL_HAZARDS_CSV_PATH = PROJECT_ROOT / "additionalHazards.csv"
 ADDITIONAL_HAZARD_PROFILES_CSV_PATH = PROJECT_ROOT / "additionalHazardProfiles.csv"
+POLICIES_XLSX_PATH = PROJECT_ROOT / "kb" / "additional" / "Policies.xlsx"
 HAZARD_WITH_MITIGATION_DIRECTORY = (
     PROJECT_ROOT / "kb" / "additional" / "hazards with mitigation"
 )
@@ -200,6 +201,40 @@ def _read_hazards_xlsx_rows() -> list[dict[str, object]]:
                 }
             )
     return parsed_rows
+
+
+def _read_policies_xlsx_rows() -> list[dict[str, object]]:
+    if not POLICIES_XLSX_PATH.exists():
+        return []
+
+    rows = _read_xlsx_first_sheet_rows(POLICIES_XLSX_PATH)
+    if len(rows) < 2:
+        return []
+
+    headers = {
+        _normalize_mitigation_example_key(_xlsx_cell(rows[0], column_index)): column_index
+        for column_index in range(len(rows[0]))
+    }
+    required_headers = {"country", "sector", "policy", "policyurl", "language", "policytype"}
+    if not required_headers.issubset(headers):
+        logger.warning("Policies.xlsx is missing one or more required headers")
+        return []
+
+    return [
+        {
+            "country": _xlsx_cell(row, headers["country"]),
+            "sector": _xlsx_cell(row, headers["sector"]),
+            "policy": _xlsx_cell(row, headers["policy"]),
+            "policy_url": _xlsx_cell(row, headers["policyurl"]),
+            "language": _xlsx_cell(row, headers["language"]),
+            "policy_type": _xlsx_cell(row, headers["policytype"]),
+            "excel_row_number": excel_row_number,
+        }
+        for excel_row_number, row in enumerate(rows[1:], start=2)
+        if _xlsx_cell(row, headers["country"])
+        and _xlsx_cell(row, headers["sector"])
+        and _xlsx_cell(row, headers["policy"])
+    ]
 
 
 def _hazards_xlsx_sector_name(value: str) -> str:
@@ -1095,6 +1130,57 @@ def _seed_mm_target_group_xlsx(connection) -> None:
     _seed_sectoral_challenge_policy_additional_hazards(connection)
 
 
+def _seed_policies_xlsx(connection) -> None:
+    rows = _read_policies_xlsx_rows()
+    if not rows:
+        return
+
+    country_by_name = {
+        _normalize_mitigation_example_key(str(row["name"] or "")): str(row["id"])
+        for row in connection.execute(text("SELECT id, name FROM countries")).mappings()
+    }
+    sector_by_name = {
+        _normalize_mitigation_example_key(str(row["name"] or "")): str(row["id"])
+        for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
+    }
+    connection.execute(text("DELETE FROM policies WHERE source = 'xlsx'"))
+
+    inserted = 0
+    skipped = 0
+    for row in rows:
+        country_id = country_by_name.get(_normalize_mitigation_example_key(str(row["country"] or "")))
+        sector_id = sector_by_name.get(_normalize_mitigation_example_key(str(row["sector"] or "")))
+        if country_id is None or sector_id is None:
+            skipped += 1
+            continue
+        connection.execute(
+            text(
+                """
+                INSERT INTO policies (
+                    id, country_id, sector_id, policy, policy_url, language,
+                    policy_type, source, excel_row_number
+                )
+                VALUES (
+                    :id, :country_id, :sector_id, :policy, :policy_url, :language,
+                    :policy_type, 'xlsx', :excel_row_number
+                )
+                """
+            ),
+            {
+                "id": str(uuid.uuid4()), "country_id": country_id, "sector_id": sector_id,
+                "policy": row["policy"], "policy_url": row["policy_url"] or None,
+                "language": row["language"] or None, "policy_type": row["policy_type"] or None,
+                "excel_row_number": row["excel_row_number"],
+            },
+        )
+        inserted += 1
+
+    logger.info(
+        "Loaded %s policies from kb/additional/Policies.xlsx; skipped %s rows",
+        inserted, skipped,
+    )
+
+
 def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
     rows = _read_sectoral_challenges_xlsx_rows()
     if not rows:
@@ -1475,5 +1561,6 @@ def ensure_mitigation_measure_examples() -> None:
         _seed_mm_csv_mitigation_measure_examples(connection)
         _seed_mm_target_group_xlsx(connection)
         _seed_hazards_xlsx_policy_system_hazards(connection)
+        _seed_policies_xlsx(connection)
 
 

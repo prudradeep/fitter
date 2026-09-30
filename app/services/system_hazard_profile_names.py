@@ -60,6 +60,7 @@ def canonical_profile_variable_name(value: object) -> str:
     )
     if prefixed_match:
         raw_value = prefixed_match.group(1)
+    raw_value = raw_value.split("__", 1)[0]
     token = re.search(r"[A-Za-z_][A-Za-z0-9_]*", raw_value)
     return token.group(0).casefold() if token else ""
 

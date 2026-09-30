@@ -62,7 +62,7 @@ class ReachService:
                 nuts_code=region,
                 sector=sector,
                 hazard=hazard_name or hazard,
-                confirmed_predictor_category=profile_name,
+                confirmed_predictor_category=predictor_name,
             )
             if prevalence is None:
                 skipped.append(
@@ -80,6 +80,8 @@ class ReachService:
                 {
                     "name": profile_name,
                     "predictor": predictor_name,
+                    "variable_name": predictor_name,
+                    "profile_key": predictor_name,
                     "eurostat_population_cache_id": prevalence.get("eurostat_population_cache_id"),
                     "population_pct": round(float(prevalence["population_pct"]), 1),
                     "national_population_pct": round(float(prevalence["national_population_pct"]), 1),

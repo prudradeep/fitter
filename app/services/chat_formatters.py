@@ -392,7 +392,7 @@ def _append_hazard_profiles(
     population_by_profile = {
         normalize_markdown_text(
             profile_name_for_variable(
-                item.get("variable_name") or item.get("variable") or "",
+                item.get("variable_name") or item.get("variable") or item.get("predictor") or "",
                 item.get("name") or item.get("profile") or "",
             )
         ).casefold(): item
@@ -402,6 +402,8 @@ def _append_hazard_profiles(
     profile_items: list[dict[str, object]] = []
     for profile in profile_list:
         if isinstance(profile, dict):
+            if _profile_has_protective_effect(profile):
+                continue
             name = str(profile.get("name") or profile.get("profile") or "").strip()
             explanation = str(profile.get("explanation") or "").strip()
             variable_name = str(profile.get("variable_name") or profile.get("variable") or "").strip()
@@ -480,6 +482,22 @@ def _list_from_profile_or_metadata(profile: dict[str, object], key: str) -> list
         if isinstance(value, list):
             return list(value)
     return []
+
+
+def _profile_has_protective_effect(profile: dict[str, object]) -> bool:
+    text = " ".join(
+        str(profile.get(key) or "")
+        for key in ("explanation", "statistical_basis", "basis")
+    ).casefold()
+    if any(marker in text for marker in ("protective", "lower odds", "lower concern")):
+        return True
+    for match in re.finditer(r"(?:odds\s+ratio|\bor\b)\s*(?:=|:|is)?\s*(\d+(?:\.\d+)?)", text):
+        try:
+            if float(match.group(1)) < 1:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _group_hazard_profile_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -690,9 +708,13 @@ def _render_profile_row(
     proposed_dataset = str(item.get("proposed_eurostat_dataset") or "").strip()
     proposed_indicator_label = str(item.get("proposed_indicator_label") or "").strip()
     if proposed_dataset:
-        description_parts.append(f"Proposed Eurostat dataset: {escape(proposed_dataset)}")
+        description_parts.append(
+            f"<strong><em>Proposed Eurostat dataset: {escape(proposed_dataset)}</em></strong>"
+        )
     if proposed_indicator_label:
-        description_parts.append(f"Proposed indicator label: {escape(proposed_indicator_label)}")
+        description_parts.append(
+            f"<strong><em>Proposed indicator label: {escape(proposed_indicator_label)}</em></strong>"
+        )
     statistical_basis = str(item.get("statistical_basis") or "").strip()
     if show_admin_details and statistical_basis:
         description_parts.append(f"Reference: {escape(statistical_basis)}")
