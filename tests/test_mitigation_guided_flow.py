@@ -497,15 +497,25 @@ class MitigationGuidedFlowTests(unittest.TestCase):
                 }
             ]
         }
-        response = run(
-            self.service._handle_mitigation_summary_review(
-                "session-1", self.session, "Confirm summary"
+        with patch(
+            "app.services.chat_mitigation_creation_guided.ask_llm_chat",
+            new=AsyncMock(
+                return_value=(
+                    '{"benefits":[{"group":"Low-income households",'
+                    '"supported":true,"explanation":"Means-tested grants remove '
+                    'up-front retrofit costs for households with limited income."}]}'
+                )
+            ),
+        ):
+            response = run(
+                self.service._handle_mitigation_summary_review(
+                    "session-1", self.session, "Confirm summary"
+                )
             )
-        )
         self.assertEqual(response.step, "mitigation_dg_review")
         self.assertIn("Low-income households:", response.bot_message)
-        self.assertIn("limited capacity to absorb high energy costs", response.bot_message)
-        self.assertNotIn("Provide means-tested grants", response.bot_message)
+        self.assertIn("Means-tested grants remove up-front retrofit costs", response.bot_message)
+        self.assertNotIn("limited capacity to absorb high energy costs", response.bot_message)
 
         response = run(
             self.service._handle_mitigation_dg_review(
@@ -546,9 +556,22 @@ class MitigationGuidedFlowTests(unittest.TestCase):
         )
         self.service._infer_mitigation_target_population_from_inputs = AsyncMock()
 
-        response = run(
-            self.service._guided_dg_suggestion_step("session-1", self.session)
-        )
+        with patch(
+            "app.services.chat_mitigation_creation_guided.ask_llm_chat",
+            new=AsyncMock(
+                return_value=(
+                    '{"benefits":['
+                    '{"group":"Low-income households","supported":true,'
+                    '"explanation":"Grid upgrades improve service reliability for low-income households."},'
+                    '{"group":"Rural residents","supported":true,'
+                    '"explanation":"Grid upgrades improve service reliability for rural residents."}'
+                    ']}'
+                )
+            ),
+        ):
+            response = run(
+                self.service._guided_dg_suggestion_step("session-1", self.session)
+            )
 
         self.assertEqual(response.step, "mitigation_dg_review")
         self.assertEqual(
@@ -561,6 +584,63 @@ class MitigationGuidedFlowTests(unittest.TestCase):
             self.session
         )
         self.service._infer_mitigation_target_population_from_inputs.assert_not_awaited()
+
+    def test_missing_measure_benefit_pathway_requests_user_clarification(self):
+        self.session.pending_mitigation_measure = "Upgrade local grid infrastructure"
+        self.session.mitigation_target_population = ["Low-income households"]
+
+        with patch(
+            "app.services.chat_mitigation_creation_guided.ask_llm_chat",
+            new=AsyncMock(
+                return_value=(
+                    '{"benefits":[{"group":"Low-income households",'
+                    '"supported":false,"explanation":""}]}'
+                )
+            ),
+        ):
+            response = run(
+                self.service._guided_dg_suggestion_step("session-1", self.session)
+            )
+
+        self.assertEqual(response.step, "mitigation_dg_input")
+        self.assertIn("could not identify how", response.bot_message)
+        self.assertIn("Upgrade local grid infrastructure", response.bot_message)
+        self.assertEqual(self.session.mitigation_revision_stage, "benefit_pathway")
+
+    def test_other_consideration_strips_excerpt_leadin(self):
+        self.assertEqual(
+            self.service._strip_excerpt_leadin(
+                "The excerpt indicates that governance structures can hinder social acceptance."
+            ),
+            "governance structures can hinder social acceptance.",
+        )
+
+    def test_user_clarified_benefit_pathway_is_shown_for_group_confirmation(self):
+        self.session.pending_mitigation_measure = "Provide targeted insulation grants"
+        self.session.mitigation_target_population = ["Low-income households"]
+        self.session.phase = "mitigation_dg_input"
+        self.session.mitigation_revision_stage = "benefit_pathway"
+        self.session.mitigation_dg_pathway_groups = ["Low-income households"]
+        self.service._guided_text_review = AsyncMock(
+            return_value={
+                "clear": True,
+                "normalized_text": "The grant removes the up-front insulation cost for low-income households.",
+            }
+        )
+        self.service._mitigation_dg_benefit_reasons = AsyncMock(
+            return_value={
+                "Low-income households": "The grant removes the up-front insulation cost for low-income households."
+            }
+        )
+
+        response = run(
+            self.service._handle_mitigation_dg_input(
+                "session-1", self.session, "The grant removes the up-front cost."
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_dg_review")
+        self.assertIn("up-front insulation cost", response.bot_message)
 
     def test_stored_custom_hazard_profiles_supply_disadvantaged_groups(self):
         hazard = "Regional energy affordability shock"

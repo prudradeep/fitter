@@ -78,6 +78,7 @@ class ChatSession:
     mitigation_creation_summary: str | None = None
     mitigation_user_added_groups: list[str] | None = None
     mitigation_dg_benefit_explanations: dict[str, str] | None = None
+    mitigation_dg_pathway_groups: list[str] | None = None
     mitigation_dg_evidence: dict[str, str] | None = None
     mitigation_dg_evidence_index: int = 0
     mitigation_equity: str | None = None

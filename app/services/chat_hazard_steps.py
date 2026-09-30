@@ -366,7 +366,7 @@ class ChatHazardStepsMixin:
         return await self._context_policy_details_step(session_id, session, document_ids)
 
     def _limit_hazards_to_selected_policy(self, session: ChatSession) -> None:
-        """Keep only hazards explicitly mapped to the selected policy."""
+        """Load the selected policy's mapped hazards with their stored profiles."""
         policy_id = str(session.selected_context_policy_id or "").strip()
         if not policy_id:
             return
@@ -386,7 +386,22 @@ class ChatHazardStepsMixin:
             )
             .where(MitigationMeasurePolicyAdditionalHazard.mitigation_measure_policy_id == policy_id)
         ).all())
-        session.hazards = [hazard for hazard in (session.hazards or []) if hazard in system_hazards]
+        stored_system_hazards = {
+            normalize(str(item.get("hazard") or "")): item
+            for item in self._stored_hazard_items_for_context("", session)
+            if str(item.get("hazard") or "").strip()
+        }
+        mapped_system_hazards = [
+            stored_system_hazards[normalize(hazard)]
+            for hazard in system_hazards
+            if normalize(hazard) in stored_system_hazards
+        ]
+        session.hazards = [str(item["hazard"]) for item in mapped_system_hazards]
+        profiles = dict(session.hazard_profiles or {})
+        for item in mapped_system_hazards:
+            hazard = str(item["hazard"])
+            profiles[hazard] = list(item.get("profiles") or [])
+        session.hazard_profiles = profiles
         session.additional_hazards = [
             hazard for hazard in (session.additional_hazards or []) if hazard in additional_hazards
         ]
@@ -417,6 +432,7 @@ class ChatHazardStepsMixin:
                 selected_policy=session.selected_context_policy,
                 policies=self._policies_for_selected_context(session),
                 survey_count=survey_respondent_count(sector=session.sector or ""),
+                has_linked_hazards=bool(session.hazards or session.additional_hazards),
                 hazards=format_hazards(
                     session,
                     show_admin_details=bool(getattr(self, "is_admin", False)),

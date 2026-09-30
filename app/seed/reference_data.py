@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from app.db.session import engine
 from app.seed.xlsx_readers import (
+    _read_xlsx_all_sheet_rows,
     _read_xlsx_first_sheet_rows,
     _xlsx_cell,
 )
@@ -130,31 +131,30 @@ def _read_sectoral_challenges_xlsx_rows() -> list[dict[str, object]]:
     if not SECTORAL_CHALLENGES_XLSX_PATH.exists():
         return []
 
-    rows = _read_xlsx_first_sheet_rows(SECTORAL_CHALLENGES_XLSX_PATH)
-    if len(rows) < 2:
-        return []
-
-    header_row = rows[0]
     parsed_rows: list[dict[str, object]] = []
-    for excel_row_number, row in enumerate(rows[1:], start=2):
-        policy_code = _xlsx_cell(row, 0)
-        policy_title = _xlsx_cell(row, 1)
-        if not policy_code and not policy_title:
+    for rows in _read_xlsx_all_sheet_rows(SECTORAL_CHALLENGES_XLSX_PATH).values():
+        if len(rows) < 2:
             continue
-        for column_index in range(2, len(header_row)):
-            challenge = _xlsx_cell(header_row, column_index)
-            if not challenge:
+        header_row = rows[0]
+        for excel_row_number, row in enumerate(rows[1:], start=2):
+            policy_code = _xlsx_cell(row, 0)
+            policy_title = _xlsx_cell(row, 1)
+            if not policy_code and not policy_title:
                 continue
-            parsed_rows.append(
-                {
-                    "policy_code": policy_code,
-                    "policy_title": policy_title,
-                    "additional_hazard": challenge,
-                    "match_value": _xlsx_cell(row, column_index),
-                    "excel_row_number": excel_row_number,
-                    "excel_column_number": column_index + 1,
-                }
-            )
+            for column_index in range(2, len(header_row)):
+                challenge = _xlsx_cell(header_row, column_index)
+                if not challenge:
+                    continue
+                parsed_rows.append(
+                    {
+                        "policy_code": policy_code,
+                        "policy_title": policy_title,
+                        "additional_hazard": challenge,
+                        "match_value": _xlsx_cell(row, column_index),
+                        "excel_row_number": excel_row_number,
+                        "excel_column_number": column_index + 1,
+                    }
+                )
     return parsed_rows
 
 
@@ -1135,6 +1135,7 @@ def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
 
     inserted = 0
     skipped = 0
+    seen_links: set[tuple[str, str]] = set()
     for row in rows:
         policy_code = str(row.get("policy_code") or "").strip()
         match_value = str(row.get("match_value") or "").strip()
@@ -1154,6 +1155,10 @@ def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
             if additional_hazard_id is None:
                 continue
             for policy_id in policy_ids_by_code_country.get((policy_code, country_id), []):
+                link_key = (policy_id, additional_hazard_id)
+                if link_key in seen_links:
+                    continue
+                seen_links.add(link_key)
                 connection.execute(
                     text(
                         """
@@ -1308,6 +1313,7 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
 
 
 def _ensure_hazards_xlsx_policy_system_hazards(connection) -> None:
+    """Refresh workbook mappings so newly available hazards are linked on existing installs."""
     table_exists = connection.execute(
         text(
             """
@@ -1319,17 +1325,6 @@ def _ensure_hazards_xlsx_policy_system_hazards(connection) -> None:
         )
     ).scalar()
     if not table_exists:
-        return
-    existing = connection.execute(
-        text(
-            """
-            SELECT COUNT(*)
-            FROM mitigation_measure_policy_system_hazards
-            WHERE source = 'xlsx'
-            """
-        )
-    ).scalar()
-    if int(existing or 0) > 0:
         return
     _seed_hazards_xlsx_policy_system_hazards(connection)
 

@@ -693,6 +693,7 @@ class ChatMitigationCreationGuidedMixin:
         lines: list[str] = []
         for index, source in enumerate(sources):
             summary = str(summaries[index] or "").strip() if index < len(summaries) else ""
+            summary = self._strip_excerpt_leadin(summary)
             if not summary:
                 continue
             source_rows = [
@@ -717,6 +718,17 @@ class ChatMitigationCreationGuidedMixin:
                 f'aria-label="Show source data for {escape(source["title"], quote=True)}">Source</button>'
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _strip_excerpt_leadin(summary: str) -> str:
+        """Keep evidence summaries direct even when the model adds a source lead-in."""
+        return re.sub(
+            r"^\s*(?:the\s+)?excerpt\s+"
+            r"(?:indicates|highlights|shows|states|suggests|notes|explains)\s+that\s+",
+            "",
+            summary,
+            flags=re.IGNORECASE,
+        ).strip()
 
     def _mitigation_policy_retry_step(
         self, session_id: str, session: ChatSession, reason: str
@@ -883,6 +895,7 @@ class ChatMitigationCreationGuidedMixin:
         session.mitigation_target_population = None
         session.mitigation_user_added_groups = None
         session.mitigation_dg_benefit_explanations = None
+        session.mitigation_dg_pathway_groups = None
         session.mitigation_dg_evidence = None
         session.mitigation_dg_evidence_index = 0
         session.mitigation_equity = None
@@ -1674,8 +1687,15 @@ class ChatMitigationCreationGuidedMixin:
             )
         session.phase = "mitigation_dg_review"
         benefit_reasons = await self._mitigation_dg_benefit_reasons(session, groups)
+        groups_missing_pathways = [
+            group for group in groups if not str(benefit_reasons.get(group) or "").strip()
+        ]
+        if groups_missing_pathways:
+            return self._request_mitigation_dg_pathway(
+                session_id, session, groups_missing_pathways
+            )
         lines = "\n".join(
-            f"- **{group}:** {benefit_reasons.get(group) or self._mitigation_dg_benefit_reason(session, group)}"
+            f"- **{group}:** {benefit_reasons[group]}"
             for group in groups
         )
         return ChatResponse(
@@ -1694,49 +1714,50 @@ class ChatMitigationCreationGuidedMixin:
             error=False,
         )
 
-    def _mitigation_dg_benefit_reason(self, session: ChatSession, group: str) -> str:
-        """Use a safe short fallback when a plain-English reflection is unavailable."""
-        _ = group
-        hazard = session.selected_hazard or session.accepted_custom_hazard or "this hazard"
-        return f"This measure can help reduce the pressure this group faces from {hazard}."
+    def _request_mitigation_dg_pathway(
+        self, session_id: str, session: ChatSession, groups: list[str]
+    ) -> ChatResponse:
+        """Ask for a measure-specific pathway when one cannot be grounded automatically."""
+        session.mitigation_dg_pathway_groups = groups
+        session.mitigation_revision_stage = "benefit_pathway"
+        session.phase = "mitigation_dg_input"
+        group = groups[0]
+        measure = session.pending_mitigation_measure or session.mitigation_measure or "this measure"
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_dg_input",
+            bot_message=(
+                f"I could not identify how **{measure}** specifically benefits "
+                f"**{group}**. Describe the pathway: what the measure does and how "
+                "that benefits this group."
+            ),
+            options=self._guided_options("Back to suggested disadvantaged groups"),
+            session=session.summary(),
+            input_mode="textarea",
+            error=False,
+        )
 
     async def _mitigation_dg_benefit_reasons(
         self,
         session: ChatSession,
         groups: list[str],
     ) -> dict[str, str]:
-        """Create and retain one short, grounded benefit explanation per group."""
+        """Create and retain only measure-grounded benefit pathways per group."""
         existing = dict(session.mitigation_dg_benefit_explanations or {})
         missing = [group for group in groups if not str(existing.get(group) or "").strip()]
         if not missing:
             return existing
 
-        profiles = self._stored_hazard_profiles(
-            session, session.selected_hazard or session.accepted_custom_hazard or ""
-        )
-        profile_reasons: dict[str, str] = {}
-        for group in missing:
-            group_key = normalize(group)
-            for profile in profiles:
-                profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
-                labels = [
-                    str(label).strip()
-                    for label in profile.get("target_population_labels") or []
-                    if str(label).strip()
-                ]
-                if group_key not in {normalize(label) for label in [profile_name, *labels]}:
-                    continue
-                profile_reasons[group] = str(profile.get("explanation") or "").strip()
-                break
-
         try:
             response = await ask_llm_chat(
                 context=(
-                    "Explain how the proposed mitigation measure could benefit each listed "
-                    "disadvantaged group. Use simple English. Write one short sentence of no "
-                    "more than 25 words for each group. Use only the supplied information and "
-                    "do not claim that a benefit is guaranteed. Return JSON only: "
-                    '{"benefits":[{"group":"...","explanation":"..."}]}.'
+                    "For each listed disadvantaged group, identify a benefit pathway that "
+                    "comes strictly from the proposed mitigation measure. A valid pathway "
+                    "states what the measure does and how that action benefits the group; it "
+                    "must not be inferred merely from the hazard or the group's vulnerability. "
+                    "Use only the supplied information. If no such pathway is supported, set "
+                    "supported to false and leave explanation empty. Return JSON only: "
+                    '{"benefits":[{"group":"...","supported":true,"explanation":"..."}]}.'
                 ),
                 messages=[
                     {
@@ -1750,10 +1771,7 @@ class ChatMitigationCreationGuidedMixin:
                                 or session.mitigation_measure
                                 or "",
                                 "groups": [
-                                    {
-                                        "group": group,
-                                        "affected_profile_context": profile_reasons.get(group, ""),
-                                    }
+                                    {"group": group}
                                     for group in missing
                                 ],
                             },
@@ -1775,12 +1793,13 @@ class ChatMitigationCreationGuidedMixin:
                     if not isinstance(item, dict):
                         continue
                     group = missing_by_key.get(normalize(str(item.get("group") or "")))
+                    supported = item.get("supported") is True
                     explanation = re.sub(
                         r"\s+",
                         " ",
                         str(item.get("explanation") or ""),
                     ).strip()
-                    if group and explanation:
+                    if group and supported and explanation:
                         words = explanation.split()
                         explanation = " ".join(words[:25]).rstrip(" ,;:")
                         if explanation and explanation[-1] not in ".!?":
@@ -1789,8 +1808,6 @@ class ChatMitigationCreationGuidedMixin:
         except Exception:
             logger.exception("Could not generate disadvantaged-group benefit explanations")
 
-        for group in missing:
-            existing.setdefault(group, self._mitigation_dg_benefit_reason(session, group))
         session.mitigation_dg_benefit_explanations = existing
         return existing
 
@@ -1845,6 +1862,26 @@ class ChatMitigationCreationGuidedMixin:
             or message
         )
         if action == normalize("Back to suggested disadvantaged groups"):
+            session.mitigation_revision_stage = None
+            session.mitigation_dg_pathway_groups = None
+            return await self._guided_dg_suggestion_step(session_id, session)
+        if session.mitigation_revision_stage == "benefit_pathway":
+            review = await self._guided_text_review("benefit pathway", message, session)
+            if not review.get("clear"):
+                return self._guided_clarification_response(
+                    session_id, session, "mitigation_dg_input", review
+                )
+            pathway = str(review.get("normalized_text") or message).strip()
+            groups = list(session.mitigation_dg_pathway_groups or [])
+            if not groups:
+                return await self._guided_dg_suggestion_step(session_id, session)
+            group = groups.pop(0)
+            explanations = dict(session.mitigation_dg_benefit_explanations or {})
+            explanations[group] = pathway
+            session.mitigation_dg_benefit_explanations = explanations
+            if groups:
+                return self._request_mitigation_dg_pathway(session_id, session, groups)
+            session.mitigation_dg_pathway_groups = None
             session.mitigation_revision_stage = None
             return await self._guided_dg_suggestion_step(session_id, session)
         if session.mitigation_revision_stage == "remove_dg":

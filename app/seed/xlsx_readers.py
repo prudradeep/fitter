@@ -5,6 +5,11 @@ from xml.etree import ElementTree as ET
 
 
 def _read_xlsx_first_sheet_rows(path: Path) -> list[list[str]]:
+    sheets = _read_xlsx_all_sheet_rows(path)
+    return next(iter(sheets.values()), [])
+
+
+def _read_xlsx_all_sheet_rows(path: Path) -> dict[str, list[list[str]]]:
     namespace = {
         "a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
         "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -17,29 +22,31 @@ def _read_xlsx_first_sheet_rows(path: Path) -> list[list[str]]:
             relationship.attrib["Id"]: relationship.attrib["Target"]
             for relationship in relationships
         }
-        first_sheet = workbook.find("a:sheets/a:sheet", namespace)
-        if first_sheet is None:
-            return []
-        relationship_id = first_sheet.attrib[
-            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
-        ]
-        sheet_target = relationship_targets[relationship_id]
-        sheet_path = (
-            sheet_target.lstrip("/")
-            if sheet_target.startswith("xl/")
-            else f"xl/{sheet_target.lstrip('/')}"
-        )
-        sheet = ET.fromstring(workbook_zip.read(sheet_path))
-        parsed_rows: list[list[str]] = []
-        for row in sheet.findall(".//a:sheetData/a:row", namespace):
-            values: list[str] = []
-            for cell in row.findall("a:c", namespace):
-                column_index = _xlsx_column_index(cell.attrib.get("r", ""))
-                while len(values) <= column_index:
-                    values.append("")
-                values[column_index] = _xlsx_cell_value(cell, shared_strings, namespace)
-            parsed_rows.append(values)
-        return parsed_rows
+        sheets: dict[str, list[list[str]]] = {}
+        for sheet_reference in workbook.findall("a:sheets/a:sheet", namespace):
+            relationship_id = sheet_reference.attrib[
+                "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+            ]
+            sheet_target = relationship_targets.get(relationship_id)
+            if not sheet_target:
+                continue
+            sheet_path = (
+                sheet_target.lstrip("/")
+                if sheet_target.startswith("xl/")
+                else f"xl/{sheet_target.lstrip('/')}"
+            )
+            sheet = ET.fromstring(workbook_zip.read(sheet_path))
+            parsed_rows: list[list[str]] = []
+            for row in sheet.findall(".//a:sheetData/a:row", namespace):
+                values: list[str] = []
+                for cell in row.findall("a:c", namespace):
+                    column_index = _xlsx_column_index(cell.attrib.get("r", ""))
+                    while len(values) <= column_index:
+                        values.append("")
+                    values[column_index] = _xlsx_cell_value(cell, shared_strings, namespace)
+                parsed_rows.append(values)
+            sheets[str(sheet_reference.attrib.get("name") or "")] = parsed_rows
+        return sheets
 
 
 def _xlsx_shared_strings(

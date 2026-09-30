@@ -36,6 +36,34 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         Base.metadata.drop_all(bind=self.engine)
         self.engine.dispose()
 
+    def test_selected_policy_loads_its_mapped_hazard_not_only_existing_session_hazards(self) -> None:
+        self.service.db = MagicMock()
+        self.service.db.scalars.side_effect = [
+            MagicMock(all=MagicMock(return_value=["Mapped hazard"])),
+            MagicMock(all=MagicMock(return_value=[])),
+        ]
+        self.service._stored_hazard_items_for_context = MagicMock(
+            return_value=[
+                {
+                    "hazard": "Mapped hazard",
+                    "profiles": [{"name": "Low-income households"}],
+                }
+            ]
+        )
+        session = ChatSession(
+            selected_context_policy_id="policy-1",
+            hazards=["Previously loaded hazard"],
+            hazard_profiles={"Previously loaded hazard": [{"name": "Older people"}]},
+        )
+
+        self.service._limit_hazards_to_selected_policy(session)
+
+        self.assertEqual(session.hazards, ["Mapped hazard"])
+        self.assertEqual(
+            session.hazard_profiles["Mapped hazard"],
+            [{"name": "Low-income households"}],
+        )
+
     def test_associates_only_owned_session_policy_references(self) -> None:
         owned = KnowledgeDocument(
             user_id="owner-1",
