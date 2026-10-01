@@ -374,6 +374,11 @@ class ChatProfileRenderingMixin:
                 for part in description.splitlines()
                 if part.strip()
             )
+            description_html = cls._emphasize_proposed_indicator_details(
+                description_html,
+                proposed_dataset,
+                proposed_indicator_label,
+            )
             body_rows.append(
                 "<tr>"
                 '<th scope="row">'
@@ -449,6 +454,11 @@ class ChatProfileRenderingMixin:
             description_html = "<br>".join(
                 escape(part.strip()) for part in description_parts if part.strip()
             )
+            description_html = cls._emphasize_proposed_indicator_details(
+                description_html,
+                proposed_dataset,
+                proposed_indicator_label,
+            )
             national = row.get("national")
             if national is None:
                 national = compared.get("national")
@@ -482,6 +492,27 @@ class ChatProfileRenderingMixin:
             f"<tbody>{''.join(body_rows)}</tbody>"
             "</table></div>"
         )
+
+    @staticmethod
+    def _emphasize_proposed_indicator_details(
+        description_html: str,
+        proposed_dataset: str,
+        proposed_indicator_label: str,
+    ) -> str:
+        """Apply the hazard-list emphasis while retaining HTML escaping."""
+        for label, value in (
+            ("Proposed Eurostat dataset", proposed_dataset),
+            ("Proposed indicator label", proposed_indicator_label),
+        ):
+            if not value:
+                continue
+            escaped_detail = escape(f"{label}: {value}")
+            description_html = description_html.replace(
+                escaped_detail,
+                '<span class="profile-indicator-detail"><strong><em>'
+                f"{escaped_detail}</em></strong></span>",
+            )
+        return description_html
 
     @staticmethod
     def _clean_profile_explanation(explanation: str) -> str:

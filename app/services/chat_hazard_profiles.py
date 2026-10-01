@@ -848,7 +848,10 @@ class ChatHazardProfilesMixin:
             name = str(profile.get("name") or profile.get("profile") or "").strip()
             if not name or self._profile_has_odds_ratio_below_one(profile):
                 continue
-            if self._profile_population_match_blocked(session, hazard, profile):
+            if (
+                self._profile_population_match_blocked(session, hazard, profile)
+                and not self._profile_has_direct_population_lookup(profile)
+            ):
                 blocked_profiles.add(normalize(name))
                 continue
             cached_match = self._matched_population_profile_from_db(
@@ -884,6 +887,12 @@ class ChatHazardProfilesMixin:
                     population_profiles,
                 ),
             )
+            if not matches:
+                matches = await self._direct_system_profile_population_match(
+                    session,
+                    hazard,
+                    profile,
+                )
             percentages = self._population_context_percentages(matches) if matches else None
             if percentages is None:
                 self._record_profile_population_match_failure(session, hazard, profile)
@@ -900,6 +909,51 @@ class ChatHazardProfilesMixin:
             updated.pop("population_context", None)
             enriched.append(updated)
         return enriched
+
+    @staticmethod
+    def _profile_has_direct_population_lookup(profile: dict[str, object]) -> bool:
+        return bool(str(profile.get("variable_name") or profile.get("variable") or "").strip())
+
+    async def _direct_system_profile_population_match(
+        self,
+        session: ChatSession,
+        hazard: str,
+        profile: dict[str, object],
+    ) -> list[dict[str, object]]:
+        """Fetch a profile's own prevalence when ranking omitted a protective effect."""
+        predictor = str(profile.get("variable_name") or profile.get("variable") or "").strip()
+        if not predictor:
+            return []
+        country = self.db.get(Country, session.country_id) if session.country_id else None
+        sector = self.db.get(Sector, session.sector_id) if session.sector_id else None
+        region = self.db.get(Region, session.region_id) if session.region_id else None
+        if country is None or sector is None:
+            return []
+        try:
+            prevalence = await self.eurostat.get_prevalence(
+                predictor,
+                country_code=str(country.name),
+                nuts_code=str((region.name if region else country.name) or ""),
+                sector=str(sector.name),
+                hazard=hazard,
+                confirmed_predictor_category=predictor,
+            )
+        except Exception:
+            logger.exception("Failed to fetch direct population context for system profile")
+            return []
+        if prevalence is None:
+            return []
+        return [
+            {
+                "name": predictor,
+                "eurostat_population_cache_id": prevalence.get("eurostat_population_cache_id"),
+                "population_pct": prevalence.get("population_pct"),
+                "national_population_pct": prevalence.get("national_population_pct"),
+                "source": prevalence.get("source"),
+                "dataset": prevalence.get("dataset"),
+                "geo": prevalence.get("geo"),
+            }
+        ]
 
     async def _additional_profiles_with_population_context(
         self,

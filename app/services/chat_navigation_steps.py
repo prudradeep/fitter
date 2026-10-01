@@ -121,7 +121,7 @@ class ChatNavigationStepsMixin:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
             self._discard_temporary_policy_references(session)
             self._clear_selected_hazard_context(session)
-            return self._hazards_step(session_id, session)
+            return await self._hazards_step(session_id, session)
 
         if action == normalize("Add a new hazard"):
             if session.sector is None:

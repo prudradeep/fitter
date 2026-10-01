@@ -1,11 +1,17 @@
 import re
+from difflib import SequenceMatcher
 
 from sqlalchemy import and_, or_, select
 
 from app.models import (
+    AdditionalHazard,
     KnowledgeChunk,
     KnowledgeDocument,
+    MitigationMeasurePolicy,
+    MitigationMeasurePolicyAdditionalHazard,
+    MitigationMeasurePolicySystemHazard,
     Policy,
+    SystemHazard,
 )
 from app.schemas import ChatResponse, Option
 from app.llm import ask_llm_chat
@@ -285,13 +291,141 @@ class ChatHazardStepsMixin:
         return await self._context_policy_details_step(session_id, session, document_ids)
 
     def _limit_hazards_to_selected_policy(self, session: ChatSession) -> None:
-        """Policies do not carry the mitigation-policy hazard mappings.
+        """Apply the selected reference policy's hazard-listing rule."""
+        if not (hasattr(self, "db") and session.selected_context_policy_id):
+            return
+        policy = self.db.get(Policy, session.selected_context_policy_id)
+        if policy is None:
+            return
+        policy_type = normalize_for_match(policy.policy_type or "")
+        if policy_type == normalize_for_match("Survey policy case study"):
+            self._set_all_system_hazards_for_selected_sector(session)
+            session.additional_hazards = []
+            return
+        if policy_type != normalize_for_match("Adjustment to existing policy"):
+            return
 
-        Keep the country/sector hazard catalogue intact after a policy is selected.
-        """
-        return
+        mitigation_policy = self._matching_mitigation_measure_policy(policy)
+        if mitigation_policy is None:
+            session.hazards = []
+            session.additional_hazards = []
+            session.custom_hazards = []
+            return
+        system_hazard_names = {
+            normalize(name)
+            for name in self.db.scalars(
+                select(SystemHazard.name)
+                .join(
+                    MitigationMeasurePolicySystemHazard,
+                    MitigationMeasurePolicySystemHazard.system_hazard_id == SystemHazard.id,
+                )
+                .where(
+                    MitigationMeasurePolicySystemHazard.mitigation_measure_policy_id
+                    == mitigation_policy.id
+                )
+            ).all()
+        }
+        additional_hazard_names = {
+            normalize(name)
+            for name in self.db.scalars(
+                select(AdditionalHazard.name)
+                .join(
+                    MitigationMeasurePolicyAdditionalHazard,
+                    MitigationMeasurePolicyAdditionalHazard.additional_hazard_id
+                    == AdditionalHazard.id,
+                )
+                .where(
+                    MitigationMeasurePolicyAdditionalHazard.mitigation_measure_policy_id
+                    == mitigation_policy.id
+                )
+            ).all()
+        }
+        session.hazards = [
+            hazard for hazard in (session.hazards or []) if normalize(hazard) in system_hazard_names
+        ]
+        session.additional_hazards = [
+            hazard
+            for hazard in (session.additional_hazards or [])
+            if normalize(hazard) in additional_hazard_names
+        ]
+        session.custom_hazards = []
 
-    def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
+    def _set_all_system_hazards_for_selected_sector(self, session: ChatSession) -> None:
+        """Restore the sector catalogue for survey case-study policies."""
+        items = self._stored_hazard_items_for_context(session.session_key, session)
+        session.hazards = [str(item["hazard"]) for item in items]
+        existing_profiles = session.hazard_profiles or {}
+        session.hazard_profiles = {
+            str(item["hazard"]): list(
+                existing_profiles.get(str(item["hazard"])) or item.get("profiles") or []
+            )
+            for item in items
+        }
+
+    async def _enrich_policy_hazards_with_population_context(
+        self, session: ChatSession
+    ) -> None:
+        """Rank policy-selected system hazards without hiding unranked catalogue items."""
+        if not session.selected_context_policy_id or not session.hazards:
+            return
+        policy = self.db.get(Policy, session.selected_context_policy_id)
+        if policy is None or normalize_for_match(policy.policy_type or "") not in {
+            normalize_for_match("Survey policy case study"),
+            normalize_for_match("Adjustment to existing policy"),
+        }:
+            return
+
+        listed_hazards = list(session.hazards)
+        listed_profiles = dict(session.hazard_profiles or {})
+        await self._rank_session_hazards(session)
+        enriched_profiles = dict(session.hazard_profiles or {})
+        session.hazards = listed_hazards
+        session.hazard_profiles = {
+            hazard: enriched_profiles.get(hazard, listed_profiles.get(hazard, []))
+            for hazard in listed_hazards
+        }
+
+    def _matching_mitigation_measure_policy(
+        self, policy: Policy
+    ) -> MitigationMeasurePolicy | None:
+        """Return one unambiguous same-context mitigation policy title match."""
+        selected_key = normalize_for_match(policy.policy or "")
+        if not selected_key:
+            return None
+        candidates = self.db.scalars(
+            select(MitigationMeasurePolicy).where(
+                MitigationMeasurePolicy.sector_id == policy.sector_id,
+                or_(
+                    MitigationMeasurePolicy.country_id == policy.country_id,
+                    MitigationMeasurePolicy.country_id.is_(None),
+                ),
+            )
+        ).all()
+        scored: list[tuple[float, MitigationMeasurePolicy]] = []
+        selected_tokens = set(selected_key.split())
+        for candidate in candidates:
+            candidate_key = normalize_for_match(candidate.policy_title or "")
+            if not candidate_key:
+                continue
+            if candidate_key == selected_key:
+                score = 1.0
+            elif candidate_key in selected_key or selected_key in candidate_key:
+                score = 0.9
+            else:
+                overlap = len(selected_tokens & set(candidate_key.split())) / max(
+                    len(selected_tokens | set(candidate_key.split())), 1
+                )
+                score = max(overlap, SequenceMatcher(None, selected_key, candidate_key).ratio())
+            if score >= 0.58:
+                scored.append((score, candidate))
+        if not scored:
+            return None
+        scored.sort(key=lambda item: (-item[0], item[1].id))
+        if len(scored) > 1 and scored[0][0] - scored[1][0] < 0.05:
+            return None
+        return scored[0][1]
+
+    async def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         if (
             (
                 session.custom_hazard_evidence is None
@@ -305,6 +439,7 @@ class ChatHazardStepsMixin:
         self._hydrate_custom_hazard_profiles(session)
         self._limit_hazards_to_selected_policy(session)
         self._filter_session_hazards_without_profiles(session)
+        await self._enrich_policy_hazards_with_population_context(session)
         session.phase = "hazards"
         return ChatResponse(
             session_id=session_id,
@@ -391,7 +526,7 @@ class ChatHazardStepsMixin:
 
         if action == normalize("Refresh hazards and DGs"):
             await self._refresh_session_hazards(session_id, session)
-            return self._hazards_step(session_id, session)
+            return await self._hazards_step(session_id, session)
 
         if action == normalize("Dive deeper into statistical findings"):
             return self._stats_deep_dive_dialog_step(session_id, session)
@@ -503,7 +638,7 @@ class ChatHazardStepsMixin:
 
         if action == normalize("Refresh hazards and DGs"):
             await self._refresh_session_hazards(session_id, session)
-            return self._hazards_step(session_id, session)
+            return await self._hazards_step(session_id, session)
 
         if not message:
             return ChatResponse(

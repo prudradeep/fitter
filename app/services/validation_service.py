@@ -513,7 +513,7 @@ class ChatValidationServiceMixin:
         if normalize(exact_label or message) == normalize("Go back to list of hazards"):
             session.pending_hazard = None
             transition_custom_hazard(session, ChatPhase.HAZARDS)
-            return self._hazards_step(session_id, session)
+            return await self._hazards_step(session_id, session)
 
         reason, evidence = parse_reason_evidence(message)
         if not reason:

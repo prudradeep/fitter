@@ -9,10 +9,15 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.models import (
+    AdditionalHazard,
     CustomHazardPolicyReference,
     KnowledgeChunk,
     KnowledgeDocument,
+    MitigationMeasurePolicy,
+    MitigationMeasurePolicyAdditionalHazard,
+    MitigationMeasurePolicySystemHazard,
     Policy,
+    SystemHazard,
 )
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
@@ -37,19 +42,10 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         Base.metadata.drop_all(bind=self.engine)
         self.engine.dispose()
 
-    def test_selected_policy_keeps_country_sector_hazards_without_mitigation_mappings(self) -> None:
+    def test_untyped_policy_keeps_country_sector_hazards(self) -> None:
         self.service.db = MagicMock()
-        self.service.db.scalars.side_effect = [
-            MagicMock(all=MagicMock(return_value=["Mapped hazard"])),
-            MagicMock(all=MagicMock(return_value=[])),
-        ]
-        self.service._stored_hazard_items_for_context = MagicMock(
-            return_value=[
-                {
-                    "hazard": "Mapped hazard",
-                    "profiles": [{"name": "Low-income households"}],
-                }
-            ]
+        self.service.db.get.return_value = SimpleNamespace(
+            policy_type="Other policy type"
         )
         session = ChatSession(
             selected_context_policy_id="policy-1",
@@ -62,6 +58,123 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         self.assertEqual(session.hazards, ["Previously loaded hazard"])
         self.assertEqual(
             session.hazard_profiles["Previously loaded hazard"],
+            [{"name": "Older people"}],
+        )
+
+    def test_adjustment_policy_limits_hazards_to_mitigation_mappings(self) -> None:
+        policy = Policy(
+            country_id="country-1",
+            sector_id="sector-1",
+            policy="Clean heat support",
+            policy_type="Adjustment to existing policy",
+        )
+        mitigation_policy = MitigationMeasurePolicy(
+            policy_code="DE_HEAT",
+            policy_title="Clean heat support scheme",
+            country_id="country-1",
+            sector_id="sector-1",
+        )
+        system_hazard = SystemHazard(sector_id="sector-1", name="Heating costs increase")
+        additional_hazard = AdditionalHazard(
+            country_id="country-1",
+            sector_id="sector-1",
+            name="Tenant displacement",
+        )
+        self.db.add_all([policy, mitigation_policy, system_hazard, additional_hazard])
+        self.db.flush()
+        self.db.add_all(
+            [
+                MitigationMeasurePolicySystemHazard(
+                    mitigation_measure_policy_id=mitigation_policy.id,
+                    system_hazard_id=system_hazard.id,
+                ),
+                MitigationMeasurePolicyAdditionalHazard(
+                    mitigation_measure_policy_id=mitigation_policy.id,
+                    additional_hazard_id=additional_hazard.id,
+                ),
+            ]
+        )
+        self.db.commit()
+        session = ChatSession(
+            selected_context_policy_id=policy.id,
+            hazards=["Heating costs increase", "Electricity bills increase"],
+            additional_hazards=["Tenant displacement", "Digital exclusion"],
+            custom_hazards=["Co-created risk"],
+        )
+
+        self.service._limit_hazards_to_selected_policy(session)
+
+        self.assertEqual(session.hazards, ["Heating costs increase"])
+        self.assertEqual(session.additional_hazards, ["Tenant displacement"])
+        self.assertEqual(session.custom_hazards, [])
+
+    def test_survey_case_policy_uses_all_sector_system_hazards_and_no_additional_hazards(self) -> None:
+        policy = Policy(
+            country_id="country-1",
+            sector_id="sector-1",
+            policy="Survey policy",
+            policy_type="Survey policy case study",
+        )
+        self.db.add(policy)
+        self.db.commit()
+        self.service._stored_hazard_items_for_context = MagicMock(
+            return_value=[
+                {"hazard": "System one", "profiles": [{"name": "Older people"}]},
+                {"hazard": "System two", "profiles": [{"name": "Low-income households"}]},
+            ]
+        )
+        session = ChatSession(
+            selected_context_policy_id=policy.id,
+            additional_hazards=["Expert-only hazard"],
+            custom_hazards=["Co-created risk"],
+        )
+
+        self.service._limit_hazards_to_selected_policy(session)
+
+        self.assertEqual(session.hazards, ["System one", "System two"])
+        self.assertEqual(session.additional_hazards, [])
+        self.assertEqual(session.custom_hazards, ["Co-created risk"])
+
+    def test_policy_population_enrichment_preserves_all_catalogue_hazards(self) -> None:
+        policy = Policy(
+            country_id="country-1",
+            sector_id="sector-1",
+            policy="Survey policy",
+            policy_type="Survey policy case study",
+        )
+        self.db.add(policy)
+        self.db.commit()
+        session = ChatSession(
+            selected_context_policy_id=policy.id,
+            hazards=["Power cuts", "Unranked catalogue hazard"],
+            hazard_profiles={
+                "Power cuts": [{"name": "Bill confidence"}],
+                "Unranked catalogue hazard": [{"name": "Older people"}],
+            },
+        )
+
+        async def rank_hazards(target_session: ChatSession) -> None:
+            target_session.hazards = ["Power cuts"]
+            target_session.hazard_profiles = {
+                "Power cuts": [
+                    {
+                        "name": "Bill confidence",
+                        "regional_population_pct": 36.5,
+                        "national_population_pct": 29.0,
+                    }
+                ]
+            }
+
+        self.service._rank_session_hazards = rank_hazards
+
+        asyncio.run(self.service._enrich_policy_hazards_with_population_context(session))
+
+        self.assertEqual(session.hazards, ["Power cuts", "Unranked catalogue hazard"])
+        self.assertEqual(
+            session.hazard_profiles["Power cuts"][0]["regional_population_pct"], 36.5
+        )
+        self.assertEqual(
+            session.hazard_profiles["Unranked catalogue hazard"],
             [{"name": "Older people"}],
         )
 

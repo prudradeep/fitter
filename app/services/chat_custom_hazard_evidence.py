@@ -118,7 +118,7 @@ class ChatCustomHazardEvidenceMixin:
             session.pending_hazard_reason = None
             session.pending_hazard_evidence = None
             transition_custom_hazard(session, ChatPhase.HAZARDS)
-            return self._hazards_step(session_id, session)
+            return await self._hazards_step(session_id, session)
 
         hazard = session.pending_hazard or ""
         if not hazard:
@@ -797,7 +797,7 @@ class ChatCustomHazardEvidenceMixin:
             )
             if hazard is None:
                 transition_custom_hazard(session, ChatPhase.HAZARDS)
-                return self._hazards_step(session_id, session)
+                return await self._hazards_step(session_id, session)
             self._clear_selected_hazard_context(session)
             session.pending_hazard = None
             session.suggested_duplicate_hazard = None

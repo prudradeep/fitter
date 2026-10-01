@@ -332,7 +332,7 @@ class ChatCustomHazardMechanismMixin:
             self._discard_temporary_policy_references(session)
             session.custom_hazard = None
             transition_custom_hazard(session, ChatPhase.HAZARDS)
-            return self._hazards_step(session_id, session)
+            return await self._hazards_step(session_id, session)
         state = self._custom_hazard_state(session)
         hazard = str(state.get("resolved_hazard_text") or state.get("raw_text") or "").strip()
         mechanism = re.sub(r"\s+", " ", str(message or "")).strip()

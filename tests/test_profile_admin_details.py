@@ -29,6 +29,8 @@ class ProfileAdminDetailsTests(unittest.TestCase):
         self.assertIn("More exposed to energy affordability risks.", html)
         self.assertIn("Proposed Eurostat dataset: edat_lfse_22 (mocked)", html)
         self.assertIn("Proposed indicator label: Mock indicator for Low-income households", html)
+        self.assertIn("<strong><em>Proposed Eurostat dataset:", html)
+        self.assertIn("<strong><em>Proposed indicator label:", html)
         self.assertNotIn("Reference:", html)
         self.assertNotIn("Plain-English:", html)
         self.assertNotIn("Mapped target population:", html)

@@ -1185,13 +1185,13 @@
 }
 
 .bubble .hazard-population-table--selected table {
-  font-size: 0.96rem;
+  font-size: 0.88rem;
 }
 
 .bubble .hazard-population-table--selected th,
 .bubble .hazard-population-table--selected td {
   border-bottom: 1px solid #e5e7eb;
-  padding: 18px 15px;
+  padding: 14px 18px;
 }
 
 .bubble .hazard-population-table--selected tbody tr:last-child th,
@@ -1200,17 +1200,18 @@
 }
 
 .bubble .hazard-population-table--selected thead th {
-  padding: 16px 15px;
+  padding: 13px 18px;
   color: #64748b;
-  font-size: 0.76rem;
-  font-weight: 900;
-  letter-spacing: 0;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 
-.bubble .hazard-population-table--selected tbody th strong {
-  color: #334155;
-  font-size: 1rem;
-  font-weight: 950;
+.bubble .hazard-population-table--selected tbody th>strong {
+  color: #1e293b;
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.3;
 }
 
 .bubble .hazard-population-table--selected .profile-type-label {
@@ -1222,22 +1223,33 @@
 
 .bubble .hazard-population-table--selected small {
   max-width: 670px;
-  margin-top: 8px;
+  margin-top: 6px;
   color: #5f6f8d;
-  font-size: 0.84rem;
-  font-weight: 500;
-  line-height: 1.45;
+  font-size: 0.78rem;
+  font-weight: 450;
+  line-height: 1.4;
 }
 
 .bubble .hazard-population-table--selected tbody td {
   color: #27206f;
-  font-size: 1rem;
-  font-weight: 950;
+  font-size: 0.9rem;
+  font-weight: 800;
 }
 
 .bubble .hazard-population-table--selected .population-value {
   display: inline-block;
-  min-width: 64px;
+  min-width: 58px;
+}
+
+.bubble .hazard-population-table--selected .profile-indicator-detail {
+  color: #475569;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.bubble .hazard-population-table--selected .profile-indicator-detail strong {
+  font-size: inherit;
+  font-weight: 700;
 }
 
 @media (max-width: 680px) {

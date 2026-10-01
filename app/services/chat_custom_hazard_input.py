@@ -424,7 +424,7 @@ class ChatCustomHazardInputMixin:
             session.pending_hazard_title_clarification_question = None
             session.pending_hazard_title_clarification_answers = []
             transition_custom_hazard(session, ChatPhase.HAZARDS)
-            return self._hazards_step(session_id, session)
+            return await self._hazards_step(session_id, session)
 
         hazard = message.strip()
         if not hazard:
@@ -555,7 +555,7 @@ class ChatCustomHazardInputMixin:
             session.pending_hazard_title_clarification_answers = []
             session.custom_hazard = None
             transition_custom_hazard(session, ChatPhase.HAZARDS)
-            return self._hazards_step(session_id, session)
+            return await self._hazards_step(session_id, session)
 
         answer = message.strip()
         state = self._custom_hazard_state(session)
@@ -780,7 +780,7 @@ class ChatCustomHazardInputMixin:
             session.pending_hazard_clarification_answer = None
             session.custom_hazard = None
             transition_custom_hazard(session, ChatPhase.HAZARDS)
-            return self._hazards_step(session_id, session)
+            return await self._hazards_step(session_id, session)
 
         answer = message.strip()
         if session.phase == "custom_hazard_clarification":

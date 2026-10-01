@@ -401,7 +401,7 @@ class ChatService(
             )
 
         if session.phase == "policy_summary":
-            return self._hazards_step(current_session_id, session)
+            return await self._hazards_step(current_session_id, session)
 
         if session.phase == "hazards":
             return await self._handle_hazards_action(current_session_id, session, clean_message)
