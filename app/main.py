@@ -28,8 +28,10 @@ from app.routes.api import router as api_router
 from app.routes.auth import router as auth_router
 from app.routes.sync import router as sync_router
 from app.security import apply_security_headers, create_csrf_token, csrf_request_allowed, csrf_token_valid
+from app.seed_data import seed_main_kb_from_files
 from app.services.coverage import get_coverage_rows
 from app.services.prompt_store import enable_prompt_db_reads_if_rows, seed_prompts_from_files
+from app.services.policy_knowledge_seed import seed_policy_documents_from_urls
 from app.services.sync_permissions import sync_client_permission_enabled
 from app.services.sync_service import SyncService
 
@@ -186,8 +188,34 @@ async def startup() -> None:
     if _sync_server_disables_llm_services():
         logger.info("Sync-only server mode enabled; skipping LLM-dependent startup work")
         app.state.client_sync_task = None
+        app.state.policy_knowledge_seed_task = None
         return
+    app.state.policy_knowledge_seed_task = None
+    app.state.policy_knowledge_seed_started = False
+    if not _client_sync_configured():
+        _start_policy_knowledge_seed_task()
     app.state.client_sync_task = asyncio.create_task(_client_sync_loop_after_startup())
+
+
+async def _seed_policy_knowledge_after_startup() -> None:
+    """Keep startup responsive while bundled and policy knowledge is indexed."""
+    try:
+        policy_result = await seed_policy_documents_from_urls()
+        logger.info("Policy knowledge startup import completed result=%s", policy_result)
+        file_result = await seed_main_kb_from_files()
+        logger.info("Bundled knowledge startup import completed result=%s", file_result)
+    except Exception:
+        logger.exception("Policy knowledge startup import failed")
+
+
+def _start_policy_knowledge_seed_task() -> None:
+    """Start the one-time policy-first knowledge import after prerequisites exist."""
+    if getattr(app.state, "policy_knowledge_seed_started", False):
+        return
+    app.state.policy_knowledge_seed_started = True
+    app.state.policy_knowledge_seed_task = asyncio.create_task(
+        _seed_policy_knowledge_after_startup()
+    )
 
 
 async def _client_sync_loop_after_startup() -> None:
@@ -195,7 +223,8 @@ async def _client_sync_loop_after_startup() -> None:
         app.state.client_sync_task = None
         return
     if settings.sync_auto_on_startup:
-        await _run_configured_client_sync("startup")
+        if await _run_configured_client_sync("startup"):
+            _start_policy_knowledge_seed_task()
     interval = int(settings.sync_interval_seconds or 0)
     if interval <= 0:
         return
@@ -203,19 +232,22 @@ async def _client_sync_loop_after_startup() -> None:
         await asyncio.sleep(interval)
         if not _client_sync_configured():
             continue
-        await _run_configured_client_sync("interval")
+        if await _run_configured_client_sync("interval"):
+            _start_policy_knowledge_seed_task()
 
 
-async def _run_configured_client_sync(trigger: str) -> None:
+async def _run_configured_client_sync(trigger: str) -> bool:
     try:
         with SessionLocal() as db:
             result = await SyncService(db).exchange_with_server()
         if result.get("error"):
             logger.warning("Client sync failed trigger=%s detail=%s", trigger, result.get("detail"))
-            return
+            return False
         logger.info("Client sync completed trigger=%s result=%s", trigger, result)
+        return True
     except Exception:
         logger.exception("Client sync failed trigger=%s", trigger)
+        return False
 
 
 def _client_sync_configured() -> bool:

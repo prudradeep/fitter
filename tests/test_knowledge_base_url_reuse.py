@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
-from app.models import KnowledgeChunk, KnowledgeDocument
+from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, Sector
 from app.services.knowledge_base import (
     MAIN_KB_SCOPE,
     TEMPORARY_KB_SCOPE,
@@ -174,6 +174,34 @@ class KnowledgeBaseUrlReuseTests(unittest.TestCase):
             ),
         )
         self.assertIn("Previously extracted evidence content.", context)
+
+    def test_list_documents_includes_context_for_policy_documents(self) -> None:
+        country = Country(name="Germany", map_code="DE")
+        sector = Sector(name="Energy")
+        self.db.add_all([country, sector])
+        self.db.flush()
+        policy = Policy(country_id=country.id, sector_id=sector.id, policy="Energy Act")
+        self.db.add(policy)
+        self.db.flush()
+        self.db.add(
+            KnowledgeDocument(
+                title="Energy policy text",
+                source_type="policy_url",
+                source_uri="https://example.org/energy-act",
+                scope=MAIN_KB_SCOPE,
+                scope_level="global",
+                policy_id=policy.id,
+            )
+        )
+        self.db.commit()
+
+        result = KnowledgeBaseService(self.db, None, scope=MAIN_KB_SCOPE).list_documents()
+
+        self.assertEqual(result[0]["policy_context"], {
+            "country": "Germany",
+            "sector": "Energy",
+            "policy": "Energy Act",
+        })
 
 
 if __name__ == "__main__":

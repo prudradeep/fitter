@@ -4808,14 +4808,23 @@ function renderKnowledgeDocuments(documents) {
   documents.forEach((documentItem) => {
     const title = String(documentItem.title || "");
     const sourceType = String(documentItem.source_type || "document").toUpperCase();
+    const policyContext = documentItem.policy_context || {};
+    const policyLabel = [policyContext.country, policyContext.sector, policyContext.policy]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" · ");
+    const documentDetails = [
+      createElement("strong", { text: title, attrs: { title } }),
+      ...(policyLabel
+        ? [createElement("small", { className: "knowledge-policy-context", text: policyLabel, attrs: { title: policyLabel } })]
+        : []),
+      createElement("small", { text: sourceType }),
+    ];
     const row = createElement("article", { className: "knowledge-item knowledge-document-row" }, [
       createElement("span", { className: "knowledge-document-icon" }, [
         knowledgeSvgIcon(["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M8 13h8", "M8 17h5"], "knowledge-document-svg"),
       ]),
-      createElement("div", { className: "knowledge-document-main" }, [
-        createElement("strong", { text: title, attrs: { title } }),
-        createElement("small", { text: sourceType }),
-      ]),
+      createElement("div", { className: "knowledge-document-main" }, documentDetails),
     ]);
     if (canManageMainKnowledge) {
       const deleteButton = document.createElement("button");

@@ -1065,7 +1065,7 @@ async def knowledge_upload(
             return too_large
         content = await file.read()
         try:
-            result = await service.ingest_file(filename, content)
+            result = await service.ingest_file(filename, content, translate_to_english=True)
         except (httpx.HTTPError, ValueError) as exc:
             failures.append({"source": filename, "detail": str(exc)})
             continue
@@ -1129,7 +1129,7 @@ async def knowledge_policies(
                     for part in (
                         str(country_name or "").strip(),
                         str(sector_name or "").strip(),
-                        str(policy_title or "").strip() or str(policy_code or "").strip() or "Untitled policy",
+                        str(policy_title or "").strip() or "Untitled policy",
                     )
                     if part
                 ),
@@ -1174,10 +1174,10 @@ async def knowledge_policy_document_upload(
     service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
     try:
         if document_url:
-            result = await service.ingest_url(document_url, document_url)
+            result = await service.ingest_url(document_url, document_url, translate_to_english=True)
         else:
             content = await file.read()
-            result = await service.ingest_file(filename, content)
+            result = await service.ingest_file(filename, content, translate_to_english=True)
     except (httpx.HTTPError, ValueError) as exc:
         return {"error": True, "detail": str(exc)}
     if result.get("error"):
@@ -1232,7 +1232,7 @@ async def knowledge_url(
     total_chunks = 0
     for url in urls:
         try:
-            result = await service.ingest_url(url, title if len(urls) == 1 else None)
+            result = await service.ingest_url(url, title if len(urls) == 1 else None, translate_to_english=True)
         except (httpx.HTTPError, ValueError) as exc:
             failures.append({"source": url, "detail": str(exc)})
             continue
@@ -1555,6 +1555,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                     policy_reference_url,
                     policy_reference_url,
                     allow_lexical_only=True,
+                    translate_to_english=True,
                 )
                 if result.get("error"):
                     raise ValueError(str(result.get("detail") or "No readable policy text was found."))
@@ -1603,6 +1604,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                     policy_filename,
                     file_bytes,
                     allow_lexical_only=True,
+                    translate_to_english=True,
                 )
                 if result.get("error"):
                     raise ValueError(str(result.get("detail") or "No readable policy text was found."))
@@ -1637,6 +1639,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                     evidence_url,
                     allow_lexical_only=True,
                     reuse_existing=True,
+                    translate_to_english=True,
                 )
                 document_id = str(result.get("document_id") or "").strip()
                 if document_id:
@@ -1683,6 +1686,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                         filename,
                         file_bytes,
                         allow_lexical_only=True,
+                        translate_to_english=True,
                     )
                     document_id = str(result.get("document_id") or "").strip()
                     if document_id:

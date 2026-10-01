@@ -531,6 +531,7 @@ class ChatCustomHazardEvidenceMixin:
                     evidence_url,
                     allow_lexical_only=True,
                     reuse_existing=True,
+                    translate_to_english=True,
                 )
             except Exception as exc:
                 logger.exception("Failed to extract custom-hazard evidence URL")

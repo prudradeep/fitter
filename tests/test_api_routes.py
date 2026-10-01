@@ -54,7 +54,7 @@ class FakeKnowledgeBaseService:
     def list_documents(self) -> list[dict[str, object]]:
         return self.documents
 
-    async def ingest_file(self, filename: str, content: bytes) -> dict[str, object]:
+    async def ingest_file(self, filename: str, content: bytes, **kwargs) -> dict[str, object]:
         return {
             "error": False,
             "id": 11,

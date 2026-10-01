@@ -14,7 +14,8 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import KnowledgeChunk, KnowledgeDocument
+from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, Sector
+from app.services.document_language import detect_document_language, translate_chunks_to_english
 from app.services.document_text import (
     compact_text,
     extract_docx_text,
@@ -109,12 +110,16 @@ class KnowledgeBaseService:
         *,
         allow_lexical_only: bool = False,
         reuse_existing: bool = False,
+        translate_to_english: bool = False,
     ) -> dict[str, object]:
         if reuse_existing:
             reusable = self.find_reusable_url_document(url)
             if reusable is not None:
                 return reusable
         drafts = await extract_url_chunks(url, self.settings.max_url_ingest_bytes)
+        if translate_to_english:
+            language = await detect_document_language(drafts)
+            drafts = await translate_chunks_to_english(drafts, language)
         result = await self.ingest_chunks(
             drafts,
             title or url,
@@ -229,6 +234,7 @@ class KnowledgeBaseService:
         content: bytes,
         *,
         allow_lexical_only: bool = False,
+        translate_to_english: bool = False,
     ) -> dict[str, object]:
         if len(content) > self.settings.max_upload_bytes:
             return {
@@ -239,6 +245,9 @@ class KnowledgeBaseService:
                 ),
             }
         drafts = extract_file_chunks(filename, content)
+        if translate_to_english:
+            language = await detect_document_language(drafts)
+            drafts = await translate_chunks_to_english(drafts, language)
         return await self.ingest_chunks(
             drafts,
             filename,
@@ -248,9 +257,19 @@ class KnowledgeBaseService:
         )
 
     async def ingest_text(
-        self, text: str, title: str, source_type: str, source_uri: str | None = None
+        self,
+        text: str,
+        title: str,
+        source_type: str,
+        source_uri: str | None = None,
+        *,
+        translate_to_english: bool = False,
     ) -> dict[str, object]:
-        return await self.ingest_chunks(chunk_text(compact_text(text)), title, source_type, source_uri)
+        chunks = chunk_text(compact_text(text))
+        if translate_to_english:
+            language = await detect_document_language(chunks)
+            chunks = await translate_chunks_to_english(chunks, language)
+        return await self.ingest_chunks(chunks, title, source_type, source_uri)
 
     async def ingest_chunks(
         self,
@@ -350,8 +369,16 @@ class KnowledgeBaseService:
         }
 
     def list_documents(self) -> list[dict[str, object]]:
-        rows = self.db.scalars(
-            select(KnowledgeDocument)
+        rows = self.db.execute(
+            select(
+                KnowledgeDocument,
+                Policy.policy.label("policy_name"),
+                Country.name.label("policy_country_name"),
+                Sector.name.label("policy_sector_name"),
+            )
+            .outerjoin(Policy, Policy.id == KnowledgeDocument.policy_id)
+            .outerjoin(Country, Country.id == Policy.country_id)
+            .outerjoin(Sector, Sector.id == Policy.sector_id)
             .where(
                 *self._document_access_filters(),
                 KnowledgeDocument.scope == self.scope,
@@ -360,17 +387,26 @@ class KnowledgeBaseService:
         ).all()
         return [
             {
-                "id": row.id,
-                "title": row.title,
-                "source_type": row.source_type,
-                "source_uri": row.source_uri,
-                "scope_level": row.scope_level,
-                "country_id": row.country_id,
-                "region_id": row.region_id,
-                "sector_id": row.sector_id,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "id": document.id,
+                "title": document.title,
+                "source_type": document.source_type,
+                "source_uri": document.source_uri,
+                "scope_level": document.scope_level,
+                "country_id": document.country_id,
+                "region_id": document.region_id,
+                "sector_id": document.sector_id,
+                "created_at": document.created_at.isoformat() if document.created_at else None,
+                "policy_context": (
+                    {
+                        "country": country_name,
+                        "sector": sector_name,
+                        "policy": policy_name,
+                    }
+                    if document.policy_id is not None and policy_name
+                    else None
+                ),
             }
-            for row in rows
+            for document, policy_name, country_name, sector_name in rows
         ]
 
     def document_results(self, document_id: str) -> list[dict[str, object]]:

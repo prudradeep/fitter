@@ -453,6 +453,15 @@
   font-weight: 800;
 }
 
+.knowledge-policy-context {
+  overflow: hidden;
+  color: #5b21b6;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .knowledge-item p {
   margin: 0;
   color: #334155;

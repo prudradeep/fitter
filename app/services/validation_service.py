@@ -3003,6 +3003,7 @@ class ChatValidationServiceMixin:
                 title[:255],
                 "validated_user_evidence",
                 source_uri,
+                translate_to_english=True,
             )
         except Exception:
             logger.exception("Failed to admit validated inline evidence to quarantine")

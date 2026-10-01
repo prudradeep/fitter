@@ -100,21 +100,30 @@ async def seed_main_kb_from_files(*, overwrite: bool = False) -> dict[str, objec
     if not KB_ROOT.exists():
         return {"ingested": [], "skipped": [], "failures": [{"source": "kb", "detail": "Bundled kb directory was not found."}]}
 
-    pdf_paths = sorted(path for path in KB_ROOT.rglob("*.pdf") if path.is_file())
+    # Include all bundled knowledge, including kb/additional. Some additional
+    # documents may have been seeded by a specialised importer using a project-
+    # relative source URI; both URI forms are checked below for idempotency.
+    document_paths = sorted(
+        path
+        for extension in ("*.pdf", "*.docx")
+        for path in KB_ROOT.rglob(extension)
+        if path.is_file()
+    )
     ingested: list[dict[str, object]] = []
     skipped: list[str] = []
     failures: list[dict[str, str]] = []
 
     with SessionLocal() as db:
         service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
-        for path in pdf_paths:
-            source_uri = path.relative_to(KB_ROOT).as_posix()
+        for path in document_paths:
+            relative_uri = path.relative_to(KB_ROOT).as_posix()
+            source_uri = f"kb/{relative_uri}"
             if not overwrite:
                 existing = db.scalar(
                     select(KnowledgeDocument.id).where(
                         KnowledgeDocument.scope == MAIN_KB_SCOPE,
                         KnowledgeDocument.user_id.is_(None),
-                        KnowledgeDocument.source_uri == source_uri,
+                        KnowledgeDocument.source_uri.in_((source_uri, relative_uri)),
                     )
                 )
                 if existing:
