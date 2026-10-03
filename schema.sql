@@ -447,13 +447,35 @@ CREATE TABLE IF NOT EXISTS policies (
   language VARCHAR(120) NULL,
   policy_type VARCHAR(120) NULL,
   source VARCHAR(40) NOT NULL DEFAULT 'xlsx',
+  created_by_user_id CHAR(36) NULL,
+  is_crowd_sourced BOOLEAN NOT NULL DEFAULT FALSE,
   excel_row_number INT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_policies_country FOREIGN KEY (country_id) REFERENCES countries(id) ON DELETE CASCADE,
   CONSTRAINT fk_policies_sector FOREIGN KEY (sector_id) REFERENCES sectors(id) ON DELETE CASCADE,
+  CONSTRAINT fk_policies_created_by_user FOREIGN KEY (created_by_user_id) REFERENCES app_users(id) ON DELETE SET NULL,
   INDEX ix_policies_country_id (country_id),
   INDEX ix_policies_sector_id (sector_id),
+  INDEX ix_policies_created_by_user_id (created_by_user_id),
   INDEX ix_policies_source (source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS policy_hazard_links (
+  id CHAR(36) PRIMARY KEY,
+  policy_id CHAR(36) NOT NULL,
+  system_hazard_id CHAR(36) NULL,
+  additional_hazard_id CHAR(36) NULL,
+  rationale TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_policy_hazard_links_policy FOREIGN KEY (policy_id) REFERENCES policies(id) ON DELETE CASCADE,
+  CONSTRAINT fk_policy_hazard_links_system FOREIGN KEY (system_hazard_id) REFERENCES system_hazards(id) ON DELETE CASCADE,
+  CONSTRAINT fk_policy_hazard_links_additional FOREIGN KEY (additional_hazard_id) REFERENCES additional_hazards(id) ON DELETE CASCADE,
+  CONSTRAINT uq_policy_system_hazard UNIQUE (policy_id, system_hazard_id),
+  CONSTRAINT uq_policy_additional_hazard UNIQUE (policy_id, additional_hazard_id),
+  CONSTRAINT chk_policy_hazard_target CHECK ((system_hazard_id IS NULL) <> (additional_hazard_id IS NULL)),
+  INDEX ix_policy_hazard_links_policy_id (policy_id),
+  INDEX ix_policy_hazard_links_system_hazard_id (system_hazard_id),
+  INDEX ix_policy_hazard_links_additional_hazard_id (additional_hazard_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mitigation_measure_target_groups (
@@ -551,6 +573,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
   source_type VARCHAR(40) NOT NULL,
   source_uri TEXT NULL,
   scope VARCHAR(20) NOT NULL DEFAULT 'main',
+  faiss_indexed TINYINT NOT NULL DEFAULT 0,
   session_key VARCHAR(64) NULL,
   custom_hazard_id CHAR(36) NULL,
   policy_id CHAR(36) NULL,
@@ -593,6 +616,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
   document_id CHAR(36) NOT NULL,
   user_id CHAR(36) NULL,
   chunk_index INT NOT NULL,
+  faiss_indexed TINYINT NOT NULL DEFAULT 0,
   content TEXT NOT NULL,
   source_type VARCHAR(40) NOT NULL,
   source_uri TEXT NULL,

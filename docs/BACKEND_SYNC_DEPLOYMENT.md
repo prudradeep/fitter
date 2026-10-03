@@ -69,15 +69,15 @@ CLIENT_ONLY
 
 SERVER_TO_CLIENT
   prompts
-  system_hazard_socio_demographics
-  system_hazard_socio_demographic_target_populations
-  system_hazard_socio_demographic_population_matches
   knowledge_documents scope=main
   knowledge_documents scope=sector_prompt
   knowledge_chunks belonging to those scopes
   reference and policy tables exported by SyncService.sync_tables()
 
 BIDIRECTIONAL
+  system_hazard_socio_demographics
+  system_hazard_socio_demographic_target_populations
+  system_hazard_socio_demographic_population_matches
   app_users, encrypted in sync payloads
   user_sessions
   user_chat_messages

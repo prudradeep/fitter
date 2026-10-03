@@ -159,11 +159,17 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
     survey_hazards = [
         hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
     ]
+    additional_content = format_additional_hazards(
+        session, show_admin_details=show_admin_details
+    )
+    custom_content = format_custom_hazards(
+        session, show_admin_details=show_admin_details
+    )
     if (
         session.selected_context_policy_id
         and not survey_hazards
-        and not session.additional_hazards
-        and not session.custom_hazards
+        and not additional_content
+        and not custom_content
     ):
         return (
             '<p class="hazard-group-intro">No hazards are currently linked to the '
@@ -173,29 +179,30 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
         '<button class="survey-source-button" type="button" '
         'data-open-survey-results="true">From the survey</button>'
     )
-    sections = [
-        '<details class="hazard-category">'
-        '<summary class="hazard-group-heading hazard-group-heading--top">'
-        f"Most relevant for your region {survey_source_button}</summary>",
-        '<div class="hazard-category-content">',
-        format_system_hazards(
-            session,
-            survey_hazards[:3],
-            show_admin_details=show_admin_details,
-        ),
-        "</div></details>",
-        '<details class="hazard-category">'
-        '<summary class="hazard-group-heading hazard-group-heading--other">'
-        f"Other hazards {survey_source_button}</summary>",
-        '<div class="hazard-category-content">',
-        format_system_hazards(
-            session,
-            survey_hazards[3:],
-            show_admin_details=show_admin_details,
-        ),
-        "</div></details>",
-    ]
-    if session.additional_hazards:
+    sections = []
+    if survey_hazards:
+        sections.extend([
+            '<details class="hazard-category">',
+            '<summary class="hazard-group-heading hazard-group-heading--top">'
+            f"Most relevant for your region {survey_source_button}</summary>",
+            '<div class="hazard-category-content">',
+            format_system_hazards(
+                session, survey_hazards[:3], show_admin_details=show_admin_details,
+            ),
+            "</div></details>",
+        ])
+    if len(survey_hazards) > 3:
+        sections.extend([
+            '<details class="hazard-category">',
+            '<summary class="hazard-group-heading hazard-group-heading--other">'
+            f"Other hazards {survey_source_button}</summary>",
+            '<div class="hazard-category-content">',
+            format_system_hazards(
+                session, survey_hazards[3:], show_admin_details=show_admin_details,
+            ),
+            "</div></details>",
+        ])
+    if additional_content:
         sections.extend(
             [
                 '<details class="hazard-category">'
@@ -211,17 +218,11 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
                 "These hazards were identified by policy and subject-matter experts "
                 "during the open labs under WP4."
                 "</p>",
-                format_additional_hazards(
-                    session,
-                    show_admin_details=show_admin_details,
-                ),
+                additional_content,
                 "</div></details>",
             ]
         )
-    if any(
-        _hazard_has_profiles(session, hazard)
-        for hazard in (session.custom_hazards or [])
-    ):
+    if custom_content:
         sections.extend(
             [
                 '<details class="hazard-category">'
@@ -235,10 +236,7 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
                 '<p class="hazard-group-intro hazard-group-intro--co-created">'
                 "These hazards were created by platform users for this specific region and sector."
                 "</p>",
-                format_custom_hazards(
-                    session,
-                    show_admin_details=show_admin_details,
-                ),
+                custom_content,
                 "</div></details>",
             ]
         )

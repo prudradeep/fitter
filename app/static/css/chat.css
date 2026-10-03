@@ -1974,6 +1974,24 @@
   box-shadow: 0 8px 18px rgba(15, 118, 110, 0.11);
 }
 
+.add-policy-option {
+  border-color: #b45309;
+  background: #fffbeb;
+  color: #78350f;
+  box-shadow: 0 8px 18px rgba(180, 83, 9, 0.15);
+}
+
+.add-policy-option:hover:not(:disabled) {
+  border-color: #92400e;
+  background: #b45309;
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(180, 83, 9, 0.24);
+}
+
+.bubble .add-policy-list-label {
+  color: #92400e;
+}
+
 .hazard-action-option {
   border-color: #0f766e;
   color: #115e59;

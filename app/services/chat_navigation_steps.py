@@ -148,6 +148,12 @@ class ChatNavigationStepsMixin:
             session.selected_context_policy_id = None
             session.selected_context_policy = None
             session.selected_context_policy_summary = None
+            session.pending_context_policy_document_ids = None
+            session.context_policy_clarifications = None
+            session.context_policy_validation = None
+            session.pending_context_policy_hazards = None
+            session.adding_context_policy = False
+            session.new_context_policy_summary_only = False
             return self._policy_step(session_id, session)
 
         if action == normalize("Write hazard again"):
@@ -272,6 +278,12 @@ class ChatNavigationStepsMixin:
         session.selected_context_policy_id = None
         session.selected_context_policy = None
         session.selected_context_policy_summary = None
+        session.pending_context_policy_document_ids = None
+        session.context_policy_clarifications = None
+        session.context_policy_validation = None
+        session.pending_context_policy_hazards = None
+        session.adding_context_policy = False
+        session.new_context_policy_summary_only = False
         session.hazards = None
         session.hazard_profiles = None
         session.custom_hazards = None
@@ -440,11 +452,14 @@ class ChatNavigationStepsMixin:
 
     def _attach_other_options(self, response: ChatResponse, session: ChatSession) -> None:
         self._apply_country_profile_count(response, session)
+        policy_flow_steps = {"policy", "policy_summary", "policy_reference", "policy_clarification", "policy_hazard_confirmation", "policy_hazard_details"}
+        hide_new_hazard = response.step in policy_flow_steps or session.phase in policy_flow_steps
         main_options = {normalize(option.label) for option in response.options}
         response_specific_options = [
             option
             for option in (response.other_options or [])
             if normalize(option) not in main_options
+            and not (hide_new_hazard and normalize(option) == normalize("Add a new hazard"))
         ]
         existing_options = {normalize(option) for option in response_specific_options}
         response.other_options = response_specific_options + [
@@ -452,6 +467,7 @@ class ChatNavigationStepsMixin:
             for option in self._other_nav_options(session, response.step)
             if normalize(option) not in main_options
             and normalize(option) not in existing_options
+            and not (hide_new_hazard and normalize(option) == normalize("Add a new hazard"))
         ]
 
     def _apply_country_profile_count(self, response: ChatResponse, session: ChatSession) -> None:
@@ -497,7 +513,7 @@ class ChatNavigationStepsMixin:
     @staticmethod
     def _other_nav_options(session: ChatSession, step: str) -> list[str]:
         options: list[str] = []
-        policy_flow_steps = {"policy", "policy_summary", "policy_reference"}
+        policy_flow_steps = {"policy", "policy_summary", "policy_reference", "policy_clarification", "policy_hazard_confirmation", "policy_hazard_details"}
         if session.mitigation_measure or session.pending_mitigation_measure:
             options.append("Write mitigation measure again")
         if session.sector and session.selected_hazard:
@@ -559,6 +575,30 @@ class ChatNavigationStepsMixin:
                 options=option_list(self._sectors_for_country(session.country_id)),
                 session=session.summary(),
                 error=error,
+            )
+
+        if session.phase in {"policy_reference", "policy_clarification"}:
+            return ChatResponse(
+                session_id=session_id,
+                step=session.phase,
+                bot_message=message,
+                options=[],
+                session=session.summary(),
+                input_mode="policy_reference",
+                error=error,
+            )
+
+        if session.phase == "policy_hazard_confirmation":
+            return ChatResponse(
+                session_id=session_id, step=session.phase, bot_message=message,
+                options=[Option(id=1, label="Yes, add policy and hazards"),
+                         Option(id=2, label="No, provide more details")],
+                session=session.summary(), error=error,
+            )
+        if session.phase == "policy_hazard_details":
+            return ChatResponse(
+                session_id=session_id, step=session.phase, bot_message=message,
+                session=session.summary(), input_mode="textarea", error=error,
             )
 
         if session.phase == "hazards":

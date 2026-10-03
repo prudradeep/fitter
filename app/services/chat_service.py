@@ -351,6 +351,11 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
+        if session.phase in {"policy_hazard_confirmation", "policy_hazard_details"}:
+            return await self._save_new_context_policy(
+                current_session_id, session, session.pending_context_policy_hazards or []
+            )
+
         if clean_message and not self._could_be_fuzzy_selection(session, clean_message):
             meaning_check = await self._validate_text_meaning(clean_message)
         else:
@@ -397,6 +402,11 @@ class ChatService(
 
         if session.phase == "policy_reference":
             return await self._handle_context_policy_reference(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "policy_clarification":
+            return await self._handle_context_policy_clarification(
                 current_session_id, session, clean_message
             )
 
@@ -767,6 +777,7 @@ class ChatService(
             # document content, not as prose supplied by the user.
             return False
         if session.phase.startswith("mitigation_") or session.phase in {
+            "complete",
             "custom_hazard_input",
             "custom_hazard_clarification",
             "custom_hazard_title_clarification",
@@ -778,8 +789,8 @@ class ChatService(
             "mitigation_clarity",
             "evaluation_question",
         }:
-            # These phases have their own phase-specific validation and must
-            # receive the complete user response, including score-only answers.
+            # Follow-up chat and these phase-specific handlers must receive the
+            # complete response, including score-only answers.
             return False
         if session.phase in {
             "add_hazard_evidence_decision",
@@ -1944,9 +1955,11 @@ class ChatService(
         elif session.sector is None:
             labels = [sector.name for sector in self._sectors_for_country(session.country_id)]
         elif session.phase == "policy":
-            labels = [title for _, title in self._policy_rows_for_selected_context(session)]
+            labels = ["Add a new policy", *[title for _, title in self._policy_rows_for_selected_context(session)]]
         elif session.phase == "policy_summary":
             labels = ["Continue to hazards"]
+        elif session.phase == "policy_hazard_confirmation":
+            labels = ["Yes, add policy and hazards", "No, provide more details"]
         elif session.phase == "hazards":
             options = (
                 CUSTOM_HAZARD_FINAL_OPTIONS
@@ -2013,9 +2026,11 @@ class ChatService(
 
     def _current_step_option_labels(self, session: ChatSession) -> list[str]:
         if session.phase == "policy":
-            return [title for _, title in self._policy_rows_for_selected_context(session)]
+            return ["Add a new policy", *[title for _, title in self._policy_rows_for_selected_context(session)]]
         if session.phase == "policy_summary":
             return ["Continue to hazards"]
+        if session.phase == "policy_hazard_confirmation":
+            return ["Yes, add policy and hazards", "No, provide more details"]
         if session.phase == "hazards":
             options = (
                 CUSTOM_HAZARD_FINAL_OPTIONS

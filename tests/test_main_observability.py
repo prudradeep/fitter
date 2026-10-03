@@ -90,6 +90,24 @@ class MainObservabilityTests(unittest.TestCase):
             settings.sync_server_url = original_url
             settings.sync_api_token = original_token
 
+    def test_client_startup_policy_seed_flag(self) -> None:
+        original_mode = settings.app_mode
+        original_flag = settings.client_startup_seed_kb_policy_documents
+        try:
+            settings.app_mode = "client"
+            settings.client_startup_seed_kb_policy_documents = False
+            self.assertFalse(main._should_seed_policy_documents())
+
+            settings.client_startup_seed_kb_policy_documents = True
+            self.assertTrue(main._should_seed_policy_documents())
+
+            settings.app_mode = "server"
+            settings.client_startup_seed_kb_policy_documents = False
+            self.assertTrue(main._should_seed_policy_documents())
+        finally:
+            settings.app_mode = original_mode
+            settings.client_startup_seed_kb_policy_documents = original_flag
+
 
 if __name__ == "__main__":
     unittest.main()

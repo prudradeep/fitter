@@ -354,7 +354,7 @@ DrTransition-psKAKEDHRPVNRjXTwUvDsaHn!1aA
 $env:ENV_FILE=".env.server.dev"
 uv sync --extra server
 uv run python scripts/apply_migrations.py --apply-base-schema
-uv run python -m app.seed_data --skip-schema
+uv run python -m app.seed_data --skip-schema --reindex-sector-prompts --seed-main-kb-from-files
 .\scripts\seed_database.ps1 -SkipSchema
 
 $env:ENV_FILE=".env.client.dev"

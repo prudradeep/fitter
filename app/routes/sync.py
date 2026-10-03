@@ -53,9 +53,9 @@ async def sync_status(
         "mode": settings.sync_mode,
         "device_id": service.device_id,
         "sync_client": _sync_client_status(sync_client),
-        "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
-        "client_to_server_knowledge_scopes": ["validated_evidence"],
-        "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
+        "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt", "policy_document"],
+        "client_to_server_knowledge_scopes": ["validated_evidence", "policy_document"],
+        "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt", "policy_document"],
         "excluded_knowledge_scopes": ["temporary", "policy_reference"],
         "knowledge_index_dirty_scopes": service.knowledge_index_dirty_scopes(),
         "tables": [table.name for table in service.sync_tables()],
@@ -109,7 +109,6 @@ async def sync_exchange(
     if isinstance(payload, JSONResponse):
         return payload
     service = SyncService(db, sync_token=str(sync_client.get("_token") or ""))
-    admin_sync = service.admin_sync_allowed(payload, sync_client=sync_client)
     result = service.apply_bundle(payload, sync_client=sync_client)
     client_requested_user_data = bool(payload.get("request_user_data_sync", True))
     can_sync_user_data = bool(sync_client.get("can_sync_user_data")) and client_requested_user_data
@@ -246,9 +245,9 @@ async def sync_client_status(
             "device_id": str(settings.sync_device_id or ""),
             "auto_on_startup": False,
             "interval_seconds": 0,
-            "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
-            "client_to_server_knowledge_scopes": ["validated_evidence"],
-            "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
+            "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt", "policy_document"],
+            "client_to_server_knowledge_scopes": ["validated_evidence", "policy_document"],
+            "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt", "policy_document"],
             "excluded_knowledge_scopes": ["temporary", "policy_reference"],
             "user_data_sync": {"enabled": False, "enabled_at": None},
             "knowledge_index_dirty_scopes": [],
@@ -262,9 +261,9 @@ async def sync_client_status(
         "device_id": service.device_id,
         "auto_on_startup": bool(settings.sync_auto_on_startup),
         "interval_seconds": int(settings.sync_interval_seconds or 0),
-        "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
-        "client_to_server_knowledge_scopes": ["validated_evidence"],
-        "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt"],
+        "server_to_client_knowledge_scopes": ["main", "validated_evidence", "sector_prompt", "policy_document"],
+        "client_to_server_knowledge_scopes": ["validated_evidence", "policy_document"],
+        "admin_client_to_server_knowledge_scopes": ["main", "validated_evidence", "sector_prompt", "policy_document"],
         "excluded_knowledge_scopes": ["temporary", "policy_reference"],
         "user_data_sync": service.user_data_sync_status(),
         "knowledge_index_dirty_scopes": service.knowledge_index_dirty_scopes() if configured else [],

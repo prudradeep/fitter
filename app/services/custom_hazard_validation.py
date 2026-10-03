@@ -482,6 +482,106 @@ async def validate_policy_reference_twin_transition(
     }
 
 
+async def validate_context_policy_document(
+    content: str,
+    *,
+    policy_title: str,
+    sector: str,
+    clarifications: list[str] | None = None,
+) -> dict[str, Any]:
+    """Check a selected policy document before it becomes policy context."""
+    objective = policy_objective_for_sector(sector)
+    content = str(content or "")
+    keys = ("sector_objective_fit", "twin_transition_fit")
+    priority = {"unsupported": 0, "unclear": 1, "supported": 2}
+    best: dict[str, dict[str, Any]] = {}
+    question = ""
+    system = load_nested_prompt_file("llm/context_policy_document_validation.txt")
+    # Overlap windows so provisions at a boundary can be read together.
+    for start in range(0, max(len(content), 1), 23500):
+        end = min(start + 24000, len(content))
+        payload = {
+            "selected_policy": policy_title,
+            "selected_sector": sector,
+            "sectoral_objective": objective,
+            "policy_document": content[start:end],
+            "user_clarifications": (clarifications or [])[-3:],
+        }
+        result = None
+        try:
+            response = await ask_llm_chat(
+                context=system,
+                messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                temperature=0.0,
+                max_tokens=550,
+            )
+            if not is_llm_unavailable_response(response):
+                result = parse_json_object(response)
+        except Exception:
+            pass
+        if not isinstance(result, dict) or any(
+            not isinstance(result.get(key), dict)
+            or result[key].get("status") not in priority
+            for key in keys
+        ):
+            result = _heuristic_context_policy_document_fit(content, sector)
+            best = {key: result[key] for key in keys}
+            question = str(result.get("clarification_question") or "")
+            break
+        for key in keys:
+            if key not in best or priority[result[key]["status"]] > priority[best[key]["status"]]:
+                best[key] = result[key]
+                if key == "sector_objective_fit":
+                    question = str(result.get("clarification_question") or "")
+        if best["sector_objective_fit"]["status"] == "supported" or end == len(content):
+            break
+    checks = {
+        key: {
+            "status": best[key]["status"],
+            "reason": re.sub(r"\s+", " ", str(best[key].get("reason") or "")).strip()[:350],
+        }
+        for key in keys
+    }
+    question = re.sub(r"\s+", " ", question).strip()[:500]
+    # Only sectoral objective fit determines whether the policy can proceed.
+    missing = (["sector_objective_fit"]
+               if checks["sector_objective_fit"]["status"] != "supported" else [])
+    if not missing:
+        question = ""
+    if missing and not question:
+        question = (
+            f"Please clarify how this policy addresses the {sector} sectoral objective "
+            f"({objective}), or provide a more complete policy document."
+        )
+    return {"checks": checks, "missing": missing, "clarification_question": question}
+
+
+def _heuristic_context_policy_document_fit(content: str, sector: str) -> dict[str, Any]:
+    """Conservative fallback when structured document review is unavailable."""
+    normalized = normalize_for_match(content)
+    green_terms = {
+        "renewable", "solar", "wind energy", "clean energy", "green energy",
+        "energy efficiency", "decarbonisation", "decarbonization", "electrification",
+    }
+    digital_terms = {
+        "digital", "data governance", "smart grid", "automation", "connectivity",
+        "digitalisation", "digitalization", "information technology",
+    }
+    objective_terms = _sector_policy_objective_terms(sector)
+    statuses = {
+        "sector_objective_fit": bool(objective_terms and _contains_any_term(normalized, objective_terms)),
+        "twin_transition_fit": _contains_any_term(normalized, green_terms)
+        and _contains_any_term(normalized, digital_terms),
+    }
+    return {
+        key: {
+            "status": "supported" if supported else "unclear",
+            "reason": "Direct terms found in the supplied text." if supported else "The supplied text does not establish this fit.",
+        }
+        for key, supported in statuses.items()
+    }
+
+
 def _heuristic_policy_reference_twin_transition(content: str) -> dict[str, Any]:
     normalized = normalize_for_match(content)
     transition_terms = {

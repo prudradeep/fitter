@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import unittest
 from datetime import datetime, timedelta
 from typing import Iterator
@@ -12,7 +13,23 @@ from sqlalchemy.pool import StaticPool
 
 from app.auth import hash_password
 from app.db.session import Base
-from app.models import AppUser, Country, KnowledgeChunk, KnowledgeDocument, Prompt, UserActivity, UserChatMessage, UserSession
+from app.models import (
+    AppUser,
+    Country,
+    EvaluationQuestion,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    Prompt,
+    QuestionOption,
+    Sector,
+    SystemHazard,
+    SystemHazardSocioDemographic,
+    SystemHazardSocioDemographicPopulationMatch,
+    SystemHazardSocioDemographicTargetPopulation,
+    UserActivity,
+    UserChatMessage,
+    UserSession,
+)
 from app.routes import sync as sync_routes
 from app.services.sync_service import SyncApplyResult, SyncService
 
@@ -219,9 +236,12 @@ class SyncServiceTests(unittest.TestCase):
                 "app.services.system_inquiry_telemetry.push_queued_system_inquiry_telemetry",
                 AsyncMock(return_value={"error": False, "pushed": 0}),
             ),
+            patch.object(service, "_is_client_mode", return_value=True),
+            patch.object(service, "index_pending_knowledge", new_callable=AsyncMock) as index_pending,
         ):
             result = asyncio.run(service.exchange_with_server())
 
+        index_pending.assert_awaited_once_with()
         self.assertEqual(
             [url.rsplit("/", 1)[-1] for url, _kwargs in fake_client.calls],
             ["push", "push", "push", "pull"],
@@ -469,6 +489,78 @@ class SyncServiceTests(unittest.TestCase):
         self.assertIsNotNone(prompt)
         self.assertEqual(prompt.category, "workflow")
         self.assertEqual(prompt.content, "Server workflow prompt")
+
+    def test_client_system_demographics_and_population_links_reach_server(self) -> None:
+        original_mode = sync_routes.settings.sync_mode
+        server_engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=server_engine)
+        server_db = Session(server_engine)
+        try:
+            sector = Sector(name="Transport")
+            self.db.add(sector)
+            self.db.flush()
+            hazard = SystemHazard(sector_id=sector.id, name="Heat")
+            question = EvaluationQuestion(category="population", question="Who?", sort_order=1)
+            self.db.add_all([hazard, question])
+            self.db.flush()
+            option = QuestionOption(question_id=question.id, option="Older adults")
+            profile = SystemHazardSocioDemographic(
+                system_hazard_id=hazard.id,
+                sector_id=sector.id,
+                profile="Older adults",
+            )
+            self.db.add_all([option, profile])
+            self.db.flush()
+            self.db.add_all(
+                [
+                    SystemHazardSocioDemographicTargetPopulation(
+                        system_hazard_socio_demographic_id=profile.id,
+                        question_option_id=option.id,
+                    ),
+                    SystemHazardSocioDemographicPopulationMatch(
+                        system_hazard_socio_demographic_id=profile.id,
+                        match_status=1,
+                    ),
+                ]
+            )
+            self.db.commit()
+
+            sync_routes.settings.sync_mode = "client"
+            bundle = SyncService(self.db, device_id="client-device").export_bundle()
+            for table_name in (
+                "system_hazard_socio_demographics",
+                "system_hazard_socio_demographic_target_populations",
+                "system_hazard_socio_demographic_population_matches",
+            ):
+                self.assertEqual(len(self._rows(bundle, table_name)), 1)
+
+            sync_routes.settings.sync_mode = "server"
+            result = SyncService(server_db, device_id="server-device").apply_bundle(bundle)
+            self.assertEqual(result.skipped, 0)
+            server_profile = server_db.scalar(select(SystemHazardSocioDemographic))
+            self.assertIsNotNone(server_profile)
+            self.assertEqual(server_profile.profile, "Older adults")
+            self.assertEqual(
+                server_db.scalar(
+                    select(SystemHazardSocioDemographicTargetPopulation)
+                ).system_hazard_socio_demographic_id,
+                server_profile.id,
+            )
+            self.assertEqual(
+                server_db.scalar(
+                    select(SystemHazardSocioDemographicPopulationMatch)
+                ).system_hazard_socio_demographic_id,
+                server_profile.id,
+            )
+        finally:
+            sync_routes.settings.sync_mode = original_mode
+            server_db.close()
+            Base.metadata.drop_all(bind=server_engine)
+            server_engine.dispose()
 
     def test_client_can_export_app_users_when_user_data_sync_is_disabled(self) -> None:
         user = self._add_user("client-user@example.com")
@@ -936,6 +1028,7 @@ class SyncServiceTests(unittest.TestCase):
             source_type="txt",
             source_uri="main.txt",
             scope="main",
+            faiss_indexed=1,
         )
         self.db.add(document)
         self.db.flush()
@@ -947,6 +1040,7 @@ class SyncServiceTests(unittest.TestCase):
                 content="Knowledge content",
                 source_type="txt",
                 source_uri="main.txt",
+                faiss_indexed=1,
             )
         )
         self.db.commit()
@@ -970,6 +1064,24 @@ class SyncServiceTests(unittest.TestCase):
 
             self.assertIn("main", result.knowledge_scopes_dirty)
             self.assertIn("main", service.knowledge_index_dirty_scopes())
+            self.assertEqual(target_db.query(KnowledgeDocument).one().faiss_indexed, 0)
+            self.assertEqual(target_db.query(KnowledgeChunk).one().faiss_indexed, 0)
+
+            target_db.query(KnowledgeDocument).one().faiss_indexed = 1
+            target_db.query(KnowledgeChunk).one().faiss_indexed = 1
+            target_db.commit()
+            updated_bundle = copy.deepcopy(bundle)
+            updated_chunk = next(
+                table["rows"][0] for table in updated_bundle["tables"]
+                if table["name"] == "knowledge_chunks"
+            )
+            updated_chunk["content"] = "Changed knowledge content"
+            updated_chunk["sync_revision"] = int(updated_chunk["sync_revision"]) + 1
+            with patch("app.services.sync_service.KnowledgeBaseService._remove_vectors") as remove:
+                service.apply_bundle(updated_bundle)
+            remove.assert_called_once_with([target_db.query(KnowledgeChunk).one().id])
+            self.assertEqual(target_db.query(KnowledgeDocument).one().faiss_indexed, 0)
+            self.assertEqual(target_db.query(KnowledgeChunk).one().faiss_indexed, 0)
         finally:
             sync_routes.settings.sync_mode = original_mode
             target_db.close()
@@ -980,14 +1092,14 @@ class SyncServiceTests(unittest.TestCase):
         original_mode = sync_routes.settings.sync_mode
         sync_routes.settings.sync_mode = "client"
         try:
-            for scope in ("main", "validated_evidence", "sector_prompt", "temporary"):
+            for scope in ("main", "validated_evidence", "sector_prompt", "policy_document", "temporary", "policy_reference"):
                 document = KnowledgeDocument(
                     user_id=None,
                     title=f"{scope} KB",
                     source_type="txt",
                     source_uri=f"{scope}.txt",
                     scope=scope,
-                    session_key="session-a" if scope == "temporary" else None,
+                    session_key="session-a" if scope in {"temporary", "policy_reference"} else None,
                 )
                 self.db.add(document)
                 self.db.flush()
@@ -1016,14 +1128,14 @@ class SyncServiceTests(unittest.TestCase):
         original_mode = sync_routes.settings.sync_mode
         sync_routes.settings.sync_mode = "client"
         try:
-            for scope in ("main", "validated_evidence", "sector_prompt", "temporary"):
+            for scope in ("main", "validated_evidence", "sector_prompt", "policy_document", "temporary", "policy_reference"):
                 document = KnowledgeDocument(
                     user_id=None,
                     title=f"{scope} KB",
                     source_type="txt",
                     source_uri=f"{scope}.txt",
                     scope=scope,
-                    session_key="session-a" if scope == "temporary" else None,
+                    session_key="session-a" if scope in {"temporary", "policy_reference"} else None,
                 )
                 self.db.add(document)
                 self.db.flush()
@@ -1050,8 +1162,8 @@ class SyncServiceTests(unittest.TestCase):
         chunk_sources = {row["source_uri"] for row in self._rows(bundle, "knowledge_chunks")}
         self.assertTrue(bundle["admin_knowledge_sync"])
         self.assertEqual(bundle["admin_user_email"], "admin@example.com")
-        self.assertEqual(document_scopes, {"main", "validated_evidence", "sector_prompt"})
-        self.assertEqual(chunk_sources, {"main.txt", "validated_evidence.txt", "sector_prompt.txt"})
+        self.assertEqual(document_scopes, {"main", "validated_evidence", "sector_prompt", "policy_document"})
+        self.assertEqual(chunk_sources, {"main.txt", "validated_evidence.txt", "sector_prompt.txt", "policy_document.txt"})
 
     def test_server_rejects_inbound_main_and_sector_knowledge(self) -> None:
         original_mode = sync_routes.settings.sync_mode
@@ -1341,9 +1453,15 @@ class SyncServiceTests(unittest.TestCase):
             self.assertEqual(legacy_denied.status_code, 401)
             self.assertEqual(allowed.status_code, 200)
             self.assertIn("user_sessions", allowed.json()["tables"])
-            self.assertEqual(allowed.json()["server_to_client_knowledge_scopes"], ["main", "validated_evidence", "sector_prompt"])
-            self.assertEqual(allowed.json()["client_to_server_knowledge_scopes"], ["validated_evidence"])
-            self.assertEqual(allowed.json()["admin_client_to_server_knowledge_scopes"], ["main", "validated_evidence", "sector_prompt"])
+            self.assertEqual(
+                allowed.json()["server_to_client_knowledge_scopes"],
+                ["main", "validated_evidence", "sector_prompt", "policy_document"],
+            )
+            self.assertEqual(allowed.json()["client_to_server_knowledge_scopes"], ["validated_evidence", "policy_document"])
+            self.assertEqual(
+                allowed.json()["admin_client_to_server_knowledge_scopes"],
+                ["main", "validated_evidence", "sector_prompt", "policy_document"],
+            )
             self.assertEqual(
                 allowed.json()["excluded_knowledge_scopes"],
                 ["temporary", "policy_reference"],

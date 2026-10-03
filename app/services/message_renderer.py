@@ -89,6 +89,12 @@ def get_message_environment() -> Environment:
 
 def render_message(template_name: str, **context: object) -> str:
     prompt = load_prompt_from_db(f"chat/{template_name}")
+    if template_name == "policy_selection.md" and prompt:
+        prompt = prompt.replace(
+            '<li><strong class="add-policy-list-label">Add a new policy</strong> '
+            '<small>Provide a document for review</small></li>',
+            "",
+        )
     if (
         template_name == "reason_confirmation.md"
         and prompt

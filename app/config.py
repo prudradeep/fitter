@@ -155,6 +155,7 @@ class Settings(BaseSettings):
     sync_server_expose_app_apis: bool = False
     sync_auto_on_startup: bool = True
     sync_interval_seconds: int = 3600
+    client_startup_seed_kb_policy_documents: bool = True
 
     model_config = SettingsConfigDict(env_file=_env_files(), env_file_encoding="utf-8", extra="ignore")
 

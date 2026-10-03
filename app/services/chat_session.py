@@ -22,6 +22,12 @@ class ChatSession:
     selected_context_policy_id: str | None = None
     selected_context_policy: str | None = None
     selected_context_policy_summary: str | None = None
+    pending_context_policy_document_ids: list[str] | None = None
+    context_policy_clarifications: list[str] | None = None
+    context_policy_validation: dict[str, object] | None = None
+    pending_context_policy_hazards: list[dict[str, str]] | None = None
+    adding_context_policy: bool = False
+    new_context_policy_summary_only: bool = False
     pending_mitigation_policy_selection: bool = False
     phase: str = ChatPhase.WIZARD.value
     hazards: list[str] | None = None
@@ -540,9 +546,17 @@ class ChatSessionStore:
         if values["phase"] == ChatPhase.WIZARD.value and values.get("current_step") in {
             ChatPhase.POLICY.value,
             ChatPhase.POLICY_REFERENCE.value,
+            ChatPhase.POLICY_CLARIFICATION.value,
             ChatPhase.POLICY_SUMMARY.value,
         }:
             values["phase"] = str(values["current_step"])
+        if (
+            values["phase"] == ChatPhase.WIZARD.value
+            and values.get("pending_context_policy_document_ids")
+            and isinstance(values.get("context_policy_validation"), dict)
+            and values["context_policy_validation"].get("missing")
+        ):
+            values["phase"] = ChatPhase.POLICY_CLARIFICATION.value
         session = ChatSession(**values)
         self._sessions[session_id] = session
         return session

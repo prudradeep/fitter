@@ -393,6 +393,7 @@ class ChatContextRetrievalMixin:
         *,
         query: str = "",
         max_chunks: int = EVIDENCE_CONTEXT_MAX_CHUNKS,
+        full_text: bool = False,
     ) -> str:
         """Return policy-reference text without exposing it to evidence retrieval."""
         if not session.session_key:
@@ -428,6 +429,8 @@ class ChatContextRetrievalMixin:
             }
             for chunk, document in rows
         ]
+        if full_text:
+            return self._format_full_knowledge_results(results)
         return self._format_bounded_knowledge_results(
             results,
             query=query,

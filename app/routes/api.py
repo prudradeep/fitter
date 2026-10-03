@@ -43,6 +43,7 @@ from app.services.hazard_effect_size import hazard_effect_size_rows, hazard_pred
 from app.services.hazard_ranking_service import HAZARD_COLUMN_BY_SLUG, HazardRankingService
 from app.services.knowledge_base import (
     MAIN_KB_SCOPE,
+    POLICY_DOCUMENT_SCOPE,
     TEMPORARY_KB_SCOPE,
     KnowledgeBaseService,
 )
@@ -1021,8 +1022,11 @@ async def knowledge_documents(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     _ = current_user
-    service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
-    return {"documents": service.list_documents()}
+    documents = [
+        *KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE).list_documents(),
+        *KnowledgeBaseService(db, None, scope=POLICY_DOCUMENT_SCOPE).list_documents(),
+    ]
+    return {"documents": documents}
 
 
 @router.post("/knowledge/upload")
@@ -1145,7 +1149,7 @@ async def knowledge_policy_document_upload(
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    """Ingest an admin-managed main-KB document and link it to one policy."""
+    """Ingest an admin-managed policy document and link it to one policy."""
     if not await _can_manage_main_knowledge(db, current_user):
         raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
     too_large = payload_too_large_response(request, settings.max_upload_bytes, "Policy document upload")
@@ -1171,7 +1175,7 @@ async def knowledge_policy_document_upload(
         if too_large is not None:
             return too_large
 
-    service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
+    service = KnowledgeBaseService(db, None, scope=POLICY_DOCUMENT_SCOPE)
     try:
         if document_url:
             result = await service.ingest_url(document_url, document_url, translate_to_english=True)
@@ -1497,7 +1501,9 @@ async def knowledge_delete(
 ) -> dict[str, object]:
     if not await _can_manage_main_knowledge(db, current_user):
         raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
-    service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
+    document = db.get(KnowledgeDocument, document_id)
+    scope = document.scope if document and document.scope in {MAIN_KB_SCOPE, POLICY_DOCUMENT_SCOPE} else MAIN_KB_SCOPE
+    service = KnowledgeBaseService(db, None, scope=scope)
     try:
         deleted = await service.delete_document(document_id)
     except (httpx.HTTPError, ValueError) as exc:

@@ -1,7 +1,9 @@
 import asyncio
+import json
 import unittest
+from dataclasses import asdict
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -20,11 +22,147 @@ from app.models import (
     SystemHazard,
 )
 from app.services.chat_service import ChatService
-from app.services.chat_session import ChatSession
+from app.services.chat_formatters import format_additional_hazards
+from app.services.chat_session import ChatSession, ChatSessionStore
 from app.services.knowledge_base import POLICY_REFERENCE_SCOPE
+from app.services.custom_hazard_validation import validate_context_policy_document
 
 
 class PolicyReferenceMitigationContextTests(unittest.TestCase):
+    def test_policy_clarification_restores_its_form_after_saved_session_reload(self) -> None:
+        session = ChatSession(
+            country="Ireland", region="Leinster", sector="Energy",
+            phase="policy_clarification",
+            pending_context_policy_document_ids=["document-1"],
+            context_policy_validation={"missing": ["twin_transition_fit"]},
+        )
+        restored = ChatSessionStore().put("session-1", asdict(session))
+
+        self.assertEqual(restored.phase, "policy_clarification")
+        prompt = self.service._repeat_current_options("session-1", restored, "", False)
+        self.assertEqual(prompt.step, "policy_clarification")
+        self.assertEqual(prompt.input_mode, "policy_reference")
+
+        # Earlier versions saved the failed response as the complete step.
+        broken = asdict(session)
+        broken.update(phase="wizard", current_step="complete", current_input_mode="text")
+        recovered = ChatSessionStore().put("session-1", broken)
+        self.assertEqual(recovered.phase, "policy_clarification")
+        prompt = self.service._repeat_current_options("session-1", recovered, "", False)
+        self.assertEqual((prompt.step, prompt.input_mode),
+                         ("policy_clarification", "policy_reference"))
+
+    def test_policy_clarification_accepts_replacement_url_or_file(self) -> None:
+        session = ChatSession(phase="policy_clarification")
+        self.service._handle_context_policy_reference = AsyncMock(
+            return_value="replacement document handled"
+        )
+
+        for marker in ("Policy reference URL: https://example.org/policy\n",
+                       "Policy reference file: policy.pdf\n"):
+            with self.subTest(marker=marker):
+                message = "Clarification text\n" + marker + "Policy reference document ID: doc-1"
+                response = asyncio.run(self.service._handle_context_policy_clarification(
+                    "session-1", session, message
+                ))
+                self.assertEqual(response, "replacement document handled")
+                self.service._handle_context_policy_reference.assert_awaited_with(
+                    "session-1", session, message
+                )
+
+    def test_policy_document_review_accepts_sector_fit_without_twin_fit(self) -> None:
+        response = (
+            '{"sector_objective_fit":{"status":"supported","reason":"Solar policy."},'
+            '"twin_transition_fit":{"status":"unclear","reason":"No digital link."},'
+            '"clarification_question":"How does the digital component support solar generation?"}'
+        )
+        with patch(
+            "app.services.custom_hazard_validation.ask_llm_chat",
+            new_callable=AsyncMock, return_value=response,
+        ) as ask_llm:
+            review = asyncio.run(validate_context_policy_document(
+                "Solar generation policy", policy_title="Solar policy", sector="Energy"
+            ))
+
+        self.assertEqual(review["missing"], [])
+        self.assertEqual(review["clarification_question"], "")
+        self.assertEqual(review["checks"]["twin_transition_fit"]["status"], "unclear")
+        self.assertNotIn("green_energy_fit", review["checks"])
+        self.assertIn("Transition towards renewable energy", ask_llm.call_args.kwargs["messages"][0]["content"])
+
+    def test_policy_document_review_fallback_accepts_sector_fit_without_digital_fit(self) -> None:
+        with patch(
+            "app.services.custom_hazard_validation.ask_llm_chat",
+            new_callable=AsyncMock, return_value="LLM unavailable",
+        ):
+            review = asyncio.run(validate_context_policy_document(
+                "The law supports solar renewable energy generation.",
+                policy_title="Solar law", sector="Energy",
+            ))
+
+        self.assertEqual(review["checks"]["sector_objective_fit"]["status"], "supported")
+        self.assertNotIn("green_energy_fit", review["checks"])
+        self.assertEqual(review["missing"], [])
+
+    def test_policy_document_review_requests_only_missing_sector_fit(self) -> None:
+        response = (
+            '{"sector_objective_fit":{"status":"unclear","reason":"Objective link unclear."},'
+            '"twin_transition_fit":{"status":"unsupported","reason":"No digital measure."},'
+            '"clarification_question":"How does the policy support the sectoral objective?"}'
+        )
+        with patch(
+            "app.services.custom_hazard_validation.ask_llm_chat",
+            new_callable=AsyncMock, return_value=response,
+        ):
+            review = asyncio.run(validate_context_policy_document(
+                "A policy with unclear sectoral provisions", policy_title="Policy", sector="Energy"
+            ))
+
+        self.assertEqual(review["missing"], ["sector_objective_fit"])
+        self.assertIn("sectoral objective", review["clarification_question"])
+
+    def test_policy_document_review_reaches_later_text_and_stops_on_support(self) -> None:
+        responses = [
+            '{"sector_objective_fit":{"status":"unsupported","reason":"No fit here."},'
+            '"twin_transition_fit":{"status":"unsupported","reason":"No link."},'
+            '"clarification_question":"Provide relevant provisions."}',
+            '{"sector_objective_fit":{"status":"supported","reason":"Solar provision."},'
+            '"twin_transition_fit":{"status":"unclear","reason":"No digital link."},'
+            '"clarification_question":""}',
+        ]
+        content = "x" * 24000 + "Solar renewable energy generation." + "y" * 24000
+        with patch(
+            "app.services.custom_hazard_validation.ask_llm_chat",
+            new_callable=AsyncMock, side_effect=responses,
+        ) as ask_llm:
+            review = asyncio.run(validate_context_policy_document(
+                content, policy_title="Solar policy", sector="Energy"
+            ))
+
+        self.assertEqual(ask_llm.await_count, 2)
+        self.assertEqual(review["missing"], [])
+        self.assertEqual(review["clarification_question"], "")
+        second_payload = json.loads(ask_llm.await_args_list[1].kwargs["messages"][0]["content"])
+        self.assertIn("Solar renewable energy generation.", second_payload["policy_document"])
+        self.assertLessEqual(len(second_payload["policy_document"]), 24000)
+
+    def test_policy_document_review_checks_all_text_before_requesting_clarification(self) -> None:
+        response = (
+            '{"sector_objective_fit":{"status":"unsupported","reason":"No objective fit."},'
+            '"twin_transition_fit":{"status":"unsupported","reason":"No link."},'
+            '"clarification_question":"Supply relevant provisions."}'
+        )
+        with patch(
+            "app.services.custom_hazard_validation.ask_llm_chat",
+            new_callable=AsyncMock, return_value=response,
+        ) as ask_llm:
+            review = asyncio.run(validate_context_policy_document(
+                "x" * 50000, policy_title="Policy", sector="Energy"
+            ))
+
+        self.assertEqual(ask_llm.await_count, 3)
+        self.assertEqual(review["missing"], ["sector_objective_fit"])
+
     def setUp(self) -> None:
         self.engine = create_engine(
             "sqlite://",
@@ -178,6 +316,43 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
             [{"name": "Older people"}],
         )
 
+    def test_policy_population_enrichment_preserves_additional_hazard_profiles(self) -> None:
+        policy = Policy(
+            country_id="country-1",
+            sector_id="sector-1",
+            policy="Clean heat support",
+            policy_type="Adjustment to existing policy",
+        )
+        self.db.add(policy)
+        self.db.commit()
+        session = ChatSession(
+            selected_context_policy_id=policy.id,
+            region="Bavaria",
+            hazards=["Heating costs increase"],
+            additional_hazards=["Tenancy & housing insecurity"],
+            hazard_profiles={
+                "Heating costs increase": [{"name": "Older people"}],
+                "Tenancy & housing insecurity": [{"name": "Renting households"}],
+            },
+        )
+
+        async def rank_hazards(target_session: ChatSession) -> None:
+            target_session.hazard_profiles = {
+                "Heating costs increase": [{"name": "Older people"}]
+            }
+
+        self.service._rank_session_hazards = rank_hazards
+
+        asyncio.run(self.service._enrich_policy_hazards_with_population_context(session))
+
+        self.assertEqual(
+            session.hazard_profiles["Tenancy & housing insecurity"],
+            [{"name": "Renting households"}],
+        )
+        table = format_additional_hazards(session)
+        self.assertIn("Affected population profile", table)
+        self.assertIn("Renting households", table)
+
     def test_policy_context_uses_policies_and_its_knowledge_document_link(self) -> None:
         policy = Policy(
             country_id="country-1",
@@ -189,7 +364,7 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         document = KnowledgeDocument(
             title="Clean electricity policy",
             source_type="txt",
-            scope="main",
+            scope="policy_document",
             policy_id=policy.id,
         )
         self.db.add(document)
@@ -206,6 +381,111 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
             self.service._stored_context_policy_document_ids(session),
             [document.id],
         )
+
+    def test_policy_selection_requests_document_even_with_catalog_details(self) -> None:
+        policy = Policy(
+            country_id="country-1",
+            sector_id="sector-1",
+            policy="Clean electricity support",
+        )
+        self.db.add(policy)
+        self.db.commit()
+        session = ChatSession(
+            country_id="country-1",
+            sector_id="sector-1",
+            selected_context_policy_id=policy.id,
+            selected_context_policy=policy.policy,
+        )
+        self.service._summarize_context_policy = AsyncMock()
+
+        response = asyncio.run(
+            self.service._context_policy_details_step("session-1", session)
+        )
+
+        self.assertEqual(response.step, "policy_reference")
+        self.assertEqual(response.input_mode, "policy_reference")
+        self.assertEqual(session.phase, "policy_reference")
+        self.assertIn("Please provide its URL or attach", response.bot_message)
+        self.service._summarize_context_policy.assert_not_called()
+
+    def test_policy_summary_requests_benefited_population_groups(self) -> None:
+        session = ChatSession(selected_context_policy="Clean electricity support")
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock,
+            return_value="Policy summary with socio-demographic groups benefited.",
+        ) as ask_llm:
+            asyncio.run(
+                self.service._summarize_context_policy(
+                    session,
+                    "Nearby residents can participate in the project.",
+                    "Clean electricity support",
+                )
+            )
+
+        prompt = ask_llm.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("Socio-demographic groups benefited", prompt)
+        self.assertIn("Briefly explain how each group benefits", prompt)
+        self.assertIn("Nearby residents", prompt)
+
+    def test_policy_summary_fallback_states_when_benefited_groups_are_unknown(self) -> None:
+        session = ChatSession(selected_context_policy="Clean electricity support")
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            summary = asyncio.run(
+                self.service._summarize_context_policy(
+                    session, "Policy text", "Clean electricity support"
+                )
+            )
+
+        self.assertIn("Socio-demographic groups benefited", summary)
+        self.assertIn("Not identified", summary)
+
+    def test_uploaded_policy_continues_when_only_sector_fit_is_supported(self) -> None:
+        policy = Policy(country_id="country-1", sector_id="sector-1", policy="Clean energy policy")
+        document = KnowledgeDocument(
+            user_id="owner-1", title="Upload", source_type="txt",
+            scope="temporary", session_key="session-1",
+        )
+        self.db.add_all([policy, document])
+        self.db.flush()
+        self.db.add(KnowledgeChunk(
+            document_id=document.id, user_id="owner-1", chunk_index=0,
+            content="The policy supports solar energy with a smart grid.", source_type="txt",
+        ))
+        self.db.commit()
+        session = ChatSession(
+            session_key="session-1", country_id="country-1", sector_id="sector-1",
+            sector="Energy", selected_context_policy_id=policy.id,
+            selected_context_policy=policy.policy, phase="policy_reference",
+        )
+        self.service._policy_reference_context = AsyncMock(return_value="Solar energy policy with smart grid")
+        self.service._summarize_context_policy = AsyncMock(return_value="Policy summary")
+        review = {
+            "checks": {
+                "sector_objective_fit": {"status": "supported", "reason": "Solar energy."},
+                "twin_transition_fit": {"status": "unclear", "reason": "Grid link unclear."},
+            },
+            "missing": [],
+            "clarification_question": "",
+        }
+        with patch(
+            "app.services.chat_hazard_steps.validate_context_policy_document",
+            new_callable=AsyncMock, return_value=review,
+        ) as validate:
+            response = asyncio.run(self.service._handle_context_policy_reference(
+                "session-1", session, f"Policy reference document ID: {document.id}"
+            ))
+
+        self.assertEqual(response.step, "policy_summary")
+        self.assertIn("Sectoral objective fit supported", response.bot_message)
+        self.assertNotIn("twin transition fit supported", response.bot_message)
+        self.assertEqual(document.scope, "policy_reference")
+        validate.assert_awaited_once()
+        self.assertNotIn("green energy", response.bot_message)
 
     def test_associates_only_owned_session_policy_references(self) -> None:
         owned = KnowledgeDocument(
@@ -378,6 +658,31 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         self.assertIsNotNone(association)
         self.assertIn("A staged policy provision.", staged_context)
         self.assertNotIn("A staged evidence finding.", staged_context)
+
+    def test_policy_review_can_retrieve_text_beyond_bounded_context(self) -> None:
+        document = KnowledgeDocument(
+            user_id="owner-1", title="Long policy", source_type="txt",
+            scope="temporary", session_key="session-1",
+        )
+        self.db.add(document)
+        self.db.flush()
+        self.db.add_all([
+            KnowledgeChunk(
+                document_id=document.id, user_id="owner-1", chunk_index=index,
+                content=("x" * 1000 if index < 25 else "Final solar provision"),
+                source_type="txt",
+            )
+            for index in range(26)
+        ])
+        self.db.commit()
+        session = ChatSession(session_key="session-1")
+
+        full_text = asyncio.run(self.service._policy_reference_context(
+            session, [document.id], full_text=True,
+        ))
+
+        self.assertIn("Final solar provision", full_text)
+        self.assertGreater(len(full_text), 24000)
 
     def test_discard_removes_only_staged_policy_documents(self) -> None:
         policy_document = KnowledgeDocument(

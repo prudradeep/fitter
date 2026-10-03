@@ -94,6 +94,8 @@ SQLITE_DATABASE_PATH="data/dr_transition.db"
 SYNC_SERVER_URL="https://your-sync-host.example"
 SYNC_API_TOKEN="<server-issued-client-token>"
 SYNC_DEVICE_ID="<stable-client-uuid>"
+# Set false to skip policy-document imports; Main KB imports remain enabled.
+CLIENT_STARTUP_SEED_KB_POLICY_DOCUMENTS=true
 ```
 
 The password placeholder is local setup guidance only. Choose a unique password
@@ -421,6 +423,14 @@ The app stores knowledge-base document metadata and chunk text/source/page
 records in the active relational database: MySQL on the central server, SQLite
 on a desktop client. Vector embeddings are stored in a local FAISS index file.
 FAISS files are derived index data and are not synchronized as database files.
+Shared policy documents use `knowledge.policy_reference.faiss`; other main
+knowledge uses `knowledge.main.faiss`. Private chat policy references remain
+local and are excluded from sync. Shared policy document rows sync with admin
+knowledge, and clients rebuild missing policy vectors locally.
+Each knowledge document and chunk has a client-local `faiss_indexed` flag.
+Incoming synced rows start at `0`; after sync, the client checks each FAISS
+index, adds missing chunk vectors, and marks a document indexed only when all
+its chunks are present. Failed chunks stay pending for the next sync.
 Configure the index path and embedding model in `.env` when needed:
 
 ```env

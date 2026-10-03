@@ -6,7 +6,7 @@ __pycache__/
 .mypy_cache/
 .uv-cache/
 .tmp/
-data/old
+data/old*
 data/*.faiss
 data/grounding-logs/
 data/service-runtime/

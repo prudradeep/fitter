@@ -1931,6 +1931,7 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     country: "Type or select a country...",
     region: "Type or select a region...",
     sector: "Type or select a sector...",
+    policy_hazard_details: "Describe policy mechanisms, intended benefits, or possible harms...",
   };
 
   return placeholders[step] || defaultPlaceholder;
@@ -1938,13 +1939,22 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
 
 function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
   if (mode === "policy_reference") {
-    primaryInputLabel.textContent = "Reason/Justification";
-    reasonInput.closest("label").hidden = true;
+    const requiredPolicyDocument = step === "policy_reference";
+    const clarification = step === "policy_clarification";
+    primaryInputLabel.textContent = clarification ? "Clarification" : "Reason/Justification";
+    reasonInput.placeholder = "Explain the missing policy details...";
+    reasonInput.closest("label").hidden = !clarification;
     secondaryReasonInput.closest("label").hidden = true;
     evidenceUrlField.hidden = false;
     evidenceFileField.hidden = false;
-    evidenceUrlField.querySelector("span").innerHTML = "Policy document URL <small>(optional when skipped)</small>";
-    evidenceFileField.querySelector("span").innerHTML = "Policy document file <small>(PDF, DOCX, MD, or TXT; optional when skipped)</small>";
+    evidenceUrlField.querySelector("span").innerHTML = requiredPolicyDocument
+      ? "Policy document URL"
+      : clarification ? "Replacement policy document URL <small>(optional)</small>"
+        : "Policy document URL <small>(optional when skipped)</small>";
+    evidenceFileField.querySelector("span").innerHTML = requiredPolicyDocument
+      ? "Policy document file <small>(PDF, DOCX, MD, or TXT)</small>"
+      : clarification ? "Replacement policy document file <small>(optional)</small>"
+        : "Policy document file <small>(PDF, DOCX, MD, or TXT; optional when skipped)</small>";
     evidenceInput.placeholder = "https://example.org/twin-transition-policy";
     evidenceInput.setAttribute("aria-label", "Policy document URL");
     evidenceFileInput.setAttribute("aria-label", "Policy document file");
@@ -3457,7 +3467,10 @@ document.addEventListener("scroll", positionVisibleTooltips, true);
 
 function renderOptions(options, otherOptions = []) {
   appState.currentOptions = options || [];
-  appState.currentOtherOptions = otherOptions || [];
+  const policyFlowSteps = new Set(["policy", "policy_summary", "policy_reference", "policy_clarification", "policy_hazard_confirmation", "policy_hazard_details"]);
+  appState.currentOtherOptions = policyFlowSteps.has(appState.currentStep)
+    ? (otherOptions || []).filter((label) => normalizeForMatch(label) !== "add a new hazard")
+    : (otherOptions || []);
   if (appState.currentStep === "hazard_profile_selection" && hasListedHazardActions(appState.currentOptions)) {
     listedHazardOptions = [...appState.currentOptions];
   }
@@ -3470,9 +3483,13 @@ function renderOptions(options, otherOptions = []) {
   }
   if (shouldCollapseHazardOptions(options)) {
     renderCollapsedHazardOptions(options);
+  } else if (appState.currentStep === "policy" && options.length > 4) {
+    renderCollapsedPolicyOptions(options);
   } else {
     options.forEach((option) => {
-      const extraClass = isHazardOptionActionLabel(option.label)
+      const extraClass = appState.currentStep === "policy" && option.label === "Add a new policy"
+        ? "add-policy-option"
+        : isHazardOptionActionLabel(option.label)
         ? "hazard-action-option"
         : "";
       const button = createOptionButton(option.label, extraClass);
@@ -3521,6 +3538,30 @@ function renderCollapsedHazardOptions(options = []) {
     button.dataset.hazardAction = "true";
     optionTray.appendChild(button);
   });
+}
+
+function renderCollapsedPolicyOptions(options = []) {
+  const addPolicy = options.find((option) => option.label === "Add a new policy");
+  const policies = options.filter((option) => option !== addPolicy);
+  if (addPolicy) optionTray.appendChild(createOptionButton(addPolicy.label, "add-policy-option"));
+  policies.slice(0, 3).forEach((option) => optionTray.appendChild(createOptionButton(option.label)));
+
+  const showMore = document.createElement("button");
+  showMore.type = "button";
+  showMore.className = "option-pill show-more-options-toggle";
+  showMore.textContent = "Show More";
+  showMore.setAttribute("aria-label", "Show more policies");
+  showMore.setAttribute("data-tooltip", "Show more policies");
+  showMore.addEventListener("click", () => {
+    pauseSpeech();
+    showMore.remove();
+    const otherOptionsToggle = optionTray.querySelector("[data-other-toggle='true']");
+    policies.slice(3).forEach((option) => {
+      optionTray.insertBefore(createOptionButton(option.label), otherOptionsToggle);
+    });
+    updateOptionHighlight();
+  });
+  optionTray.appendChild(showMore);
 }
 
 function isHazardOptionActionLabel(label = "") {
@@ -4802,7 +4843,7 @@ function renderKnowledgeDocuments(documents) {
   clearElement(knowledgeDocuments);
   if (knowledgeDocumentCount) knowledgeDocumentCount.textContent = String(documents.length || 0);
   if (!documents.length) {
-    renderEmptyState(knowledgeDocuments, "No main knowledge documents yet.");
+    renderEmptyState(knowledgeDocuments, "No knowledge documents yet.");
     return;
   }
   documents.forEach((documentItem) => {
@@ -5677,7 +5718,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     if (["reason_evidence", "reason_only", "mitigation_measure"].includes(appState.inputMode)) {
       reasonInput.focus();
     } else if (["evidence_only", "policy_reference"].includes(appState.inputMode)) {
-      evidenceInput.focus();
+      (appState.currentStep === "policy_clarification" ? reasonInput : evidenceInput).focus();
     } else if (appState.inputMode === "evaluation_question") {
       scoreInput.focus();
     } else if (appState.inputMode === "textarea") {
@@ -5751,7 +5792,11 @@ chatForm.addEventListener("submit", (event) => {
     }
 
     if (appState.inputMode === "policy_reference") {
-      if (!evidenceUrl && !(evidenceFile instanceof File && evidenceFile.size > 0)) {
+      if (!primaryValue && !evidenceUrl && !(evidenceFile instanceof File && evidenceFile.size > 0)) {
+        if (["policy_reference", "policy_clarification"].includes(appState.currentStep)) {
+          flashRequiredField(appState.currentStep === "policy_clarification" ? reasonInput : evidenceInput);
+          return;
+        }
         evidenceInput.value = "";
         evidenceFileInput.value = "";
         collapseExpandedMessages();
@@ -5760,6 +5805,7 @@ chatForm.addEventListener("submit", (event) => {
         return;
       }
       const value = [
+        primaryValue ? `Clarification: ${primaryValue}` : "",
         evidenceUrl ? `Policy reference URL: ${evidenceUrl}` : "",
         evidenceFile instanceof File && evidenceFile.size > 0
           ? `Policy reference file: ${evidenceFile.name}`
@@ -5767,9 +5813,10 @@ chatForm.addEventListener("submit", (event) => {
       ].filter(Boolean).join("\n");
       evidenceInput.value = "";
       evidenceFileInput.value = "";
+      reasonInput.value = "";
       collapseExpandedMessages();
       addMessage("user", value);
-      sendMessage("", false, {
+      sendMessage(primaryValue, false, {
         policyReferenceUrl: evidenceUrl,
         policyReferenceFile: evidenceFile,
       });

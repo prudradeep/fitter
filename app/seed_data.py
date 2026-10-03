@@ -149,6 +149,25 @@ async def seed_main_kb_from_files(*, overwrite: bool = False) -> dict[str, objec
                 continue
             ingested.append(result)
 
+        # Synced Main KB rows can already exist while the local FAISS file does
+        # not. Rebuild the local vector index in that case instead of treating
+        # the existing database rows as fully seeded.
+        if not service._index_path.exists():
+            configuration_error = service._embedding_configuration_error()
+            if configuration_error:
+                logging.getLogger(__name__).info(
+                    "Main KB chunks remain available for lexical search; FAISS indexing is pending: %s",
+                    configuration_error,
+                )
+            else:
+                index_result = await service.ensure_indexed_from_database()
+                if index_result.get("created"):
+                    logging.getLogger(__name__).info(
+                        "Rebuilt Main KB FAISS index from %s persisted chunks at %s",
+                        index_result.get("chunks", 0),
+                        index_result.get("index_path"),
+                    )
+
     return {"ingested": ingested, "skipped": skipped, "failures": failures}
 
 

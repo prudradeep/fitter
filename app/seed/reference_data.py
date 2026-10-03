@@ -528,11 +528,18 @@ def _seed_additional_hazards(connection) -> None:
         for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
     }
 
-    connection.execute(text("DELETE FROM additional_hazards WHERE source = 'csv'"))
-
     inserted = 0
     skipped = 0
-    seen: set[tuple[str, str, str]] = set()
+    seen = {
+        (
+            str(row["country_id"]),
+            str(row["sector_id"]),
+            _normalize_mitigation_example_key(str(row["name"] or "")),
+        )
+        for row in connection.execute(
+            text("SELECT country_id, sector_id, name FROM additional_hazards")
+        ).mappings()
+    }
     for csv_index, row in enumerate(rows, start=2):
         country_name = (row.get("country") or "").strip()
         sector_name = (row.get("sector") or "").strip()
@@ -610,13 +617,14 @@ def _seed_additional_hazard_profiles(connection) -> None:
         ).mappings()
     }
 
-    connection.execute(
-        text("DELETE FROM additional_hazard_profiles WHERE source = 'd4_2_pdf'")
-    )
-
     inserted = 0
     skipped = 0
-    seen: set[tuple[str, str]] = set()
+    seen = {
+        (str(row["additional_hazard_id"]), _normalize_mitigation_example_key(str(row["profile"] or "")))
+        for row in connection.execute(
+            text("SELECT additional_hazard_id, profile FROM additional_hazard_profiles")
+        ).mappings()
+    }
     for csv_index, row in enumerate(rows, start=2):
         country_id = country_by_key.get(
             _normalize_mitigation_example_key((row.get("country") or "").strip())
@@ -705,9 +713,16 @@ def _seed_additional_hazard_profile_target_populations(connection) -> None:
             text("SELECT id, profile FROM additional_hazard_profiles")
         ).mappings()
     )
-    connection.execute(text("DELETE FROM additional_hazard_profile_target_populations"))
-
     inserted = 0
+    existing_links = {
+        (str(row["additional_hazard_profile_id"]), str(row["question_option_id"]))
+        for row in connection.execute(
+            text(
+                "SELECT additional_hazard_profile_id, question_option_id "
+                "FROM additional_hazard_profile_target_populations"
+            )
+        ).mappings()
+    }
     for row in profile_rows:
         option_ids: set[str] = set()
         for question, option in _target_population_pairs_for_profile(str(row["profile"] or "")):
@@ -720,6 +735,9 @@ def _seed_additional_hazard_profile_target_populations(connection) -> None:
             if option_id is not None:
                 option_ids.add(option_id)
         for option_id in sorted(option_ids):
+            link_key = (str(row["id"]), option_id)
+            if link_key in existing_links:
+                continue
             connection.execute(
                 text(
                     """
@@ -733,6 +751,7 @@ def _seed_additional_hazard_profile_target_populations(connection) -> None:
                 ),
                 {"id": str(uuid.uuid4()), "profile_id": str(row["id"]), "option_id": option_id},
             )
+            existing_links.add(link_key)
             inserted += 1
 
     logger.info(
@@ -883,12 +902,17 @@ def _seed_mm_csv_mitigation_measure_examples(connection) -> None:
         ).mappings()
     ]
 
-    connection.execute(
-        text("DELETE FROM mitigation_measure_examples WHERE source = 'mm_csv'")
-    )
-
     inserted = 0
     skipped = 0
+    existing_rows = {
+        int(row["csv_row_number"])
+        for row in connection.execute(
+            text(
+                "SELECT csv_row_number FROM mitigation_measure_examples "
+                "WHERE source = 'mm_csv' AND csv_row_number IS NOT NULL"
+            )
+        ).mappings()
+    }
     for csv_index, row in enumerate(rows, start=2):
         sector_name = (row.get("Sector") or "").strip()
         hazard_name = (row.get("Hazard") or "").strip()
@@ -898,6 +922,9 @@ def _seed_mm_csv_mitigation_measure_examples(connection) -> None:
         measure = (row.get("Twin-transition mitigation measure") or "").strip()
         sector_id = sector_by_key.get(_normalize_mitigation_example_key(sector_name))
         if not sector_id or not measure:
+            skipped += 1
+            continue
+        if csv_index in existing_rows:
             skipped += 1
             continue
 
@@ -969,6 +996,7 @@ def _seed_mm_csv_mitigation_measure_examples(connection) -> None:
                 "csv_row_number": csv_index,
             },
         )
+        existing_rows.add(csv_index)
         inserted += 1
 
     logger.info(
@@ -997,17 +1025,6 @@ def _seed_mm_target_group_xlsx(connection) -> None:
     }
     option_by_group = _mm_target_group_option_map(connection)
 
-    connection.execute(
-        text("DELETE FROM mitigation_measure_target_groups WHERE source = 'xlsx'")
-    )
-    connection.execute(
-        text("DELETE FROM mitigation_measure_policy_additional_hazards WHERE source = 'xlsx'")
-    )
-    connection.execute(
-        text("DELETE FROM mitigation_measure_policy_system_hazards WHERE source = 'xlsx'")
-    )
-    connection.execute(text("DELETE FROM mitigation_measure_policies WHERE source = 'xlsx'"))
-
     policy_ids: dict[tuple[str, str | None], str] = {}
     policy_rows: dict[tuple[str, str | None], dict[str, object]] = {}
     for row in rows:
@@ -1029,39 +1046,49 @@ def _seed_mm_target_group_xlsx(connection) -> None:
                 "source": "xlsx",
                 "excel_row_number": row.get("excel_row_number"),
             }
-    for policy_row in policy_rows.values():
-        policy_id = str(uuid.uuid4())
-        connection.execute(
+    for policy_key, policy_row in policy_rows.items():
+        existing_policy_id = connection.execute(
             text(
-                """
-                INSERT INTO mitigation_measure_policies (
-                    id,
-                    policy_code,
-                    policy_title,
-                    country_id,
-                    sector_id,
-                    policy_type,
-                    short_description,
-                    source,
-                    excel_row_number
-                )
-                VALUES (
-                    :id,
-                    :policy_code,
-                    :policy_title,
-                    :country_id,
-                    :sector_id,
-                    :policy_type,
-                    :short_description,
-                    :source,
-                    :excel_row_number
-                )
-                """
+                "SELECT id FROM mitigation_measure_policies "
+                "WHERE policy_code = :policy_code AND source = 'xlsx' "
+                "AND ((sector_id = :sector_id) OR (sector_id IS NULL AND :sector_id IS NULL)) "
+                "LIMIT 1"
             ),
-            {"id": policy_id, **policy_row},
-        )
+            {"policy_code": policy_row["policy_code"], "sector_id": policy_row["sector_id"]},
+        ).scalar()
+        policy_id = str(existing_policy_id or uuid.uuid4())
+        if existing_policy_id is None:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO mitigation_measure_policies (
+                        id,
+                        policy_code,
+                        policy_title,
+                        country_id,
+                        sector_id,
+                        policy_type,
+                        short_description,
+                        source,
+                        excel_row_number
+                    )
+                    VALUES (
+                        :id,
+                        :policy_code,
+                        :policy_title,
+                        :country_id,
+                        :sector_id,
+                        :policy_type,
+                        :short_description,
+                        :source,
+                        :excel_row_number
+                    )
+                    """
+                ),
+                {"id": policy_id, **policy_row},
+            )
         policy_ids[
-            (str(policy_row["policy_code"]), policy_row.get("sector_id"))
+            policy_key
         ] = policy_id
 
     inserted = 0
@@ -1087,6 +1114,17 @@ def _seed_mm_target_group_xlsx(connection) -> None:
         for sector_id in _mm_target_group_sector_ids(sector_name, sector_by_key):
             policy_id = policy_ids.get((policy_code, sector_id))
             if policy_id is None:
+                skipped += 1
+                continue
+            existing_mapping = connection.execute(
+                text(
+                    "SELECT 1 FROM mitigation_measure_target_groups "
+                    "WHERE mitigation_measure_policy_id = :policy_id "
+                    "AND question_option_id = :option_id LIMIT 1"
+                ),
+                {"policy_id": policy_id, "option_id": question_option_id},
+            ).scalar()
+            if existing_mapping is not None:
                 skipped += 1
                 continue
             connection.execute(
@@ -1143,14 +1181,25 @@ def _seed_policies_xlsx(connection) -> None:
         _normalize_mitigation_example_key(str(row["name"] or "")): str(row["id"])
         for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
     }
-    connection.execute(text("DELETE FROM policies WHERE source = 'xlsx'"))
-
     inserted = 0
     skipped = 0
+    existing_rows = {
+        int(row["excel_row_number"])
+        for row in connection.execute(
+            text(
+                "SELECT excel_row_number FROM policies "
+                "WHERE source = 'xlsx' AND excel_row_number IS NOT NULL"
+            )
+        ).mappings()
+    }
     for row in rows:
         country_id = country_by_name.get(_normalize_mitigation_example_key(str(row["country"] or "")))
         sector_id = sector_by_name.get(_normalize_mitigation_example_key(str(row["sector"] or "")))
         if country_id is None or sector_id is None:
+            skipped += 1
+            continue
+        row_number = int(row["excel_row_number"])
+        if row_number in existing_rows:
             skipped += 1
             continue
         connection.execute(
@@ -1173,6 +1222,7 @@ def _seed_policies_xlsx(connection) -> None:
                 "excel_row_number": row["excel_row_number"],
             },
         )
+        existing_rows.add(row_number)
         inserted += 1
 
     logger.info(
@@ -1215,13 +1265,17 @@ def _seed_sectoral_challenge_policy_additional_hazards(connection) -> None:
             )
         ).mappings()
     }
-    connection.execute(
-        text("DELETE FROM mitigation_measure_policy_additional_hazards WHERE source = 'xlsx'")
-    )
-
     inserted = 0
     skipped = 0
-    seen_links: set[tuple[str, str]] = set()
+    seen_links = {
+        (str(row["mitigation_measure_policy_id"]), str(row["additional_hazard_id"]))
+        for row in connection.execute(
+            text(
+                "SELECT mitigation_measure_policy_id, additional_hazard_id "
+                "FROM mitigation_measure_policy_additional_hazards"
+            )
+        ).mappings()
+    }
     for row in rows:
         policy_code = str(row.get("policy_code") or "").strip()
         match_value = str(row.get("match_value") or "").strip()
@@ -1325,12 +1379,17 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
         ).mappings()
     }
 
-    connection.execute(
-        text("DELETE FROM mitigation_measure_policy_system_hazards WHERE source = 'xlsx'")
-    )
-
     inserted = 0
     skipped = 0
+    seen_links = {
+        (str(row["mitigation_measure_policy_id"]), str(row["system_hazard_id"]))
+        for row in connection.execute(
+            text(
+                "SELECT mitigation_measure_policy_id, system_hazard_id "
+                "FROM mitigation_measure_policy_system_hazards"
+            )
+        ).mappings()
+    }
     for row in rows:
         mitigation_effect = str(row.get("mitigation_effect") or "").strip()
         if not mitigation_effect or mitigation_effect.casefold() == "not applicable":
@@ -1353,6 +1412,9 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
         policy_code = str(row.get("policy_code") or "").strip()
         inserted_for_cell = False
         for policy_id in policy_ids_by_code.get(policy_code, []):
+            link_key = (policy_id, system_hazard_id)
+            if link_key in seen_links:
+                continue
             connection.execute(
                 text(
                     """
@@ -1385,6 +1447,7 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
                     "excel_column_number": row.get("excel_column_number"),
                 },
             )
+            seen_links.add(link_key)
             inserted += 1
             inserted_for_cell = True
         if not inserted_for_cell:

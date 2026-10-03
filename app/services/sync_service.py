@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import uuid
 from binascii import Error as BinasciiError
@@ -13,7 +14,7 @@ from typing import Any
 import httpx
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import Column, DateTime, Integer, String, Table, inspect, select, text, update
+from sqlalchemy import Column, DateTime, Integer, String, Table, and_, inspect, or_, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import UniqueConstraint
 
@@ -21,8 +22,10 @@ from app.config import get_settings
 from app.db.session import Base
 from app.services.prompt_loader import clear_prompt_caches
 from app.services.prompt_store import enable_prompt_db_reads
+from app.services.knowledge_base import KnowledgeBaseService
 
 SYNC_NAMESPACE = uuid.UUID("6b09c4c5-8a21-491f-9f52-98df34b63bd8")
+logger = logging.getLogger(__name__)
 SYNC_COLUMN_NAMES = {
     "sync_id",
     "origin_device_id",
@@ -42,12 +45,7 @@ INTERNAL_TABLES = {
 DEFAULT_EXCLUDED_TABLES = {"app_rate_limits"}
 LOG_TABLES = {"audit_logs", "llm_exchange_logs"}
 KNOWLEDGE_TABLES = {"knowledge_documents", "knowledge_chunks"}
-SERVER_OWNED_TABLES = {
-    "prompts",
-    "system_hazard_socio_demographics",
-    "system_hazard_socio_demographic_target_populations",
-    "system_hazard_socio_demographic_population_matches",
-}
+SERVER_OWNED_TABLES = {"prompts"}
 ENCRYPTED_SYNC_TABLES = {"app_users"}
 USER_DATA_TABLES = {
     "app_users",
@@ -77,12 +75,13 @@ APP_USER_ENCRYPTED_COLUMNS = (
 )
 USER_DATA_SYNC_ENABLED_SCOPE = "client_user_data_sync:enabled"
 USER_DATA_SYNC_ENABLED_AT_SCOPE = "client_user_data_sync:enabled_at"
-KNOWLEDGE_SCOPES = ("main", "validated_evidence", "sector_prompt")
+KNOWLEDGE_SCOPES = ("main", "validated_evidence", "sector_prompt", "policy_document")
 EXCLUDED_KNOWLEDGE_SCOPES = {"temporary", "policy_reference"}
+# Crowd sourced policy documents are included by the linked-policy filter in _table_rows.
 CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"validated_evidence"}
-ADMIN_CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt"}
+ADMIN_CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt", "policy_document"}
 SERVER_ACCEPTED_INBOUND_KNOWLEDGE_SCOPES = {"validated_evidence"}
-SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt"}
+SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt", "policy_document"}
 SYNC_CLIENT_COLUMNS = (
     "id",
     "client_name",
@@ -317,6 +316,14 @@ class SyncService:
                 if table.name in USER_DATA_TABLES and not inbound_user_data_allowed:
                     skipped += 1
                     continue
+                if (
+                    table.name == "policies"
+                    and str(row.get("source") or "") == "user"
+                    and self._is_server_mode()
+                    and not inbound_user_data_allowed
+                ):
+                    skipped += 1
+                    continue
                 action = self._upsert_row(
                     table,
                     row,
@@ -409,6 +416,8 @@ class SyncService:
         if not isinstance(bundle, dict) or not isinstance(bundle.get("tables"), list):
             raise ValueError("Sync server response did not include a valid bundle.")
         applied = self.apply_bundle(bundle, current_user_email=current_user_email)
+        if self._is_client_mode():
+            await self.index_pending_knowledge()
         return {
             "error": False,
             "pushed": {
@@ -427,6 +436,22 @@ class SyncService:
                 "prompts_dirty": applied.prompts_dirty,
             },
         }
+
+    async def index_pending_knowledge(self) -> dict[str, dict[str, object]]:
+        """Reconcile each synced scope with this client's local FAISS files."""
+        results: dict[str, dict[str, object]] = {}
+        for scope in KNOWLEDGE_SCOPES:
+            try:
+                result = await KnowledgeBaseService(
+                    self.db, None, scope=scope
+                ).ensure_indexed_from_database()
+                results[scope] = result
+                if not result.get("failed"):
+                    self.clear_knowledge_index_dirty(scope)
+            except Exception:
+                self.db.rollback()
+                logger.exception("Could not update the local %s index after sync", scope)
+        return results
 
     def _outbound_sync_batches(self, bundle: dict[str, Any]) -> list[dict[str, Any]]:
         metadata = {key: value for key, value in bundle.items() if key != "tables"}
@@ -604,6 +629,15 @@ class SyncService:
             if ":" in str(row[0])
         ]
 
+    def clear_knowledge_index_dirty(self, scope: str) -> None:
+        if scope not in KNOWLEDGE_SCOPES:
+            return
+        self.db.execute(
+            text("DELETE FROM sync_state WHERE scope = :scope"),
+            {"scope": f"knowledge_index_dirty:{scope}"},
+        )
+        self.db.commit()
+
     def user_data_sync_status(self) -> dict[str, Any]:
         self.ensure_schema()
         enabled_at = self.user_data_sync_enabled_at()
@@ -652,7 +686,13 @@ class SyncService:
             )
         if table.name == "knowledge_documents":
             scope = str(payload_row.get("scope") or "").strip()
-            if self._should_skip_inbound_knowledge_scope(
+            if self._is_server_mode() and not admin_knowledge_sync and scope == "policy_document":
+                if (
+                    scope not in (normal_knowledge_scopes or set())
+                    or not self._crowd_policy_document_payload(payload_row)
+                ):
+                    return "skipped"
+            elif self._should_skip_inbound_knowledge_scope(
                 scope,
                 admin_knowledge_sync=admin_knowledge_sync,
                 admin_knowledge_scopes=admin_knowledge_scopes,
@@ -661,7 +701,13 @@ class SyncService:
                 return "skipped"
         if table.name == "knowledge_chunks":
             scope = self._knowledge_scope_for_payload(table, payload_row)
-            if self._should_skip_inbound_knowledge_scope(
+            if self._is_server_mode() and not admin_knowledge_sync and scope == "policy_document":
+                if (
+                    scope not in (normal_knowledge_scopes or set())
+                    or not self._crowd_policy_chunk_payload(payload_row)
+                ):
+                    return "skipped"
+            elif self._should_skip_inbound_knowledge_scope(
                 scope,
                 admin_knowledge_sync=admin_knowledge_sync,
                 admin_knowledge_scopes=admin_knowledge_scopes,
@@ -700,6 +746,9 @@ class SyncService:
                     values[column.name] = resolved_fk
                 else:
                     values[column.name] = coerce_datetime(raw_value) if isinstance(column.type, DateTime) else raw_value
+        if table.name in KNOWLEDGE_TABLES:
+            # FAISS files are local; an incoming flag never proves a vector exists here.
+            values["faiss_indexed"] = 0
         values["sync_id"] = sync_id
         values["origin_device_id"] = values.get("origin_device_id") or payload_row.get("origin_device_id") or self.device_id
         values["sync_revision"] = int(values.get("sync_revision") or payload_row.get("sync_revision") or 1)
@@ -709,13 +758,54 @@ class SyncService:
         if natural_pk is not None:
             if not self._payload_is_newer_than_existing(table, natural_pk, payload_row):
                 return "skipped"
+            self._remove_replaced_knowledge_vectors(table, natural_pk, values)
             self.db.execute(update(table).where(pk_col == natural_pk).values(**values))
+            if table.name == "knowledge_chunks":
+                self._mark_chunk_document_unindexed(values)
             return "updated"
         insert_values = dict(values)
         if payload_pk:
             insert_values[pk_col.name] = payload_pk
         self.db.execute(table.insert().values(**insert_values))
+        if table.name == "knowledge_chunks":
+            self._mark_chunk_document_unindexed(values)
         return "inserted"
+
+    def _mark_chunk_document_unindexed(self, chunk_values: dict[str, Any]) -> None:
+        document_id = chunk_values.get("document_id")
+        if document_id:
+            documents = Base.metadata.tables["knowledge_documents"]
+            self.db.execute(
+                update(documents)
+                .where(documents.c.id == document_id)
+                .values(faiss_indexed=0)
+            )
+
+    def _remove_replaced_knowledge_vectors(
+        self, table: Table, existing_pk: Any, values: dict[str, Any]
+    ) -> None:
+        if table.name == "knowledge_chunks":
+            previous = self.db.execute(
+                select(table.c.content, table.c.document_id).where(table.c.id == existing_pk)
+            ).first()
+            if previous and previous.content != values.get("content", previous.content):
+                documents = Base.metadata.tables["knowledge_documents"]
+                scope = self.db.execute(
+                    select(documents.c.scope).where(documents.c.id == previous.document_id)
+                ).scalar_one_or_none()
+                if scope:
+                    KnowledgeBaseService(self.db, None, scope=scope)._remove_vectors([str(existing_pk)])
+        elif table.name == "knowledge_documents":
+            previous_scope = self.db.execute(
+                select(table.c.scope).where(table.c.id == existing_pk)
+            ).scalar_one_or_none()
+            new_scope = values.get("scope")
+            if previous_scope and new_scope and previous_scope != new_scope:
+                chunks = Base.metadata.tables["knowledge_chunks"]
+                chunk_ids = list(self.db.scalars(
+                    select(chunks.c.id).where(chunks.c.document_id == existing_pk)
+                ).all())
+                KnowledgeBaseService(self.db, None, scope=previous_scope)._remove_vectors(chunk_ids)
 
     def _serialize_row(self, table: Table, row: dict[str, Any]) -> dict[str, Any]:
         serialized: dict[str, Any] = {}
@@ -869,16 +959,26 @@ class SyncService:
         if table.name in USER_DATA_TABLES and table.name != "app_users" and not include_user_data:
             return []
         query = select(table)
-        if table.name == "knowledge_documents":
-            query = query.where(table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge)))
+        if table.name == "policies" and self._is_server_mode():
+            query = query.where(
+                (table.c.source != "user") | (table.c.is_crowd_sourced.is_(True))
+            )
+        elif table.name == "knowledge_documents":
+            if self._is_client_mode() and not include_admin_knowledge:
+                query = query.where(table.c.id.in_(self._client_exportable_knowledge_document_ids()))
+            else:
+                query = query.where(table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge)))
         elif table.name == "knowledge_chunks":
             document_table = Base.metadata.tables["knowledge_documents"]
-            query = query.where(
-                table.c.document_id.in_(
-                    select(document_table.c.id).where(
-                        document_table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge))
-                    )
+            document_ids = (
+                self._client_exportable_knowledge_document_ids()
+                if self._is_client_mode() and not include_admin_knowledge
+                else select(document_table.c.id).where(
+                    document_table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge))
                 )
+            )
+            query = query.where(
+                table.c.document_id.in_(document_ids)
             )
         # The opt-in cutoff applies to user-owned activity/data, but not to
         # app_users themselves. Existing accounts must be discoverable by the
@@ -898,6 +998,23 @@ class SyncService:
         ):
             query = query.where(table.c.sync_encrypted_payload.is_(None))
         return [dict(row._mapping) for row in self.db.execute(query).all()]
+
+    @staticmethod
+    def _client_exportable_knowledge_document_ids():
+        document_table = Base.metadata.tables["knowledge_documents"]
+        policy_table = Base.metadata.tables["policies"]
+        shared_policy_ids = select(policy_table.c.id).where(
+            policy_table.c.source == "user",
+            policy_table.c.is_crowd_sourced.is_(True),
+        )
+        return select(document_table.c.id).where(or_(
+            document_table.c.scope == "validated_evidence",
+            and_(
+                document_table.c.scope == "policy_document",
+                document_table.c.user_id.is_(None),
+                document_table.c.policy_id.in_(shared_policy_ids),
+            ),
+        ))
 
     def _sync_id_for_pk(self, table: Table, pk_value: Any) -> str | None:
         pk_col = only_pk(table)
@@ -999,6 +1116,43 @@ class SyncService:
         scope = str(row[0] if row else "").strip()
         return scope if scope in {*KNOWLEDGE_SCOPES, *EXCLUDED_KNOWLEDGE_SCOPES} else None
 
+    def _crowd_policy_document_payload(self, payload_row: dict[str, Any]) -> bool:
+        if payload_row.get("user_id") not in (None, ""):
+            return False
+        fk_sync_ids = payload_row.get("__fk_sync_ids") if isinstance(payload_row.get("__fk_sync_ids"), dict) else {}
+        policy_sync_id = str(fk_sync_ids.get("policy_id") or "").strip()
+        policy_id = str(payload_row.get("policy_id") or "").strip()
+        if not policy_sync_id and not policy_id:
+            return False
+        policy_table = Base.metadata.tables["policies"]
+        policy = self.db.execute(select(
+            policy_table.c.source, policy_table.c.is_crowd_sourced,
+        ).where(or_(
+            policy_table.c.sync_id == policy_sync_id if policy_sync_id else False,
+            policy_table.c.id == policy_id if policy_id else False,
+        ))).first()
+        return bool(policy and policy[0] == "user" and policy[1])
+
+    def _crowd_policy_chunk_payload(self, payload_row: dict[str, Any]) -> bool:
+        if payload_row.get("user_id") not in (None, ""):
+            return False
+        fk_sync_ids = payload_row.get("__fk_sync_ids") if isinstance(payload_row.get("__fk_sync_ids"), dict) else {}
+        document_sync_id = str(fk_sync_ids.get("document_id") or "").strip()
+        if not document_sync_id:
+            return False
+        document_table = Base.metadata.tables["knowledge_documents"]
+        policy_table = Base.metadata.tables["policies"]
+        document = self.db.execute(select(document_table.c.id).join(
+            policy_table, policy_table.c.id == document_table.c.policy_id,
+        ).where(
+            document_table.c.sync_id == document_sync_id,
+            document_table.c.scope == "policy_document",
+            document_table.c.user_id.is_(None),
+            policy_table.c.source == "user",
+            policy_table.c.is_crowd_sourced.is_(True),
+        )).first()
+        return document is not None
+
     def _exportable_knowledge_scopes(self, include_admin_knowledge: bool = False) -> tuple[str, ...]:
         if self._is_client_mode():
             if include_admin_knowledge:
@@ -1035,9 +1189,12 @@ class SyncService:
     def _normal_inbound_knowledge_scopes(self, *, sync_client: dict[str, Any] | None = None) -> set[str]:
         if not self._is_server_mode():
             return set(KNOWLEDGE_SCOPES)
+        scopes: set[str] = set()
         if bool((sync_client or {}).get("can_sync_validated_kb")):
-            return set(SERVER_ACCEPTED_INBOUND_KNOWLEDGE_SCOPES)
-        return set()
+            scopes.update(SERVER_ACCEPTED_INBOUND_KNOWLEDGE_SCOPES)
+        if bool((sync_client or {}).get("can_sync_user_data")):
+            scopes.add("policy_document")
+        return scopes
 
     def _admin_knowledge_sync_scopes(
         self, payload: dict[str, Any], *, sync_client: dict[str, Any] | None = None
@@ -1054,6 +1211,7 @@ class SyncService:
             scopes.add("validated_evidence")
         if bool(client.get("can_sync_main_kb")):
             scopes.add("main")
+            scopes.add("policy_document")
         if bool(client.get("can_sync_sector_prompts")):
             scopes.add("sector_prompt")
         return scopes & SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES

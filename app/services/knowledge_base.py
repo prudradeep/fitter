@@ -1,5 +1,6 @@
 import ipaddress
 import hashlib
+import logging
 import re
 import socket
 from dataclasses import dataclass
@@ -34,11 +35,13 @@ except ModuleNotFoundError:
 
 
 FAISS_LOCK = Lock()
+logger = logging.getLogger(__name__)
 LEXICAL_WEIGHT = 0.55
 SCOPE_MATCH_WEIGHT = 0.35
 MAIN_KB_SCOPE = "main"
 TEMPORARY_KB_SCOPE = "temporary"
 POLICY_REFERENCE_SCOPE = "policy_reference"
+POLICY_DOCUMENT_SCOPE = "policy_document"
 VALIDATED_EVIDENCE_SCOPE = "validated_evidence"
 SECTOR_PROMPT_SCOPE = "sector_prompt"
 QUARANTINED_SCOPE = "quarantined"
@@ -283,6 +286,9 @@ class KnowledgeBaseService:
         if not chunks:
             return {"error": True, "detail": "No readable knowledge-base text was found."}
 
+        embedding_config_error = self._embedding_configuration_error()
+        if embedding_config_error and not allow_lexical_only:
+            raise ValueError(embedding_config_error)
         if not allow_lexical_only:
             self._require_faiss()
         scope_level = self._scope_level()
@@ -294,7 +300,9 @@ class KnowledgeBaseService:
         embeddings: list[list[float]] | None = None
         vector_indexed = False
         vector_error = ""
-        if faiss is not None and np is not None:
+        if embedding_config_error:
+            vector_error = embedding_config_error
+        elif faiss is not None and np is not None:
             try:
                 embeddings = await self._embed_many([chunk.content for chunk in chunks])
             except Exception as exc:
@@ -354,6 +362,9 @@ class KnowledgeBaseService:
             if embeddings is not None:
                 self._add_vectors([row.id for row in chunk_rows], embeddings)
                 vector_indexed = True
+                document.faiss_indexed = 1
+                for row in chunk_rows:
+                    row.faiss_indexed = 1
             self.db.commit()
         except Exception:
             self.db.rollback()
@@ -778,16 +789,22 @@ class KnowledgeBaseService:
                 select(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id)
             ).all()
             for chunk in chunks:
+                chunk.faiss_indexed = int(chunk.id in vectors)
                 if target_scope == VALIDATED_EVIDENCE_SCOPE:
                     chunk.country_id = country_id
                     chunk.region_id = region_id
                     chunk.sector_id = sector_id
                     chunk.scope_level = scope_level
+            document.faiss_indexed = int(bool(chunks) and all(
+                chunk.faiss_indexed for chunk in chunks
+            ))
         self.db.commit()
         return len(documents)
 
     def _document_access_filters(self) -> list[object]:
         if self.scope == MAIN_KB_SCOPE:
+            return [KnowledgeDocument.user_id.is_(None)]
+        if self.scope == POLICY_DOCUMENT_SCOPE:
             return [KnowledgeDocument.user_id.is_(None)]
         if self.scope == SECTOR_PROMPT_SCOPE:
             return [KnowledgeDocument.user_id.is_(None)]
@@ -827,7 +844,18 @@ class KnowledgeBaseService:
             embeddings.append(await self._embed(text))
         return embeddings
 
+    def _embedding_configuration_error(self) -> str:
+        base_url = str(self.settings.ollama_base_url or "").strip()
+        parsed = urlparse(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return "OLLAMA_BASE_URL must be a full http:// or https:// URL to create FAISS vectors."
+        if not str(self.settings.ollama_embedding_model or "").strip():
+            return "OLLAMA_EMBEDDING_MODEL must be set to create FAISS vectors."
+        return ""
+
     async def _embed(self, text: str) -> list[float]:
+        if configuration_error := self._embedding_configuration_error():
+            raise ValueError(configuration_error)
         payload = {"model": self.settings.ollama_embedding_model, "prompt": text}
         request_id = new_llm_request_id()
         started_at = perf_counter()
@@ -916,6 +944,7 @@ class KnowledgeBaseService:
         ids = np.array([vector_id_for_chunk_id(chunk_id) for chunk_id in chunk_ids], dtype="int64")
         with FAISS_LOCK:
             index = self._load_index(vectors.shape[1])
+            index.remove_ids(ids)
             index.add_with_ids(vectors, ids)
             self._save_index(index)
 
@@ -968,6 +997,85 @@ class KnowledgeBaseService:
             self._save_index(empty)
         return True
 
+    async def ensure_indexed_from_database(self) -> dict[str, object]:
+        """Reconcile local flags and add any vectors missing from this scope's FAISS index."""
+        self._require_faiss()
+        rows = self.db.execute(
+            select(KnowledgeChunk, KnowledgeDocument)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(
+                KnowledgeDocument.scope == self.scope,
+                *self._document_access_filters(),
+            )
+            .order_by(KnowledgeChunk.document_id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+        ).all()
+        if not rows:
+            return {"created": False, "chunks": 0, "index_path": str(self._index_path)}
+        existing_ids: set[int] = set()
+        if self._index_path.exists():
+            with FAISS_LOCK:
+                index = self._load_existing_index()
+                existing_ids = set(int(value) for value in faiss.vector_to_array(index.id_map))
+        pending: list[KnowledgeChunk] = []
+        documents: dict[str, KnowledgeDocument] = {}
+        chunks_by_document: dict[str, list[KnowledgeChunk]] = {}
+        for chunk, document in rows:
+            documents[document.id] = document
+            chunks_by_document.setdefault(document.id, []).append(chunk)
+            indexed = vector_id_for_chunk_id(chunk.id) in existing_ids
+            chunk.faiss_indexed = int(indexed)
+            if not indexed:
+                pending.append(chunk)
+        indexed_count = 0
+        failed_count = 0
+        configuration_error = self._embedding_configuration_error() if pending else ""
+        batch: list[tuple[KnowledgeChunk, list[float]]] = []
+
+        def flush_batch() -> None:
+            nonlocal indexed_count, failed_count
+            if not batch:
+                return
+            try:
+                self._add_vectors(
+                    [chunk.id for chunk, _ in batch],
+                    [embedding for _, embedding in batch],
+                )
+            except Exception:
+                failed_count += len(batch)
+                logger.exception("Could not write %s knowledge vectors in scope %s", len(batch), self.scope)
+            else:
+                for chunk, _ in batch:
+                    chunk.faiss_indexed = 1
+                indexed_count += len(batch)
+            batch.clear()
+
+        if configuration_error:
+            failed_count = len(pending)
+        else:
+            for chunk in pending:
+                try:
+                    embedding = await self._embed(chunk.content)
+                except Exception:
+                    failed_count += 1
+                    logger.exception("Could not index knowledge chunk %s in scope %s", chunk.id, self.scope)
+                    continue
+                batch.append((chunk, embedding))
+                if len(batch) >= 32:
+                    flush_batch()
+            flush_batch()
+        for document_id, document in documents.items():
+            document.faiss_indexed = int(all(
+                chunk.faiss_indexed for chunk in chunks_by_document[document_id]
+            ))
+        self.db.commit()
+        return {
+            "created": bool(indexed_count),
+            "chunks": indexed_count,
+            "failed": failed_count,
+            "error": configuration_error,
+            "index_path": str(self._index_path),
+        }
+
     def _load_index(self, dimensions: int):
         if self._index_path.exists():
             index = self._load_existing_index()
@@ -1002,7 +1110,7 @@ class KnowledgeBaseService:
             return main_path.with_name(f"{main_path.stem}.main{main_path.suffix}")
         if self.scope == TEMPORARY_KB_SCOPE:
             return main_path.with_name(f"{main_path.stem}.temporary{main_path.suffix}")
-        if self.scope == POLICY_REFERENCE_SCOPE:
+        if self.scope in {POLICY_REFERENCE_SCOPE, POLICY_DOCUMENT_SCOPE}:
             return main_path.with_name(
                 f"{main_path.stem}.policy_reference{main_path.suffix}"
             )

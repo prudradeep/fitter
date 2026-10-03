@@ -2,6 +2,7 @@ import asyncio
 import unittest
 from pathlib import Path
 
+from app.schemas import ChatResponse
 from app.services.chat_session import ChatSession
 from app.services.chat_service import ChatService
 from tests.run_open_conversation_selection_cases import (
@@ -61,6 +62,7 @@ class OpenConversationFlowActionTests(unittest.TestCase):
 
         selection_options = ChatService._other_nav_options(session, "policy")
         detail_options = ChatService._other_nav_options(session, "policy_summary")
+        review_options = ChatService._other_nav_options(session, "policy_clarification")
         hazard_list_options = ChatService._other_nav_options(session, "hazards")
         mitigation_creation_options = ChatService._other_nav_options(
             session, "mitigation_measure"
@@ -68,10 +70,28 @@ class OpenConversationFlowActionTests(unittest.TestCase):
 
         self.assertNotIn("Add a new hazard", selection_options)
         self.assertNotIn("Add a new hazard", detail_options)
+        self.assertNotIn("Add a new hazard", review_options)
         self.assertNotIn("Select another policy", selection_options)
         self.assertIn("Select another policy", detail_options)
         self.assertIn("Select another policy", hazard_list_options)
         self.assertIn("Select another policy", mitigation_creation_options)
+
+    def test_policy_review_removes_stale_hazard_option_from_restored_prompt(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Energy", phase="policy_clarification",
+            selected_context_policy_id="policy-1",
+        )
+        response = ChatResponse(
+            session_id="session-1", step="policy_clarification",
+            bot_message="Policy document review", session=session.summary(),
+            other_options=["Add a new hazard", "Select another policy"],
+        )
+
+        service._attach_other_options(response, session)
+
+        self.assertNotIn("Add a new hazard", response.other_options)
+        self.assertIn("Select another policy", response.other_options)
 
     def test_select_another_policy_returns_to_policy_selection(self):
         service = ChatService.__new__(ChatService)

@@ -7,10 +7,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
-from app.models import Country, KnowledgeDocument, Policy, Sector
-from app.services.knowledge_base import ChunkDraft
+from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, Sector
+from app.services.knowledge_base import ChunkDraft, POLICY_DOCUMENT_SCOPE
 from app.services.policy_knowledge_seed import (
     POLICY_URL_SOURCE_TYPE,
+    migrate_policy_documents_from_main,
     policy_language_is_english,
     seed_policy_documents_from_urls,
     translate_policy_chunks_to_english,
@@ -54,7 +55,7 @@ class PolicyKnowledgeSeedTests(unittest.TestCase):
         self.db.commit()
 
         async def ingest_chunks(service, chunks, title, source_type, source_uri, **kwargs):
-            document = KnowledgeDocument(title=title, source_type=source_type, source_uri=source_uri, scope="main", scope_level="global")
+            document = KnowledgeDocument(title=title, source_type=source_type, source_uri=source_uri, scope=service.scope, scope_level="global")
             service.db.add(document)
             service.db.commit()
             return {"error": False, "document_id": document.id}
@@ -71,4 +72,43 @@ class PolicyKnowledgeSeedTests(unittest.TestCase):
         self.assertEqual(second, {"imported": 0, "skipped": 1, "failed": 0})
         document = self.db.query(KnowledgeDocument).one()
         self.assertEqual(document.policy_id, policy.id)
+        self.assertEqual(document.scope, POLICY_DOCUMENT_SCOPE)
         self.assertEqual(document.source_type, POLICY_URL_SOURCE_TYPE)
+
+    def test_existing_policy_document_moves_out_of_main_index(self) -> None:
+        country = Country(name="Germany", map_code="DE")
+        sector = Sector(name="Energy")
+        self.db.add_all([country, sector])
+        self.db.flush()
+        policy = Policy(country_id=country.id, sector_id=sector.id, policy="Energy policy")
+        self.db.add(policy)
+        self.db.flush()
+        document = KnowledgeDocument(
+            title="Energy policy document", source_type="txt", scope="main",
+            policy_id=policy.id,
+        )
+        other = KnowledgeDocument(title="General KB", source_type="txt", scope="main")
+        self.db.add_all([document, other])
+        self.db.flush()
+        chunk = KnowledgeChunk(
+            document_id=document.id, chunk_index=0, content="Policy content",
+            source_type="txt",
+        )
+        self.db.add(chunk)
+        self.db.commit()
+
+        vector_calls = []
+        def add_vectors(service, chunk_ids, vectors):
+            vector_calls.append((service.scope, chunk_ids, vectors))
+
+        with (
+            patch("app.services.policy_knowledge_seed.KnowledgeBaseService._reconstruct_vectors", return_value={chunk.id: [1.0, 0.0]}),
+            patch("app.services.policy_knowledge_seed.KnowledgeBaseService._remove_vectors"),
+            patch("app.services.policy_knowledge_seed.KnowledgeBaseService._add_vectors", new=add_vectors),
+        ):
+            self.assertEqual(migrate_policy_documents_from_main(self.db), 1)
+
+        self.assertEqual(document.scope, POLICY_DOCUMENT_SCOPE)
+        self.assertEqual(other.scope, "main")
+        self.assertEqual(vector_calls, [(POLICY_DOCUMENT_SCOPE, [chunk.id], [[1.0, 0.0]])])
+        self.assertEqual(migrate_policy_documents_from_main(self.db), 0)

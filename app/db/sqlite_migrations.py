@@ -362,6 +362,43 @@ def _016_policy_context_links(connection: Connection) -> None:
         """))
 
 
+def _017_faiss_index_flags(connection: Connection) -> None:
+    _add_column(connection, "knowledge_documents", "faiss_indexed", "faiss_indexed INTEGER NOT NULL DEFAULT 0")
+    _add_column(connection, "knowledge_chunks", "faiss_indexed", "faiss_indexed INTEGER NOT NULL DEFAULT 0")
+
+
+def _018_crowd_sourced_policies(connection: Connection) -> None:
+    _add_column(
+        connection, "policies", "created_by_user_id",
+        "created_by_user_id CHAR(36) NULL REFERENCES app_users(id) ON DELETE SET NULL",
+    )
+    _add_column(
+        connection, "policies", "is_crowd_sourced",
+        "is_crowd_sourced BOOLEAN NOT NULL DEFAULT 0",
+    )
+    _create_index(connection, "policies", "ix_policies_created_by_user_id", "created_by_user_id")
+
+
+def _019_policy_hazard_links(connection: Connection) -> None:
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS policy_hazard_links (
+            id VARCHAR(36) PRIMARY KEY,
+            policy_id VARCHAR(36) NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+            system_hazard_id VARCHAR(36) REFERENCES system_hazards(id) ON DELETE CASCADE,
+            additional_hazard_id VARCHAR(36) REFERENCES additional_hazards(id) ON DELETE CASCADE,
+            rationale TEXT NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_policy_system_hazard UNIQUE (policy_id, system_hazard_id),
+            CONSTRAINT uq_policy_additional_hazard UNIQUE (policy_id, additional_hazard_id),
+            CONSTRAINT chk_policy_hazard_target CHECK (
+                (system_hazard_id IS NULL) <> (additional_hazard_id IS NULL)
+            )
+        )
+    """))
+    for column in ("policy_id", "system_hazard_id", "additional_hazard_id"):
+        _create_index(connection, "policy_hazard_links", f"ix_policy_hazard_links_{column}", column)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -379,6 +416,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("014_policy_knowledge_documents", _014_policy_knowledge_documents),
     ("015_policies", _015_policies),
     ("016_policy_context_links", _016_policy_context_links),
+    ("017_faiss_index_flags", _017_faiss_index_flags),
+    ("018_crowd_sourced_policies", _018_crowd_sourced_policies),
+    ("019_policy_hazard_links", _019_policy_hazard_links),
 )
 
 

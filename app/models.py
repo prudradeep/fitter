@@ -1,7 +1,7 @@
 from datetime import datetime
 import uuid
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -466,7 +466,27 @@ class Policy(Base):
     language: Mapped[str | None] = mapped_column(String(120))
     policy_type: Mapped[str | None] = mapped_column(String(120))
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="xlsx", server_default="xlsx")
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), index=True
+    )
+    is_crowd_sourced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     excel_row_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class PolicyHazardLink(Base):
+    __tablename__ = "policy_hazard_links"
+    __table_args__ = (
+        UniqueConstraint("policy_id", "system_hazard_id", name="uq_policy_system_hazard"),
+        UniqueConstraint("policy_id", "additional_hazard_id", name="uq_policy_additional_hazard"),
+        CheckConstraint("(system_hazard_id IS NULL) <> (additional_hazard_id IS NULL)", name="chk_policy_hazard_target"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    policy_id: Mapped[str] = mapped_column(String(36), ForeignKey("policies.id", ondelete="CASCADE"), index=True)
+    system_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("system_hazards.id", ondelete="CASCADE"), index=True)
+    additional_hazard_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("additional_hazards.id", ondelete="CASCADE"), index=True)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
@@ -606,6 +626,7 @@ class KnowledgeDocument(Base):
     source_type: Mapped[str] = mapped_column(String(40), nullable=False)
     source_uri: Mapped[str | None] = mapped_column(Text)
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="main", index=True)
+    faiss_indexed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     session_key: Mapped[str | None] = mapped_column(String(64), index=True)
     custom_hazard_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("custom_hazards.id", ondelete="SET NULL"), index=True
@@ -652,6 +673,7 @@ class KnowledgeChunk(Base):
         String(36), ForeignKey("app_users.id", ondelete="CASCADE"), index=True
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    faiss_indexed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     content: Mapped[str] = mapped_column(Text, nullable=False)
     source_type: Mapped[str] = mapped_column(String(40), nullable=False)
     source_uri: Mapped[str | None] = mapped_column(Text)

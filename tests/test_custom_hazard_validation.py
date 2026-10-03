@@ -1946,6 +1946,27 @@ class CustomHazardValidationTests(unittest.TestCase):
             )
         )
 
+    def test_complete_followup_skips_common_quality_gate(self):
+        service = ChatService.__new__(ChatService)
+        service._check_user_input_quality = AsyncMock(
+            return_value={"valid": False, "reason": "The text is too short."}
+        )
+        session = ChatSession(
+            sector="Energy",
+            country="Ireland",
+            region="Leinster",
+            phase="complete",
+        )
+        clarification = (
+            "The scheme funds home energy upgrades and uses an online application "
+            "portal and digital BER register to verify the completed work."
+        )
+
+        self.assertIsNone(_run(service._common_user_input_quality_response(
+            "session-1", session, clarification
+        )))
+        service._check_user_input_quality.assert_not_awaited()
+
     def test_hazard_evidence_decision_accepts_url_in_open_text(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(

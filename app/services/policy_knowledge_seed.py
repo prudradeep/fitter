@@ -5,15 +5,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.session import SessionLocal
-from app.models import KnowledgeDocument, Policy
+from app.models import KnowledgeChunk, KnowledgeDocument, Policy
 from app.services.document_language import language_is_english, translate_chunks_to_english
 from app.services.knowledge_base import (
     MAIN_KB_SCOPE,
+    POLICY_DOCUMENT_SCOPE,
     ChunkDraft,
     KnowledgeBaseService,
     extract_url_chunks,
@@ -59,9 +61,61 @@ def _already_seeded(db: Session, policy_id: str) -> bool:
     return db.scalar(
         select(KnowledgeDocument.id).where(
             KnowledgeDocument.policy_id == policy_id,
-            KnowledgeDocument.scope == MAIN_KB_SCOPE,
+            KnowledgeDocument.scope == POLICY_DOCUMENT_SCOPE,
         ).limit(1)
     ) is not None
+
+
+def migrate_policy_documents_from_main(db: Session) -> int:
+    """Move linked policy documents and their existing vectors to the policy index."""
+    documents = db.scalars(
+        select(KnowledgeDocument).where(
+            KnowledgeDocument.scope == MAIN_KB_SCOPE,
+            KnowledgeDocument.policy_id.is_not(None),
+            KnowledgeDocument.user_id.is_(None),
+        )
+    ).all()
+    if not documents:
+        return 0
+    chunks = db.scalars(
+        select(KnowledgeChunk).where(
+            KnowledgeChunk.document_id.in_([document.id for document in documents])
+        )
+    ).all()
+    chunk_ids = [chunk.id for chunk in chunks]
+    main_service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
+    policy_service = KnowledgeBaseService(db, None, scope=POLICY_DOCUMENT_SCOPE)
+    vectors = main_service._reconstruct_vectors(chunk_ids)
+    if vectors:
+        policy_service._remove_vectors(list(vectors))
+        policy_service._add_vectors(list(vectors), list(vectors.values()))
+    main_service._remove_vectors(chunk_ids)
+    chunks_by_document: dict[str, list[KnowledgeChunk]] = {}
+    for chunk in chunks:
+        chunk.faiss_indexed = int(chunk.id in vectors)
+        chunks_by_document.setdefault(chunk.document_id, []).append(chunk)
+    for document in documents:
+        document.scope = POLICY_DOCUMENT_SCOPE
+        document.faiss_indexed = int(bool(chunks_by_document.get(document.id)) and all(
+            chunk.faiss_indexed for chunk in chunks_by_document[document.id]
+        ))
+    db.flush()
+    columns = {column["name"] for column in inspect(db.connection()).get_columns("knowledge_documents")}
+    if {"sync_revision", "sync_updated_at"} <= columns:
+        updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        for document in documents:
+            db.execute(
+                text("""
+                    UPDATE knowledge_documents
+                    SET sync_revision = COALESCE(sync_revision, 0) + 1,
+                        sync_updated_at = :updated_at
+                    WHERE id = :document_id
+                """),
+                {"updated_at": updated_at, "document_id": document.id},
+            )
+    db.commit()
+    logger.info("Moved %s linked policy documents to the policy index", len(documents))
+    return len(documents)
 
 
 async def seed_policy_documents_from_urls(
@@ -122,7 +176,7 @@ async def seed_policy_documents_from_urls(
                     skipped += 1
                     continue
                 try:
-                    result = await KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE).ingest_chunks(
+                    result = await KnowledgeBaseService(db, None, scope=POLICY_DOCUMENT_SCOPE).ingest_chunks(
                         item.chunks or [],
                         item.item.title,
                         POLICY_URL_SOURCE_TYPE,
