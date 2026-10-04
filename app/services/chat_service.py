@@ -33,6 +33,7 @@ from app.services.chat_mitigation_creation import ChatMitigationCreationMixin
 from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_navigation_steps import ChatNavigationStepsMixin
 from app.services.chat_options import (
+    ADOPT_INSPIRED_MITIGATION,
     CUSTOM_HAZARD_FINAL_OPTIONS,
     CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
     CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS,
@@ -355,6 +356,14 @@ class ChatService(
         if session.phase in {"policy_hazard_confirmation", "policy_hazard_details"}:
             return await self._save_new_context_policy(
                 current_session_id, session, session.pending_context_policy_hazards or []
+            )
+
+        if (
+            session.phase == "mitigation_measure"
+            and clean_message.casefold() == ADOPT_INSPIRED_MITIGATION.casefold()
+        ):
+            return await self._adopt_inspired_mitigation_response(
+                current_session_id, session
             )
 
         if clean_message and not self._could_be_fuzzy_selection(session, clean_message):

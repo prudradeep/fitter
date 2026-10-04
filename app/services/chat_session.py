@@ -69,6 +69,7 @@ class ChatSession:
     suggested_new_policy_proposal: str | None = None
     suggested_new_policy_reason: str | None = None
     suggested_new_policy_target_group_mechanisms: str | None = None
+    new_policy_inspiration: dict[str, list[str]] | None = None
     mitigation_measure: str | None = None
     mitigation_reason: str | None = None
     mitigation_target_population: list[str] | None = None

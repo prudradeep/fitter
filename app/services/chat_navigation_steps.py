@@ -4,9 +4,10 @@ from dataclasses import asdict
 from sqlalchemy import select
 
 from app.models import Country, Region
-from app.schemas import ChatResponse
+from app.schemas import ChatResponse, Option
 from app.services.chat_formatters import format_all_dgs, normalize_markdown_text
 from app.services.chat_options import (
+    ADOPT_INSPIRED_MITIGATION,
     ADD_DGS_OPTIONS,
     DG_REASON_EVIDENCE_OPTIONS,
     FUZZY_CONFIRMATION_OPTIONS,
@@ -809,7 +810,10 @@ class ChatNavigationStepsMixin:
                 session_id=session_id,
                 step="mitigation_measure",
                 bot_message=message,
-                options=[],
+                options=(
+                    [Option(id=1, label=ADOPT_INSPIRED_MITIGATION)]
+                    if session.new_policy_inspiration else []
+                ),
                 session=session.summary(),
                 input_mode="mitigation_measure",
                 error=error,

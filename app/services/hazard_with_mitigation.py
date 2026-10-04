@@ -26,6 +26,7 @@ def country_factsheet_reference(
     proposal_type: str,
     disadvantage_groups: list[str] | None = None,
     mechanism_suggestions: list[dict[str, object]] | None = None,
+    new_policy_interpretation: dict[str, list[str]] | None = None,
 ) -> str:
     """Render country/sector factsheet material for the chosen proposal path."""
     text = _country_factsheet_text(db, country)
@@ -44,6 +45,7 @@ def country_factsheet_reference(
         hazard,
         disadvantage_groups,
         mechanism_suggestions,
+        new_policy_interpretation,
     )
 
 
@@ -211,6 +213,7 @@ def _new_policy_reference(
     hazard: str | None,
     disadvantage_groups: list[str] | None,
     mechanism_suggestions: list[dict[str, object]] | None = None,
+    new_policy_interpretation: dict[str, list[str]] | None = None,
 ) -> str:
     blocks = _rank_blocks(
         _factsheet_blocks(text, NEW_POLICY_FACTSHEET, "Title of the policy (new proposal)"),
@@ -231,9 +234,28 @@ def _new_policy_reference(
         "# Inspiration for New policy proposal\n\n"
         + mitigation_context
         + _policy_mechanisms_section(mechanism_suggestions)
-        + _important_new_proposal_concepts_section(blocks, hazard)
+        + _important_new_proposal_concepts_section(new_policy_interpretation)
         + groups
     )
+
+
+def country_factsheet_inspiration_fields(
+    db: Session,
+    *,
+    country: str | None,
+    sector: str | None,
+    selected_policy: str | None,
+    hazard: str | None,
+) -> list[dict[str, str]]:
+    """Return relevant source fields as internal input for a grounded interpretation."""
+    text = _country_factsheet_text(db, country)
+    blocks = _rank_blocks(
+        _factsheet_blocks(text, NEW_POLICY_FACTSHEET, "Title of the policy (new proposal)"),
+        sector,
+        selected_policy,
+        hazard,
+    )
+    return _relevant_new_policy_fields(blocks, hazard)
 
 
 def _policy_mechanisms_section(mechanism_suggestions: list[dict[str, object]] | None) -> str:
@@ -262,8 +284,8 @@ def _policy_mechanisms_section(mechanism_suggestions: list[dict[str, object]] | 
     )
 
 
-def _important_new_proposal_concepts_section(blocks: list[str], hazard: str | None) -> str:
-    """Present key concepts from the fact sheet most relevant to the selected hazard."""
+def _relevant_new_policy_fields(blocks: list[str], hazard: str | None) -> list[dict[str, str]]:
+    """Select fact sheet entries most relevant to the selected hazard."""
     hazard_key = normalize_for_match(hazard or "")
     hazard_tokens = set(hazard_key.split())
 
@@ -277,48 +299,45 @@ def _important_new_proposal_concepts_section(blocks: list[str], hazard: str | No
 
     ranked = sorted(blocks, key=relevance, reverse=True)
     if not ranked:
-        return ""
+        return []
     top_score = relevance(ranked[0])
     relevant_blocks = [
         block for block in ranked[:3] if relevance(block) == top_score and top_score != (0, 0)
     ] or ranked[:1]
 
-    values = [_new_policy_fields(block) for block in relevant_blocks]
+    labels = (
+        "Prioritised challenge addressed",
+        "Policy description",
+        "Participatory dimension & stakeholders",
+    )
+    return [
+        {label: fields[label] for label in labels if fields.get(label)}
+        for fields in (_new_policy_fields(block) for block in relevant_blocks)
+    ]
 
-    def field_values(label: str) -> list[str]:
-        seen: set[str] = set()
-        items: list[str] = []
-        for fields in values:
-            value = str(fields.get(label) or "").strip()
-            key = normalize_for_match(value)
-            if value and key not in seen:
-                seen.add(key)
-                items.append(value)
-        return items
 
-    challenges = field_values("Prioritised challenge addressed")
-    descriptions = field_values("Policy description")
-    stakeholders = field_values("Participatory dimension & stakeholders")
-    if not any((challenges, descriptions, stakeholders)):
+def _important_new_proposal_concepts_section(
+    interpretation: dict[str, list[str]] | None,
+) -> str:
+    """Show distinct, original explanations without raw fact sheet fields."""
+    if not isinstance(interpretation, dict):
         return ""
-
-    sections: list[str] = ["# Important concepts for your new proposal"]
-    if challenges:
-        sections.extend([
-            "### Challenges to be addressed",
-            "\n".join(f"- {value}" for value in challenges),
-        ])
-    if descriptions:
-        sections.extend([
-            "### Possible ways to address the challenges",
-            "\n".join(f"- {value}" for value in descriptions),
-        ])
-    if stakeholders:
-        sections.extend([
-            "### Possible stakeholders to involve",
-            "\n".join(f"- {value}" for value in stakeholders),
-        ])
-    return "\n\n".join(sections) + "\n\n"
+    headings = (
+        ("challenge", "Challenges to be addressed"),
+        ("approach", "Possible ways to address the challenges"),
+        ("stakeholders", "Possible stakeholders to involve"),
+    )
+    sections: list[str] = []
+    for key, heading in headings:
+        values = interpretation.get(key)
+        if not isinstance(values, list):
+            continue
+        bullets = [str(value).strip() for value in values if str(value).strip()]
+        if bullets:
+            sections.append(f"### {heading}\n\n" + "\n".join(f"- {value}" for value in bullets))
+    if not sections:
+        return ""
+    return "# Important concepts for your new proposal\n\n" + "\n\n".join(sections) + "\n\n"
 
 
 _NEW_POLICY_FIELDS = (

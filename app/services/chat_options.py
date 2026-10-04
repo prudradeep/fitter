@@ -1,6 +1,8 @@
 from app.models import Country, Region, Sector
 from app.schemas import Option
 
+ADOPT_INSPIRED_MITIGATION = "Adopt mitigation measure for my context"
+
 POST_SECTOR_OPTIONS = [
     Option(id=1, label="Start Mitigation Planning"),
     Option(id=2, label="Add a new Hazard"),

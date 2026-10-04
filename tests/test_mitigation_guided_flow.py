@@ -407,6 +407,12 @@ class MitigationGuidedFlowTests(unittest.TestCase):
         self.service._assess_measure_policy_and_mechanisms = AsyncMock(
             return_value=({"relevant": True, "reason": "Relevant"}, [])
         )
+        self.service._mitigation_target_population_labels = MagicMock(
+            return_value=["Low-income households"]
+        )
+        self.service._mitigation_dg_benefit_reasons = AsyncMock(
+            return_value={"Low-income households": "Advance grants cover up-front costs."}
+        )
 
         response = run(
             self.service._start_guided_mitigation_flow(
@@ -438,7 +444,107 @@ class MitigationGuidedFlowTests(unittest.TestCase):
             )
         self.assertEqual(response.step, "mitigation_mechanism_reflection_review")
 
+    def test_missing_benefit_pathway_is_clarified_before_reflection(self):
+        self.service._assess_measure_policy_and_mechanisms = AsyncMock(
+            return_value=({"relevant": True}, ["Up-front energy costs create arrears"])
+        )
+        self.service._mitigation_target_population_labels = MagicMock(
+            return_value=["Low-income households"]
+        )
+        self.service._mitigation_dg_benefit_reasons = AsyncMock(
+            side_effect=lambda session, groups: session.mitigation_dg_benefit_explanations or {}
+        )
+        self.service._continue_with_knowledge_base_evidence_or_request_user_evidence = AsyncMock()
+
+        response = run(
+            self.service._start_guided_mitigation_flow(
+                "session-1", self.session, "Provide local energy advice"
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_dg_input")
+        self.assertEqual(self.session.mitigation_revision_stage, "initial_benefit_pathway")
+        self.assertIn("how", response.bot_message.lower())
+        self.service._continue_with_knowledge_base_evidence_or_request_user_evidence.assert_not_awaited()
+
+        self.service._guided_text_review = AsyncMock(
+            return_value={
+                "clear": True,
+                "normalized_text": "Advice helps low-income households compare tariffs and avoid unaffordable plans.",
+            }
+        )
+        expected = ChatResponse(
+            session_id="session-1",
+            step="mitigation_evidence_decision",
+            bot_message="Evidence next",
+            session=self.session.summary(),
+        )
+        self.service._continue_with_knowledge_base_evidence_or_request_user_evidence.return_value = expected
+
+        resumed = run(
+            self.service._handle_mitigation_dg_input(
+                "session-1", self.session, "Advice helps households compare tariffs"
+            )
+        )
+
+        self.assertIs(resumed, expected)
+        self.assertIsNone(self.session.mitigation_revision_stage)
+        self.assertIn(
+            "low-income households compare tariffs",
+            self.session.mitigation_dg_benefit_explanations["Low-income households"],
+        )
+
+    def test_missing_target_group_is_requested_before_reflection(self):
+        self.service._assess_measure_policy_and_mechanisms = AsyncMock(
+            return_value=({"relevant": True}, [])
+        )
+        self.service._mitigation_target_population_labels = MagicMock(return_value=[])
+        self.service._continue_with_knowledge_base_evidence_or_request_user_evidence = AsyncMock()
+
+        response = run(
+            self.service._start_guided_mitigation_flow(
+                "session-1", self.session, "Provide targeted energy advice"
+            )
+        )
+
+        self.assertEqual(response.step, "mitigation_dg_input")
+        self.assertEqual(self.session.mitigation_revision_stage, "initial_target_population")
+        self.service._continue_with_knowledge_base_evidence_or_request_user_evidence.assert_not_awaited()
+
+        self.service._guided_text_review = AsyncMock(
+            return_value={"clear": True, "normalized_text": "Low-income tenants"}
+        )
+        self.service._match_mitigation_target_population_answer = AsyncMock(
+            return_value=["Low-income tenants"]
+        )
+        self.service._mitigation_dg_benefit_reasons = AsyncMock(
+            return_value={"Low-income tenants": "Advice helps tenants compare energy tariffs."}
+        )
+        expected = ChatResponse(
+            session_id="session-1",
+            step="mitigation_evidence_decision",
+            bot_message="Evidence next",
+            session=self.session.summary(),
+        )
+        self.service._continue_with_knowledge_base_evidence_or_request_user_evidence.return_value = expected
+
+        resumed = run(
+            self.service._handle_mitigation_dg_input(
+                "session-1", self.session, "Low-income tenants"
+            )
+        )
+
+        self.assertIs(resumed, expected)
+        self.assertEqual(self.session.mitigation_target_population, ["Low-income tenants"])
+        self.assertIsNone(self.session.mitigation_revision_stage)
+
     def test_confirmed_flow_reaches_self_evaluation_after_equity(self):
+        self.service._mitigation_target_population_labels = MagicMock(
+            return_value=["Low-income households"]
+        )
+        self.service._mitigation_dg_benefit_reasons = AsyncMock(
+            return_value={"Low-income households": "Means-tested grants cover up-front costs."}
+        )
         mechanism_result = (
             '{"relevant": true, "reason": "Relevant", '
             '"mechanisms": ["Up-front retrofit costs exclude low-income households"]}'
