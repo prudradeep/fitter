@@ -42,7 +42,11 @@ class ChatSession:
     pending_hazard: str | None = None
     selected_hazard: str | None = None
     selected_hazard_record_id: str | None = None
+    hazard_qa_active: bool = False
+    hazard_qa_questions: list[str] | None = None
     socio_demographic_findings: str | None = None
+    selected_hazard_displayed_profiles: list[str] | None = None
+    selected_hazard_displayed_profile_details: list[dict[str, str]] | None = None
     socio_demographic_profiles: list[str] | None = None
     additional_dgs: list[str] | None = None
     pending_additional_dgs: list[str] | None = None

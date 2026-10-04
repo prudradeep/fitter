@@ -335,6 +335,7 @@ class ChatService(
             current_session_id, session, clean_message
         )
         if other_nav_response is not None:
+            session.hazard_qa_active = False
             return other_nav_response
 
         if not clean_message and not any([session.country, session.region, session.sector]):
@@ -383,6 +384,17 @@ class ChatService(
 
         if session.sector is None:
             return await self._select_sector(current_session_id, session, clean_message)
+
+        if session.phase == "socio_demographic_review" and session.hazard_qa_active:
+            selected_action = exact_option_label(clean_message, SOCIO_DEMOGRAPHIC_OPTIONS)
+            if selected_action is not None:
+                session.hazard_qa_active = False
+                return await self._handle_socio_demographic_review(
+                    current_session_id, session, selected_action
+                )
+            return await self._handle_hazard_qa_question(
+                current_session_id, session, clean_message
+            )
 
         if session.phase == "hazard_population_region_comparison":
             return await self._handle_custom_hazard_population_region_comparison(
@@ -1053,6 +1065,8 @@ class ChatService(
             display_profiles,
             hazard_summary=hazard_summary,
         )
+        session.selected_hazard_displayed_profiles = self._displayed_hazard_profile_names(answer)
+        session.selected_hazard_displayed_profile_details = self._displayed_hazard_profile_details(answer)
         if is_custom_hazard:
             assistant_names, user_names = self._custom_hazard_profile_name_sections(
                 profiles

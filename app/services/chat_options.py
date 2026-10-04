@@ -24,6 +24,7 @@ SOCIO_DEMOGRAPHIC_OPTIONS = [
     Option(id=1, label="Create a new mitigation proposal"),
     Option(id=2, label="Propose adaptations in the existing policy"),
     Option(id=3, label="Add more DGs"),
+    Option(id=4, label="Know more about the hazard"),
 ]
 
 ADD_DGS_OPTIONS = [

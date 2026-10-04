@@ -305,7 +305,11 @@ class ChatNavigationStepsMixin:
         session.pending_hazard = None
         session.selected_hazard = None
         session.selected_hazard_record_id = None
+        session.hazard_qa_active = False
+        session.hazard_qa_questions = None
         session.socio_demographic_findings = None
+        session.selected_hazard_displayed_profiles = None
+        session.selected_hazard_displayed_profile_details = None
         session.socio_demographic_profiles = None
         session.additional_dgs = None
         session.pending_additional_dgs = None

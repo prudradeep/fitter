@@ -1617,6 +1617,23 @@ class ChatHazardStepsMixin:
                 return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
         action = normalize(exact_label or message)
 
+        if action == normalize("Know more about the hazard"):
+            if not session.selected_hazard:
+                return self._repeat_current_options(session_id, session, self.invalid_message, True)
+            session.hazard_qa_active = True
+            session.hazard_qa_questions = []
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=markdown_to_html(
+                    f"Ask a question about **{session.selected_hazard}**. "
+                    "I will answer using available knowledge for this hazard."
+                ),
+                options=SOCIO_DEMOGRAPHIC_OPTIONS,
+                session=session.summary(),
+                error=False,
+            )
+
         if action == normalize("Add more DGs"):
             return self._start_additional_dg_questions(session_id, session)
 
