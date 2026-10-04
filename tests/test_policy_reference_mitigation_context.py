@@ -444,6 +444,61 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         self.assertIn("Socio-demographic groups benefited", summary)
         self.assertIn("Not identified", summary)
 
+    def test_policy_summary_renders_all_sections_from_structured_response(self) -> None:
+        session = ChatSession(selected_context_policy="Clean electricity support")
+        response = json.dumps({
+            "policy_details": [{"label": "Scope", "text": "The policy funds solar generation."}],
+            "mechanisms": [{"label": "Grants", "text": "Grants support rooftop installations."}],
+            "intended_benefits": [{"label": "Renewable Supply", "text": "More renewable electricity."}],
+            "benefited_groups": [{"label": "Low-income Households", "text": "They receive grants."}],
+        })
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock, return_value=response,
+        ) as ask_llm:
+            summary = asyncio.run(self.service._summarize_context_policy(
+                session, "Solar grants for low-income households.", "Clean electricity support"
+            ))
+
+        self.assertEqual(ask_llm.await_count, 1)
+        for heading in (
+            "Policy details", "Mechanisms", "Intended benefits",
+            "Socio-demographic groups benefited",
+        ):
+            self.assertIn(f"### {heading}\n\n- **", summary)
+        self.assertIn("- **Low-income Households:** They receive grants.", summary)
+        from app.services.message_renderer import markdown_to_html
+        rendered = markdown_to_html(summary)
+        self.assertEqual(rendered.count("<h3>"), 4)
+        self.assertEqual(rendered.count("<li>"), 4)
+
+    def test_policy_summary_retries_incomplete_response(self) -> None:
+        session = ChatSession(selected_context_policy="Clean electricity support")
+        complete = json.dumps({
+            "policy_details": [{"label": "Scope", "text": "The policy funds solar generation."}],
+            "mechanisms": [{"label": "Grants", "text": "Grants support rooftop installations."}],
+            "intended_benefits": [{"label": "Renewable Supply", "text": "More renewable electricity."}],
+            "benefited_groups": [{"label": "Not identified", "text": "Not stated in the supplied text."}],
+        })
+        incomplete = json.dumps({
+            "policy_details": [{"label": "Scope", "text": "The regulation amends ("}],
+            "mechanisms": [{"label": "Grants", "text": "Grants support rooftop installations."}],
+            "intended_benefits": [{"label": "Renewable Supply", "text": "More renewable electricity."}],
+            "benefited_groups": [{"label": "Not identified", "text": "Not stated in the supplied text."}],
+        })
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock,
+            side_effect=[incomplete, complete],
+        ) as ask_llm:
+            summary = asyncio.run(self.service._summarize_context_policy(
+                session, "Solar grants for households.", "Clean electricity support"
+            ))
+
+        self.assertEqual(ask_llm.await_count, 2)
+        self.assertIn("### Intended benefits\n\n- **Renewable Supply:** More renewable electricity.", summary)
+        self.assertNotIn("amends (", summary)
+
     def test_uploaded_policy_continues_when_only_sector_fit_is_supported(self) -> None:
         policy = Policy(country_id="country-1", sector_id="sector-1", policy="Clean energy policy")
         document = KnowledgeDocument(
@@ -683,6 +738,35 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
 
         self.assertIn("Final solar provision", full_text)
         self.assertGreater(len(full_text), 24000)
+
+    def test_evidence_review_can_retrieve_text_beyond_bounded_context(self) -> None:
+        document = KnowledgeDocument(
+            user_id="owner-1", title="Long evidence", source_type="txt",
+            scope="temporary", session_key="session-1",
+        )
+        self.db.add(document)
+        self.db.flush()
+        self.db.add_all([
+            KnowledgeChunk(
+                document_id=document.id, user_id="owner-1", chunk_index=index,
+                content=("x" * 1000 if index < 25 else "Final evidence finding"),
+                source_type="txt",
+            )
+            for index in range(26)
+        ])
+        self.db.commit()
+        session = ChatSession(session_key="session-1")
+        evidence = f"Temporary evidence document ID: {document.id}"
+
+        bounded = asyncio.run(self.service._user_evidence_context_for_contradiction_check(
+            session, evidence,
+        ))
+        full_text = asyncio.run(self.service._user_evidence_context_for_contradiction_check(
+            session, evidence, full_text=True,
+        ))
+
+        self.assertNotIn("Final evidence finding", bounded)
+        self.assertIn("Final evidence finding", full_text)
 
     def test_discard_removes_only_staged_policy_documents(self) -> None:
         policy_document = KnowledgeDocument(

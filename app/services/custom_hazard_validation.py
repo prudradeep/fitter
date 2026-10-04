@@ -116,48 +116,53 @@ async def validate_hazard_evidence_relevance(
             "reason": "No readable evidence content was supplied.",
             "supporting_excerpts": [],
         }
-    payload = {
-        "hazard": str(hazard or "").strip(),
-        "raw_hazard_text": str(raw_hazard or "").strip(),
-        "evidence_content": content,
-        "required_output_schema": {
-            "relevant": False,
-            "reason": "",
-            "relationship": "",
-            "supporting_excerpts": [],
+    system = load_nested_prompt_file("llm/custom_hazard_evidence_relevance.txt")
+    response_format = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["relevant", "reason", "relationship", "supporting_excerpts"],
+        "properties": {
+            "relevant": {"type": "boolean"},
+            "reason": {"type": "string"},
+            "relationship": {"type": "string"},
+            "supporting_excerpts": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 5,
+            },
         },
     }
-    try:
-        response = await ask_llm_chat(
-            context=load_nested_prompt_file("llm/custom_hazard_evidence_relevance.txt"),
-            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            temperature=0.0,
-            max_tokens=1500,
-            response_format={
-                "type": "object",
-                "additionalProperties": False,
-                "required": [
-                    "relevant",
-                    "reason",
-                    "relationship",
-                    "supporting_excerpts",
-                ],
-                "properties": {
-                    "relevant": {"type": "boolean"},
-                    "reason": {"type": "string"},
-                    "relationship": {"type": "string"},
-                    "supporting_excerpts": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "maxItems": 5,
-                    },
-                },
+    result = None
+    # Continue through the document until a window supports the hazard.
+    for start in range(0, len(content), 23500):
+        payload = {
+            "hazard": str(hazard or "").strip(),
+            "raw_hazard_text": str(raw_hazard or "").strip(),
+            "evidence_content": content[start:start + 24000],
+            "required_output_schema": {
+                "relevant": False,
+                "reason": "",
+                "relationship": "",
+                "supporting_excerpts": [],
             },
-        )
-        print("IN try LLM response for evidence relevance:", response)
-        result = parse_json_object(response)
-    except Exception:
-        result = None
+        }
+        try:
+            response = await ask_llm_chat(
+                context=system,
+                messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                temperature=0.0,
+                max_tokens=1500,
+                response_format=response_format,
+            )
+            current = parse_json_object(response)
+        except Exception:
+            current = None
+        if isinstance(current, dict) and isinstance(current.get("relevant"), bool):
+            result = current
+            if result["relevant"]:
+                break
+        if start + 24000 >= len(content):
+            break
     if isinstance(result, dict) and isinstance(result.get("relevant"), bool):
         raw_excerpts = result.get("supporting_excerpts")
         supporting_excerpts = raw_excerpts if isinstance(raw_excerpts, list) else []

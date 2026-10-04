@@ -42,6 +42,7 @@ class ChatContextRetrievalMixin:
         evidence: str,
         *,
         query: str = "",
+        full_text: bool = False,
     ) -> str:
         temporary_document_ids = re.findall(
             r"^Temporary evidence document ID:\s*(\S+)",
@@ -52,8 +53,11 @@ class ChatContextRetrievalMixin:
             session,
             temporary_document_ids or None,
             query=query,
+            full_text=full_text,
         )
-        reused_context = self._reused_evidence_context(session, evidence, query=query)
+        reused_context = self._reused_evidence_context(
+            session, evidence, query=query, full_text=full_text
+        )
         inline_evidence = self._inline_evidence_content(evidence)
         if inline_evidence:
             inline_context = self._format_full_knowledge_results(
@@ -80,6 +84,7 @@ class ChatContextRetrievalMixin:
         evidence: str | None = None,
         *,
         query: str = "",
+        full_text: bool = False,
     ) -> str:
         text = str(evidence or "")
         document_ids = re.findall(
@@ -111,6 +116,8 @@ class ChatContextRetrievalMixin:
         results: list[dict[str, object]] = []
         for document_id in document_ids:
             results.extend(service.document_results(document_id))
+        if full_text:
+            return self._format_full_knowledge_results(results)
         return self._format_bounded_knowledge_results(results, query=query)
 
     async def _mitigation_evidence_context(
@@ -348,6 +355,7 @@ class ChatContextRetrievalMixin:
         *,
         query: str = "",
         max_chunks: int = EVIDENCE_CONTEXT_MAX_CHUNKS,
+        full_text: bool = False,
     ) -> str:
         if not session.session_key:
             return ""
@@ -380,6 +388,8 @@ class ChatContextRetrievalMixin:
             }
             for chunk, document in rows
         ]
+        if full_text:
+            return self._format_full_knowledge_results(results)
         return self._format_bounded_knowledge_results(
             results,
             query=query,

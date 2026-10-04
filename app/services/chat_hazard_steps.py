@@ -327,36 +327,101 @@ class ChatHazardStepsMixin:
         self, session: ChatSession, source_text: str, catalog_details: str,
         clarifications: list[str] | None = None,
     ) -> str:
-        prompt = (
-            "Summarize this policy using only the supplied text. Use concise headings: "
-            "Policy details, Mechanisms, Intended benefits, and Socio-demographic groups benefited. "
-            "Under the last heading, identify the people or population groups the policy benefits, "
-            "including groups defined by residence, income, age, occupation, or other characteristics "
-            "when the text supports them. Briefly explain how each group benefits. "
+        instructions = (
+            "Summarize this policy using only the supplied text. Return JSON with four arrays: "
+            "policy_details (Policy details), mechanisms (Mechanisms), "
+            "intended_benefits (Intended benefits), and "
+            "benefited_groups (Socio-demographic groups benefited). "
+            "Each array must contain short, distinct bullet points with a concise label and a "
+            "complete explanatory sentence in the text field. Use 2-4 bullets per section when "
+            "the source supports them. For example, label a legal provision 'Legal Basis', "
+            "a participation rule 'Participation Rights', and an outcome 'Regional Value Creation'. "
+            "Under benefited_groups, identify people or population groups defined by residence, "
+            "income, age, occupation, or other supported characteristics. "
+            "Briefly explain how each group benefits. "
             "Do not treat institutions or places as socio-demographic groups. "
-            "If the text does not identify any benefited groups, say so explicitly. "
-            "State when other details are not available.\n\n"
-            f"Policy: {session.selected_context_policy}\nContext: {session.country}, {session.region}, {session.sector}\n\n"
-            f"Source text:\n{source_text[:12000]}\n\n"
-            "User clarifications (label these as user-provided, not document facts):\n"
-            f"{chr(10).join((clarifications or [])[-3:]) or 'None'}"
+            "If a section is unsupported, return one bullet labeled 'Not identified' with text "
+            "'Not stated in the supplied text.' Do not invent facts or end mid-sentence."
         )
-        try:
-            response = await ask_llm_chat(
-                context="You are a careful policy analyst. Do not invent policy details.",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=600,
+        fields = (
+            ("policy_details", "Policy details"),
+            ("mechanisms", "Mechanisms"),
+            ("intended_benefits", "Intended benefits"),
+            ("benefited_groups", "Socio-demographic groups benefited"),
+        )
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [key for key, _ in fields],
+            "properties": {
+                key: {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["label", "text"],
+                        "properties": {
+                            "label": {"type": "string"},
+                            "text": {"type": "string"},
+                        },
+                    },
+                }
+                for key, _ in fields
+            },
+        }
+        for source_limit in (12000, 6000):
+            prompt = (
+                f"{instructions}\n\n"
+                f"Policy: {session.selected_context_policy}\n"
+                f"Context: {session.country}, {session.region}, {session.sector}\n\n"
+                f"Source text:\n{source_text[:source_limit]}\n\n"
+                "User clarifications (label these as user-provided, not document facts):\n"
+                f"{chr(10).join((clarifications or [])[-3:]) or 'None'}"
             )
-        except Exception:
-            response = ""
-        if not is_llm_unavailable_response(response) and response.strip():
-            return response.strip()
-        return (
-            f"**Policy details:** {catalog_details or source_text[:1200]}\n\n"
-            "**Mechanisms:** Not separately stated in the available policy material.\n\n"
-            "**Intended benefits:** Not separately stated in the available policy material.\n\n"
-            "**Socio-demographic groups benefited:** Not identified in the available policy material."
+            try:
+                response = await ask_llm_chat(
+                    context="You are a careful policy analyst. Do not invent policy details.",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    max_tokens=2000,
+                    response_format=schema,
+                )
+            except Exception:
+                response = ""
+            parsed = parse_json_object(response) if not is_llm_unavailable_response(response) else None
+            if isinstance(parsed, dict) and all(
+                isinstance(parsed.get(key), list) and parsed[key]
+                and all(
+                    isinstance(item, dict)
+                    and isinstance(item.get("label"), str) and item["label"].strip()
+                    and isinstance(item.get("text"), str) and item["text"].strip()
+                    and not re.search(
+                        r"(?:[(:,;]|\b(?:and|or))\s*$",
+                        item["text"].strip(), re.IGNORECASE,
+                    )
+                    for item in parsed[key]
+                )
+                for key, _ in fields
+            ):
+                return "\n\n".join(
+                    f"### {heading}\n\n" + "\n".join(
+                        f"- **{item['label'].strip()}:** {item['text'].strip()}"
+                        for item in parsed[key]
+                    )
+                    for key, heading in fields
+                )
+        fallback = {
+            "policy_details": (
+                "Available details",
+                catalog_details or session.selected_context_policy or "Not established from the supplied text.",
+            ),
+            "mechanisms": ("Not identified", "Not separately stated in the available policy material."),
+            "intended_benefits": ("Not identified", "Not separately stated in the available policy material."),
+            "benefited_groups": ("Not identified", "Not identified in the available policy material."),
+        }
+        return "\n\n".join(
+            f"### {heading}\n\n- **{fallback[key][0]}:** {fallback[key][1]}"
+            for key, heading in fields
         )
 
     async def _handle_context_policy_reference(

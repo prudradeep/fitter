@@ -589,6 +589,7 @@ class ChatCustomHazardEvidenceMixin:
             evidence_context = await self._user_evidence_context_for_contradiction_check(
                 session,
                 evidence,
+                full_text=True,
                 query=" ".join(
                     part
                     for part in (

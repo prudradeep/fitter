@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -260,6 +261,9 @@ class CustomHazardEvidenceReflectionTests(unittest.TestCase):
         validation_target = relevance.await_args.args[0]
         self.assertIn("Coal phase-out employment shock", validation_target)
         self.assertIn("The shock is concentrated near mine closures", validation_target)
+        self.assertTrue(
+            service._user_evidence_context_for_contradiction_check.await_args.kwargs["full_text"]
+        )
         linkage = session.custom_hazard["linkage_analysis"]["evidence_hazard_linkage"]
         self.assertIn("supports your reflection", linkage["reason"])
         self.assertIn("documents local job losses", linkage["relationship"])
@@ -282,6 +286,45 @@ class CustomHazardEvidenceReflectionTests(unittest.TestCase):
         self.assertFalse(result["relevant"])
         self.assertIn("could not be established", result["reason"])
         self.assertNotIn("causal_linkage", result)
+
+    def test_evidence_relevance_reaches_later_text_and_stops_on_support(self):
+        responses = [
+            '{"relevant":false,"reason":"No relevant finding here.",'
+            '"relationship":"","supporting_excerpts":[]}',
+            '{"relevant":true,"reason":"Later finding supports the hazard.",'
+            '"relationship":"Mine closure caused job losses.",'
+            '"supporting_excerpts":["Mine closure caused job losses."]}',
+        ]
+        content = "x" * 24000 + "Mine closure caused job losses." + "y" * 24000
+        with patch(
+            "app.services.custom_hazard_validation.ask_llm_chat",
+            new_callable=AsyncMock, side_effect=responses,
+        ) as ask_llm:
+            result = _run(validate_hazard_evidence_relevance(
+                "Job losses", content,
+            ))
+
+        self.assertTrue(result["relevant"])
+        self.assertEqual(ask_llm.await_count, 2)
+        second = json.loads(ask_llm.await_args_list[1].kwargs["messages"][0]["content"])
+        self.assertIn("Mine closure caused job losses.", second["evidence_content"])
+        self.assertLessEqual(len(second["evidence_content"]), 24000)
+
+    def test_evidence_relevance_checks_all_text_before_rejecting(self):
+        response = (
+            '{"relevant":false,"reason":"No supporting finding.",'
+            '"relationship":"","supporting_excerpts":[]}'
+        )
+        with patch(
+            "app.services.custom_hazard_validation.ask_llm_chat",
+            new_callable=AsyncMock, return_value=response,
+        ) as ask_llm:
+            result = _run(validate_hazard_evidence_relevance(
+                "Job losses", "x" * 50000,
+            ))
+
+        self.assertFalse(result["relevant"])
+        self.assertEqual(ask_llm.await_count, 3)
 
     def test_unclear_user_evidence_explains_mismatch_and_offers_both_retries(self):
         service = _service()
