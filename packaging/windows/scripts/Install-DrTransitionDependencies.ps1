@@ -1803,6 +1803,36 @@ function Invoke-DatabaseSeed {
     Write-SetupLog "Database setup completed"
 }
 
+function Install-OfflineKnowledgeSeedBundle {
+    if (-not $DisableSync) {
+        return $false
+    }
+    $bundleManifest = Join-Path $InstallDir "seed-indexes\manifest.json"
+    if (-not (Test-Path -LiteralPath $bundleManifest -PathType Leaf)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $backendExe -PathType Leaf)) {
+        Write-SetupLog "Offline FAISS bundle skipped; backend executable was not found"
+        return $false
+    }
+
+    $seedOut = Join-Path $logDir "install-offline-seed.out.log"
+    $seedErr = Join-Path $logDir "install-offline-seed.err.log"
+    $process = Start-Process -FilePath $backendExe -ArgumentList "--install-offline-seed-bundle" -WorkingDirectory $InstallDir -PassThru -WindowStyle Hidden -RedirectStandardOutput $seedOut -RedirectStandardError $seedErr
+    $exitCode = Wait-SetupProcess -Process $process -Activity "Offline FAISS bundle installation" -HeartbeatSeconds 15
+    $status = if (Test-Path -LiteralPath $seedOut) { (Get-Content -LiteralPath $seedOut -Raw).Trim() } else { "" }
+    if ($exitCode -eq 0 -and $status -match '^installed offline ') {
+        Write-SetupLog "Offline SQLite and FAISS seed bundle $status"
+        $manifest = Get-Content -LiteralPath $bundleManifest -Raw | ConvertFrom-Json
+        return @{ Installed = $true; Scopes = @($manifest.indexes | ForEach-Object { [string]$_.scope }) }
+    }
+    Write-SetupLog "Offline FAISS bundle skipped ($status); local KB seeding will run"
+    if (Test-Path -LiteralPath $seedErr) {
+        Get-Content -LiteralPath $seedErr -Tail 5 | ForEach-Object { Write-SetupLog "  $_" }
+    }
+    return $false
+}
+
 function Write-DefaultAppUserCredentialsSummary {
     param([string]$SeedOutputPath)
 
@@ -1989,6 +2019,16 @@ try {
         $runtimeEnvUpdates.SYNC_INTERVAL_SECONDS = "0"
     }
     Update-RuntimeEnv -Updates $runtimeEnvUpdates
+
+    $offlineKnowledgeBundle = Install-OfflineKnowledgeSeedBundle
+    if ($offlineKnowledgeBundle -and $offlineKnowledgeBundle.Installed) {
+        if ($offlineKnowledgeBundle.Scopes -contains "sector_prompt") {
+            $ReindexSectorPrompts = $false
+        }
+        if ($offlineKnowledgeBundle.Scopes -contains "main") {
+            $SeedMainKbFromFiles = $false
+        }
+    }
 
     Write-SetupLog "Configured SQLite client database: $sqliteDatabasePath"
     Use-ConfiguredOllamaModelsPath

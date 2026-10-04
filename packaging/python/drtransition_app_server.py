@@ -17,6 +17,13 @@ def main() -> None:
         seed_main()
         return
 
+    if "--install-offline-seed-bundle" in sys.argv:
+        from app.config import get_settings
+        from app.services.seed_index_bundle import install_offline_seed_bundle
+
+        print(install_offline_seed_bundle(get_settings()), flush=True)
+        return
+
     from app.main import app
 
     host = os.getenv("DRTRANSITION_APP_HOST", "127.0.0.1")

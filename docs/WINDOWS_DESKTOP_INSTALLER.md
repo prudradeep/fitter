@@ -149,6 +149,79 @@ missing.
 
 ## Build Installer
 
+### Prebuilt knowledge indexes for sync clients
+
+The normal sync-client installer can include FAISS files for the Main KB, sector
+prompts, and policy documents. Build them on a dedicated client that has fully
+synced from the **same server** the release will use. The server must own and
+sync the matching knowledge documents and chunks, including policy documents.
+Complete its indexing with the release's Ollama embedding model before export.
+
+```powershell
+.\.venv\Scripts\python.exe .\packaging\windows\scripts\create-seed-index-bundle.py `
+  --database .\data\release-client.db `
+  --index-base .\data\knowledge.faiss `
+  --embedding-model nomic-embed-text `
+  --sync-server-url https://your-sync-host.example `
+  --output .\build\seed-indexes
+
+.\packaging\windows\scripts\build-installer.ps1 `
+  -SeedIndexBundlePath .\build\seed-indexes
+```
+
+`build-release.ps1` accepts the same `-SeedIndexBundlePath` parameter. Omit it
+to build an installer without prebuilt indexes. The exporter checks that every
+FAISS vector matches a public, indexed, server-synced knowledge chunk and
+rejects user-owned documents or inconsistent files. It copies only FAISS files
+and a manifest; the source SQLite database is never packaged. Review the
+source KB and policy documents before distributing their vectors.
+
+At the first backend startup, the client verifies the bundle checksum,
+embedding model, and sync server URL, then places the indexes under
+`%ProgramData%\DrTransition\data`. It leaves existing client knowledge and
+indexes untouched. The first sync supplies the matching document/chunk rows;
+its index reconciliation then finds those vectors without embedding them again.
+New or changed server chunks are indexed normally. A bundle built from a
+different server or embedding model is ignored.
+
+Policy documents seeded only on an individual client have no server sync IDs
+and cannot be exported for this workflow. Seed and index those documents on
+the release server, then sync the dedicated export client first. The offline
+admin installer can instead use the offline bundle below.
+
+### Prebuilt indexes for offline admin installers
+
+An offline admin installer needs the SQLite knowledge rows that match its FAISS
+vector IDs because it has no server sync. Prepare a SQLite database with the
+bundled Main KB, sector prompts, and policy documents already indexed using the
+release embedding model. Then export a sanitized database snapshot and indexes:
+
+```powershell
+.\.venv\Scripts\python.exe .\packaging\windows\scripts\create-seed-index-bundle.py `
+  --offline `
+  --database .\data\prepared-offline.db `
+  --index-base .\data\knowledge.faiss `
+  --embedding-model nomic-embed-text `
+  --output .\build\offline-seed-indexes
+
+.\packaging\windows\scripts\build-installer.ps1 `
+  -OfflineAdmin -PrepackageDependencies `
+  -SeedIndexBundlePath .\build\offline-seed-indexes
+```
+
+`build-release.ps1` accepts the same flags. The exporter checks FAISS IDs
+against the knowledge chunks, rejects user-owned knowledge and user-created
+policies, and removes users, chat, logs, sync state, and other client data from
+the SQLite snapshot. Review the KB and policy content before distributing it.
+The installer verifies the database and index checksums and installs them only
+when no local database or index exists. It then creates the local admin account
+and skips indexing for the Main KB and sector-prompt scopes included in the
+bundle. With no bundle, or when the
+embedding model differs, the existing local indexing flow runs. Ollama model
+weights still require a separate download or preinstalled model store.
+
+### Standard installer build
+
 For release builds, prefer the full release script. It increments the patch
 version by default, keeps all Windows packaging version files in sync, then
 builds the bundled services, desktop launcher, and installer:
@@ -180,16 +253,13 @@ This produces:
 build/windows-dependencies-installer/DrTransitionDatabaseModelOnlineSetup-<version>.exe
 ```
 
-That standalone preparation installer is for server-style or offline-admin
-workflows that deliberately provision MySQL locally. It is not the normal
-desktop sync-client path.
+Despite its legacy script name, that standalone preparation installer uses
+SQLite and Ollama. It does not install or bundle MySQL.
 
-To include offline MySQL and Ollama installers in the payload, place the vendor
-installers under:
+To include the Ollama installer in the payload, place it under:
 
 ```text
-packaging/windows/offline/mysql/
-packaging/windows/offline/ollama/
+packaging/windows/offline/ollama/OllamaSetup.exe
 ```
 
 Then pass:
@@ -204,8 +274,8 @@ For the standalone database/model preparation installer, use:
 .\packaging\windows\scripts\build-mysql-ollama-installer.ps1 -PrepackageDependencies
 ```
 
-Use `-PrepackageDependencies` together with `-OfflineAdmin` for a fully local
-installer build:
+Use `-PrepackageDependencies` together with `-OfflineAdmin` to bundle Ollama
+setup for the local SQLite admin installer:
 
 ```powershell
 .\packaging\windows\scripts\build-installer.ps1 -OfflineAdmin -PrepackageDependencies
@@ -318,18 +388,17 @@ standalone installer:
 .\packaging\windows\scripts\build-mysql-ollama-installer.ps1
 ```
 
-or bundle offline MySQL/Ollama installers:
+or bundle the Ollama installer:
 
 ```powershell
 .\packaging\windows\scripts\build-mysql-ollama-installer.ps1 -PrepackageDependencies
 ```
 
-This standalone installer installs/checks MySQL and Ollama, creates the
-application database/user, applies schema/migrations, seeds bundled base lookup
-rows and reference data, seeds database-backed prompts from packaged prompt
-files, and pulls the selected chat and embedding models. It does not install the
-desktop launcher, grounding services, or create a default app user. Use it only
-when a local MySQL/offline-admin deployment is explicitly required.
+Despite the legacy build-script name, this standalone installer configures a
+local SQLite database, installs/checks Ollama, applies schema/migrations, seeds
+bundled reference data and prompts, and pulls the selected chat and embedding
+models. It does not install the desktop launcher, grounding services, or create
+a default app user. MySQL is not required.
 
 The default installer remains a sync-client build and does not create a local
 default user or seed reference data. To build the optional fully local installer
@@ -345,23 +414,20 @@ or for a full release build:
 .\packaging\windows\scripts\build-release.ps1 -OfflineAdmin
 ```
 
-To include the offline dependency installers in a full release build:
+To include the Ollama installer in a full release build:
 
 ```powershell
 .\packaging\windows\scripts\build-release.ps1 -OfflineAdmin -PrepackageDependencies
 ```
 
 This produces `DrTransitionOfflineAdminPrepackagedSetup-<version>.exe`, uses a runtime
-template with sync disabled, seeds the bundled base lookup rows and reference
-data locally, seeds the database prompt library from bundled prompt/template
-files, indexes the bundled sector-prompt knowledge chunks, creates or reuses
-`admin@drtransition.local` with the `admin` role, and starts a background
-backend seed for bundled `kb/*.pdf` files into the Main knowledge base. The
-installer does not wait for the Main KB PDF seed to finish; progress and errors
-are written to `%LOCALAPPDATA%\DrTransition\logs\seed-main-kb.out.log` and
-`%LOCALAPPDATA%\DrTransition\logs\seed-main-kb.err.log`. The installer shows the
-seeded admin user details after dependency setup completes, and the final setup
-screen includes a button to copy the admin credentials.
+template with sync disabled, seeds local reference data and prompts, and creates
+or reuses `admin@drtransition.local` with the `admin` role. With an offline seed
+bundle, setup installs its SQLite knowledge rows and FAISS files before seeding
+and skips Main KB and sector-prompt indexing. Without a bundle, it indexes the
+sector prompts and starts a background seed for bundled `kb/*.pdf` files. The
+installer shows the seeded admin user details after dependency setup completes,
+and the final setup screen includes a button to copy the admin credentials.
 
 If a custom Ollama model directory is already configured through `OLLAMA_MODELS`
 or a common Ollama `server.json` location, the installer preserves that path
@@ -371,30 +437,13 @@ to Ollama's default path.
 When `-PrepackageDependencies` is used, the installer payload includes:
 
 ```text
-installers/mysql/<bundled MySQL .msi or .exe>
 installers/ollama/<bundled Ollama .exe>
 ```
 
-At setup time, missing MySQL and Ollama installations are installed from those
-bundled files first. Bundled dependency installers run silently in the
-background and Dr Transition continues after verifying the installed binaries.
-The MySQL MSI writes a detailed native installer log to
-`%LOCALAPPDATA%\DrTransition\logs\mysql-bundled-msiexec.log`. If no bundled
-installer is present, missing dependencies are installed online with `winget` or
-direct download:
-
-```text
-Oracle.MySQL
-https://ollama.com/download/OllamaSetup.exe
-```
-
-Use `mysql-8.4.11-winx64.msi` as the preferred bundled MySQL Server package; the
-prepackaging scripts choose that file when it is present under
-`packaging/windows/offline/mysql/`. The setup script verifies `mysql.exe` and
-`mysqld.exe` after running the bundled MySQL installer and stops with a clear
-error if the package only installs the MySQL Installer shell rather than the
-server binaries. Use the official Ollama `OllamaSetup.exe` for the Ollama
-bundle.
+The offline admin installer uses SQLite. It does not read
+`packaging/windows/offline/mysql/` or ship a MySQL installer. At setup time,
+Ollama is installed from the bundled `OllamaSetup.exe` if needed. Without
+`-PrepackageDependencies`, setup obtains Ollama online if it is missing.
 
 Prepackaging Ollama installs the Ollama application offline. Ollama model pulls
 still require network access unless the target machine already has the required
@@ -420,14 +469,6 @@ Manual checks for a normal sync client:
 
 ```powershell
 Test-Path "$env:ProgramData\DrTransition"
-Invoke-RestMethod http://127.0.0.1:11434/api/tags
-ollama list
-```
-
-Manual checks for legacy/offline-admin MySQL preparation only:
-
-```powershell
-Test-NetConnection 127.0.0.1 -Port 3306
 Invoke-RestMethod http://127.0.0.1:11434/api/tags
 ollama list
 ```
@@ -472,14 +513,13 @@ Included now:
 - Config/log path conventions
 - First-run diagnostics for `.env`, SQLite path, Ollama, and Ollama models
 - Installer-driven SQLite/Ollama setup and model pull for normal clients
-- Legacy/offline-admin MySQL preparation path where explicitly requested
+- Offline admin setup backed by local SQLite
 
 Next production hardening layer:
 
-- Remove remaining MySQL dependency checks from the normal sync-client installer
-  path where older scripts still reference them
+- Remove unused MySQL helper code from legacy setup scripts
 - Optional offline Hugging Face model bundle
 - Code signing
 - Upgrade migration rules
-- Rich installer progress UI for long MySQL/Ollama/model operations
+- Rich installer progress UI for long Ollama/model operations
 - Diagnostics export command

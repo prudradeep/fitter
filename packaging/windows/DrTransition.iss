@@ -2,6 +2,9 @@
 #define MyAppVersion "0.1.11"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
+#ifndef InstallerPayloadPath
+#define InstallerPayloadPath "..\..\build\windows-installer\payload"
+#endif
 
 [Setup]
 AppId={{9A34E5CC-A8AA-40E4-9F81-6E20E3E3A8D8}
@@ -42,7 +45,7 @@ Name: "{commonappdata}\DrTransition"; Permissions: users-modify
 Name: "{commonappdata}\DrTransition\uploads"; Permissions: users-modify
 
 [Files]
-Source: "..\..\build\windows-installer\payload\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#InstallerPayloadPath}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 #ifdef OfflineAdminInstaller
 Source: "config\offline-admin.env"; DestDir: "{app}\config"; DestName: ".env"; Flags: ignoreversion
 #else

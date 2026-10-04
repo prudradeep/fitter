@@ -32,6 +32,7 @@ from app.seed_data import seed_main_kb_from_files
 from app.services.coverage import get_coverage_rows
 from app.services.prompt_store import enable_prompt_db_reads_if_rows, seed_prompts_from_files
 from app.services.policy_knowledge_seed import migrate_policy_documents_from_main, seed_policy_documents_from_urls
+from app.services.seed_index_bundle import install_seed_indexes
 from app.services.sync_permissions import sync_client_permission_enabled
 from app.services.sync_service import SyncService
 
@@ -177,6 +178,9 @@ def _should_seed_policy_documents() -> bool:
 
 @app.on_event("startup")
 async def startup() -> None:
+    bundle_status = install_seed_indexes(settings)
+    if bundle_status != "unavailable":
+        logger.info("Seed FAISS bundle: %s", bundle_status)
     validate_database_connection()
     if settings.database_auto_migrate:
         run_runtime_migrations()
