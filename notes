@@ -370,6 +370,15 @@ uv run python scripts/create_sync_client.py --name "Admin workstation" --user-em
 
 uv run python scripts/create_sync_client.py --name "Clients"
 
+----------------------------------------------------------------------------------------------------
+Windows Build
+----------------------------------------------------------------------------------------------------
+python .\packaging\windows\scripts\create-seed-index-bundle.py --offline --database .\data\dta_c.db --index-base .\data\knowledge.faiss --embedding-model nomic-embed-text --output .\build\seed-indexes
+.\packaging\windows\scripts\build-release.ps1 -OfflineAdmin -NoVersionBump -PrepackageDependencies -SeedIndexBundlePath .\build\seed-indexes
+----------------------------------------------------------------------------------------------------
+
+
+
 Hazard:
 Strict: Hazard Name => Ask for clarification 
 Easy: Not required

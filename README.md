@@ -220,6 +220,34 @@ after backing up the database:
 Production deployments should keep this flag off and rely on `schema.sql` for
 fresh installs plus versioned files under `app/db/migrations/` for changes.
 
+### Import previously extracted policy documents
+
+If `data/dta_c - Copy.db` already contains policy URL documents and chunks,
+`scripts/import_policy_chunks.py` can copy them into `data/dta_c.db` without
+fetching the URLs, translating, or chunking again. It matches seeded policies by
+spreadsheet row, name, URL, country, and sector, and skips policies that already
+have a policy document. Stop the application and back up the target database
+and `data/knowledge.policy_reference.faiss` before running it. Start Ollama with
+the embedding model configured in `.env` for the indexing phase.
+
+PowerShell, from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\import_policy_chunks.py `
+  --source '.\data\dta_c - Copy.db' --target .\data\dta_c.db --dry-run
+
+.\.venv\Scripts\python.exe .\scripts\import_policy_chunks.py `
+  --source '.\data\dta_c - Copy.db' --target .\data\dta_c.db
+```
+
+The source database is opened read-only. To split or resume the operation, use
+`--import-only` for the copy phase, then `--index-only --target .\data\dta_c.db`
+for the embedding phase. The index phase reconciles the policy FAISS index and
+only embeds chunks whose vectors are missing. If the index base is not the
+configured `FAISS_INDEX_PATH`, pass `--index-base` with the correct base path.
+Stored source text is copied as-is; the script does not verify or change its
+translation.
+
 ## Seed Prompt Library
 
 Database-backed prompts are loaded from packaged prompt files under
