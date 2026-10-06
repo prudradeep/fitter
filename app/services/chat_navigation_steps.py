@@ -143,7 +143,7 @@ class ChatNavigationStepsMixin:
                 error=False,
             )
 
-        if action == normalize("Select another policy"):
+        if action in {normalize("Select another policy"), normalize("Show policy list")}:
             if session.sector is None:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
             session.selected_context_policy_id = None
@@ -587,7 +587,7 @@ class ChatNavigationStepsMixin:
                 session_id=session_id,
                 step=session.phase,
                 bot_message=message,
-                options=[],
+                options=[Option(id=0, label="Show policy list")],
                 session=session.summary(),
                 input_mode="policy_reference",
                 error=error,

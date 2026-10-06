@@ -183,6 +183,7 @@ OTHER_NAV_OPTIONS = [
     "Go back to list of hazards",
     "Add a new hazard",
     "Select another policy",
+    "Show policy list",
     "Write hazard again",
     "Choose a different sector",
     "Select another region",

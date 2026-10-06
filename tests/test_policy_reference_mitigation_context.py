@@ -42,6 +42,7 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         prompt = self.service._repeat_current_options("session-1", restored, "", False)
         self.assertEqual(prompt.step, "policy_clarification")
         self.assertEqual(prompt.input_mode, "policy_reference")
+        self.assertEqual([option.label for option in prompt.options], ["Show policy list"])
 
         # Earlier versions saved the failed response as the complete step.
         broken = asdict(session)
@@ -409,6 +410,7 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         self.assertEqual(response.step, "policy_reference")
         self.assertEqual(response.input_mode, "policy_reference")
         self.assertEqual(session.phase, "policy_reference")
+        self.assertEqual([option.label for option in response.options], ["Show policy list"])
         self.assertIn("Please provide its URL or attach", response.bot_message)
         self.assertIn("Please provide an English document", response.bot_message)
         self.service._summarize_context_policy.assert_not_called()

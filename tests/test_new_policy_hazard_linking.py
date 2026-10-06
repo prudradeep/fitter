@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.db.sqlite_migrations import _019_policy_hazard_links
-from app.models import KnowledgeChunk, KnowledgeDocument, Policy, PolicyHazardLink, SystemHazard
+from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, PolicyHazardLink, Sector, SystemHazard
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
 
@@ -65,6 +65,61 @@ class NewPolicyHazardLinkingTests(unittest.TestCase):
         self.assertFalse(self.session.adding_context_policy)
         self.service._limit_hazards_to_selected_policy(self.session)
         self.assertEqual(self.session.hazards, ["Higher household energy costs"])
+
+    def test_duplicate_policy_names_existing_title_country_and_sector(self):
+        country = Country(name="Germany")
+        sector = Sector(name="Energy")
+        self.db.add_all([country, sector])
+        self.db.flush()
+        old_policy = self.db.scalar(select(Policy).where(Policy.policy == "Existing energy policy"))
+        old_policy.country_id = country.id
+        old_policy.sector_id = sector.id
+        self.session.country_id = country.id
+        self.session.sector_id = sector.id
+        self.session.country = ""
+        self.session.sector = ""
+        self.session.selected_context_policy = old_policy.policy
+        self.db.commit()
+
+        response = asyncio.run(
+            self.service._new_policy_hazard_suggestions_step("session-1", self.session)
+        )
+        self.assertIn("Policy title:", response.bot_message)
+        self.assertIn("Existing energy policy", response.bot_message)
+        self.assertIn("Country:", response.bot_message)
+        self.assertIn("Germany", response.bot_message)
+        self.assertIn("Sector:", response.bot_message)
+        self.assertIn("Energy", response.bot_message)
+        self.assertEqual([option.label for option in response.options], ["Show policy list"])
+
+        saved_response = asyncio.run(self.service._save_new_context_policy("session-1", self.session, []))
+        self.assertIn("Existing energy policy", saved_response.bot_message)
+        self.assertIn("Germany", saved_response.bot_message)
+        self.assertIn("Energy", saved_response.bot_message)
+        self.assertEqual([option.label for option in saved_response.options], ["Show policy list"])
+
+        policy_list = asyncio.run(self.service._handle_other_nav_action(
+            "session-1", self.session, response.options[0].label
+        ))
+        self.assertEqual(policy_list.step, "policy")
+        self.assertEqual(self.session.phase, "policy")
+        self.assertIn("Existing energy policy", [option.label for option in policy_list.options])
+        self.assertFalse(self.session.adding_context_policy)
+        self.assertIsNone(self.session.pending_context_policy_document_ids)
+
+    def test_add_new_policy_prompt_can_return_to_policy_list(self):
+        self.session.phase = "policy"
+        prompt = asyncio.run(self.service._select_context_policy(
+            "session-1", self.session, "Add a new policy"
+        ))
+        self.assertEqual(prompt.step, "policy_reference")
+        self.assertEqual([option.label for option in prompt.options], ["Show policy list"])
+
+        policy_list = asyncio.run(self.service._handle_other_nav_action(
+            "session-1", self.session, prompt.options[0].label
+        ))
+        self.assertEqual(policy_list.step, "policy")
+        self.assertFalse(self.session.adding_context_policy)
 
     def test_existing_policy_title_is_used_when_its_document_is_unavailable(self):
         old_chunk = self.db.scalar(select(KnowledgeChunk).where(

@@ -1,5 +1,6 @@
 import re
 from difflib import SequenceMatcher
+from html import escape
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -7,6 +8,7 @@ from sqlalchemy import and_, or_, select
 
 from app.models import (
     AdditionalHazard,
+    Country,
     KnowledgeChunk,
     KnowledgeDocument,
     MitigationMeasurePolicy,
@@ -14,6 +16,7 @@ from app.models import (
     MitigationMeasurePolicySystemHazard,
     Policy,
     PolicyHazardLink,
+    Sector,
     SystemHazard,
 )
 from app.schemas import ChatResponse, Option
@@ -58,6 +61,32 @@ def is_hazard_action_label(label: str) -> bool:
 
 
 class ChatHazardStepsMixin:
+    def _duplicate_policy_message(
+        self, session: ChatSession, title: str, *, already_added: bool = False
+    ) -> str:
+        country = self.db.get(Country, session.country_id) if session.country_id else None
+        sector = self.db.get(Sector, session.sector_id) if session.sector_id else None
+        details = (
+            ("Policy title", title),
+            ("Country", country.name if country else session.country),
+            ("Sector", sector.name if sector else session.sector),
+        )
+        lines = [
+            f"- **{label}:** {escape(' '.join(str(value).split()), quote=False)}"
+            for label, value in details if str(value or "").strip()
+        ]
+        introduction = (
+            "A policy with this title was already added."
+            if already_added else
+            "A policy with this title already exists in the selected country and sector."
+        )
+        guidance = (
+            "Select that policy from the list, or provide a different policy document."
+            if already_added else
+            "Select it from the policy list, or provide a different policy document."
+        )
+        return "\n\n".join((introduction, "\n".join(lines), guidance))
+
     def _policy_rows_for_selected_context(
         self, session: ChatSession
     ) -> list[tuple[str, str]]:
@@ -164,6 +193,7 @@ class ChatHazardStepsMixin:
                     "I will check the document before adding the policy.\n\n"
                     f"{document_language_guidance()}"
                 ),
+                options=[Option(id=0, label="Show policy list")],
                 session=session.summary(),
                 input_mode="policy_reference",
             )
@@ -284,6 +314,7 @@ class ChatHazardStepsMixin:
                     "Please provide its URL or attach a PDF, DOCX, MD, or TXT file.\n\n"
                     f"{document_language_guidance()}"
                 ),
+                options=[Option(id=0, label="Show policy list")],
                 session=session.summary(),
                 input_mode="policy_reference",
                 error=False,
@@ -452,6 +483,7 @@ class ChatHazardStepsMixin:
                         "## Policy document needed\n\nNo readable text was found in that document. "
                         "Please provide another policy URL or file."
                     ),
+                    options=[Option(id=0, label="Show policy list")],
                     session=session.summary(),
                     input_mode="policy_reference",
                     error=True,
@@ -523,6 +555,7 @@ class ChatHazardStepsMixin:
                     "## Policy document needed\n\nThe submitted document is no longer available. "
                     "Please provide a policy URL or file again."
                 ),
+                options=[Option(id=0, label="Show policy list")],
                 session=session.summary(),
                 input_mode="policy_reference",
                 error=True,
@@ -550,17 +583,18 @@ class ChatHazardStepsMixin:
     async def _new_policy_hazard_suggestions_step(
         self, session_id: str, session: ChatSession,
     ) -> ChatResponse:
-        if any(
-            normalize_for_match(title) == normalize_for_match(session.selected_context_policy or "")
-            for _, title in self._policy_rows_for_selected_context(session)
-        ):
+        existing_policy = next((
+            title for _, title in self._policy_rows_for_selected_context(session)
+            if normalize_for_match(title) == normalize_for_match(session.selected_context_policy or "")
+        ), None)
+        if existing_policy:
             session.phase = "policy_reference"
             return ChatResponse(
                 session_id=session_id, step="policy_reference",
                 bot_message=markdown_to_html(
-                    "A policy with this title already exists in the selected country and sector. "
-                    "Select it from the policy list, or provide a different policy document."
+                    self._duplicate_policy_message(session, existing_policy)
                 ),
+                options=[Option(id=0, label="Show policy list")],
                 session=session.summary(), input_mode="policy_reference",
             )
         document_ids = session.pending_context_policy_document_ids or []
@@ -687,19 +721,19 @@ class ChatHazardStepsMixin:
                 bot_message=markdown_to_html("The policy document is no longer available. Please upload it again."),
                 session=session.summary(), input_mode="policy_reference", error=True,
             )
-        existing_id = next(
-            (policy_id for policy_id, title in self._policy_rows_for_selected_context(session)
+        existing_policy = next(
+            ((policy_id, title) for policy_id, title in self._policy_rows_for_selected_context(session)
              if normalize_for_match(title) == normalize_for_match(session.selected_context_policy or "")),
             None,
         )
-        if existing_id:
+        if existing_policy:
             session.phase = "policy_reference"
             return ChatResponse(
                 session_id=session_id, step="policy_reference",
                 bot_message=markdown_to_html(
-                    "A policy with this title was already added. "
-                    "Select that policy from the list, or provide a different policy document."
+                    self._duplicate_policy_message(session, existing_policy[1], already_added=True)
                 ),
+                options=[Option(id=0, label="Show policy list")],
                 session=session.summary(), input_mode="policy_reference",
             )
         policy = Policy(
@@ -782,6 +816,7 @@ class ChatHazardStepsMixin:
             session_id=session_id,
             step="policy_clarification",
             bot_message=markdown_to_html("\n".join(lines)),
+            options=[Option(id=0, label="Show policy list")],
             session=session.summary(),
             input_mode="policy_reference",
             error=False,
