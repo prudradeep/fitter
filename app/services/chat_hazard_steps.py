@@ -50,6 +50,38 @@ from app.services.message_renderer import markdown_to_html, render_message
 
 
 ADD_NEW_POLICY_LABEL = "Add a new policy"
+POLICY_SUMMARY_REFERENCE = re.compile(
+    r"§\s*\d+[a-z]?\b|\b(?:section|article|clause)\s+\d+[a-z]?\b",
+    re.IGNORECASE,
+)
+POLICY_SECTION_HEADING = re.compile(
+    r"(?m)^\s*(?:§\s*|Section\s+|Article\s+)(\d+[a-z]?)\b[^\n]*$",
+    re.IGNORECASE,
+)
+
+
+def _policy_summary_source(source_text: str, limit: int) -> str:
+    """Keep the opening text and the provisions it cites within the prompt."""
+    opening = source_text[:limit]
+    cited_numbers = {
+        match.group(1).casefold()
+        for match in re.finditer(
+            r"(?:§\s*|\b(?:section|article)\s+)(\d+[a-z]?)\b",
+            opening, re.IGNORECASE,
+        )
+    }
+    if not cited_numbers:
+        return opening
+    headings = list(POLICY_SECTION_HEADING.finditer(source_text))
+    additions = []
+    for index, heading in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(source_text)
+        if heading.group(1).casefold() not in cited_numbers or end <= limit:
+            continue
+        additions.append(source_text[heading.start():end].strip()[:4000])
+    if not additions:
+        return opening
+    return opening + "\n\nReferenced provisions:\n" + "\n\n".join(additions)[:12000]
 
 
 def is_hazard_action_label(label: str) -> bool:
@@ -249,7 +281,7 @@ class ChatHazardStepsMixin:
             .where(KnowledgeDocument.id.in_(document_ids))
             .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index)
         ).all()
-        return "\n\n".join(str(row).strip() for row in rows if str(row).strip())[:24000]
+        return "\n\n".join(str(row).strip() for row in rows if str(row).strip())
 
     def _stored_context_policy_document_ids(self, session: ChatSession) -> list[str]:
         if not session.selected_context_policy_id:
@@ -329,11 +361,7 @@ class ChatHazardStepsMixin:
         session.phase = "policy_summary"
         validation_intro = ""
         if session.context_policy_validation and not session.context_policy_validation.get("missing"):
-            checks = session.context_policy_validation.get("checks") or {}
-            validation_intro = "**Policy document review:** Sectoral objective fit supported."
-            if (checks.get("twin_transition_fit") or {}).get("status") == "supported":
-                validation_intro += " Also found: twin transition."
-            validation_intro += "\n\n"
+            validation_intro = "**Policy document review:** Sectoral objective fit supported.\n\n"
         closing_message = (
             "Choose **Continue to hazards** to explore the hazard flow or add a new hazard."
             if session.new_context_policy_summary_only else
@@ -374,6 +402,12 @@ class ChatHazardStepsMixin:
             "income, age, occupation, or other supported characteristics. "
             "Briefly explain how each group benefits. "
             "Do not treat institutions or places as socio-demographic groups. "
+            "For every reference to another provision, read that provision in the supplied "
+            "source and combine its actual rule with the referring sentence into a meaningful "
+            "explanation. Write the resulting rule in plain language in the relevant bullet. "
+            "Do not put section numbers, section symbols, article numbers, or cross-references "
+            "in any label or text field. If a cited provision is absent, do not guess its content; "
+            "state only what the available source establishes. "
             "If a section is unsupported, return one bullet labeled 'Not identified' with text "
             "'Not stated in the supplied text.' Do not invent facts or end mid-sentence."
         )
@@ -403,12 +437,12 @@ class ChatHazardStepsMixin:
                 for key, _ in fields
             },
         }
-        for source_limit in (12000, 6000):
+        for source_limit in (48000, 24000):
             prompt = (
                 f"{instructions}\n\n"
                 f"Policy: {session.selected_context_policy}\n"
                 f"Context: {session.country}, {session.region}, {session.sector}\n\n"
-                f"Source text:\n{source_text[:source_limit]}\n\n"
+                f"Source text:\n{_policy_summary_source(source_text, source_limit)}\n\n"
                 "User clarifications (label these as user-provided, not document facts):\n"
                 f"{chr(10).join((clarifications or [])[-3:]) or 'None'}"
             )
@@ -432,6 +466,9 @@ class ChatHazardStepsMixin:
                     and not re.search(
                         r"(?:[(:,;]|\b(?:and|or))\s*$",
                         item["text"].strip(), re.IGNORECASE,
+                    )
+                    and not POLICY_SUMMARY_REFERENCE.search(
+                        item["label"] + " " + item["text"]
                     )
                     for item in parsed[key]
                 )
@@ -598,7 +635,7 @@ class ChatHazardStepsMixin:
                 session=session.summary(), input_mode="policy_reference",
             )
         document_ids = session.pending_context_policy_document_ids or []
-        source = await self._policy_reference_context(session, document_ids)
+        source = await self._policy_reference_context(session, document_ids, full_text=True)
         summary = await self._summarize_context_policy(
             session, source, "", session.context_policy_clarifications,
         )

@@ -506,6 +506,71 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         self.assertIn("### Intended benefits\n\n- **Renewable Supply:** More renewable electricity.", summary)
         self.assertNotIn("amends (", summary)
 
+    def test_policy_summary_includes_cited_provisions_beyond_initial_limit(self) -> None:
+        from app.services.chat_hazard_steps import _policy_summary_source
+
+        source = (
+            "A participation agreement under § 7 must reflect participation provided under § 8.\n"
+            + "x" * 49000
+            + "\n§ 7 Participation agreement\nResidents may receive a share of project revenue.\n"
+            + "§ 8 Replacement participation\nThe operator may offer an annual payment.\n"
+        )
+        excerpt = _policy_summary_source(source, 48000)
+
+        self.assertIn("Residents may receive a share of project revenue.", excerpt)
+        self.assertIn("The operator may offer an annual payment.", excerpt)
+
+    def test_policy_summary_sends_more_than_twelve_thousand_source_characters(self) -> None:
+        session = ChatSession(selected_context_policy="Wind participation")
+        source = "x" * 13000 + "Residents receive project revenue."
+        response = json.dumps({
+            "policy_details": [{"label": "Scope", "text": "Residents can participate."}],
+            "mechanisms": [{"label": "Agreement", "text": "Residents share project revenue."}],
+            "intended_benefits": [{"label": "Local Value", "text": "Residents receive value."}],
+            "benefited_groups": [{"label": "Residents", "text": "They can participate."}],
+        })
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock, return_value=response,
+        ) as ask_llm:
+            asyncio.run(self.service._summarize_context_policy(
+                session, source, "Wind participation",
+            ))
+
+        self.assertIn(
+            "Residents receive project revenue.",
+            ask_llm.call_args.kwargs["messages"][0]["content"],
+        )
+
+    def test_policy_summary_retries_section_references(self) -> None:
+        session = ChatSession(selected_context_policy="Wind participation")
+        def response(mechanism: str) -> str:
+            return json.dumps({
+                "policy_details": [{"label": "Scope", "text": "Residents can participate."}],
+                "mechanisms": [{"label": "Agreement", "text": mechanism}],
+                "intended_benefits": [{"label": "Local Value", "text": "Residents receive value."}],
+                "benefited_groups": [{"label": "Residents", "text": "They can participate."}],
+            })
+
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock,
+            side_effect=[
+                response("A participation agreement is required under § 7."),
+                response("A participation agreement lets residents share project revenue."),
+            ],
+        ) as ask_llm:
+            summary = asyncio.run(self.service._summarize_context_policy(
+                session,
+                "§ 7 Participation agreement\nResidents may receive a share of project revenue.",
+                "Wind participation",
+            ))
+
+        self.assertEqual(ask_llm.await_count, 2)
+        self.assertNotIn("§ 7", summary)
+        self.assertIn("residents share project revenue", summary)
+        self.assertIn("combine its actual rule", ask_llm.call_args.kwargs["messages"][0]["content"])
+
     def test_uploaded_policy_continues_when_only_sector_fit_is_supported(self) -> None:
         policy = Policy(country_id="country-1", sector_id="sector-1", policy="Clean energy policy")
         document = KnowledgeDocument(
