@@ -392,14 +392,29 @@ class SyncService:
             "knowledge_scopes_dirty": [],
             "prompts_dirty": False,
         }
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=float(self.settings.sync_http_read_timeout_seconds),
+            write=120.0,
+            pool=10.0,
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
             headers = {"Authorization": f"Bearer {token}"}
-            for batch in outbound_batches:
-                response = await client.post(
-                    f"{server_url}/api/sync/push",
-                    json=batch,
-                    headers=headers,
-                )
+            for batch_number, batch in enumerate(outbound_batches, start=1):
+                try:
+                    response = await client.post(
+                        f"{server_url}/api/sync/push",
+                        json=batch,
+                        headers=headers,
+                    )
+                except httpx.ReadTimeout:
+                    logger.error(
+                        "Sync push response timed out batch=%s/%s read_timeout_seconds=%s",
+                        batch_number,
+                        len(outbound_batches),
+                        self.settings.sync_http_read_timeout_seconds,
+                    )
+                    raise
                 response.raise_for_status()
                 self._merge_sync_apply_result(applied_totals, response.json())
             response = await client.post(

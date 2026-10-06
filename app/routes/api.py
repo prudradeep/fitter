@@ -42,6 +42,11 @@ from app.services.audit_log import record_audit_event
 from app.services.document_language import EnglishDocumentRequiredError
 from app.services.hazard_effect_size import hazard_effect_size_rows, hazard_predictor_effect_rows
 from app.services.hazard_ranking_service import HAZARD_COLUMN_BY_SLUG, HazardRankingService
+from app.services.ingestion_progress import (
+    begin_ingestion_progress,
+    get_ingestion_progress,
+    update_ingestion_progress,
+)
 from app.services.knowledge_base import (
     MAIN_KB_SCOPE,
     POLICY_DOCUMENT_SCOPE,
@@ -62,6 +67,25 @@ from app.services.sync_permissions import sync_client_permission_enabled
 
 router = APIRouter(prefix="/api", tags=["chat"])
 settings = get_settings()
+
+
+def _ingestion_progress_id(request: Request, user_id: str) -> str | None:
+    return begin_ingestion_progress(request.headers.get("x-ingestion-progress-id"), user_id)
+
+
+def _ingestion_step(progress_id: str | None, source: str):
+    return lambda stage: update_ingestion_progress(progress_id, source, stage)
+
+
+@router.get("/knowledge/progress/{progress_id}")
+def knowledge_ingestion_progress(
+    progress_id: str,
+    current_user: AppUser = Depends(require_current_user),
+) -> dict[str, object]:
+    status = get_ingestion_progress(progress_id, str(current_user.id))
+    if status is None:
+        raise HTTPException(status_code=404, detail="Ingestion progress was not found.")
+    return status
 
 
 def _is_admin_user(user: AppUser) -> bool:
@@ -1053,6 +1077,7 @@ async def knowledge_upload(
 
     _ = current_user
     service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
+    progress_id = _ingestion_progress_id(request, str(current_user.id))
     results: list[dict[str, object]] = []
     failures: list[dict[str, str]] = []
     total_chunks = 0
@@ -1070,7 +1095,10 @@ async def knowledge_upload(
             return too_large
         content = await file.read()
         try:
-            result = await service.ingest_file(filename, content, translate_to_english=True)
+            result = await service.ingest_file(
+                filename, content, translate_to_english=True,
+                progress=_ingestion_step(progress_id, filename),
+            )
         except (httpx.HTTPError, ValueError) as exc:
             failures.append({"source": filename, "detail": str(exc)})
             continue
@@ -1177,12 +1205,19 @@ async def knowledge_policy_document_upload(
             return too_large
 
     service = KnowledgeBaseService(db, None, scope=POLICY_DOCUMENT_SCOPE)
+    progress_id = _ingestion_progress_id(request, str(current_user.id))
     try:
         if document_url:
-            result = await service.ingest_url(document_url, document_url, translate_to_english=True)
+            result = await service.ingest_url(
+                document_url, document_url, translate_to_english=True,
+                progress=_ingestion_step(progress_id, document_url),
+            )
         else:
             content = await file.read()
-            result = await service.ingest_file(filename, content, translate_to_english=True)
+            result = await service.ingest_file(
+                filename, content, translate_to_english=True,
+                progress=_ingestion_step(progress_id, filename),
+            )
     except (httpx.HTTPError, ValueError) as exc:
         return {"error": True, "detail": str(exc)}
     if result.get("error"):
@@ -1232,12 +1267,16 @@ async def knowledge_url(
         return {"error": True, "detail": "At least one URL is required."}
     _ = current_user
     service = KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE)
+    progress_id = _ingestion_progress_id(request, str(current_user.id))
     results: list[dict[str, object]] = []
     failures: list[dict[str, str]] = []
     total_chunks = 0
     for url in urls:
         try:
-            result = await service.ingest_url(url, title if len(urls) == 1 else None, translate_to_english=True)
+            result = await service.ingest_url(
+                url, title if len(urls) == 1 else None, translate_to_english=True,
+                progress=_ingestion_step(progress_id, url),
+            )
         except (httpx.HTTPError, ValueError) as exc:
             failures.append({"source": url, "detail": str(exc)})
             continue
@@ -1537,6 +1576,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
         raise HTTPException(status_code=413, detail="Evidence upload is too large.")
 
     form = await request.form()
+    progress_id = _ingestion_progress_id(request, user_id)
     message = str(form.get("message") or "")
     session_id = str(form.get("session_id") or "") or None
     validation_mode = _validation_mode(str(form.get("validation_mode") or ""))
@@ -1563,6 +1603,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                     policy_reference_url,
                     allow_lexical_only=True,
                     translate_to_english=True,
+                    progress=_ingestion_step(progress_id, policy_reference_url),
                 )
                 if result.get("error"):
                     raise ValueError(str(result.get("detail") or "No readable policy text was found."))
@@ -1572,6 +1613,8 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                         f"Policy reference document ID: {result.get('document_id')}",
                     ]
                 )
+            except EnglishDocumentRequiredError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except (httpx.HTTPError, ValueError) as exc:
                 policy_reference_parts.append(
                     f"Policy reference error: The URL could not be read ({exc})."
@@ -1612,6 +1655,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                     file_bytes,
                     allow_lexical_only=True,
                     translate_to_english=True,
+                    progress=_ingestion_step(progress_id, policy_filename),
                 )
                 if result.get("error"):
                     raise ValueError(str(result.get("detail") or "No readable policy text was found."))
@@ -1621,6 +1665,8 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                         f"Policy reference document ID: {result.get('document_id')}",
                     ]
                 )
+            except EnglishDocumentRequiredError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except ValueError as exc:
                 policy_reference_parts.append(
                     f"Policy reference error: The file could not be read ({exc})."
@@ -1647,6 +1693,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                     allow_lexical_only=True,
                     reuse_existing=True,
                     translate_to_english=True,
+                    progress=_ingestion_step(progress_id, evidence_url),
                 )
                 document_id = str(result.get("document_id") or "").strip()
                 if document_id:
@@ -1696,6 +1743,7 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                         file_bytes,
                         allow_lexical_only=True,
                         translate_to_english=True,
+                        progress=_ingestion_step(progress_id, filename),
                     )
                     document_id = str(result.get("document_id") or "").strip()
                     if document_id:

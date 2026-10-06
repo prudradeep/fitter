@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Iterator
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +38,7 @@ from app.models import (
 )
 from app.resource_paths import resource_path
 from app.services.document_language import EnglishDocumentRequiredError
+from app.services.ingestion_progress import begin_ingestion_progress, update_ingestion_progress
 from app.services.rate_limit import clear_rate_limits
 from app.services.sync_service import SyncService
 from app.services import sync_permissions
@@ -1221,6 +1223,33 @@ class ApiRouteIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["detail"], "Please provide an English document.")
+
+    def test_non_english_policy_upload_returns_language_error(self) -> None:
+        detail = "This document was detected as German. Please provide an English document."
+        with patch.object(
+            api_routes.KnowledgeBaseService,
+            "ingest_file",
+            AsyncMock(side_effect=EnglishDocumentRequiredError(detail)),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                data={"session_id": "policy-session"},
+                files={"policy_reference_file": ("policy.pdf", b"PDF", "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["detail"], detail)
+
+    def test_knowledge_progress_is_available_to_its_owner(self) -> None:
+        progress_id = str(uuid4())
+        begin_ingestion_progress(progress_id, str(self.user.id))
+        update_ingestion_progress(progress_id, "report.pdf", "extracting")
+
+        response = self.client.get(f"/api/knowledge/progress/{progress_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["stage"], "extracting")
+        self.assertEqual(response.json()["history"], ["extracting"])
 
     def test_policy_reference_upload_uses_isolated_scope_and_message_marker(self) -> None:
         chat_response = {

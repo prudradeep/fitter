@@ -2320,3 +2320,9 @@
   border-bottom: 0;
 }
 
+.chat-ingestion-status {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: inherit;
+}

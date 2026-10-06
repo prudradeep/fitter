@@ -83,6 +83,12 @@ class SettingsSafetyTests(unittest.TestCase):
         self.assertEqual(settings.database_pool_timeout_seconds, 5)
         self.assertEqual(settings.database_connect_timeout_seconds, 3)
 
+    def test_sync_http_read_timeout_is_configurable(self) -> None:
+        settings = Settings(sync_http_read_timeout_seconds=900)
+        self.assertEqual(settings.sync_http_read_timeout_seconds, 900)
+        with self.assertRaises(ValidationError):
+            Settings(sync_http_read_timeout_seconds=5)
+
     def test_knowledge_chunk_settings_are_configurable(self) -> None:
         settings = Settings(knowledge_chunk_size=1600, knowledge_chunk_overlap=240)
 

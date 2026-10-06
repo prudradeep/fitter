@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import time
 import unittest
 from datetime import datetime, timedelta
 from typing import Iterator
@@ -7,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import httpx
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -149,12 +151,15 @@ class SyncServiceTests(unittest.TestCase):
         original_server_url = service.settings.sync_server_url
         original_api_token = service.settings.sync_api_token
         original_batch_size = service.settings.sync_batch_size
+        original_timeout = service.settings.sync_http_read_timeout_seconds
         self.addCleanup(setattr, service.settings, "sync_server_url", original_server_url)
         self.addCleanup(setattr, service.settings, "sync_api_token", original_api_token)
         self.addCleanup(setattr, service.settings, "sync_batch_size", original_batch_size)
+        self.addCleanup(setattr, service.settings, "sync_http_read_timeout_seconds", original_timeout)
         service.settings.sync_server_url = "https://sync.example.test"
         service.settings.sync_api_token = "secret"
         service.settings.sync_batch_size = 2
+        service.settings.sync_http_read_timeout_seconds = 900
         service.export_bundle = MagicMock(
             return_value={
                 "format": "dr-transition-sync-v1",
@@ -231,7 +236,7 @@ class SyncServiceTests(unittest.TestCase):
             patch(
                 "app.services.sync_service.httpx.AsyncClient",
                 return_value=fake_client,
-            ),
+            ) as client_factory,
             patch(
                 "app.services.system_inquiry_telemetry.push_queued_system_inquiry_telemetry",
                 AsyncMock(return_value={"error": False, "pushed": 0}),
@@ -242,6 +247,7 @@ class SyncServiceTests(unittest.TestCase):
             result = asyncio.run(service.exchange_with_server())
 
         index_pending.assert_awaited_once_with()
+        self.assertEqual(client_factory.call_args.kwargs["timeout"].read, 900.0)
         self.assertEqual(
             [url.rsplit("/", 1)[-1] for url, _kwargs in fake_client.calls],
             ["push", "push", "push", "pull"],
@@ -253,6 +259,40 @@ class SyncServiceTests(unittest.TestCase):
             fake_client.calls[-1][1]["params"],
             {"request_user_data_sync": "false"},
         )
+
+    def test_slow_sync_push_does_not_block_other_requests(self) -> None:
+        app = FastAPI()
+        app.include_router(sync_routes.router)
+        app.dependency_overrides[sync_routes.require_sync_token] = lambda: {"_token": "test"}
+        app.dependency_overrides[sync_routes.get_db] = lambda: self.db
+
+        @app.get("/ping")
+        async def ping():
+            return {"ok": True}
+
+        class SlowSyncService:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def apply_bundle(self, *_args, **_kwargs):
+                time.sleep(1)
+                return SyncApplyResult(0, 0, 0, 0, (), False)
+
+        async def run_requests():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                started = time.monotonic()
+                push = asyncio.create_task(client.post("/api/sync/push", json={"tables": []}))
+                await asyncio.sleep(0.05)
+                health = await client.get("/ping")
+                response_time = time.monotonic() - started
+                await push
+                return health, response_time
+
+        with patch.object(sync_routes, "SyncService", SlowSyncService):
+            health, response_time = asyncio.run(run_requests())
+        self.assertEqual(health.status_code, 200)
+        self.assertLess(response_time, 0.5)
 
     def test_sync_schema_creates_internal_foundation_tables(self) -> None:
         service = SyncService(self.db, device_id="device-a")

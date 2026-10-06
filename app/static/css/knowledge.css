@@ -998,3 +998,18 @@
   margin: 0;
 }
 
+.knowledge-progress-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+}
+
+.knowledge-progress-steps span.done::before {
+  content: "✓ ";
+}
+
+.knowledge-progress-steps span.current {
+  font-weight: 700;
+}

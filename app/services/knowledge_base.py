@@ -3,6 +3,7 @@ import hashlib
 import logging
 import re
 import socket
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,7 @@ from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, Secto
 from app.services.document_language import (
     EnglishDocumentRequiredError,
     detect_document_language,
+    display_language,
     language_is_english,
     translate_chunks_to_english,
 )
@@ -119,14 +121,24 @@ class KnowledgeBaseService:
         allow_lexical_only: bool = False,
         reuse_existing: bool = False,
         translate_to_english: bool = True,
+        progress: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         if reuse_existing:
             reusable = self.find_reusable_url_document(url)
             if reusable is not None:
+                if progress:
+                    progress("reusing")
+                    progress("complete")
                 return reusable
-        drafts = await extract_url_chunks(url, self.settings.max_url_ingest_bytes)
+        if progress:
+            progress("downloading")
+        drafts = await extract_url_chunks(
+            url, self.settings.max_url_ingest_bytes, progress=progress
+        )
         if translate_to_english:
-            drafts = await self._english_document_chunks(drafts)
+            drafts = await self._english_document_chunks(drafts, progress)
+        if progress:
+            progress("ingesting")
         result = await self.ingest_chunks(
             drafts,
             title or url,
@@ -136,6 +148,8 @@ class KnowledgeBaseService:
         )
         result["scope"] = self.scope
         result["reused"] = False
+        if progress and not result.get("error"):
+            progress("complete")
         return result
 
     def find_reusable_url_document(self, url: str) -> dict[str, object] | None:
@@ -242,6 +256,7 @@ class KnowledgeBaseService:
         *,
         allow_lexical_only: bool = False,
         translate_to_english: bool = True,
+        progress: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         if len(content) > self.settings.max_upload_bytes:
             return {
@@ -251,16 +266,23 @@ class KnowledgeBaseService:
                     f"{self.settings.max_upload_bytes // (1024 * 1024)} MB."
                 ),
             }
+        if progress:
+            progress("extracting")
         drafts = extract_file_chunks(filename, content)
         if translate_to_english:
-            drafts = await self._english_document_chunks(drafts)
-        return await self.ingest_chunks(
+            drafts = await self._english_document_chunks(drafts, progress)
+        if progress:
+            progress("ingesting")
+        result = await self.ingest_chunks(
             drafts,
             filename,
             file_source_type(filename),
             filename,
             allow_lexical_only=allow_lexical_only,
         )
+        if progress and not result.get("error"):
+            progress("complete")
+        return result
 
     async def ingest_text(
         self,
@@ -276,12 +298,23 @@ class KnowledgeBaseService:
             chunks = await self._english_document_chunks(chunks)
         return await self.ingest_chunks(chunks, title, source_type, source_uri)
 
-    async def _english_document_chunks(self, chunks: list[ChunkDraft]) -> list[ChunkDraft]:
+    async def _english_document_chunks(
+        self, chunks: list[ChunkDraft], progress: Callable[[str], None] | None = None
+    ) -> list[ChunkDraft]:
+        if progress:
+            progress("detecting_language")
         language = await detect_document_language(chunks)
+        if progress:
+            progress(f"detected_language:{display_language(language)}")
         if language_is_english(language):
             return chunks
         if not self.settings.enable_english_translation:
-            raise EnglishDocumentRequiredError("Please provide an English document.")
+            raise EnglishDocumentRequiredError(
+                f"This document was detected as {display_language(language)}. "
+                "Please provide an English document."
+            )
+        if progress:
+            progress("translating")
         return await translate_chunks_to_english(chunks, language)
 
     async def ingest_chunks(
@@ -1297,10 +1330,17 @@ def extract_file_chunks(filename: str, content: bytes) -> list[ChunkDraft]:
     return []
 
 
-async def extract_url_chunks(url: str, max_bytes: int | None = None) -> list[ChunkDraft]:
+async def extract_url_chunks(
+    url: str,
+    max_bytes: int | None = None,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> list[ChunkDraft]:
     if not url.casefold().startswith(("http://", "https://")):
         return []
     response_url, content_type, encoding, content = await _fetch_public_url(url, max_bytes)
+    if progress:
+        progress("extracting")
     lookup_url = response_url or url
     if "pdf" in content_type or lookup_url.casefold().split("?", 1)[0].endswith(".pdf"):
         return extract_pdf_chunks(content)

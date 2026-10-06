@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 import httpx
 import re
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.auth import is_admin_user, require_current_user
 from app.config import get_settings
@@ -69,7 +70,8 @@ async def sync_pull(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     can_sync_user_data = bool(sync_client.get("can_sync_user_data")) and request_user_data_sync
-    return SyncService(db, sync_token=str(sync_client.get("_token") or "")).export_bundle(
+    return await run_in_threadpool(
+        SyncService(db, sync_token=str(sync_client.get("_token") or "")).export_bundle,
         include_app_users=can_sync_user_data,
         include_user_data=can_sync_user_data,
     )
@@ -84,7 +86,8 @@ async def sync_push(
     payload = await _sync_payload_or_error(request)
     if isinstance(payload, JSONResponse):
         return payload
-    result = SyncService(db, sync_token=str(sync_client.get("_token") or "")).apply_bundle(
+    result = await run_in_threadpool(
+        SyncService(db, sync_token=str(sync_client.get("_token") or "")).apply_bundle,
         payload,
         sync_client=sync_client,
     )
@@ -109,12 +112,14 @@ async def sync_exchange(
     if isinstance(payload, JSONResponse):
         return payload
     service = SyncService(db, sync_token=str(sync_client.get("_token") or ""))
-    result = service.apply_bundle(payload, sync_client=sync_client)
     client_requested_user_data = bool(payload.get("request_user_data_sync", True))
     can_sync_user_data = bool(sync_client.get("can_sync_user_data")) and client_requested_user_data
-    bundle = service.export_bundle(
-        include_app_users=can_sync_user_data,
-        include_user_data=can_sync_user_data,
+    result, bundle = await run_in_threadpool(
+        _apply_and_export_sync_bundle,
+        service,
+        payload,
+        sync_client,
+        can_sync_user_data,
     )
     return {
         "error": False,
@@ -128,6 +133,20 @@ async def sync_exchange(
         },
         "bundle": bundle,
     }
+
+
+def _apply_and_export_sync_bundle(
+    service: SyncService,
+    payload: dict[str, object],
+    sync_client: dict[str, object],
+    can_sync_user_data: bool,
+):
+    result = service.apply_bundle(payload, sync_client=sync_client)
+    bundle = service.export_bundle(
+        include_app_users=can_sync_user_data,
+        include_user_data=can_sync_user_data,
+    )
+    return result, bundle
 
 
 @router.post("/run")

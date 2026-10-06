@@ -398,14 +398,19 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         )
         self.service._summarize_context_policy = AsyncMock()
 
-        response = asyncio.run(
-            self.service._context_policy_details_step("session-1", session)
-        )
+        with patch(
+            "app.services.document_language.get_settings",
+            return_value=SimpleNamespace(enable_english_translation=False),
+        ):
+            response = asyncio.run(
+                self.service._context_policy_details_step("session-1", session)
+            )
 
         self.assertEqual(response.step, "policy_reference")
         self.assertEqual(response.input_mode, "policy_reference")
         self.assertEqual(session.phase, "policy_reference")
         self.assertIn("Please provide its URL or attach", response.bot_message)
+        self.assertIn("Please provide an English document", response.bot_message)
         self.service._summarize_context_policy.assert_not_called()
 
     def test_policy_summary_requests_benefited_population_groups(self) -> None:

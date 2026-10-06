@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 from typing import Protocol
 
+from app.config import get_settings
 from app.llm import ask_llm_chat
 
 
@@ -34,6 +35,20 @@ _LLM_FAILURE_PREFIXES = (
 
 def language_is_english(language: str | None) -> bool:
     return str(language or "").strip().casefold() in _ENGLISH_LANGUAGE_NAMES
+
+
+def document_language_guidance() -> str:
+    if get_settings().enable_english_translation:
+        return "Non-English documents will be translated into English before review."
+    return "Please provide an English document. Non-English documents cannot be accepted."
+
+
+def display_language(language: str) -> str:
+    code = str(language or "").strip().casefold()
+    return next(
+        (name.title() for name, alias in _LANGUAGE_ALIASES.items() if alias == code),
+        f"language code {code}",
+    )
 
 
 async def detect_document_language(chunks: Sequence[TextChunk]) -> str:

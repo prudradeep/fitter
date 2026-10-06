@@ -39,6 +39,7 @@ from app.services.custom_hazard_validation import (
     validate_context_policy_document,
 )
 from app.services.custom_hazard_state_machine import transition_custom_hazard
+from app.services.document_language import document_language_guidance
 from app.services.enums import ChatPhase
 from app.services.hazard_salience import survey_respondent_count
 from app.services.knowledge_base import POLICY_DOCUMENT_SCOPE, TEMPORARY_KB_SCOPE
@@ -160,7 +161,8 @@ class ChatHazardStepsMixin:
                 step="policy_reference",
                 bot_message=markdown_to_html(
                     "## Add a new policy\n\nProvide a policy document URL or attach a PDF, DOCX, MD, or TXT file. "
-                    "I will check the document before adding the policy."
+                    "I will check the document before adding the policy.\n\n"
+                    f"{document_language_guidance()}"
                 ),
                 session=session.summary(),
                 input_mode="policy_reference",
@@ -279,7 +281,8 @@ class ChatHazardStepsMixin:
                 bot_message=markdown_to_html(
                     "## Policy document needed\n\n"
                     "The policy document is not available for this policy. "
-                    "Please provide its URL or attach a PDF, DOCX, MD, or TXT file."
+                    "Please provide its URL or attach a PDF, DOCX, MD, or TXT file.\n\n"
+                    f"{document_language_guidance()}"
                 ),
                 session=session.summary(),
                 input_mode="policy_reference",

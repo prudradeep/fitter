@@ -12,6 +12,7 @@ from app.services.hazard_with_mitigation import (
     country_factsheet_inspiration_fields,
     country_factsheet_reference,
 )
+from app.services.document_language import document_language_guidance
 from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE
 
 
@@ -500,6 +501,7 @@ class ChatMitigationCreationGuidedMixin:
         if detail:
             message += f"{detail}\n\n"
         message += "Paste a policy URL or attach a PDF, DOCX, MD, or TXT file."
+        message += f"\n\n{document_language_guidance()}"
         return ChatResponse(
             session_id=session_id,
             step="mitigation_policy_reference",

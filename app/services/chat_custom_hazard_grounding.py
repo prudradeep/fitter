@@ -41,6 +41,7 @@ from app.services.custom_hazard_validation import (
     policy_objective_for_sector,
     validate_custom_hazard_dimensions,
 )
+from app.services.document_language import document_language_guidance
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.prompt_loader import load_nested_prompt_file
@@ -1080,7 +1081,8 @@ class ChatCustomHazardGroundingMixin:
             "I will check whether it supports the mechanism you provided and trace the "
             "causal link from its provisions, through the mechanism, to the hazard.\n\n"
             "This document is a policy reference only and will not be treated as evidence "
-            "that the hazard occurred or affects a population."
+            "that the hazard occurred or affects a population.\n\n"
+            f"{document_language_guidance()}"
         )
         if detail:
             message = f"{detail}\n\n{message}"

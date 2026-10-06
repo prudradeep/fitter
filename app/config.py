@@ -152,6 +152,7 @@ class Settings(BaseSettings):
     sync_api_token: str = ""
     sync_device_id: str = ""
     sync_batch_size: int = 500
+    sync_http_read_timeout_seconds: int = Field(default=600, ge=30, le=3600)
     sync_include_logs: bool = False
     sync_server_expose_app_apis: bool = False
     sync_auto_on_startup: bool = True

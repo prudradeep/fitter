@@ -94,6 +94,7 @@ SQLITE_DATABASE_PATH="data/dr_transition.db"
 SYNC_SERVER_URL="https://your-sync-host.example"
 SYNC_API_TOKEN="<server-issued-client-token>"
 SYNC_DEVICE_ID="<stable-client-uuid>"
+SYNC_HTTP_READ_TIMEOUT_SECONDS=600
 # Set false to skip policy-document imports; Main KB imports remain enabled.
 CLIENT_STARTUP_SEED_KB_POLICY_DOCUMENTS=true
 ```

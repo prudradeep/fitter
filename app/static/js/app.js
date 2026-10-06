@@ -4667,10 +4667,11 @@ function addKnowledgeProgressRow(label, status = "Queued") {
     knowledgeSvgIcon(["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"]),
     createElement("div", { className: "knowledge-progress-main" }, [
       createElement("strong", { text: label, attrs: { title: label } }),
-      createElement("small", { text: status }),
+      createElement("small", { text: status, attrs: { role: "status", "aria-live": "polite" } }),
       createElement("div", { className: "knowledge-progress-track", attrs: { "aria-hidden": "true" } }, [
         createElement("span"),
       ]),
+      createElement("div", { className: "knowledge-progress-steps" }),
     ]),
   ]);
   knowledgeProgressList.appendChild(row);
@@ -4687,8 +4688,70 @@ function updateKnowledgeProgressRow(row, status, percent, state = "") {
   if (bar) bar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
 }
 
+const ingestionStages = {
+  reusing: ["Using existing document...", 80],
+  downloading: ["Downloading document...", 20],
+  extracting: ["Extracting text...", 35],
+  detecting_language: ["Checking language...", 50],
+  translating: ["Translating to English...", 65],
+  ingesting: ["Embedding and indexing...", 80],
+  complete: ["Document ready", 95],
+};
+
+function startIngestionProgress(onUpdate) {
+  const id = globalThis.crypto?.randomUUID?.() ||
+    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+      const value = globalThis.crypto.getRandomValues(new Uint8Array(1))[0] & 15;
+      return (character === "x" ? value : (value & 3) | 8).toString(16);
+    });
+  let stopped = false;
+  let timer;
+  async function readStatus() {
+    try {
+      const response = await fetch(`/api/knowledge/progress/${id}`);
+      if (response.ok && !stopped) {
+        const status = await response.json();
+        if (!stopped && status.stage !== "queued") onUpdate(status);
+      }
+    } catch (error) {
+      console.debug("Ingestion progress is temporarily unavailable", error);
+    }
+  }
+  async function poll() {
+    if (stopped) return;
+    await readStatus();
+    if (!stopped) timer = setTimeout(poll, 350);
+  }
+  timer = setTimeout(poll, 350);
+  return {
+    id,
+    stop() { stopped = true; clearTimeout(timer); },
+    async finish() { await readStatus(); this.stop(); },
+  };
+}
+
+function showIngestionStep(row, status) {
+  const [label, percent] = ingestionStageInfo(status.stage);
+  updateKnowledgeProgressRow(row, label, percent);
+  const steps = row?.querySelector(".knowledge-progress-steps");
+  if (steps && Array.isArray(status.history)) {
+    steps.replaceChildren(...status.history.map((stage) => createElement("span", {
+      text: ingestionStageInfo(stage)[0].replace(/\.\.\.$/, ""),
+      className: stage === status.stage ? "current" : "done",
+    })));
+  }
+}
+
+function ingestionStageInfo(stage) {
+  if (stage.startsWith("detected_language:")) {
+    return [`Detected language: ${stage.split(":", 2)[1]}`, 55];
+  }
+  return ingestionStages[stage] || ["Processing document...", 15];
+}
+
 function uploadKnowledgeFile(file, row) {
   return new Promise((resolve) => {
+    const progress = startIngestionProgress((status) => showIngestionStep(row, status));
     const formData = new FormData();
     formData.append("files", file);
     const csrfToken = cookieValue("dr_transition_csrf");
@@ -4697,6 +4760,7 @@ function uploadKnowledgeFile(file, row) {
     }
     const request = new XMLHttpRequest();
     request.open("POST", "/api/knowledge/upload");
+    request.setRequestHeader("X-Ingestion-Progress-ID", progress.id);
     if (csrfToken) {
       request.setRequestHeader("X-CSRF-Token", csrfToken);
     }
@@ -4705,13 +4769,14 @@ function uploadKnowledgeFile(file, row) {
         updateKnowledgeProgressRow(row, "Uploading...", 12);
         return;
       }
-      const percent = Math.round((event.loaded / event.total) * 70);
-      updateKnowledgeProgressRow(row, `Uploading ${Math.max(1, percent)}%`, percent);
+      const uploaded = Math.round((event.loaded / event.total) * 100);
+      updateKnowledgeProgressRow(row, `Uploading ${Math.max(1, uploaded)}%`, Math.round(uploaded * 0.15));
     });
     request.upload.addEventListener("load", () => {
-      updateKnowledgeProgressRow(row, "Embedding and indexing...", 75);
+      updateKnowledgeProgressRow(row, "Preparing document...", 15);
     });
-    request.addEventListener("load", () => {
+    request.addEventListener("load", async () => {
+      await progress.finish();
       let data = { error: true, detail: "Could not ingest file." };
       try {
         data = JSON.parse(request.responseText || "{}");
@@ -4728,6 +4793,7 @@ function uploadKnowledgeFile(file, row) {
       resolve(data);
     });
     request.addEventListener("error", () => {
+      progress.stop();
       resolve({ error: true, detail: "Upload failed before ingestion started." });
     });
     updateKnowledgeProgressRow(row, "Uploading...", 5);
@@ -4747,24 +4813,27 @@ async function openKnowledgeDialog() {
 
 function uploadPolicyDocument(formData, row, isUrl) {
   return new Promise((resolve) => {
+    const progress = startIngestionProgress((status) => showIngestionStep(row, status));
     const csrfToken = cookieValue("dr_transition_csrf");
     if (csrfToken) formData.append("csrf_token", csrfToken);
     const request = new XMLHttpRequest();
     request.open("POST", "/api/knowledge/policy-document");
+    request.setRequestHeader("X-Ingestion-Progress-ID", progress.id);
     if (csrfToken) request.setRequestHeader("X-CSRF-Token", csrfToken);
     request.upload.addEventListener("progress", (event) => {
       if (isUrl || !event.lengthComputable) return;
-      const percent = Math.round((event.loaded / event.total) * 60);
-      updateKnowledgeProgressRow(row, `Uploading ${Math.max(1, percent)}%`, percent);
+      const uploaded = Math.round((event.loaded / event.total) * 100);
+      updateKnowledgeProgressRow(row, `Uploading ${Math.max(1, uploaded)}%`, Math.round(uploaded * 0.15));
     });
     request.upload.addEventListener("load", () => {
       updateKnowledgeProgressRow(
         row,
-        isUrl ? "Fetching and indexing document..." : "Embedding and indexing document...",
-        isUrl ? 45 : 75,
+        isUrl ? "Downloading document..." : "Preparing document...",
+        isUrl ? 20 : 15,
       );
     });
-    request.addEventListener("load", () => {
+    request.addEventListener("load", async () => {
+      await progress.finish();
       let data = { error: true, detail: "Could not update the policy document." };
       try {
         data = JSON.parse(request.responseText || "{}");
@@ -4781,6 +4850,7 @@ function uploadPolicyDocument(formData, row, isUrl) {
       resolve(data);
     });
     request.addEventListener("error", () => {
+      progress.stop();
       resolve({ error: true, detail: "Policy document update failed before ingestion started." });
     });
     updateKnowledgeProgressRow(row, isUrl ? "Fetching document..." : "Uploading document...", 8);
@@ -5653,6 +5723,7 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
   const typing = addTyping();
   setLoading(true);
   let shouldScheduleAuto = false;
+  let progress = null;
 
   try {
     const hasEvidenceFile = extras.evidenceFile instanceof File && extras.evidenceFile.size > 0;
@@ -5660,8 +5731,22 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     const hasPolicyReferenceFile = extras.policyReferenceFile instanceof File && extras.policyReferenceFile.size > 0;
     const hasPolicyReferenceUrl = Boolean(extras.policyReferenceUrl);
     const useMultipart = hasEvidenceFile || hasEvidenceUrl || hasPolicyReferenceFile || hasPolicyReferenceUrl;
+    if (useMultipart) {
+      const statusElement = createElement("small", {
+        className: "chat-ingestion-status",
+        text: hasEvidenceFile || hasPolicyReferenceFile ? "Uploading document..." : "Downloading document...",
+        attrs: { role: "status", "aria-live": "polite" },
+      });
+      typing.querySelector(".bubble")?.appendChild(statusElement);
+      progress = startIngestionProgress((status) => {
+        const [label] = ingestionStageInfo(status.stage);
+        statusElement.textContent = status.stage === "complete"
+          ? "Document ready; continuing validation..." : label;
+      });
+    }
     const response = await csrfFetch("/api/chat", {
       method: "POST",
+      ...(progress ? { headers: { "X-Ingestion-Progress-ID": progress.id } } : {}),
       ...(useMultipart
         ? {
             body: buildChatFormData(cleanMessage, extras),
@@ -5683,7 +5768,8 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     }
 
     if (!response.ok) {
-      throw new Error(`Request failed with status ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Request failed with status ${response.status}`);
     }
 
     const data = await response.json();
@@ -5713,7 +5799,9 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
   } catch (error) {
     typing.remove();
     console.error("Chat request failed", error);
+    addMessage("bot", error.message || "The document could not be processed.", true);
   } finally {
+    progress?.stop();
     setLoading(false);
     if (["reason_evidence", "reason_only", "mitigation_measure"].includes(appState.inputMode)) {
       reasonInput.focus();
@@ -6066,7 +6154,7 @@ knowledgeUploadForm?.addEventListener("submit", async (event) => {
     const data = await uploadKnowledgeFile(file, row);
     const failed = data.error || Boolean(data.failures?.length);
     if (failed) {
-      const detail = data.detail || data.failures?.[0]?.detail || "Could not ingest file.";
+      const detail = data.failures?.[0]?.detail || data.detail || "Could not ingest file.";
       failures.push({ source: file.name, detail });
       updateKnowledgeProgressRow(row, detail, 100, "failed");
       continue;
@@ -6096,16 +6184,28 @@ knowledgeUrlForm?.addEventListener("submit", async (event) => {
   const failures = [];
   for (const [index, url] of urls.entries()) {
     const row = rows[index];
-    updateKnowledgeProgressRow(row, "Fetching and ingesting...", 35);
-    const response = await csrfFetch("/api/knowledge/url", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ urls: [url] }),
-    });
-    const data = await response.json();
+    updateKnowledgeProgressRow(row, "Downloading document...", 10);
+    const progress = startIngestionProgress((status) => showIngestionStep(row, status));
+    let data;
+    try {
+      const response = await csrfFetch("/api/knowledge/url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Ingestion-Progress-ID": progress.id,
+        },
+        body: JSON.stringify({ urls: [url] }),
+      });
+      data = await response.json();
+      if (!response.ok) data.error = true;
+    } catch (error) {
+      data = { error: true, detail: error.message || "Could not ingest URL." };
+    } finally {
+      await progress.finish();
+    }
     const failed = data.error || Boolean(data.failures?.length);
     if (failed) {
-      const detail = data.detail || data.failures?.[0]?.detail || "Could not ingest URL.";
+      const detail = data.failures?.[0]?.detail || data.detail || "Could not ingest URL.";
       failures.push({ source: url, detail });
       updateKnowledgeProgressRow(row, detail, 100, "failed");
       continue;
