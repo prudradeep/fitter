@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     env, fs,
-    net::{TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -279,18 +278,6 @@ fn check_runtime(config: &DesktopConfig, env_config: &RuntimeEnv, log_dir: &Path
         action: "Create or copy the app .env file to %LOCALAPPDATA%\\DrTransition\\.env or %ProgramData%\\DrTransition\\.env.".to_string(),
     });
 
-    let mysql_ok = tcp_port_open("127.0.0.1:3306", Duration::from_secs(2));
-    checks.push(RuntimeCheck {
-        name: "MySQL".to_string(),
-        ok: mysql_ok,
-        detail: if mysql_ok {
-            "MySQL is accepting local connections on 127.0.0.1:3306.".to_string()
-        } else {
-            "MySQL is not reachable on 127.0.0.1:3306.".to_string()
-        },
-        action: "Install/start MySQL and create the Dr Transition database user/schema from your seed script.".to_string(),
-    });
-
     let ollama_ok = health_ok(ollama_base_url);
     checks.push(RuntimeCheck {
         name: "Ollama service".to_string(),
@@ -336,15 +323,6 @@ fn check_runtime(config: &DesktopConfig, env_config: &RuntimeEnv, log_dir: &Path
         checks,
         logs_dir: log_dir.display().to_string(),
     }
-}
-
-fn tcp_port_open(address: &str, timeout: Duration) -> bool {
-    address
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut addresses| addresses.next())
-        .and_then(|address| TcpStream::connect_timeout(&address, timeout).ok())
-        .is_some()
 }
 
 fn ollama_models(base_url: &str) -> Result<Vec<String>> {
