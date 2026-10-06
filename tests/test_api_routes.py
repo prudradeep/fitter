@@ -36,6 +36,7 @@ from app.models import (
     UserSession,
 )
 from app.resource_paths import resource_path
+from app.services.document_language import EnglishDocumentRequiredError
 from app.services.rate_limit import clear_rate_limits
 from app.services.sync_service import SyncService
 from app.services import sync_permissions
@@ -1205,6 +1206,21 @@ class ApiRouteIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 413)
         self.assertEqual(response.json()["detail"], "Evidence upload is too large.")
+
+    def test_non_english_evidence_upload_returns_language_error(self) -> None:
+        with patch.object(
+            api_routes.KnowledgeBaseService,
+            "ingest_file",
+            AsyncMock(side_effect=EnglishDocumentRequiredError("Please provide an English document.")),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                data={"session_id": "evidence-session"},
+                files={"evidence_file": ("evidence.pdf", b"PDF", "application/pdf")},
+            )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["detail"], "Please provide an English document.")
 
     def test_policy_reference_upload_uses_isolated_scope_and_message_marker(self) -> None:
         chat_response = {

@@ -16,7 +16,12 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, Sector
-from app.services.document_language import detect_document_language, translate_chunks_to_english
+from app.services.document_language import (
+    EnglishDocumentRequiredError,
+    detect_document_language,
+    language_is_english,
+    translate_chunks_to_english,
+)
 from app.services.document_text import (
     compact_text,
     extract_docx_text,
@@ -113,7 +118,7 @@ class KnowledgeBaseService:
         *,
         allow_lexical_only: bool = False,
         reuse_existing: bool = False,
-        translate_to_english: bool = False,
+        translate_to_english: bool = True,
     ) -> dict[str, object]:
         if reuse_existing:
             reusable = self.find_reusable_url_document(url)
@@ -121,8 +126,7 @@ class KnowledgeBaseService:
                 return reusable
         drafts = await extract_url_chunks(url, self.settings.max_url_ingest_bytes)
         if translate_to_english:
-            language = await detect_document_language(drafts)
-            drafts = await translate_chunks_to_english(drafts, language)
+            drafts = await self._english_document_chunks(drafts)
         result = await self.ingest_chunks(
             drafts,
             title or url,
@@ -237,7 +241,7 @@ class KnowledgeBaseService:
         content: bytes,
         *,
         allow_lexical_only: bool = False,
-        translate_to_english: bool = False,
+        translate_to_english: bool = True,
     ) -> dict[str, object]:
         if len(content) > self.settings.max_upload_bytes:
             return {
@@ -249,8 +253,7 @@ class KnowledgeBaseService:
             }
         drafts = extract_file_chunks(filename, content)
         if translate_to_english:
-            language = await detect_document_language(drafts)
-            drafts = await translate_chunks_to_english(drafts, language)
+            drafts = await self._english_document_chunks(drafts)
         return await self.ingest_chunks(
             drafts,
             filename,
@@ -270,9 +273,16 @@ class KnowledgeBaseService:
     ) -> dict[str, object]:
         chunks = chunk_text(compact_text(text))
         if translate_to_english:
-            language = await detect_document_language(chunks)
-            chunks = await translate_chunks_to_english(chunks, language)
+            chunks = await self._english_document_chunks(chunks)
         return await self.ingest_chunks(chunks, title, source_type, source_uri)
+
+    async def _english_document_chunks(self, chunks: list[ChunkDraft]) -> list[ChunkDraft]:
+        language = await detect_document_language(chunks)
+        if language_is_english(language):
+            return chunks
+        if not self.settings.enable_english_translation:
+            raise EnglishDocumentRequiredError("Please provide an English document.")
+        return await translate_chunks_to_english(chunks, language)
 
     async def ingest_chunks(
         self,

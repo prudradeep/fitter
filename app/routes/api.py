@@ -39,6 +39,7 @@ from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
 from app.services.chat_parsers import parse_evaluation_answer
 from app.services.audit_log import record_audit_event
+from app.services.document_language import EnglishDocumentRequiredError
 from app.services.hazard_effect_size import hazard_effect_size_rows, hazard_predictor_effect_rows
 from app.services.hazard_ranking_service import HAZARD_COLUMN_BY_SLUG, HazardRankingService
 from app.services.knowledge_base import (
@@ -1661,6 +1662,8 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                         evidence_parts.append(
                             f"Temporary evidence document ID: {document_id}"
                         )
+            except EnglishDocumentRequiredError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except (httpx.HTTPError, ValueError):
                 pass
 
@@ -1697,6 +1700,8 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                     document_id = str(result.get("document_id") or "").strip()
                     if document_id:
                         evidence_parts.append(f"Temporary evidence document ID: {document_id}")
+                except EnglishDocumentRequiredError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
                 except (httpx.HTTPError, ValueError):
                     pass
 

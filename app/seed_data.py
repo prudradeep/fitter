@@ -134,6 +134,7 @@ async def seed_main_kb_from_files(*, overwrite: bool = False) -> dict[str, objec
                     source_uri,
                     path.read_bytes(),
                     allow_lexical_only=True,
+                    translate_to_english=False,
                 )
             except Exception as exc:
                 logging.getLogger(__name__).exception("Failed to seed KB file %s", source_uri)

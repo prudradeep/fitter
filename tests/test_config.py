@@ -89,6 +89,10 @@ class SettingsSafetyTests(unittest.TestCase):
         self.assertEqual(settings.knowledge_chunk_size, 1600)
         self.assertEqual(settings.knowledge_chunk_overlap, 240)
 
+    def test_english_translation_can_be_disabled_from_env(self) -> None:
+        with patch.dict("os.environ", {"ENABLE_ENGLISH_TRANSLATION": "false"}):
+            self.assertFalse(Settings().enable_english_translation)
+
     def test_knowledge_chunk_overlap_must_be_smaller_than_chunk_size(self) -> None:
         with self.assertRaises(ValidationError):
             Settings(knowledge_chunk_size=200, knowledge_chunk_overlap=200)

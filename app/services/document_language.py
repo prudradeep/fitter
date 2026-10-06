@@ -14,6 +14,10 @@ class TextChunk(Protocol):
     page_number: int | None
 
 
+class EnglishDocumentRequiredError(ValueError):
+    """A non-English user document cannot be accepted while translation is disabled."""
+
+
 _ENGLISH_LANGUAGE_NAMES = {"en", "eng", "english", "english language"}
 _LANGUAGE_ALIASES = {
     "arabic": "ar", "bulgarian": "bg", "croatian": "hr", "czech": "cs", "danish": "da",

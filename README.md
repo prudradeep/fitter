@@ -466,6 +466,13 @@ FAISS_INDEX_PATH="data/knowledge.faiss"
 OLLAMA_EMBEDDING_MODEL="nomic-embed-text"
 ```
 
+User supplied URLs and documents are checked for language before ingestion.
+Set `ENABLE_ENGLISH_TRANSLATION=true` in the active env file to translate
+non-English content into English. Set it to `false` to reject non-English
+documents with “Please provide an English document.” Restart the backend after
+changing this setting. The active file is `.env` unless `ENV_FILE` selects
+another file.
+
 ## Grounding Model Services
 
 Mitigation validation includes two dedicated local model services:

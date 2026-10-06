@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     prompt_source: str = "auto"
 
     faiss_index_path: str = "data/knowledge.faiss"
+    enable_english_translation: bool = True
     max_upload_bytes: int = 10 * 1024 * 1024
     max_session_import_bytes: int = 10 * 1024 * 1024
     max_url_ingest_bytes: int = 10 * 1024 * 1024
