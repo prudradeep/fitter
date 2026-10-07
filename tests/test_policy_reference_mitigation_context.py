@@ -29,6 +29,21 @@ from app.services.custom_hazard_validation import validate_context_policy_docume
 
 
 class PolicyReferenceMitigationContextTests(unittest.TestCase):
+    def test_policy_summary_restores_after_saved_session_reload(self) -> None:
+        session = ChatSession(
+            country="Germany", region="Baden-Württemberg", sector="Energy",
+            phase="policy_summary", selected_context_policy="Wind levy act",
+            selected_context_policy_summary="### Policy details\n\n- **Levy:** Wind operators pay municipalities.",
+        )
+        restored = ChatSessionStore().put("session-1", asdict(session))
+
+        prompt = self.service._repeat_current_options("session-1", restored, "", False)
+
+        self.assertEqual(prompt.step, "policy_summary")
+        self.assertEqual(prompt.session.selected_context_policy, "Wind levy act")
+        self.assertEqual(prompt.session.selected_context_policy_summary, session.selected_context_policy_summary)
+        self.assertEqual([option.label for option in prompt.options], ["Continue to hazards"])
+
     def test_policy_clarification_restores_its_form_after_saved_session_reload(self) -> None:
         session = ChatSession(
             country="Ireland", region="Leinster", sector="Energy",
@@ -450,6 +465,55 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
 
         self.assertIn("Socio-demographic groups benefited", summary)
         self.assertIn("Not identified", summary)
+
+    def test_policy_summary_fallback_uses_readable_document_excerpts(self) -> None:
+        session = ChatSession(selected_context_policy="Wind participation")
+        source = (
+            "The law applies to wind energy facilities in North Rhine-Westphalia.\n\n"
+            "Project promoters are required to offer residents financial participation "
+            "through an agreement.\n\n"
+            "The payments are intended to enhance acceptance of wind energy projects.\n\n"
+            "Natural persons residing in participating municipalities may receive "
+            "participation rights."
+        )
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock, return_value="",
+        ):
+            summary = asyncio.run(self.service._summarize_context_policy(
+                session, source, session.selected_context_policy,
+            ))
+
+        self.assertNotIn("A complete automatic summary was unavailable", summary)
+        self.assertIn("The law applies to wind energy facilities", summary)
+        self.assertNotIn("Document excerpt", summary)
+        self.assertIn("financial participation", summary)
+        self.assertIn("enhance acceptance", summary)
+        self.assertIn("Natural persons residing", summary)
+        self.assertNotIn("Not separately stated in the available policy material", summary)
+
+    def test_policy_summary_preserves_valid_sections_when_another_section_fails(self) -> None:
+        session = ChatSession(selected_context_policy="Wind participation")
+        source = (
+            "Project promoters are required to offer residents financial participation "
+            "through an agreement."
+        )
+        partial = json.dumps({
+            "policy_details": [{"label": "Scope", "text": "The law covers wind projects."}],
+            "mechanisms": [{"label": "Agreement", "text": "The agreement requires ("}],
+        })
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock, side_effect=[partial, ""],
+        ):
+            summary = asyncio.run(self.service._summarize_context_policy(
+                session, source, session.selected_context_policy,
+            ))
+
+        self.assertIn("- **Scope:** The law covers wind projects.", summary)
+        self.assertIn("- Project promoters are required", summary)
+        self.assertNotIn("Document excerpt", summary)
+        self.assertNotIn("The agreement requires (", summary)
 
     def test_policy_summary_renders_all_sections_from_structured_response(self) -> None:
         session = ChatSession(selected_context_policy="Clean electricity support")

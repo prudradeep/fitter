@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260907-hide-current-policy-ui" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261007-sector-guides" />
   </head>
   <body data-tour-user-id="{{ current_user.id }}">
     <header class="topbar">
@@ -343,7 +343,7 @@
             <dd id="sessionSector">Not selected</dd>
           </div>
         </dl>
-        <p id="sessionEmpty" class="session-empty stage-empty">Session not started yet.</p>
+        <p id="sessionEmpty" class="session-empty stage-empty"></p>
         <section
           id="selectedHazardContext"
           class="selected-hazard-context"
@@ -432,12 +432,43 @@
             data-europe-map-path="custom/europe.geo.json"
           ></div>
           <div id="stageIconGrid" class="stage-icon-grid" aria-label="Stage icons"></div>
+          <iframe
+            id="stageHazardGuide"
+            class="stage-hazard-guide"
+            src="{{ url_for('static', path='/hazard.html') }}?v=20261007-circles-v2"
+            title="What is a hazard?"
+            hidden
+          ></iframe>
+          <iframe
+            id="stageSectorGuide"
+            class="stage-sector-guide"
+            data-energy-src="{{ url_for('static', path='/energy-hbg.html') }}?v=20261007-hero-contrast"
+            data-housing-src="{{ url_for('static', path='/housing-hbg.html') }}?v=20261007-hero-contrast"
+            data-transport-src="{{ url_for('static', path='/transport-hbg.html') }}?v=20261007-hero-contrast"
+            title="Selected sector guide"
+            hidden
+          ></iframe>
+          <iframe
+            id="stagePolicySummary"
+            class="stage-policy-summary"
+            data-src="{{ url_for('static', path='/policy-summary.html') }}?v=20261007-all-titles"
+            title="Selected policy summary"
+            hidden
+          ></iframe>
         </div>
         <div class="stage-copy">
           <h2 id="stageVisualTitle">Starting your roadmap</h2>
           <p id="stageVisualText">
             Your selections and evidence will shape this workspace as the guided analysis moves forward.
           </p>
+          <div id="stageSectorTable" class="stage-sector-table" hidden>
+            <table aria-label="Sectors analyzed and sectoral objectives">
+              <thead>
+                <tr><th scope="col">Sector</th><th scope="col">Sectoral objective</th></tr>
+              </thead>
+              <tbody id="stageSectorTableBody"></tbody>
+            </table>
+          </div>
         </div>
         <button
           id="floatingStatsButton"
@@ -1211,6 +1242,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260904-prompt-source-preference"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261003-policy-review-navigation"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261007-selected-location"></script>
   </body>
 </html>

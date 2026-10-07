@@ -354,8 +354,16 @@ class ChatService(
             )
 
         if session.phase in {"policy_hazard_confirmation", "policy_hazard_details"}:
-            return await self._save_new_context_policy(
-                current_session_id, session, session.pending_context_policy_hazards or []
+            return await self._new_policy_summary_review_step(current_session_id, session)
+
+        if session.phase == "policy_summary_review":
+            return await self._handle_new_policy_summary_review(
+                current_session_id, session, clean_message,
+            )
+
+        if session.phase in {"policy_summary_details", "policy_summary_clarification"}:
+            return await self._handle_new_policy_summary_detail(
+                current_session_id, session, clean_message,
             )
 
         if (
@@ -1981,6 +1989,8 @@ class ChatService(
             labels = ["Add a new policy", *[title for _, title in self._policy_rows_for_selected_context(session)]]
         elif session.phase == "policy_summary":
             labels = ["Continue to hazards"]
+        elif session.phase == "policy_summary_review":
+            labels = ["Confirm summary", "Add more details"]
         elif session.phase == "policy_hazard_confirmation":
             labels = ["Yes, add policy and hazards", "No, provide more details"]
         elif session.phase == "hazards":
@@ -2052,6 +2062,8 @@ class ChatService(
             return ["Add a new policy", *[title for _, title in self._policy_rows_for_selected_context(session)]]
         if session.phase == "policy_summary":
             return ["Continue to hazards"]
+        if session.phase == "policy_summary_review":
+            return ["Confirm summary", "Add more details"]
         if session.phase == "policy_hazard_confirmation":
             return ["Yes, add policy and hazards", "No, provide more details"]
         if session.phase == "hazards":

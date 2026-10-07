@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from dataclasses import asdict
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import create_engine, inspect, select
@@ -10,7 +11,7 @@ from app.db.session import Base
 from app.db.sqlite_migrations import _019_policy_hazard_links
 from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, PolicyHazardLink, Sector, SystemHazard
 from app.services.chat_service import ChatService
-from app.services.chat_session import ChatSession
+from app.services.chat_session import ChatSession, ChatSessionStore
 
 
 class NewPolicyHazardLinkingTests(unittest.TestCase):
@@ -38,6 +39,7 @@ class NewPolicyHazardLinkingTests(unittest.TestCase):
             session_key="session-1", country_id="country-1", country="Germany",
             sector_id="sector-1", sector="Energy", phase="policy_reference",
             adding_context_policy=True, selected_context_policy="New smart tariff policy",
+            context_policy_summary_confirmed=True,
             pending_context_policy_document_ids=[new_doc.id],
             hazards=[hazard.name], hazard_profiles={hazard.name: [{"name": "Low-income households"}]},
         )
@@ -49,7 +51,7 @@ class NewPolicyHazardLinkingTests(unittest.TestCase):
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
 
-    def test_found_hazards_are_linked_without_confirmation(self):
+    def test_found_hazards_are_linked_after_summary_confirmation(self):
         answer = '{"hazards":[{"id":"system:%s","reason":"Dynamic prices -> peak rates -> higher bills"}]}' % self.hazard_id
         with patch("app.services.chat_hazard_steps.ask_llm_chat", new_callable=AsyncMock, return_value=answer):
             result = asyncio.run(self.service._new_policy_hazard_suggestions_step("session-1", self.session))
@@ -178,7 +180,7 @@ class NewPolicyHazardLinkingTests(unittest.TestCase):
         self.assertEqual(self.session.hazards, [])
         self.assertIn("No hazards are currently linked", hazards.bot_message)
 
-    def test_accepted_document_reaches_saved_summary_without_confirmation(self):
+    def test_accepted_document_waits_for_summary_confirmation_before_saving(self):
         review = {
             "checks": {
                 "sector_objective_fit": {"status": "supported", "reason": "Relevant."},
@@ -193,13 +195,129 @@ class NewPolicyHazardLinkingTests(unittest.TestCase):
         ):
             response = asyncio.run(self.service._validate_context_policy_document("session-1", self.session))
 
-        self.assertEqual(response.step, "policy_summary")
-        self.assertIn("No hazards found.", response.bot_message)
-        self.assertIsNotNone(self.db.scalar(select(Policy).where(Policy.source == "user")))
-        self.assertEqual(self.db.get(KnowledgeDocument, self.new_doc_id).scope, "policy_reference")
+        self.assertEqual(response.step, "policy_summary_review")
+        self.assertFalse(self.session.context_policy_summary_confirmed)
+        self.assertEqual(
+            [option.label for option in response.options],
+            ["Confirm summary", "Add more details"],
+        )
+        self.assertIn("Mechanisms: dynamic prices", response.bot_message)
+        self.assertIsNone(self.db.scalar(select(Policy).where(Policy.source == "user")))
+        self.assertEqual(self.db.get(KnowledgeDocument, self.new_doc_id).scope, "temporary")
         self.service._policy_reference_context.assert_any_await(
             self.session, [self.new_doc_id], full_text=True
         )
+
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock, return_value='{"hazards":[]}',
+        ):
+            saved = asyncio.run(self.service._handle_new_policy_summary_review(
+                "session-1", self.session, "Confirm summary",
+            ))
+        self.assertEqual(saved.step, "policy_summary")
+        self.assertFalse(self.session.context_policy_summary_confirmed)
+        self.assertIn("No hazards found.", saved.bot_message)
+        self.assertIn("Mechanisms: dynamic prices", saved.bot_message)
+        self.assertEqual(self.service._summarize_context_policy.await_count, 1)
+        self.assertIsNotNone(self.db.scalar(select(Policy).where(Policy.source == "user")))
+        self.assertEqual(self.db.get(KnowledgeDocument, self.new_doc_id).scope, "policy_reference")
+
+    def test_added_detail_is_checked_then_summary_is_regenerated_before_save(self):
+        first = asyncio.run(self.service._new_policy_summary_review_step("session-1", self.session))
+        self.assertEqual(first.step, "policy_summary_review")
+        details = asyncio.run(self.service._handle_new_policy_summary_review(
+            "session-1", self.session, "Add more details",
+        ))
+        self.assertEqual(details.step, "policy_summary_details")
+
+        self.service._check_new_policy_detail = AsyncMock(return_value={
+            "status": "relevant", "reason": "Related to dynamic prices.", "question": "",
+        })
+        self.service._summarize_context_policy.return_value = (
+            "### Policy details\n\n- **Tariffs:** Peak prices may raise bills.\n\n"
+            "### Mechanisms\n\n- **Dynamic rates:** Rates change by time.\n\n"
+            "### Intended benefits\n\n- **Efficiency:** Demand shifts.\n\n"
+            "### Socio-demographic groups benefited\n\n- **Residents:** They can shift use."
+        )
+        revised = asyncio.run(self.service._handle_new_policy_summary_detail(
+            "session-1", self.session, "Peak-hour bills may increase.",
+        ))
+
+        self.assertEqual(revised.step, "policy_summary_review")
+        self.assertIn("Peak prices may raise bills", revised.bot_message)
+        self.assertIn("Peak-hour bills may increase.", self.session.context_policy_clarifications)
+        self.assertEqual(self.service._summarize_context_policy.await_count, 2)
+        self.assertIsNone(self.db.scalar(select(Policy).where(Policy.source == "user")))
+
+    def test_unclear_detail_requires_clarification_before_resummarizing(self):
+        asyncio.run(self.service._new_policy_summary_review_step("session-1", self.session))
+        self.session.phase = "policy_summary_details"
+        self.service._check_new_policy_detail = AsyncMock(side_effect=[
+            {"status": "unclear", "reason": "No link found.",
+             "question": "Which provision concerns tariffs?"},
+            {"status": "relevant", "reason": "The link is clear.", "question": ""},
+        ])
+
+        clarification = asyncio.run(self.service._handle_new_policy_summary_detail(
+            "session-1", self.session, "The policy supports home batteries.",
+        ))
+        self.assertEqual(clarification.step, "policy_summary_clarification")
+        self.assertIn("Which provision concerns tariffs?", clarification.bot_message)
+        self.assertEqual(self.service._summarize_context_policy.await_count, 1)
+        self.assertIsNone(self.db.scalar(select(Policy).where(Policy.source == "user")))
+
+        revised = asyncio.run(self.service._handle_new_policy_summary_detail(
+            "session-1", self.session, "The tariff provision also covers battery use.",
+        ))
+        self.assertEqual(revised.step, "policy_summary_review")
+        self.assertIn("Clarification: The tariff provision", self.session.context_policy_clarifications[-1])
+        self.assertEqual(self.service._summarize_context_policy.await_count, 2)
+        self.assertIsNone(self.db.scalar(select(Policy).where(Policy.source == "user")))
+
+    def test_detail_check_searches_late_document_text(self):
+        from app.services.chat_hazard_steps import _policy_detail_source
+
+        source = "Early background. " + "x" * 50000 + " Batteries can shift demand from peak hours."
+        context = _policy_detail_source(source, "Batteries shift demand from peak hours")
+
+        self.assertIn("Batteries can shift demand from peak hours.", context)
+
+    def test_user_can_return_from_detail_clarification_without_saving(self):
+        asyncio.run(self.service._new_policy_summary_review_step("session-1", self.session))
+        self.session.phase = "policy_summary_clarification"
+        self.session.pending_context_policy_detail = "Unclear detail"
+
+        response = asyncio.run(self.service._handle_new_policy_summary_detail(
+            "session-1", self.session, "Back to summary",
+        ))
+
+        self.assertEqual(response.step, "policy_summary_review")
+        self.assertIsNone(self.session.pending_context_policy_detail)
+        self.assertIsNone(self.db.scalar(select(Policy).where(Policy.source == "user")))
+
+    def test_internal_save_does_not_persist_unconfirmed_policy(self):
+        self.session.context_policy_summary_confirmed = False
+
+        response = asyncio.run(self.service._save_new_context_policy(
+            "session-1", self.session, [],
+        ))
+
+        self.assertEqual(response.step, "policy_summary_review")
+        self.assertIsNone(self.db.scalar(select(Policy).where(Policy.source == "user")))
+        self.assertEqual(self.db.get(KnowledgeDocument, self.new_doc_id).scope, "temporary")
+
+    def test_summary_review_survives_session_reload(self):
+        asyncio.run(self.service._new_policy_summary_review_step("session-1", self.session))
+
+        restored = ChatSessionStore().put("session-1", asdict(self.session))
+
+        self.assertEqual(restored.phase, "policy_summary_review")
+        self.assertEqual(
+            restored.selected_context_policy_summary,
+            "Mechanisms: dynamic prices. Intended benefits: efficiency.",
+        )
+        self.assertEqual(restored.pending_context_policy_document_ids, [self.new_doc_id])
 
     def test_hazard_analysis_failure_does_not_block_accepted_policy(self):
         with patch("app.services.chat_hazard_steps.ask_llm_chat", new_callable=AsyncMock, side_effect=RuntimeError("unavailable")):

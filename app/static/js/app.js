@@ -207,6 +207,8 @@ const mitigationSupportCorpus = document.querySelector("#mitigationSupportCorpus
 const mitigationLastNote = document.querySelector("#mitigationLastNote");
 const stageVisualTitle = document.querySelector("#stageVisualTitle");
 const stageVisualText = document.querySelector("#stageVisualText");
+const stageSectorTable = document.querySelector("#stageSectorTable");
+const stageSectorTableBody = document.querySelector("#stageSectorTableBody");
 const stageProgressFill = document.querySelector("#stageProgressFill");
 const stageProgress = document.querySelector(".stage-progress");
 const stageProgressToggle = document.querySelector("#stageProgressToggle");
@@ -214,6 +216,9 @@ const stageProgressCurrent = document.querySelector("#stageProgressCurrent");
 const stageSteps = Array.from(document.querySelectorAll("[data-stage-key]"));
 const stageMap = document.querySelector("#stageMap");
 const stageIconGrid = document.querySelector("#stageIconGrid");
+const stageHazardGuide = document.querySelector("#stageHazardGuide");
+const stageSectorGuide = document.querySelector("#stageSectorGuide");
+const stagePolicySummary = document.querySelector("#stagePolicySummary");
 const stageCoverageRows = JSON.parse(stageMap?.dataset.coverage || "[]");
 const europeMapPath = stageMap?.dataset.europeMapPath || "";
 const appShell = document.querySelector(".app-shell");
@@ -484,10 +489,10 @@ function updateStageVisual(step = "", session = {}, options = appState.currentOp
       : visual.title;
   }
   if (stageVisualText) {
-    stageVisualText.hidden = showingPracticalConsiderations;
-    stageVisualText.textContent = showingPracticalConsiderations
-      ? ""
-      : key === "sector" ? sectorStageText(session, appState.currentOptions) : visual.text;
+    const hasSectorRows = key === "sector" && renderSectorStageTable(session, appState.currentOptions);
+    stageVisualText.hidden = showingPracticalConsiderations || hasSectorRows;
+    stageVisualText.textContent = showingPracticalConsiderations ? "" : visual.text;
+    if (stageSectorTable) stageSectorTable.hidden = !hasSectorRows;
   }
   if (stageProgressFill) {
     const percent = (visual.index / Math.max(1, stageSteps.length - 1)) * 100;
@@ -515,13 +520,26 @@ stageProgressToggle?.addEventListener("click", () => {
   );
 });
 
-function sectorStageText(session = {}, options = appState.currentOptions) {
+function renderSectorStageTable(session = {}, options = appState.currentOptions) {
+  if (!stageSectorTableBody) return false;
   const sectors = sectorItemsForSession(session, options)
     .filter((item) => item.title);
-  if (!sectors.length) return stageVisuals.sector.text;
-  return sectors
-    .map((item) => `${item.title}: ${String(item.text || "").replace(/^(?:Policy|Sectoral) objective:\s*/i, "")}`)
-    .join("\n");
+  const rows = sectors.map((item) => {
+    const row = document.createElement("tr");
+    const sectorCell = document.createElement("td");
+    const objectiveCell = document.createElement("td");
+    const sectorName = normalizeForMatch(item.title);
+    sectorCell.textContent = sectorName === "housing" || sectorName === "housing built environment"
+      ? "Housing & Built Environment"
+      : sectorName === "transport" || sectorName === "transport mobility"
+        ? "Transport & Mobility"
+        : item.title;
+    objectiveCell.textContent = String(item.text || "").replace(/^(?:Policy|Sectoral) objective:\s*/i, "");
+    row.append(sectorCell, objectiveCell);
+    return row;
+  });
+  stageSectorTableBody.replaceChildren(...rows);
+  return rows.length > 0;
 }
 
 function updateFloatingStatsButton() {
@@ -699,6 +717,78 @@ function mapTopologyUrl(path) {
 }
 
 async function renderDynamicStageVisual(key, session = {}, options = appState.currentOptions) {
+  const policySummarySteps = new Set([
+    "policy_reference", "policy_clarification", "policy_summary",
+    "policy_summary_review", "policy_summary_details", "policy_summary_clarification",
+    "policy_hazard_confirmation", "policy_hazard_details",
+  ]);
+  const showPolicySummary = policySummarySteps.has(appState.currentStep);
+  if (stagePolicySummary) {
+    stagePolicySummary.hidden = !showPolicySummary;
+    if (showPolicySummary) {
+      if (!stagePolicySummary.getAttribute("src")) {
+        stagePolicySummary.src = stagePolicySummary.dataset.src;
+      } else if (stagePolicySummary.contentWindow) {
+        stagePolicySummary.contentWindow.postMessage({
+          type: "policy-summary:update",
+          policy: session.selected_context_policy || "",
+          summary: session.selected_context_policy_summary || "",
+        }, window.location.origin);
+      }
+    }
+    stagePolicySummary.parentElement?.classList.toggle("has-policy-summary", showPolicySummary);
+    stagePolicySummary.closest(".stage-visual-panel")?.classList.toggle("has-policy-summary", showPolicySummary);
+  }
+  const showHazardGuide = appState.currentStep === "hazards"
+    && session?.custom_hazard
+    && !String(session.custom_hazard.raw_text || "").trim()
+    && !session.selected_hazard
+    && options.some((option) => normalizeForMatch(option.label || "") === "go back to list of hazards");
+  if (stageHazardGuide) {
+    stageHazardGuide.hidden = !showHazardGuide;
+    stageHazardGuide.parentElement?.classList.toggle("has-hazard-guide", Boolean(showHazardGuide));
+    stageHazardGuide.closest(".stage-visual-panel")?.classList.toggle("has-hazard-guide", Boolean(showHazardGuide));
+  }
+  const sectorName = normalizeForMatch(session?.sector || "");
+  const sectorGuideSource = {
+    energy: stageSectorGuide?.dataset.energySrc,
+    housing: stageSectorGuide?.dataset.housingSrc,
+    "housing built environment": stageSectorGuide?.dataset.housingSrc,
+    transport: stageSectorGuide?.dataset.transportSrc,
+    "transport mobility": stageSectorGuide?.dataset.transportSrc,
+  }[sectorName];
+  const showSectorGuide = Boolean(sectorGuideSource && !showHazardGuide && !showPolicySummary);
+  if (stageSectorGuide) {
+    stageSectorGuide.hidden = !showSectorGuide;
+    if (showSectorGuide) {
+      const guideUrl = new URL(sectorGuideSource, window.location.href);
+      guideUrl.searchParams.set("country", String(session.country || ""));
+      guideUrl.searchParams.set("region", String(session.region || ""));
+      const guideSourceWithLocation = `${guideUrl.pathname}${guideUrl.search}`;
+      if (stageSectorGuide.getAttribute("src") !== guideSourceWithLocation) {
+        stageSectorGuide.src = guideSourceWithLocation;
+      }
+      stageSectorGuide.title = `${session.sector} sector guide`;
+    } else {
+      stageSectorGuide.removeAttribute("src");
+    }
+    stageSectorGuide.parentElement?.classList.toggle("has-sector-guide", showSectorGuide);
+    stageSectorGuide.closest(".stage-visual-panel")?.classList.toggle("has-sector-guide", showSectorGuide);
+  }
+  if (showHazardGuide || showPolicySummary) {
+    stageVisualRenderId += 1;
+    if (stageMap) stageMap.hidden = true;
+    if (stageIconGrid) stageIconGrid.hidden = true;
+    stageMap?.parentElement?.classList.remove("has-map-summary");
+    return;
+  }
+  if (showSectorGuide) {
+    stageVisualRenderId += 1;
+    if (stageMap) stageMap.hidden = true;
+    if (stageIconGrid) stageIconGrid.hidden = true;
+    stageMap?.parentElement?.classList.remove("has-map-summary");
+    return;
+  }
   if (session?.selected_hazard) {
     renderStageIcons(key, session, options);
     return;
@@ -713,6 +803,16 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
   }
   renderStageIcons(key, session, options);
 }
+
+stagePolicySummary?.addEventListener("load", () => {
+  if (!stagePolicySummary.hidden && stagePolicySummary.contentWindow) {
+    stagePolicySummary.contentWindow.postMessage({
+      type: "policy-summary:update",
+      policy: appState.currentSession.selected_context_policy || "",
+      summary: appState.currentSession.selected_context_policy_summary || "",
+    }, window.location.origin);
+  }
+});
 
 async function renderCountrySelectionMap() {
   const visualKey = "country-map";
@@ -968,6 +1068,7 @@ function sectorPolicyObjective(sector = "") {
     housing: "Sectoral objective: Adaptation of housing to climate change",
     "housing built environment": "Sectoral objective: Adaptation of housing to climate change",
     transport: "Sectoral objective: Shift to Sustainable Mobility",
+    "transport mobility": "Sectoral objective: Shift to Sustainable Mobility",
   };
   return objectives[normalizeForMatch(sector)] || "Sectoral objective: Not available";
 }
@@ -1932,6 +2033,8 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     region: "Type or select a region...",
     sector: "Type or select a sector...",
     policy_hazard_details: "Describe policy mechanisms, intended benefits, or possible harms...",
+    policy_summary_details: "Add a detail about the uploaded policy...",
+    policy_summary_clarification: "Explain how the detail relates to the uploaded policy...",
   };
 
   return placeholders[step] || defaultPlaceholder;
@@ -3467,7 +3570,11 @@ document.addEventListener("scroll", positionVisibleTooltips, true);
 
 function renderOptions(options, otherOptions = []) {
   appState.currentOptions = options || [];
-  const policyFlowSteps = new Set(["policy", "policy_summary", "policy_reference", "policy_clarification", "policy_hazard_confirmation", "policy_hazard_details"]);
+  const policyFlowSteps = new Set([
+    "policy", "policy_summary", "policy_reference", "policy_clarification",
+    "policy_hazard_confirmation", "policy_hazard_details", "policy_summary_review",
+    "policy_summary_details", "policy_summary_clarification",
+  ]);
   appState.currentOtherOptions = policyFlowSteps.has(appState.currentStep)
     ? (otherOptions || []).filter((label) => normalizeForMatch(label) !== "add a new hazard")
     : (otherOptions || []);

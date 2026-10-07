@@ -24,6 +24,8 @@ class ChatSession:
     selected_context_policy_summary: str | None = None
     pending_context_policy_document_ids: list[str] | None = None
     context_policy_clarifications: list[str] | None = None
+    pending_context_policy_detail: str | None = None
+    context_policy_summary_confirmed: bool = False
     context_policy_validation: dict[str, object] | None = None
     pending_context_policy_hazards: list[dict[str, str]] | None = None
     adding_context_policy: bool = False
@@ -188,6 +190,8 @@ class ChatSession:
             country=self.country,
             region=self.region,
             sector=self.sector,
+            selected_context_policy=self.selected_context_policy,
+            selected_context_policy_summary=self.selected_context_policy_summary,
             selected_hazard=self.selected_hazard,
             mitigation_measure=mitigation_measure,
             benefited_profiles=benefited_profiles,
@@ -553,6 +557,9 @@ class ChatSessionStore:
             ChatPhase.POLICY_REFERENCE.value,
             ChatPhase.POLICY_CLARIFICATION.value,
             ChatPhase.POLICY_SUMMARY.value,
+            ChatPhase.POLICY_SUMMARY_REVIEW.value,
+            ChatPhase.POLICY_SUMMARY_DETAILS.value,
+            ChatPhase.POLICY_SUMMARY_CLARIFICATION.value,
         }:
             values["phase"] = str(values["current_step"])
         if (

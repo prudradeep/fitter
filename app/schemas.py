@@ -19,6 +19,8 @@ class SessionSummary(BaseModel):
     country: str | None = None
     region: str | None = None
     sector: str | None = None
+    selected_context_policy: str | None = None
+    selected_context_policy_summary: str | None = None
     selected_hazard: str | None = None
     mitigation_measure: str | None = None
     benefited_profiles: list[str] = Field(default_factory=list)

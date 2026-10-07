@@ -38,6 +38,13 @@ from app.services.enums import ChatPhase
 from app.services.message_renderer import render_message
 
 
+POLICY_FLOW_STEPS = frozenset({
+    "policy", "policy_summary", "policy_reference", "policy_clarification",
+    "policy_hazard_confirmation", "policy_hazard_details", "policy_summary_review",
+    "policy_summary_details", "policy_summary_clarification",
+})
+
+
 class ChatNavigationStepsMixin:
     def _country_step(
         self, session_id: str, session: ChatSession, bot_message: str, error: bool = False
@@ -151,6 +158,8 @@ class ChatNavigationStepsMixin:
             session.selected_context_policy_summary = None
             session.pending_context_policy_document_ids = None
             session.context_policy_clarifications = None
+            session.pending_context_policy_detail = None
+            session.context_policy_summary_confirmed = False
             session.context_policy_validation = None
             session.pending_context_policy_hazards = None
             session.adding_context_policy = False
@@ -281,6 +290,8 @@ class ChatNavigationStepsMixin:
         session.selected_context_policy_summary = None
         session.pending_context_policy_document_ids = None
         session.context_policy_clarifications = None
+        session.pending_context_policy_detail = None
+        session.context_policy_summary_confirmed = False
         session.context_policy_validation = None
         session.pending_context_policy_hazards = None
         session.adding_context_policy = False
@@ -457,8 +468,7 @@ class ChatNavigationStepsMixin:
 
     def _attach_other_options(self, response: ChatResponse, session: ChatSession) -> None:
         self._apply_country_profile_count(response, session)
-        policy_flow_steps = {"policy", "policy_summary", "policy_reference", "policy_clarification", "policy_hazard_confirmation", "policy_hazard_details"}
-        hide_new_hazard = response.step in policy_flow_steps or session.phase in policy_flow_steps
+        hide_new_hazard = response.step in POLICY_FLOW_STEPS or session.phase in POLICY_FLOW_STEPS
         main_options = {normalize(option.label) for option in response.options}
         response_specific_options = [
             option
@@ -518,14 +528,13 @@ class ChatNavigationStepsMixin:
     @staticmethod
     def _other_nav_options(session: ChatSession, step: str) -> list[str]:
         options: list[str] = []
-        policy_flow_steps = {"policy", "policy_summary", "policy_reference", "policy_clarification", "policy_hazard_confirmation", "policy_hazard_details"}
         if session.mitigation_measure or session.pending_mitigation_measure:
             options.append("Write mitigation measure again")
         if session.sector and session.selected_hazard:
             options.append("Analyse another hazard in the same sector")
         if session.sector and step == "hazard_profile_selection":
             options.append("Go back to list of hazards")
-        if session.sector and step not in {"sector", *policy_flow_steps}:
+        if session.sector and step not in {"sector", *POLICY_FLOW_STEPS}:
             options.append("Add a new hazard")
         if session.selected_context_policy_id and step != "policy":
             options.append("Select another policy")
@@ -591,6 +600,30 @@ class ChatNavigationStepsMixin:
                 session=session.summary(),
                 input_mode="policy_reference",
                 error=error,
+            )
+
+        if session.phase == "policy_summary":
+            return ChatResponse(
+                session_id=session_id,
+                step="policy_summary",
+                bot_message=message,
+                options=[Option(id=1, label="Continue to hazards")],
+                session=session.summary(),
+                error=error,
+            )
+
+        if session.phase == "policy_summary_review":
+            response = self._new_policy_summary_review_response(session_id, session)
+            if bot_message:
+                response.bot_message = message
+                response.error = error
+            return response
+
+        if session.phase in {"policy_summary_details", "policy_summary_clarification"}:
+            return ChatResponse(
+                session_id=session_id, step=session.phase, bot_message=message,
+                options=[Option(id=1, label="Back to summary")],
+                session=session.summary(), input_mode="textarea", error=error,
             )
 
         if session.phase == "policy_hazard_confirmation":

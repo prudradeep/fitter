@@ -96,6 +96,18 @@ body.is-resizing-panels {
   padding: 16px;
 }
 
+.stage-visual-panel.has-hazard-guide,
+.stage-visual-panel.has-sector-guide,
+.stage-visual-panel.has-policy-summary {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
+.stage-visual-panel.has-hazard-guide .stage-copy,
+.stage-visual-panel.has-sector-guide .stage-copy,
+.stage-visual-panel.has-policy-summary .stage-copy {
+  display: none;
+}
+
 .stage-orbit {
   position: relative;
   min-height: 250px;
@@ -212,6 +224,29 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 .stage-dynamic-visual.has-map-summary .stage-map {
   height: 200px;
   min-height: 0;
+}
+
+.stage-dynamic-visual.has-hazard-guide,
+.stage-dynamic-visual.has-sector-guide,
+.stage-dynamic-visual.has-policy-summary {
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.stage-hazard-guide,
+.stage-sector-guide,
+.stage-policy-summary,
+.stage-hazard-guide {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.stage-hazard-guide[hidden],
+.stage-sector-guide[hidden],
+.stage-policy-summary[hidden] {
+  display: none;
 }
 
 .stage-map[hidden],
@@ -868,6 +903,42 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   font-size: 0.82rem;
   line-height: 1.4;
   white-space: pre-line;
+}
+
+.stage-sector-table {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.stage-sector-table[hidden] {
+  display: none;
+}
+
+.stage-sector-table table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.stage-sector-table th,
+.stage-sector-table td {
+  border: 1px solid #d9dee7;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.stage-sector-table th {
+  background: #f5f0ff;
+  color: #4c1d95;
+  font-weight: 800;
+}
+
+.stage-sector-table th:first-child,
+.stage-sector-table td:first-child {
+  width: 42%;
 }
 
 .stage-progress {

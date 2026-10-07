@@ -1,0 +1,813 @@
+/* =========================================================
+       RESET
+    ========================================================= */
+
+    * {
+      box-sizing: border-box;
+    }
+
+    .summary-status {
+      margin: 16px 0;
+      padding: 20px;
+      border: 1px solid #bce7f7;
+      border-radius: 16px;
+      background: #effaff;
+      color: var(--navy);
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    .summary-status[hidden],
+    .section[hidden] {
+      display: none;
+    }
+
+    .has-summary .policy-items,
+    .has-summary .works-items,
+    .has-summary .benefit-items,
+    .has-summary .people-items {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+      gap: 10px;
+    }
+
+    .has-summary .items .item,
+    .has-summary .policy-items .item:nth-child(n) {
+      grid-column: auto;
+      min-height: 0;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: flex-start;
+      gap: 7px;
+      text-align: left;
+      font-size: 14px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .has-summary .item strong {
+      font-size: 15px;
+    }
+
+    .hero h1 {
+      overflow-wrap: anywhere;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+    }
+
+    body {
+      background: #ffffff;
+      font-family:
+        Inter,
+        Arial,
+        Helvetica,
+        sans-serif;
+      color: #10145d;
+    }
+
+    :root {
+      --navy: #10145d;
+
+      --green: #149b68;
+      --blue: #1686e8;
+      --orange: #ff720b;
+      --pink: #e72b83;
+
+      --green-section: #f1fcf7;
+      --blue-section: #effaff;
+      --yellow-section: #fffaf0;
+      --pink-section: #fff4f9;
+    }
+
+    /* =========================================================
+       MAIN INFOGRAPHIC
+    ========================================================= */
+
+    .infographic {
+      width: 100%;
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 14px;
+      overflow: hidden;
+    }
+
+    /* =========================================================
+       HERO
+    ========================================================= */
+
+    .hero {
+      position: relative;
+      min-height: 260px;
+
+      display: flex;
+      align-items: flex-start;
+
+      padding: 27px 32px;
+
+      border-radius: 24px;
+      border: 1px solid #bce7f7;
+
+      overflow: hidden;
+
+      background:
+        linear-gradient(
+          90deg,
+          rgba(224, 247, 255, 1) 0%,
+          rgba(224, 247, 255, 0.96) 35%,
+          rgba(224, 247, 255, 0.45) 57%,
+          rgba(224, 247, 255, 0.04) 78%
+        ),
+        url("../img/policy-summary.png") center right / cover no-repeat;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 2;
+      width: 58%;
+    }
+
+    .policy-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+
+      padding: 8px 18px;
+
+      border-radius: 999px;
+
+      background: #cceeff;
+      color: #0879df;
+
+      font-size: 17px;
+      font-weight: 800;
+
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .hero h1 {
+      max-width: 570px;
+
+      margin: 20px 0 0;
+
+      color: var(--navy);
+
+      font-size: 42px;
+      line-height: 1.08;
+      font-weight: 800;
+
+      letter-spacing: -1.5px;
+    }
+
+    /* =========================================================
+       GENERAL SECTIONS
+    ========================================================= */
+
+    .section {
+      width: 100%;
+      max-width: 100%;
+
+      margin-top: 15px;
+      padding: 22px 22px 26px;
+
+      border-radius: 23px;
+
+      overflow: hidden;
+    }
+
+    .policy-section {
+      background: var(--green-section);
+    }
+
+    .works-section {
+      background: var(--blue-section);
+    }
+
+    .benefits-section {
+      background: var(--yellow-section);
+    }
+
+    .people-section {
+      background: var(--pink-section);
+    }
+
+    /* =========================================================
+       SECTION HEADINGS
+    ========================================================= */
+
+    .section-heading {
+      display: flex;
+      align-items: center;
+
+      min-width: 0;
+
+      gap: 15px;
+
+      margin-bottom: 22px;
+    }
+
+    .heading-bar {
+      width: 8px;
+      height: 52px;
+
+      flex: 0 0 auto;
+
+      border-radius: 999px;
+    }
+
+    .policy-section .heading-bar {
+      background: var(--green);
+    }
+
+    .works-section .heading-bar {
+      background: var(--blue);
+    }
+
+    .benefits-section .heading-bar {
+      background: var(--orange);
+    }
+
+    .people-section .heading-bar {
+      background: var(--pink);
+    }
+
+    .heading-icon {
+      width: 64px;
+      height: 64px;
+
+      flex: 0 0 64px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      border-radius: 50%;
+    }
+
+    .policy-section .heading-icon {
+      background: #139c69;
+    }
+
+    .works-section .heading-icon {
+      background: #087cd5;
+    }
+
+    .benefits-section .heading-icon {
+      background: #ff6508;
+    }
+
+    .people-section .heading-icon {
+      background: #e82b82;
+    }
+
+    .heading-icon svg {
+      width: 38px;
+      height: 38px;
+
+      display: block;
+    }
+
+    .section-heading h2 {
+      min-width: 0;
+
+      margin: 0;
+
+      color: var(--navy);
+
+      font-size: 36px;
+      line-height: 1.05;
+      font-weight: 800;
+
+      letter-spacing: -1px;
+    }
+
+    /* =========================================================
+       COMMON CARD STYLES
+    ========================================================= */
+
+    .items {
+      width: 100%;
+      max-width: 100%;
+
+      display: grid;
+
+      min-width: 0;
+    }
+
+    .item {
+      min-width: 0;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      text-align: center;
+
+      color: var(--navy);
+
+      font-weight: 800;
+    }
+
+    /* =========================================================
+       KEY POLICY AREAS
+    ========================================================= */
+
+    .policy-items {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .policy-items .item {
+      min-height: 142px;
+
+      padding: 14px 8px;
+
+      border-radius: 15px;
+
+      font-size: 16px;
+      line-height: 1.18;
+
+      overflow-wrap: break-word;
+      word-break: normal;
+      hyphens: auto;
+    }
+
+    .policy-items .item:nth-child(1) {
+      background: #d9f1ff;
+    }
+
+    .policy-items .item:nth-child(2) {
+      background: #ddf8e6;
+    }
+
+    .policy-items .item:nth-child(3) {
+      background: #fff1bc;
+    }
+
+    .policy-items .item:nth-child(4) {
+      background: #ffe5d6;
+    }
+
+    .policy-items .item:nth-child(5) {
+      background: #e8ddff;
+    }
+
+    .policy-items .item:nth-child(6) {
+      background: #ffdae4;
+    }
+
+    .policy-items .item:nth-child(7) {
+      background: #daf7e2;
+    }
+
+    /* =========================================================
+       HOW POLICY WORKS
+    ========================================================= */
+
+    .works-items {
+      grid-template-columns:
+        minmax(0, 1fr)
+        48px
+        minmax(0, 1fr)
+        48px
+        minmax(0, 1fr);
+
+      gap: 12px;
+
+      align-items: center;
+    }
+
+    .works-items .item {
+      min-height: 135px;
+
+      padding: 15px;
+
+      border-radius: 15px;
+
+      font-size: 22px;
+      line-height: 1.15;
+    }
+
+    .works-items .item:nth-child(1) {
+      background: #d5f0ff;
+    }
+
+    .works-items .item:nth-child(3) {
+      background: #d8f8df;
+    }
+
+    .works-items .item:nth-child(5) {
+      background: #eadfff;
+    }
+
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      min-width: 0;
+    }
+
+    .arrow svg {
+      width: 30px;
+      height: 44px;
+
+      display: block;
+    }
+
+    /* =========================================================
+       BENEFITS
+    ========================================================= */
+
+    .benefit-items {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .benefit-items .item {
+      min-height: 145px;
+
+      padding: 14px 10px;
+
+      border-radius: 15px;
+
+      font-size: 20px;
+      line-height: 1.15;
+    }
+
+    .benefit-items .item:nth-child(1) {
+      background: #dcf8df;
+    }
+
+    .benefit-items .item:nth-child(2) {
+      background: #d9f3ff;
+    }
+
+    .benefit-items .item:nth-child(3) {
+      background: #fff0c5;
+    }
+
+    .benefit-items .item:nth-child(4) {
+      background: #eee0ff;
+    }
+
+    /* =========================================================
+       PEOPLE
+    ========================================================= */
+
+    .people-items {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .people-items .item {
+      min-height: 140px;
+
+      padding: 14px;
+
+      border-radius: 15px;
+
+      font-size: 21px;
+      line-height: 1.15;
+    }
+
+    .people-items .item:nth-child(1) {
+      background: #d8f2ff;
+    }
+
+    .people-items .item:nth-child(2) {
+      background: #d9f8df;
+    }
+
+    .people-items .item:nth-child(3) {
+      background: #eadfff;
+    }
+
+    /* =========================================================
+       TABLET
+    ========================================================= */
+
+    @media (max-width: 800px) {
+
+      .hero h1 {
+        font-size: 34px;
+      }
+
+      .section-heading h2 {
+        font-size: 30px;
+      }
+
+      .policy-items {
+        gap: 7px;
+      }
+
+      .policy-items .item {
+        font-size: 13px;
+        padding: 10px 5px;
+      }
+
+      .works-items .item {
+        font-size: 18px;
+      }
+
+      .benefit-items .item {
+        font-size: 17px;
+      }
+
+    }
+
+    /* =========================================================
+       MOBILE - 360px SAFE
+    ========================================================= */
+
+    @media (max-width: 600px) {
+
+      body {
+        min-width: 0;
+      }
+
+      .infographic {
+        width: 100%;
+        max-width: 100%;
+
+        padding: 7px;
+      }
+
+      /* ---------------- HERO ---------------- */
+
+      .hero {
+        min-height: 178px;
+
+        padding: 14px 14px;
+
+        border-radius: 14px;
+
+        background:
+          linear-gradient(
+            90deg,
+            rgba(224, 247, 255, 1) 0%,
+            rgba(224, 247, 255, 0.97) 42%,
+            rgba(224, 247, 255, 0.52) 63%,
+            rgba(224, 247, 255, 0.04) 86%
+          ),
+          url("../img/policy-summary.png") 67% center / cover no-repeat;
+      }
+
+      .hero-content {
+        width: 72%;
+      }
+
+      .policy-badge {
+        padding: 5px 10px;
+
+        font-size: 9px;
+      }
+
+      .hero h1 {
+        max-width: 235px;
+
+        margin-top: 12px;
+
+        font-size: 23px;
+        line-height: 1.07;
+
+        letter-spacing: -0.6px;
+      }
+
+      /* ---------------- SECTIONS ---------------- */
+
+      .section {
+        width: 100%;
+
+        margin-top: 7px;
+
+        padding: 12px 9px 13px;
+
+        border-radius: 14px;
+      }
+
+      /* ---------------- HEADINGS ---------------- */
+
+      .section-heading {
+        gap: 7px;
+
+        margin-bottom: 12px;
+      }
+
+      .heading-bar {
+        width: 4px;
+        height: 31px;
+      }
+
+      .heading-icon {
+        width: 38px;
+        height: 38px;
+
+        flex-basis: 38px;
+      }
+
+      .heading-icon svg {
+        width: 23px;
+        height: 23px;
+      }
+
+      .section-heading h2 {
+        font-size: 20px;
+        line-height: 1.05;
+
+        letter-spacing: -0.4px;
+      }
+
+      /* =======================================================
+         POLICY AREAS
+
+         Important:
+         4 columns on first row
+         3 cards centered on second row.
+      ======================================================= */
+
+      .policy-items {
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+
+        gap: 5px;
+
+        width: 100%;
+      }
+
+      .policy-items .item {
+        grid-column: span 2;
+
+        width: 100%;
+        min-width: 0;
+        min-height: 82px;
+
+        padding: 7px 4px;
+
+        border-radius: 9px;
+
+        font-size: 8.5px;
+        line-height: 1.14;
+
+        overflow-wrap: break-word;
+      }
+
+      /* First four = 4 equal cards */
+
+      .policy-items .item:nth-child(1) {
+        grid-column: 1 / span 2;
+      }
+
+      .policy-items .item:nth-child(2) {
+        grid-column: 3 / span 2;
+      }
+
+      .policy-items .item:nth-child(3) {
+        grid-column: 5 / span 2;
+      }
+
+      .policy-items .item:nth-child(4) {
+        grid-column: 7 / span 2;
+      }
+
+      /* Second row = centered 3 cards */
+
+      .policy-items .item:nth-child(5) {
+        grid-column: 2 / span 2;
+      }
+
+      .policy-items .item:nth-child(6) {
+        grid-column: 4 / span 2;
+      }
+
+      .policy-items .item:nth-child(7) {
+        grid-column: 6 / span 2;
+      }
+
+      /* =======================================================
+         HOW IT WORKS
+      ======================================================= */
+
+      .works-items {
+        grid-template-columns:
+          minmax(0, 1fr)
+          20px
+          minmax(0, 1fr)
+          20px
+          minmax(0, 1fr);
+
+        gap: 3px;
+      }
+
+      .works-items .item {
+        min-height: 82px;
+
+        padding: 6px 3px;
+
+        border-radius: 9px;
+
+        font-size: 11px;
+        line-height: 1.15;
+      }
+
+      .arrow svg {
+        width: 15px;
+        height: 25px;
+      }
+
+      /* =======================================================
+         BENEFITS
+      ======================================================= */
+
+      .benefit-items {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+
+        gap: 5px;
+      }
+
+      .benefit-items .item {
+        min-height: 76px;
+
+        padding: 7px 5px;
+
+        border-radius: 9px;
+
+        font-size: 11px;
+        line-height: 1.15;
+      }
+
+      /* =======================================================
+         PEOPLE
+      ======================================================= */
+
+      .people-items {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+
+        gap: 5px;
+      }
+
+      .people-items .item {
+        min-height: 76px;
+
+        padding: 7px 4px;
+
+        border-radius: 9px;
+
+        font-size: 10px;
+        line-height: 1.15;
+      }
+
+    }
+
+    /* =========================================================
+       EXTRA SMALL DEVICES
+    ========================================================= */
+
+    @media (max-width: 380px) {
+
+      .infographic {
+        padding: 6px;
+      }
+
+      .hero {
+        min-height: 170px;
+      }
+
+      .hero h1 {
+        max-width: 220px;
+
+        font-size: 21px;
+      }
+
+      .section-heading h2 {
+        font-size: 18px;
+      }
+
+      .policy-items .item {
+        min-height: 80px;
+
+        padding-left: 3px;
+        padding-right: 3px;
+
+        font-size: 8px;
+      }
+
+      .works-items .item {
+        font-size: 10px;
+      }
+
+      .benefit-items .item {
+        font-size: 10.5px;
+      }
+
+      .people-items .item {
+        font-size: 9.5px;
+      }
+
+    }
