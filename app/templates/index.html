@@ -167,6 +167,22 @@
                     <svg viewBox="0 0 24 24" role="img" focusable="false"><path d="m9 18 6-6-6-6" /></svg>
                   </span>
                 </button>
+                <button id="replayUiTourButton" class="settings-action-button" type="button">
+                  <span class="settings-action-icon settings-action-icon-blue" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" role="img" focusable="false">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4" />
+                      <path d="M12 17h.01" />
+                    </svg>
+                  </span>
+                  <span class="settings-action-copy">
+                    <strong>See UI guide again</strong>
+                    <small>Replay the workspace tour.</small>
+                  </span>
+                  <span class="settings-action-arrow" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" role="img" focusable="false"><path d="m9 18 6-6-6-6" /></svg>
+                  </span>
+                </button>
                 {% if current_user.role == 'admin' %}
                   <button id="knowledgeButton" class="settings-action-button" type="button">
                     <span class="settings-action-icon settings-action-icon-blue" aria-hidden="true">
@@ -1242,6 +1258,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260904-prompt-source-preference"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261007-selected-location"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261007-replay-ui-tour"></script>
   </body>
 </html>

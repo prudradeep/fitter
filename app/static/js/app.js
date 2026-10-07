@@ -54,6 +54,7 @@ const confirmNewPasswordInput = document.querySelector("#confirmNewPasswordInput
 const cancelPasswordButton = document.querySelector("#cancelPasswordButton");
 const settingsButton = document.querySelector("#settingsButton");
 const settingsDrawer = document.querySelector("#settingsDrawer");
+const replayUiTourButton = document.querySelector("#replayUiTourButton");
 const closeSettingsButton = document.querySelector("#closeSettingsButton");
 const voiceAssistantToggle = document.querySelector("#voiceAssistantToggle");
 const typingEffectToggle = document.querySelector("#typingEffectToggle");
@@ -6141,6 +6142,10 @@ settingsButton?.addEventListener("click", () => {
 });
 
 closeSettingsButton?.addEventListener("click", closeSettingsDrawer);
+replayUiTourButton?.addEventListener("click", () => {
+  closeSettingsDrawer();
+  startUiTour();
+});
 voicePreferenceButton?.addEventListener("click", () => {
   closeSettingsDrawer();
   openVoicePreferenceDialog();
@@ -6645,7 +6650,12 @@ function renderUiTourStep() {
 }
 
 function startUiTourIfNeeded() {
-  if (!uiTour || localStorage.getItem(uiTourStorageKey()) === "true") return;
+  if (!uiTour || !uiTour.hidden || localStorage.getItem(uiTourStorageKey()) === "true") return;
+  startUiTour();
+}
+
+function startUiTour() {
+  if (!uiTour) return;
   uiTour.hidden = false;
   uiTour.setAttribute("aria-hidden", "false");
   document.body.classList.add("ui-tour-active");
