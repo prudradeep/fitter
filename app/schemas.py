@@ -23,6 +23,7 @@ class SessionSummary(BaseModel):
     selected_context_policy_summary: str | None = None
     selected_hazard: str | None = None
     mitigation_measure: str | None = None
+    mitigation_revision_stage: str | None = None
     benefited_profiles: list[str] = Field(default_factory=list)
     mitigation_review: dict[str, object] | None = None
     target_population_questions: list[dict[str, object]] = Field(default_factory=list)

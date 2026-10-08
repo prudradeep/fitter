@@ -1975,6 +1975,15 @@ function hasPendingCustomProfileReason(session = appState.currentSession) {
 }
 
 function placeholderForStep(step, options = [], session = appState.currentSession) {
+  if (step === "mitigation_dg_input") {
+    const stage = session?.mitigation_revision_stage;
+    if (stage === "benefit_pathway" || stage === "initial_benefit_pathway") {
+      return "Describe how the measure benefits this group...";
+    }
+    if (stage === "add_dg") return "Name the disadvantaged group to add...";
+    if (stage === "remove_dg") return "Name the disadvantaged group to remove...";
+    return "Name the specific disadvantaged groups...";
+  }
   if (step === "custom_hazard_profile_reason" || hasPendingCustomProfileReason(session)) {
     const group = String(session?.custom_hazard?.pending_profile_reason_group || "").trim();
     return group
@@ -2040,7 +2049,6 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
     mitigation_policy_effect_mitigation: "Describe an additional mitigation for this problem...",
     mitigation_policy_effect_disagreement: "Explain why this problem would not be created...",
     mitigation_summary_revision: "Describe the precise change...",
-    mitigation_dg_input: "Name the specific disadvantaged groups...",
     mitigation_equity: "Explain how the measure is equitable...",
     system_inquiry_observation: "Write your reflection...",
     system_inquiry_followup: "Write your follow-up reflection...",

@@ -428,6 +428,24 @@ http://localhost:11434
 
 The guided wizard works even if Ollama is not running; `app/llm.py` returns a graceful fallback message when the local model is unavailable.
 
+## Amazon Bedrock chat
+
+Set `LLM_PROVIDER="bedrock"` to send chat requests through the Bedrock Converse
+API. Ollama remains the default provider and continues to produce knowledge-base
+embeddings, so the existing FAISS indexes can be used.
+
+On the server, set `AWS_REGION` and `BEDROCK_MODEL_ID` to a model available in
+that Region. Supply credentials with `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`,
+or the standard AWS credential chain (including an IAM role). Keep credentials
+in an ignored runtime environment file or inject them into the process.
+
+Desktop clients with `APP_MODE="client"` and `LLM_PROVIDER="bedrock"` send chat
+requests to the server's authenticated `/api/sync/llm/chat` endpoint. Configure
+`SYNC_SERVER_URL` and a server-issued `SYNC_API_TOKEN` on each client. The server
+must have `SYNC_ENABLED=true` and `LLM_PROVIDER="bedrock"`. Clients need no AWS
+credentials or Bedrock model ID; this chat route works regardless of the
+client's data synchronization settings. Bedrock chat requires network access.
+
 LLM request/response logging is enabled by default in development and disabled
 by default outside development. When enabled, chat and embedding calls are
 appended as JSON Lines to:

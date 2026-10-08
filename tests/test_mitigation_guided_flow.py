@@ -710,7 +710,9 @@ class MitigationGuidedFlowTests(unittest.TestCase):
 
         self.assertEqual(response.step, "mitigation_dg_input")
         self.assertIn("could not identify how", response.bot_message)
-        self.assertIn("Upgrade local grid infrastructure", response.bot_message)
+        self.assertIn("<strong>Upgrade local grid infrastructure</strong>", response.bot_message)
+        self.assertIn("<strong>Low-income households</strong>", response.bot_message)
+        self.assertNotIn("**", response.bot_message)
         self.assertEqual(self.session.mitigation_revision_stage, "benefit_pathway")
 
     def test_other_consideration_strips_excerpt_leadin(self):

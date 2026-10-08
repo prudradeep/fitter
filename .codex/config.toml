@@ -6,11 +6,7 @@ glob_scan_max_depth = 5
 
 [permissions.project-edit.filesystem.":workspace_roots"]
 "." = "write"
-".env" = "deny"
-".env.*" = "deny"
-"**/.env" = "deny"
-"**/.env.*" = "deny"
-".env.example" = "write"
+".env.example" = "read"
 
 [permissions.project-edit.network]
 enabled = false

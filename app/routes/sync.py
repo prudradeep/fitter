@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.db.session import get_db
 from app.models import AppUser, Prompt
 from app.routes.request_limits import InvalidJsonPayload, RequestTooLarge, json_payload_error_response, read_limited_json
+from app.services.bedrock_provider import BedrockProviderError, chat as bedrock_chat
 from app.services.prompt_loader import clear_prompt_caches
 from app.services.prompt_store import prompt_metadata
 from app.services.sync_service import SyncService
@@ -155,6 +156,55 @@ async def sync_run(_: dict[str, object] = Depends(require_sync_token), db: Sessi
         return await SyncService(db).exchange_with_server()
     except (httpx.HTTPError, ValueError) as exc:
         return {"error": True, "detail": str(exc)}
+
+
+@router.post("/llm/chat", response_model=None)
+async def sync_llm_chat(
+    request: Request,
+    _: dict[str, object] = Depends(require_sync_token),
+):
+    """Handle authenticated client chat requests with server-side Bedrock credentials."""
+    payload = await _sync_payload_or_error(request)
+    if isinstance(payload, JSONResponse):
+        return payload
+    if settings.llm_provider != "bedrock" or not settings.is_server_mode:
+        raise HTTPException(status_code=503, detail="Bedrock chat is not configured on this server.")
+    context = payload.get("context")
+    messages = payload.get("messages")
+    response_format = payload.get("response_format")
+    temperature = payload.get("temperature", 0.2)
+    max_tokens = payload.get("max_tokens", 700)
+    if (
+        not isinstance(context, str)
+        or not isinstance(messages, list)
+        or not messages
+        or not all(
+            isinstance(message, dict)
+            and message.get("role") in {"user", "assistant"}
+            and isinstance(message.get("content"), str)
+            for message in messages
+        )
+        or not isinstance(response_format, (str, dict, type(None)))
+        or isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or not 0 <= temperature <= 1
+        or isinstance(max_tokens, bool)
+        or not isinstance(max_tokens, int)
+        or not 1 <= max_tokens <= 8192
+    ):
+        raise HTTPException(status_code=422, detail="Invalid Bedrock chat request.")
+    try:
+        answer = await bedrock_chat(
+            settings,
+            context,
+            [{"role": message["role"], "content": message["content"]} for message in messages],
+            temperature=float(temperature),
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
+    except BedrockProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"error": False, "answer": answer}
 
 
 @router.post("/system-inquiry-telemetry")

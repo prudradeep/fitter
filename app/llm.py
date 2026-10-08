@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.services.bedrock_provider import BedrockProviderError, chat as bedrock_chat
 from app.services.llm_logging import log_llm_exchange, new_llm_request_id
 from app.services.prompt_loader import load_nested_prompt_file
 
@@ -32,6 +33,22 @@ async def ask_llm_chat(
     settings = get_settings()
     if sync_server_llm_disabled():
         return "LLM requests are disabled on this sync-only server."
+    if settings.llm_provider == "bedrock":
+        try:
+            if settings.is_client_mode:
+                return await proxy_bedrock_chat(
+                    settings, context, messages,
+                    temperature=temperature, max_tokens=max_tokens,
+                    response_format=response_format,
+                )
+            return await bedrock_chat(
+                settings, context, messages,
+                temperature=temperature, max_tokens=max_tokens,
+                response_format=response_format,
+            )
+        except BedrockProviderError as exc:
+            logger.warning("Bedrock request failed: %s", exc)
+            return str(exc)
     chat_messages = [{"role": "system", "content": context}] + messages
     payload = {
         "model": settings.ollama_model,
@@ -179,4 +196,48 @@ def sync_server_llm_disabled() -> bool:
         settings.sync_enabled
         and str(settings.sync_mode or "").strip().casefold() == "server"
         and not settings.sync_server_expose_app_apis
+        and settings.llm_provider == "ollama"
     )
+
+
+async def proxy_bedrock_chat(
+    settings,
+    context: str,
+    messages: list[ChatMessage],
+    *,
+    temperature: float,
+    max_tokens: int,
+    response_format: str | dict[str, Any] | None,
+) -> str:
+    payload = {
+        "context": context,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "response_format": response_format,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=settings.ollama_timeout_seconds) as client:
+            response = await client.post(
+                f"{settings.sync_server_url.strip().rstrip('/')}/api/sync/llm/chat",
+                headers={"X-Sync-Token": settings.sync_api_token.strip()},
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+    except httpx.TimeoutException as exc:
+        raise BedrockProviderError("The sync server timed out while calling Bedrock.") from exc
+    except httpx.HTTPStatusError as exc:
+        raise BedrockProviderError(
+            f"The sync server rejected the Bedrock request (HTTP {exc.response.status_code})."
+        ) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise BedrockProviderError(f"Could not reach the sync server for Bedrock: {exc}") from exc
+    if not isinstance(data, dict):
+        raise BedrockProviderError("Invalid Bedrock proxy response.")
+    if data.get("error"):
+        raise BedrockProviderError(str(data.get("detail") or "The sync server could not call Bedrock."))
+    answer = data.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        raise BedrockProviderError("The sync server returned an empty Bedrock response.")
+    return answer.strip()

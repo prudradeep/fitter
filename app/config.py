@@ -3,7 +3,7 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DEVELOPMENT_CSP = (
@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen3.5:4b"
     ollama_embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: int = 1200
+    llm_provider: str = "ollama"
+    aws_region: str = ""
+    aws_profile: str = ""
+    aws_bearer_token_bedrock: SecretStr = Field(default_factory=lambda: SecretStr(""))
+    bedrock_model_id: str = ""
     llm_log_enabled: bool | None = None
     llm_log_to_file: bool | None = None
     llm_log_to_db: bool | None = None
@@ -167,6 +172,17 @@ class Settings(BaseSettings):
         self.prompt_source = self.prompt_source.strip().casefold()
         if self.prompt_source not in {"auto", "db", "file"}:
             raise ValueError("PROMPT_SOURCE must be one of: auto, db, file")
+        self.llm_provider = self.llm_provider.strip().casefold()
+        if self.llm_provider not in {"ollama", "bedrock"}:
+            raise ValueError("LLM_PROVIDER must be one of: ollama, bedrock")
+        if self.llm_provider == "bedrock":
+            if self.is_client_mode:
+                if not str(self.sync_server_url or "").strip():
+                    raise ValueError("SYNC_SERVER_URL is required for Bedrock chat in client mode")
+                if not str(self.sync_api_token or "").strip():
+                    raise ValueError("SYNC_API_TOKEN is required for Bedrock chat in client mode")
+            elif not self.bedrock_model_id.strip():
+                raise ValueError("BEDROCK_MODEL_ID is required when LLM_PROVIDER=bedrock")
         if self.knowledge_chunk_overlap >= self.knowledge_chunk_size:
             raise ValueError("KNOWLEDGE_CHUNK_OVERLAP must be smaller than KNOWLEDGE_CHUNK_SIZE")
         if not str(self.database_url or "").strip() or (

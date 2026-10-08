@@ -1848,7 +1848,7 @@ class ChatMitigationCreationGuidedMixin:
         return ChatResponse(
             session_id=session_id,
             step="mitigation_dg_input",
-            bot_message=(
+            bot_message=markdown_to_html(
                 f"I could not identify how **{measure}** specifically benefits "
                 f"**{group}**. Describe the pathway: what the measure does and how "
                 "that benefits this group."

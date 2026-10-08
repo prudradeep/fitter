@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
-from app.llm import should_disable_thinking, sync_server_llm_disabled
+from app.llm import ask_llm_chat, should_disable_thinking, sync_server_llm_disabled
 
 
 class LlmModelOptionsTests(unittest.TestCase):
@@ -32,6 +33,41 @@ class LlmModelOptionsTests(unittest.TestCase):
             settings.sync_enabled = original_enabled
             settings.sync_mode = original_mode
             settings.sync_server_expose_app_apis = original_expose
+
+
+class BedrockRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_chat_uses_proxy_even_without_data_sync(self) -> None:
+        from app.config import Settings
+
+        settings = Settings(
+            app_mode="client", llm_provider="bedrock", sync_enabled=False,
+            sync_server_url="https://example.test", sync_api_token="token", _env_file=None,
+        )
+        with (
+            patch("app.llm.get_settings", return_value=settings),
+            patch("app.llm.proxy_bedrock_chat", new_callable=AsyncMock) as proxy,
+            patch("app.llm.bedrock_chat", new_callable=AsyncMock) as direct,
+        ):
+            proxy.return_value = "proxied"
+            answer = await ask_llm_chat("context", [{"role": "user", "content": "hello"}])
+        self.assertEqual(answer, "proxied")
+        proxy.assert_awaited_once()
+        direct.assert_not_awaited()
+
+    async def test_server_chat_uses_bedrock_directly(self) -> None:
+        from app.config import Settings
+
+        settings = Settings(app_mode="server", llm_provider="bedrock", bedrock_model_id="model-id", _env_file=None)
+        with (
+            patch("app.llm.get_settings", return_value=settings),
+            patch("app.llm.proxy_bedrock_chat", new_callable=AsyncMock) as proxy,
+            patch("app.llm.bedrock_chat", new_callable=AsyncMock) as direct,
+        ):
+            direct.return_value = "direct"
+            answer = await ask_llm_chat("context", [{"role": "user", "content": "hello"}])
+        self.assertEqual(answer, "direct")
+        direct.assert_awaited_once()
+        proxy.assert_not_awaited()
 
 
 if __name__ == "__main__":

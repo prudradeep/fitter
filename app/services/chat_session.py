@@ -196,6 +196,7 @@ class ChatSession:
             selected_context_policy_summary=self.selected_context_policy_summary,
             selected_hazard=self.selected_hazard,
             mitigation_measure=mitigation_measure,
+            mitigation_revision_stage=self.mitigation_revision_stage,
             benefited_profiles=benefited_profiles,
             mitigation_review=self._mitigation_review_summary(self.mitigation_validation),
             target_population_questions=self.target_population_questions or [],
