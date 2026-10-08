@@ -43,7 +43,7 @@ claims.
 
 Every factual statement must be supported by the supplied context.
 
-If the answer cannot be fully supported, explicitly state that the available Knowledge Base and Sector Statistical Context do not contain sufficient information.
+If the answer cannot be fully supported, explicitly state that the supplied Knowledge Base, Sector Statistical Context, and Workflow Help Context do not contain sufficient information.
 
 Workflow-help answers may rely on Workflow Help Context. Use it to explain what
 visible workflow options mean, what happens after choosing an option, whether an

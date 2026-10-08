@@ -10,7 +10,7 @@ Recent conversation:
 {conversation_history}
 
 The conversation history is provided only to understand references, follow-up questions, and conversational context. It is NOT an authoritative source of facts.
-If the user uses words like "that", "these", "it", "above", or "the previous answer", resolve them from the recent conversation, then answer using only the supplied Knowledge Base and Sector Statistical Context.
+If the user uses words like "that", "these", "it", "above", or "the previous answer", resolve them from the recent conversation, then answer using only the supplied Knowledge Base, Sector Statistical Context, and Workflow Help Context.
 
 User question:
 {question}

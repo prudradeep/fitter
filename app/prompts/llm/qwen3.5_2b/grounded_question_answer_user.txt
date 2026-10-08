@@ -10,9 +10,9 @@ Recent conversation:
 {conversation_history}
 
 The conversation history is provided only to understand references, follow-up questions, and conversational context. It is NOT an authoritative source of facts.
-If the user uses words like "that", "these", "it", "above", or "the previous answer", resolve them from the recent conversation, then answer using only the supplied Knowledge Base and Sector Statistical Context.
+If the user uses words like "that", "these", "it", "above", or "the previous answer", resolve them from the recent conversation, then answer using only the supplied Knowledge Base, Sector Statistical Context, and Workflow Help Context.
 
 User question:
 {question}
 
-Answer in Markdown using only the Knowledge Base excerpts and sector statistical context supplied in the system message. Cite supported factual claims with the provided source IDs.
+Answer in Markdown using only the Knowledge Base excerpts, sector statistical context, and workflow help context supplied in the system message. Cite supported factual and workflow claims with the provided source IDs.

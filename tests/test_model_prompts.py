@@ -1,3 +1,4 @@
+import re
 import unittest
 from collections import Counter
 from pathlib import Path
@@ -18,6 +19,10 @@ MODEL_PROMPT_DIRS = {
 }
 
 USER_TEMPLATE_SUFFIXES = ("_user.txt", "_user_context.txt", "_user_followup.txt")
+SHARED_FALLBACK_PROMPTS = {
+    "context_policy_document_validation.txt",
+    "custom_affected_group_reason_validation.txt",
+}
 
 USER_FACING_PROMPTS = {
     "dr_transition_coach.txt",
@@ -125,12 +130,40 @@ class ModelPromptTests(unittest.TestCase):
         base_dir = Path("app/prompts/llm")
         base_files = {path.name for path in base_dir.glob("*.txt")}
 
-        self.assertEqual(len(base_files), 91)
+        self.assertTrue(SHARED_FALLBACK_PROMPTS <= base_files)
         for model, directory in MODEL_PROMPT_DIRS.items():
             with self.subTest(model=model):
                 model_files = {path.name for path in (base_dir / directory).glob("*.txt")}
 
-                self.assertEqual(model_files, base_files)
+                self.assertEqual(model_files, base_files - SHARED_FALLBACK_PROMPTS)
+
+    def test_model_templates_accept_every_shared_template_field(self) -> None:
+        base_dir = Path("app/prompts/llm")
+        template_field = re.compile(r"\{([a-z_][a-z_0-9]*)\}")
+        for model, directory in MODEL_PROMPT_DIRS.items():
+            for base_path in base_dir.glob("*.txt"):
+                model_path = base_dir / directory / base_path.name
+                if not model_path.exists():
+                    continue
+                with self.subTest(model=model, prompt=base_path.name):
+                    shared_fields = set(template_field.findall(base_path.read_text(encoding="utf-8")))
+                    model_fields = set(template_field.findall(model_path.read_text(encoding="utf-8")))
+                    self.assertEqual(model_fields, shared_fields)
+
+    def test_model_prompts_keep_workflow_help_and_guided_review_contracts(self) -> None:
+        base_dir = Path("app/prompts/llm")
+        for model, directory in (*MODEL_PROMPT_DIRS.items(), ("mistral-nemo", "mistral-nemo")):
+            with self.subTest(model=model):
+                model_dir = base_dir / directory
+                answer = (model_dir / "grounded_question_answer.txt").read_text(encoding="utf-8")
+                user = (model_dir / "grounded_question_answer_user.txt").read_text(encoding="utf-8")
+
+                self.assertIn("{workflow_context}", answer)
+                self.assertIn("[WF1]", answer)
+                self.assertIn("workflow help context supplied in the system message", user)
+                clarity_path = model_dir / "mitigation_guided_input_clarity.txt"
+                if clarity_path.exists():
+                    self.assertIn('"relevant": true', clarity_path.read_text(encoding="utf-8"))
 
     def test_system_task_prompts_have_one_header_and_guardrail(self) -> None:
         base_dir = Path("app/prompts/llm")
