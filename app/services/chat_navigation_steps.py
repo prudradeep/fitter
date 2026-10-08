@@ -122,6 +122,8 @@ class ChatNavigationStepsMixin:
         if action == normalize("Analyse another hazard in the same sector"):
             if session.sector is None:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
+            self._discard_temporary_policy_references(session)
+            self._clear_selected_hazard_context(session)
             return self._hazard_profile_step(session_id, session)
 
         if action == normalize("Go back to list of hazards"):
@@ -330,10 +332,16 @@ class ChatNavigationStepsMixin:
         session.dg_reason = None
         session.dg_evidence = None
         session.pending_mitigation_measure = None
+        session.pending_inspired_mitigation_measure = None
+        session.pending_inspired_mitigation_reason = None
+        session.new_policy_inspiration = None
         cls._clear_mitigation_clarity_state(session)
         session.suggested_mitigation_measure_id = None
         session.suggested_mitigation_measure_name = None
         session.suggested_existing_policy_modification = None
+        session.suggested_new_policy_proposal = None
+        session.suggested_new_policy_reason = None
+        session.suggested_new_policy_target_group_mechanisms = None
         session.mitigation_measure = None
         session.mitigation_reason = None
         session.mitigation_target_population = None
@@ -850,6 +858,11 @@ class ChatNavigationStepsMixin:
                 session=session.summary(),
                 input_mode="mitigation_measure",
                 error=error,
+            )
+
+        if session.phase == "inspired_mitigation_confirmation":
+            return self._inspired_mitigation_confirmation_response(
+                session_id, session, error=error
             )
 
         if session.phase == "mitigation_duplicate_suggestion":

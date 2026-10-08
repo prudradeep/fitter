@@ -220,6 +220,7 @@ const stageIconGrid = document.querySelector("#stageIconGrid");
 const stageHazardGuide = document.querySelector("#stageHazardGuide");
 const stageSectorGuide = document.querySelector("#stageSectorGuide");
 const stagePolicySummary = document.querySelector("#stagePolicySummary");
+const stageMitigationGuide = document.querySelector("#stageMitigationGuide");
 const stageCoverageRows = JSON.parse(stageMap?.dataset.coverage || "[]");
 const europeMapPath = stageMap?.dataset.europeMapPath || "";
 const appShell = document.querySelector(".app-shell");
@@ -456,7 +457,7 @@ function stageKeyForStep(step = "", mode = appState.inputMode) {
   ) {
     return "hazards";
   }
-  if (step.startsWith("mitigation") || step === "mitigation") return "mitigation";
+  if (step.startsWith("mitigation") || step === "mitigation" || step === "inspired_mitigation_confirmation") return "mitigation";
   if (step.startsWith("evaluation") || step === "complete") return "evaluation";
   return "country";
 }
@@ -740,6 +741,21 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
     stagePolicySummary.parentElement?.classList.toggle("has-policy-summary", showPolicySummary);
     stagePolicySummary.closest(".stage-visual-panel")?.classList.toggle("has-policy-summary", showPolicySummary);
   }
+  const showMitigationGuide = ["hazard_profile_selection", "socio_demographic_review", "mitigation", "inspired_mitigation_confirmation"]
+    .includes(appState.currentStep) || appState.currentStep.startsWith("mitigation_");
+  if (stageMitigationGuide) {
+    stageMitigationGuide.hidden = !showMitigationGuide;
+    if (showMitigationGuide && !stageMitigationGuide.getAttribute("src")) {
+      stageMitigationGuide.src = stageMitigationGuide.dataset.src;
+    }
+    stageMitigationGuide.parentElement?.classList.toggle("has-mitigation-guide", showMitigationGuide);
+    const visualPanel = stageMitigationGuide.closest(".stage-visual-panel");
+    visualPanel?.classList.toggle("has-mitigation-guide", showMitigationGuide);
+    visualPanel?.classList.toggle(
+      "has-mitigation-context",
+      showMitigationGuide && selectedHazardContext && !selectedHazardContext.hidden,
+    );
+  }
   const showHazardGuide = appState.currentStep === "hazards"
     && session?.custom_hazard
     && !String(session.custom_hazard.raw_text || "").trim()
@@ -758,7 +774,7 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
     transport: stageSectorGuide?.dataset.transportSrc,
     "transport mobility": stageSectorGuide?.dataset.transportSrc,
   }[sectorName];
-  const showSectorGuide = Boolean(sectorGuideSource && !showHazardGuide && !showPolicySummary);
+  const showSectorGuide = Boolean(sectorGuideSource && !showHazardGuide && !showPolicySummary && !showMitigationGuide);
   if (stageSectorGuide) {
     stageSectorGuide.hidden = !showSectorGuide;
     if (showSectorGuide) {
@@ -776,7 +792,7 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
     stageSectorGuide.parentElement?.classList.toggle("has-sector-guide", showSectorGuide);
     stageSectorGuide.closest(".stage-visual-panel")?.classList.toggle("has-sector-guide", showSectorGuide);
   }
-  if (showHazardGuide || showPolicySummary) {
+  if (showHazardGuide || showPolicySummary || showMitigationGuide) {
     stageVisualRenderId += 1;
     if (stageMap) stageMap.hidden = true;
     if (stageIconGrid) stageIconGrid.hidden = true;
@@ -3276,7 +3292,8 @@ function renderSelectedHazardContext(session = {}) {
             .filter((profile) => profile.name)
         : []);
 
-  selectedHazardContext.hidden = showMitigationReviewPanel ? !mitigationMeasure : !hazard;
+  selectedHazardContext.hidden = appState.currentStep === "hazard_profile_selection"
+    || (showMitigationReviewPanel ? !mitigationMeasure : !hazard);
   if (selectedContextLabel) {
     selectedContextLabel.textContent = showMitigationReviewPanel ? "Proposed mitigation measure" : "Selected hazard";
   }

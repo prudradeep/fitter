@@ -374,6 +374,11 @@ class ChatService(
                 current_session_id, session
             )
 
+        if session.phase == "inspired_mitigation_confirmation":
+            return await self._handle_inspired_mitigation_confirmation(
+                current_session_id, session, clean_message
+            )
+
         if clean_message and not self._could_be_fuzzy_selection(session, clean_message):
             meaning_check = await self._validate_text_meaning(clean_message)
         else:

@@ -87,6 +87,7 @@ class ChatPhase(AppStrEnum):
     DG_REASON_EVIDENCE = "dg_reason_evidence"
     MITIGATION = "mitigation"
     MITIGATION_MEASURE = "mitigation_measure"
+    INSPIRED_MITIGATION_CONFIRMATION = "inspired_mitigation_confirmation"
     MITIGATION_DUPLICATE_SUGGESTION = "mitigation_duplicate_suggestion"
     MITIGATION_DUPLICATE_REPORT = "mitigation_duplicate_report"
     MITIGATION_REASON = "mitigation_reason"

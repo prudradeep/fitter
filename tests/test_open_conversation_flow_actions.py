@@ -214,6 +214,48 @@ class OpenConversationFlowActionTests(unittest.TestCase):
         self.assertEqual(response.step, "hazards")
         self.assertIsNone(session.selected_hazard)
 
+    def test_analyse_another_hazard_clears_previous_selection(self):
+        service = ChatService.__new__(ChatService)
+        service._discard_temporary_policy_references = lambda session: None
+
+        def hazard_selection_step(session_id, session):
+            session.phase = "hazard_profile_selection"
+            return ChatResponse(
+                session_id=session_id,
+                step="hazard_profile_selection",
+                bot_message="Choose another hazard.",
+                session=session.summary(),
+            )
+
+        service._hazard_profile_step = hazard_selection_step
+        session = ChatSession(
+            country="Germany",
+            region="Baden-Württemberg",
+            sector="Energy",
+            selected_hazard="Heat stress",
+        )
+        session.selected_context_policy = "Existing energy policy"
+        session.socio_demographic_profiles = ["Older people"]
+        session.pending_mitigation_measure = "Provide cooling support"
+        session.pending_inspired_mitigation_measure = "Add a cooling fund"
+        session.new_policy_inspiration = {"challenge": ["Heat exposure"]}
+
+        response = _run(
+            service._handle_other_nav_action(
+                "test-session", session, "Analyse another hazard in the same sector"
+            )
+        )
+
+        self.assertEqual(response.step, "hazard_profile_selection")
+        self.assertIsNone(session.selected_hazard)
+        self.assertIsNone(response.session.selected_hazard)
+        self.assertIsNone(session.socio_demographic_profiles)
+        self.assertIsNone(session.pending_mitigation_measure)
+        self.assertIsNone(session.pending_inspired_mitigation_measure)
+        self.assertIsNone(session.new_policy_inspiration)
+        self.assertEqual(session.selected_context_policy, "Existing energy policy")
+        self.assertEqual(session.sector, "Energy")
+
     def test_reason_confirmation_add_mitigation_text_enters_measure_flow(self):
         engine = _OpenConversationSelectionEngine()
 

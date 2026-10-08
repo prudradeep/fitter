@@ -57,6 +57,8 @@ class ChatSession:
     dg_reason: str | None = None
     dg_evidence: str | None = None
     pending_mitigation_measure: str | None = None
+    pending_inspired_mitigation_measure: str | None = None
+    pending_inspired_mitigation_reason: str | None = None
     pending_mitigation_reason: str | None = None
     pending_mitigation_evidence: str | None = None
     mitigation_evidence_declined: bool = False
