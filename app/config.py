@@ -86,10 +86,12 @@ class Settings(BaseSettings):
     ollama_embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: int = 1200
     llm_provider: str = "ollama"
+    embedding_provider: str = "ollama"
     aws_region: str = ""
     aws_profile: str = ""
     aws_bearer_token_bedrock: SecretStr = Field(default_factory=lambda: SecretStr(""))
     bedrock_model_id: str = ""
+    bedrock_embedding_model_id: str = "amazon.titan-embed-text-v2:0"
     llm_log_enabled: bool | None = None
     llm_log_to_file: bool | None = None
     llm_log_to_db: bool | None = None
@@ -183,6 +185,17 @@ class Settings(BaseSettings):
                     raise ValueError("SYNC_API_TOKEN is required for Bedrock chat in client mode")
             elif not self.bedrock_model_id.strip():
                 raise ValueError("BEDROCK_MODEL_ID is required when LLM_PROVIDER=bedrock")
+        self.embedding_provider = self.embedding_provider.strip().casefold()
+        if self.embedding_provider not in {"ollama", "bedrock"}:
+            raise ValueError("EMBEDDING_PROVIDER must be one of: ollama, bedrock")
+        if self.embedding_provider == "bedrock":
+            if self.is_client_mode:
+                if not str(self.sync_server_url or "").strip():
+                    raise ValueError("SYNC_SERVER_URL is required for Bedrock embeddings in client mode")
+                if not str(self.sync_api_token or "").strip():
+                    raise ValueError("SYNC_API_TOKEN is required for Bedrock embeddings in client mode")
+            elif not self.bedrock_embedding_model_id.strip():
+                raise ValueError("BEDROCK_EMBEDDING_MODEL_ID is required when EMBEDDING_PROVIDER=bedrock")
         if self.knowledge_chunk_overlap >= self.knowledge_chunk_size:
             raise ValueError("KNOWLEDGE_CHUNK_OVERLAP must be smaller than KNOWLEDGE_CHUNK_SIZE")
         if not str(self.database_url or "").strip() or (

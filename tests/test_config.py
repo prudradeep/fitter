@@ -129,6 +129,23 @@ class SettingsSafetyTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Settings(llm_provider="unknown", _env_file=None)
 
+    def test_bedrock_embeddings_require_server_model_or_client_proxy_settings(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(app_mode="server", embedding_provider="bedrock", bedrock_embedding_model_id="", _env_file=None)
+        with self.assertRaises(ValidationError):
+            Settings(app_mode="client", embedding_provider="bedrock", _env_file=None)
+        server = Settings(app_mode="server", embedding_provider=" BEDROCK ", _env_file=None)
+        client = Settings(
+            app_mode="client", embedding_provider="bedrock", sync_enabled=False,
+            sync_server_url="https://example.test", sync_api_token="token", _env_file=None,
+        )
+        self.assertEqual(server.embedding_provider, "bedrock")
+        self.assertEqual(client.embedding_provider, "bedrock")
+
+    def test_unknown_embedding_provider_is_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(embedding_provider="unknown", _env_file=None)
+
     def test_custom_hazard_validation_thresholds_are_configurable(self) -> None:
         settings = Settings(
             custom_hazard_strict_ready_score=80,

@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 SCOPES = {"main": "main", "sector_prompt": "sector_prompts", "policy_document": "policy_reference"}
 
 
+def _index_metadata_path(index_path: Path) -> Path:
+    return index_path.with_suffix(f"{index_path.suffix}.metadata.json")
+
+
+def _write_ollama_index_metadata(index_path: Path, model: str, dimensions: int) -> None:
+    metadata = {"version": 1, "provider": "ollama", "model": model, "dimensions": dimensions}
+    _index_metadata_path(index_path).write_text(
+        json.dumps(metadata, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+
 def _same_server(left: str, right: str) -> bool:
     return left.strip().rstrip("/").casefold() == right.strip().rstrip("/").casefold()
 
@@ -66,6 +77,8 @@ def install_offline_seed_bundle(settings: Settings, bundle_dir: Path | None = No
     """Install a clean SQLite seed and its indexes before installer database seeding."""
     if not getattr(sys, "frozen", False) or not settings.is_client_mode or settings.sync_enabled:
         return "unavailable"
+    if getattr(settings, "embedding_provider", "ollama") != "ollama":
+        return "embedding provider differs"
     if bundle_dir is None:
         bundle_dir = Path(sys.executable).resolve().parents[2] / "seed-indexes"
     manifest_path = bundle_dir / "manifest.json"
@@ -95,7 +108,7 @@ def install_offline_seed_bundle(settings: Settings, bundle_dir: Path | None = No
         import faiss
 
         scopes: set[str] = set()
-        copies: list[tuple[Path, Path]] = []
+        copies: list[tuple[Path, Path, int]] = []
         index_base = Path(settings.faiss_index_path)
         for entry in entries:
             scope = entry.get("scope") if isinstance(entry, dict) else None
@@ -111,14 +124,18 @@ def install_offline_seed_bundle(settings: Settings, bundle_dir: Path | None = No
             index = faiss.read_index(str(source))
             if index.ntotal != entry.get("vectors") or index.d != entry.get("dimensions"):
                 raise ValueError(f"offline index metadata mismatch: {filename}")
-            copies.append((source, index_base.with_name(filename)))
-        if db_target.exists() or any(destination.exists() for _, destination in copies):
+            copies.append((source, index_base.with_name(filename), index.d))
+        if db_target.exists() or any(destination.exists() for _, destination, _ in copies):
             return "client database or index already exists"
         installed: list[Path] = []
         try:
-            for source, destination in [*copies, (db_source, db_target)]:
+            for source, destination, dimensions in copies:
                 _copy_atomically(source, destination)
                 installed.append(destination)
+                installed.append(_index_metadata_path(destination))
+                _write_ollama_index_metadata(destination, settings.ollama_embedding_model, dimensions)
+            _copy_atomically(db_source, db_target)
+            installed.append(db_target)
         except OSError:
             for destination in installed:
                 destination.unlink(missing_ok=True)
@@ -139,6 +156,8 @@ def install_seed_indexes(settings: Settings, bundle_dir: Path | None = None) -> 
         or not str(settings.sync_server_url or "").strip()
     ):
         return "unavailable"
+    if getattr(settings, "embedding_provider", "ollama") != "ollama":
+        return "embedding provider differs"
     if bundle_dir is None:
         bundle_dir = Path(sys.executable).resolve().parents[2] / "seed-indexes"
     manifest_path = bundle_dir / "manifest.json"
@@ -161,7 +180,7 @@ def install_seed_indexes(settings: Settings, bundle_dir: Path | None = None) -> 
         if not isinstance(entries, list) or not entries:
             raise ValueError("manifest has no indexes")
         scopes: set[str] = set()
-        copies: list[tuple[Path, Path]] = []
+        copies: list[tuple[Path, Path, int]] = []
         import faiss
 
         for entry in entries:
@@ -178,17 +197,19 @@ def install_seed_indexes(settings: Settings, bundle_dir: Path | None = None) -> 
             index = faiss.read_index(str(source))
             if index.ntotal != entry.get("vectors") or index.d != entry.get("dimensions"):
                 raise ValueError(f"index metadata mismatch: {filename}")
-            copies.append((source, index_base.with_name(filename)))
+            copies.append((source, index_base.with_name(filename), index.d))
         existing_scopes = scopes | ({"policy_reference"} if "policy_document" in scopes else set())
         if _has_existing_knowledge(db_path, existing_scopes):
             return "client knowledge already exists"
-        if any(destination.exists() for _, destination in copies):
+        if any(destination.exists() for _, destination, _ in copies):
             return "client index already exists"
         installed: list[Path] = []
         try:
-            for source, destination in copies:
+            for source, destination, dimensions in copies:
                 _copy_atomically(source, destination)
                 installed.append(destination)
+                installed.append(_index_metadata_path(destination))
+                _write_ollama_index_metadata(destination, settings.ollama_embedding_model, dimensions)
         except OSError:
             for destination in installed:
                 destination.unlink(missing_ok=True)

@@ -90,7 +90,14 @@ def test_exported_index_installs_only_for_matching_fresh_client(tmp_path: Path, 
     settings = _settings(client_db, destination)
     assert install_seed_indexes(settings, bundle) == "installed main"
     assert faiss.read_index(str(destination.with_name("knowledge.main.faiss"))).ntotal == 1
+    metadata_path = destination.with_name("knowledge.main.faiss.metadata.json")
+    assert json.loads(metadata_path.read_text(encoding="utf-8"))["model"] == "nomic-embed-text"
     assert install_seed_indexes(settings, bundle) == "client index already exists"
+
+    bedrock = _settings(tmp_path / "bedrock.db", tmp_path / "bedrock" / "knowledge.faiss")
+    bedrock.embedding_provider = "bedrock"
+    assert install_seed_indexes(bedrock, bundle) == "embedding provider differs"
+    assert not (tmp_path / "bedrock" / "knowledge.main.faiss").exists()
 
     other_model = _settings(tmp_path / "other.db", tmp_path / "other" / "knowledge.faiss", model="other-model")
     assert install_seed_indexes(other_model, bundle) == "embedding model differs"

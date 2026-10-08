@@ -1,5 +1,6 @@
 import ipaddress
 import hashlib
+import json
 import logging
 import re
 import socket
@@ -17,6 +18,11 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, Sector
+from app.services.bedrock_provider import (
+    BedrockProviderError,
+    embedding as bedrock_embedding,
+    proxy_embedding as proxy_bedrock_embedding,
+)
 from app.services.document_language import (
     EnglishDocumentRequiredError,
     detect_document_language,
@@ -52,6 +58,7 @@ POLICY_DOCUMENT_SCOPE = "policy_document"
 VALIDATED_EVIDENCE_SCOPE = "validated_evidence"
 SECTOR_PROMPT_SCOPE = "sector_prompt"
 QUARANTINED_SCOPE = "quarantined"
+EMBEDDING_INDEX_METADATA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -348,6 +355,8 @@ class KnowledgeBaseService:
         elif faiss is not None and np is not None:
             try:
                 embeddings = await self._embed_many([chunk.content for chunk in chunks])
+                if embeddings:
+                    await self._rebuild_index_if_needed(embeddings[0])
             except Exception as exc:
                 if not allow_lexical_only:
                     raise
@@ -608,13 +617,14 @@ class KnowledgeBaseService:
             return {}
         try:
             query_vector = await self._embed(query)
+            await self._rebuild_index_if_needed(query_vector)
             vector = normalize_vectors([query_vector])
             with FAISS_LOCK:
-                index = self._load_index(len(query_vector))
+                index = self._load_index(len(query_vector), self._embedding_identity(query_vector))
                 if not index.ntotal:
                     return {}
                 scores, ids = index.search(vector, min(overfetch, index.ntotal))
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, BedrockProviderError, ValueError):
             return {}
         vector_scores = {
             int(chunk_id): float(score)
@@ -888,6 +898,13 @@ class KnowledgeBaseService:
         return embeddings
 
     def _embedding_configuration_error(self) -> str:
+        if getattr(self.settings, "embedding_provider", "ollama") == "bedrock":
+            if self.settings.is_client_mode:
+                if not str(self.settings.sync_server_url or "").strip() or not str(self.settings.sync_api_token or "").strip():
+                    return "SYNC_SERVER_URL and SYNC_API_TOKEN are required for Bedrock embeddings in client mode."
+            elif not str(self.settings.bedrock_embedding_model_id or "").strip():
+                return "BEDROCK_EMBEDDING_MODEL_ID must be set to create FAISS vectors."
+            return ""
         base_url = str(self.settings.ollama_base_url or "").strip()
         parsed = urlparse(base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -899,6 +916,10 @@ class KnowledgeBaseService:
     async def _embed(self, text: str) -> list[float]:
         if configuration_error := self._embedding_configuration_error():
             raise ValueError(configuration_error)
+        if getattr(self.settings, "embedding_provider", "ollama") == "bedrock":
+            if self.settings.is_client_mode:
+                return await proxy_bedrock_embedding(self.settings, text)
+            return await bedrock_embedding(self.settings, text)
         payload = {"model": self.settings.ollama_embedding_model, "prompt": text}
         request_id = new_llm_request_id()
         started_at = perf_counter()
@@ -985,11 +1006,12 @@ class KnowledgeBaseService:
     def _add_vectors(self, chunk_ids: list[str], embeddings: list[list[float]]) -> None:
         vectors = normalize_vectors(embeddings)
         ids = np.array([vector_id_for_chunk_id(chunk_id) for chunk_id in chunk_ids], dtype="int64")
+        identity = self._embedding_identity(embeddings[0])
         with FAISS_LOCK:
-            index = self._load_index(vectors.shape[1])
+            index = self._load_index(vectors.shape[1], identity)
             index.remove_ids(ids)
             index.add_with_ids(vectors, ids)
-            self._save_index(index)
+            self._save_index(index, identity)
 
     def _remove_vectors(self, chunk_ids: list[str]) -> None:
         if not chunk_ids or not self._index_path.exists():
@@ -1054,6 +1076,15 @@ class KnowledgeBaseService:
         ).all()
         if not rows:
             return {"created": False, "chunks": 0, "index_path": str(self._index_path)}
+        if self._index_path.exists():
+            with FAISS_LOCK:
+                existing_index = self._load_existing_index()
+                metadata = self._read_index_metadata()
+            configured_identity = self._embedding_identity()
+            client_bedrock = configured_identity["provider"] == "bedrock" and self.settings.is_client_mode
+            if client_bedrock or not self._metadata_matches(metadata, configured_identity, existing_index.d):
+                sample = await self._embed(str(rows[0][0].content))
+                await self._rebuild_index_if_needed(sample)
         existing_ids: set[int] = set()
         if self._index_path.exists():
             with FAISS_LOCK:
@@ -1119,11 +1150,15 @@ class KnowledgeBaseService:
             "index_path": str(self._index_path),
         }
 
-    def _load_index(self, dimensions: int):
+    def _load_index(self, dimensions: int, identity: dict[str, object] | None = None):
         if self._index_path.exists():
             index = self._load_existing_index()
             if index.d != dimensions:
-                raise ValueError("FAISS index dimensions do not match the Ollama embedding model.")
+                raise ValueError("FAISS index dimensions do not match the configured embedding model.")
+            if identity is not None:
+                metadata = self._read_index_metadata()
+                if metadata is not None and not self._metadata_matches(metadata, identity, dimensions):
+                    raise ValueError("FAISS index was created with a different embedding provider or model.")
             return index
         flat_index = faiss.IndexFlatIP(dimensions)
         return faiss.IndexIDMap2(flat_index)
@@ -1131,16 +1166,109 @@ class KnowledgeBaseService:
     def _load_existing_index(self):
         return faiss.read_index(str(self._index_path))
 
-    def _save_index(self, index) -> None:
+    def _save_index(self, index, identity: dict[str, object] | None = None) -> None:
         if self.scope in {TEMPORARY_KB_SCOPE, POLICY_REFERENCE_SCOPE} and index.ntotal == 0:
             try:
                 self._index_path.unlink(missing_ok=True)
+                self._index_metadata_path.unlink(missing_ok=True)
                 return
             except OSError:
                 # Some managed filesystems allow overwriting an index but not unlinking it.
                 pass
         self._index_path.parent.mkdir(parents=True, exist_ok=True)
-        faiss.write_index(index, str(self._index_path))
+        temporary_path = self._index_path.with_suffix(f"{self._index_path.suffix}.tmp")
+        faiss.write_index(index, str(temporary_path))
+        temporary_path.replace(self._index_path)
+        if identity is not None:
+            self._write_index_metadata(identity, index.d)
+
+    async def _rebuild_index_if_needed(self, sample_embedding: list[float]) -> bool:
+        if not self._index_path.exists():
+            return False
+        dimensions = len(sample_embedding)
+        identity = self._embedding_identity(sample_embedding)
+        with FAISS_LOCK:
+            index = self._load_existing_index()
+            metadata = self._read_index_metadata()
+            needs_rebuild = (
+                metadata is None
+                or index.d != dimensions
+                or not self._metadata_matches(metadata, identity, dimensions)
+            )
+        if not needs_rebuild:
+            return False
+        logger.info(
+            "Rebuilding %s FAISS index for embedding provider=%s model=%s dimensions=%s",
+            self.scope, identity["provider"], identity["model"], dimensions,
+        )
+        await self.rebuild_index()
+        return True
+
+    async def rebuild_index(self) -> dict[str, object]:
+        """Replace this scope's vectors using the currently configured provider."""
+        scopes = (
+            (POLICY_REFERENCE_SCOPE, POLICY_DOCUMENT_SCOPE)
+            if self.scope in {POLICY_REFERENCE_SCOPE, POLICY_DOCUMENT_SCOPE}
+            else (self.scope,)
+        )
+        rows = self.db.execute(
+            select(KnowledgeChunk.id, KnowledgeChunk.content)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(KnowledgeDocument.scope.in_(scopes))
+            .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
+        ).all()
+        if not rows:
+            with FAISS_LOCK:
+                self._index_path.unlink(missing_ok=True)
+                self._index_metadata_path.unlink(missing_ok=True)
+            return {"error": False, "indexed_chunks": 0, "scope": self.scope}
+        embeddings = await self._embed_many([str(row.content) for row in rows])
+        vectors = normalize_vectors(embeddings)
+        ids = np.array([vector_id_for_chunk_id(str(row.id)) for row in rows], dtype="int64")
+        identity = self._embedding_identity(embeddings[0])
+        replacement = faiss.IndexIDMap2(faiss.IndexFlatIP(vectors.shape[1]))
+        replacement.add_with_ids(vectors, ids)
+        with FAISS_LOCK:
+            self._save_index(replacement, identity)
+        return {
+            "error": False, "indexed_chunks": len(rows), "scope": self.scope,
+            "provider": identity["provider"], "model": identity["model"],
+            "dimensions": vectors.shape[1],
+        }
+
+    def _embedding_identity(self, embedding: list[float] | None = None) -> dict[str, object]:
+        provider = str(getattr(self.settings, "embedding_provider", "ollama") or "").strip().casefold()
+        model = (
+            str(getattr(embedding, "model_id", "") or self.settings.bedrock_embedding_model_id or "server-managed").strip()
+            if provider == "bedrock"
+            else str(self.settings.ollama_embedding_model or "").strip()
+        )
+        return {"version": EMBEDDING_INDEX_METADATA_VERSION, "provider": provider, "model": model}
+
+    @staticmethod
+    def _metadata_matches(metadata: dict[str, object] | None, identity: dict[str, object], dimensions: int) -> bool:
+        return bool(
+            metadata
+            and metadata.get("version") == EMBEDDING_INDEX_METADATA_VERSION
+            and metadata.get("provider") == identity.get("provider")
+            and metadata.get("model") == identity.get("model")
+            and metadata.get("dimensions") == dimensions
+        )
+
+    def _read_index_metadata(self) -> dict[str, object] | None:
+        if not self._index_metadata_path.exists():
+            return None
+        try:
+            value = json.loads(self._index_metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def _write_index_metadata(self, identity: dict[str, object], dimensions: int) -> None:
+        metadata = {**identity, "dimensions": dimensions}
+        temporary_path = self._index_metadata_path.with_suffix(f"{self._index_metadata_path.suffix}.tmp")
+        temporary_path.write_text(json.dumps(metadata, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        temporary_path.replace(self._index_metadata_path)
 
     def _require_faiss(self) -> None:
         if faiss is None or np is None:
@@ -1164,6 +1292,10 @@ class KnowledgeBaseService:
         if self.scope == QUARANTINED_SCOPE:
             return main_path.with_name(f"{main_path.stem}.quarantined{main_path.suffix}")
         return main_path
+
+    @property
+    def _index_metadata_path(self) -> Path:
+        return self._index_path.with_suffix(f"{self._index_path.suffix}.metadata.json")
 
 
 def normalize_vectors(embeddings: list[list[float]]):

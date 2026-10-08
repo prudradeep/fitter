@@ -431,8 +431,10 @@ The guided wizard works even if Ollama is not running; `app/llm.py` returns a gr
 ## Amazon Bedrock chat
 
 Set `LLM_PROVIDER="bedrock"` to send chat requests through the Bedrock Converse
-API. Ollama remains the default provider and continues to produce knowledge-base
-embeddings, so the existing FAISS indexes can be used.
+API. Chat and knowledge-base embeddings are selected independently. Ollama
+remains the default for both. To use Bedrock embeddings as well, set
+`EMBEDDING_PROVIDER="bedrock"` and `BEDROCK_EMBEDDING_MODEL_ID` on the server.
+The default embedding model ID is `amazon.titan-embed-text-v2:0`.
 
 On the server, set `AWS_REGION` and `BEDROCK_MODEL_ID` to a model available in
 that Region. Supply credentials with `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`,
@@ -445,6 +447,14 @@ requests to the server's authenticated `/api/sync/llm/chat` endpoint. Configure
 must have `SYNC_ENABLED=true` and `LLM_PROVIDER="bedrock"`. Clients need no AWS
 credentials or Bedrock model ID; this chat route works regardless of the
 client's data synchronization settings. Bedrock chat requires network access.
+
+For Bedrock embeddings on a desktop client, set `EMBEDDING_PROVIDER="bedrock"`,
+`SYNC_SERVER_URL`, and `SYNC_API_TOKEN`. The server must set
+`EMBEDDING_PROVIDER="bedrock"` and `SYNC_ENABLED=true`. Embedding requests use
+the authenticated `/api/sync/llm/embedding` route. Existing FAISS indexes are
+rebuilt from stored chunks when the embedding provider or model changes; this
+can make many Bedrock calls and incur AWS charges. Packaged Ollama seed indexes
+are skipped when Bedrock embeddings are selected.
 
 LLM request/response logging is enabled by default in development and disabled
 by default outside development. When enabled, chat and embedding calls are

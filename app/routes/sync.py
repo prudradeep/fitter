@@ -12,7 +12,11 @@ from app.config import get_settings
 from app.db.session import get_db
 from app.models import AppUser, Prompt
 from app.routes.request_limits import InvalidJsonPayload, RequestTooLarge, json_payload_error_response, read_limited_json
-from app.services.bedrock_provider import BedrockProviderError, chat as bedrock_chat
+from app.services.bedrock_provider import (
+    BedrockProviderError,
+    chat as bedrock_chat,
+    embedding as bedrock_embedding,
+)
 from app.services.prompt_loader import clear_prompt_caches
 from app.services.prompt_store import prompt_metadata
 from app.services.sync_service import SyncService
@@ -205,6 +209,27 @@ async def sync_llm_chat(
     except BedrockProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"error": False, "answer": answer}
+
+
+@router.post("/llm/embedding", response_model=None)
+async def sync_llm_embedding(
+    request: Request,
+    _: dict[str, object] = Depends(require_sync_token),
+):
+    """Embed client text with server-side Bedrock credentials."""
+    payload = await _sync_payload_or_error(request)
+    if isinstance(payload, JSONResponse):
+        return payload
+    if settings.embedding_provider != "bedrock" or not settings.is_server_mode:
+        raise HTTPException(status_code=503, detail="Bedrock embeddings are not configured on this server.")
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip() or len(text) > 50_000:
+        raise HTTPException(status_code=422, detail="Embedding text must be 1 to 50000 characters.")
+    try:
+        vector = await bedrock_embedding(settings, text)
+    except BedrockProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"error": False, "embedding": vector, "model": vector.model_id}
 
 
 @router.post("/system-inquiry-telemetry")
