@@ -75,7 +75,10 @@ class EmbeddingRoutingTests(unittest.IsolatedAsyncioTestCase):
 
 class BedrockEmbeddingTests(unittest.TestCase):
     def test_titan_invoke_model_payload_and_vector(self) -> None:
-        settings = Settings(app_mode="server", embedding_provider="bedrock", _env_file=None)
+        settings = Settings(
+            app_mode="server", embedding_provider="bedrock",
+            bedrock_embedding_cache_enabled=False, _env_file=None,
+        )
         client = MagicMock()
         client.invoke_model.return_value = {"body": io.BytesIO(json.dumps({"embedding": [1, 2]}).encode())}
         with (
@@ -86,6 +89,49 @@ class BedrockEmbeddingTests(unittest.TestCase):
         self.assertEqual(result, [1.0, 2.0])
         self.assertEqual(result.model_id, settings.bedrock_embedding_model_id)
         self.assertEqual(json.loads(client.invoke_model.call_args.kwargs["body"]), {"inputText": "example"})
+
+    def test_server_cache_reuses_exact_text_and_model_across_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings = Settings(
+                app_mode="server", embedding_provider="bedrock",
+                bedrock_embedding_cache_path=str(Path(temp_dir) / "embeddings.sqlite"),
+                _env_file=None,
+            )
+            client = MagicMock()
+            client.invoke_model.return_value = {"body": io.BytesIO(b'{"embedding": [1, 2]}')}
+            with (
+                patch("app.services.bedrock_provider._client", return_value=client),
+                patch("app.services.bedrock_provider.log_llm_exchange"),
+            ):
+                first = _embedding_sync(settings, "private chunk")
+                second = _embedding_sync(settings, "private chunk")
+            self.assertEqual(first, second)
+            client.invoke_model.assert_called_once()
+            self.assertNotIn(b"private chunk", Path(settings.bedrock_embedding_cache_path).read_bytes())
+
+            changed_model = settings.model_copy(update={"bedrock_embedding_model_id": "another-model"})
+            client.invoke_model.return_value = {"body": io.BytesIO(b'{"embedding": [3, 4]}')}
+            with (
+                patch("app.services.bedrock_provider._client", return_value=client),
+                patch("app.services.bedrock_provider.log_llm_exchange"),
+            ):
+                different = _embedding_sync(changed_model, "private chunk")
+            self.assertEqual(different, [3.0, 4.0])
+            self.assertEqual(client.invoke_model.call_count, 2)
+
+    def test_cache_write_failure_returns_bedrock_vector(self) -> None:
+        settings = Settings(app_mode="server", embedding_provider="bedrock", _env_file=None)
+        client = MagicMock()
+        client.invoke_model.return_value = {"body": io.BytesIO(b'{"embedding": [1, 2]}')}
+        with (
+            patch("app.services.bedrock_provider._client", return_value=client),
+            patch("app.services.bedrock_provider.cached_embedding", return_value=None),
+            patch("app.services.bedrock_provider.store_embedding", side_effect=OSError("disk unavailable")),
+            patch("app.services.bedrock_provider.log_llm_exchange"),
+        ):
+            result = _embedding_sync(settings, "example")
+        self.assertEqual(result, [1.0, 2.0])
+        client.invoke_model.assert_called_once()
 
 
 class EmbeddingProxyRouteTests(unittest.TestCase):
@@ -106,6 +152,31 @@ class EmbeddingProxyRouteTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 200)
         self.assertEqual(accepted.json()["model"], "server-model")
         embed.assert_awaited_once_with(settings, "example")
+
+    def test_proxy_reuses_cached_embedding_on_second_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings = Settings(
+                app_mode="server", embedding_provider="bedrock", sync_enabled=True,
+                bedrock_embedding_cache_path=str(Path(temp_dir) / "embeddings.sqlite"),
+                _env_file=None,
+            )
+            app = FastAPI()
+            app.include_router(sync_routes.router)
+            app.dependency_overrides[get_db] = lambda: object()
+            bedrock_client = MagicMock()
+            bedrock_client.invoke_model.return_value = {"body": io.BytesIO(b'{"embedding": [1, 2]}')}
+            with (
+                patch.object(sync_routes, "settings", settings),
+                patch.object(sync_routes.SyncService, "sync_client_for_token", return_value={"id": "client"}),
+                patch("app.services.bedrock_provider._client", return_value=bedrock_client),
+                patch("app.services.bedrock_provider.log_llm_exchange"),
+                TestClient(app) as client,
+            ):
+                first = client.post("/api/sync/llm/embedding", headers={"X-Sync-Token": "valid"}, json={"text": "same chunk"})
+                second = client.post("/api/sync/llm/embedding", headers={"X-Sync-Token": "valid"}, json={"text": "same chunk"})
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(first.json(), second.json())
+            bedrock_client.invoke_model.assert_called_once()
 
 
 @unittest.skipIf(kb.faiss is None or kb.np is None, "FAISS is unavailable")

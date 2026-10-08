@@ -2,14 +2,23 @@
 
 import asyncio
 import json
+import logging
 import os
+import sqlite3
+from functools import lru_cache
+from threading import Lock
 from time import perf_counter
 from typing import Any
 
 import httpx
 
 from app.config import Settings
+from app.services.bedrock_chat_cache import cached_chat, chat_cache_key, store_chat
+from app.services.bedrock_embedding_cache import cached_embedding, embedding_cache_key, store_embedding
 from app.services.llm_logging import log_llm_exchange, new_llm_request_id
+
+
+logger = logging.getLogger(__name__)
 
 
 class BedrockProviderError(RuntimeError):
@@ -53,7 +62,6 @@ def _chat_sync(
     response_format: str | dict[str, Any] | None,
 ) -> str:
     model_id = settings.bedrock_model_id.strip()
-    request_id = new_llm_request_id()
     if response_format == "json":
         context = f"{context}\nReturn valid JSON only. Do not use Markdown or code fences."
     elif isinstance(response_format, dict):
@@ -71,6 +79,42 @@ def _chat_sync(
     }
     if context:
         request["system"] = [{"text": context}]
+    if not (
+        settings.is_server_mode
+        and settings.llm_provider == "bedrock"
+        and settings.bedrock_chat_cache_enabled
+        and settings.bedrock_chat_cache_ttl_seconds > 0
+    ):
+        return _invoke_chat_sync(settings, request)
+    try:
+        key = chat_cache_key(request)
+    except (TypeError, ValueError):
+        return _invoke_chat_sync(settings, request)
+    cache_path = settings.bedrock_chat_cache_path
+    with _chat_lock(f"{cache_path}\0{key}"):
+        try:
+            answer = cached_chat(cache_path, key, settings.bedrock_chat_cache_ttl_seconds)
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            logger.warning("Bedrock chat cache read failed: %s", exc)
+            answer = None
+        if answer is not None:
+            return answer
+        answer = _invoke_chat_sync(settings, request)
+        try:
+            store_chat(cache_path, key, answer, settings.bedrock_chat_cache_ttl_seconds)
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning("Bedrock chat cache write failed: %s", exc)
+        return answer
+
+
+@lru_cache(maxsize=4096)
+def _chat_lock(cache_key: str) -> Lock:
+    return Lock()
+
+
+def _invoke_chat_sync(settings: Settings, request: dict[str, Any]) -> str:
+    model_id = request["modelId"]
+    request_id = new_llm_request_id()
     started_at = perf_counter()
     try:
         response = _client(settings).converse(**request)
@@ -126,7 +170,38 @@ async def chat(
     )
 
 
+@lru_cache(maxsize=4096)
+def _embedding_lock(cache_key: str) -> Lock:
+    return Lock()
+
+
 def _embedding_sync(settings: Settings, text: str) -> EmbeddingVector:
+    if not (
+        settings.is_server_mode
+        and settings.embedding_provider == "bedrock"
+        and settings.bedrock_embedding_cache_enabled
+    ):
+        return _invoke_embedding_sync(settings, text)
+    model_id = settings.bedrock_embedding_model_id.strip()
+    cache_path = settings.bedrock_embedding_cache_path
+    key = embedding_cache_key(model_id, text)
+    with _embedding_lock(key):
+        try:
+            values = cached_embedding(cache_path, model_id, text)
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning("Bedrock embedding cache read failed: %s", exc)
+            values = None
+        if values is not None:
+            return EmbeddingVector(values, model_id)
+        result = _invoke_embedding_sync(settings, text)
+        try:
+            store_embedding(cache_path, model_id, text, result)
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            logger.warning("Bedrock embedding cache write failed: %s", exc)
+        return result
+
+
+def _invoke_embedding_sync(settings: Settings, text: str) -> EmbeddingVector:
     model_id = settings.bedrock_embedding_model_id.strip()
     request_id = new_llm_request_id()
     payload = {"inputText": text}

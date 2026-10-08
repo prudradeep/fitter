@@ -448,6 +448,16 @@ must have `SYNC_ENABLED=true` and `LLM_PROVIDER="bedrock"`. Clients need no AWS
 credentials or Bedrock model ID; this chat route works regardless of the
 client's data synchronization settings. Bedrock chat requires network access.
 
+The server caches successful Bedrock chat answers for exact repeats of the
+request sent to Converse, including the model, system context, conversation,
+temperature, and token limit. Cache entries expire after 24 hours by default.
+Set `BEDROCK_CHAT_CACHE_ENABLED=false` to disable this, or use
+`BEDROCK_CHAT_CACHE_TTL_SECONDS` and `BEDROCK_CHAT_CACHE_PATH` to change the
+expiry and server-local SQLite file. The cache stores a hash of the request
+and the answer, but not the request text. Cache hits do not make a Bedrock call
+or create a Bedrock request log entry. Desktop clients use this cache through
+the chat proxy.
+
 For Bedrock embeddings on a desktop client, set `EMBEDDING_PROVIDER="bedrock"`,
 `SYNC_SERVER_URL`, and `SYNC_API_TOKEN`. The server must set
 `EMBEDDING_PROVIDER="bedrock"` and `SYNC_ENABLED=true`. Embedding requests use
@@ -455,6 +465,15 @@ the authenticated `/api/sync/llm/embedding` route. Existing FAISS indexes are
 rebuilt from stored chunks when the embedding provider or model changes; this
 can make many Bedrock calls and incur AWS charges. Packaged Ollama seed indexes
 are skipped when Bedrock embeddings are selected.
+
+The server caches Bedrock embeddings by model ID and exact text. Repeated
+requests for the same chunk reuse the stored vector without another Bedrock
+call. The persistent cache defaults to
+`data/service-runtime/bedrock_embeddings.sqlite`; set
+`BEDROCK_EMBEDDING_CACHE_ENABLED=false` to disable it or change
+`BEDROCK_EMBEDDING_CACHE_PATH` to move it. The cache stores a text hash and the
+vector, not the chunk text. Desktop clients use the server cache through the
+embedding proxy and do not need a local cache.
 
 LLM request/response logging is enabled by default in development and disabled
 by default outside development. When enabled, chat and embedding calls are
