@@ -21,8 +21,6 @@ packaging/windows/offline
 
 # Environment / secrets
 .env
-.env.client.dev
-.env.server.dev
 .env.*
 !.env.example
 
