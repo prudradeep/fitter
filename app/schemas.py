@@ -21,6 +21,7 @@ class SessionSummary(BaseModel):
     sector: str | None = None
     selected_context_policy: str | None = None
     selected_context_policy_summary: str | None = None
+    selected_context_policy_sources: dict[str, list[list[dict[str, str]]]] | None = None
     selected_hazard: str | None = None
     mitigation_measure: str | None = None
     mitigation_revision_stage: str | None = None

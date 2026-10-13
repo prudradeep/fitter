@@ -83,6 +83,135 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
         self.assertEqual(response.options, [])
         self.assertIsNone(session.new_policy_inspiration)
 
+    def test_existing_policy_shows_d42_adaptations_without_factsheet_context(self):
+        engine = _InspiredMeasureEngine()
+        engine._hazard_with_mitigation_factsheet_reference = lambda session, **kwargs: (
+            "## Factsheet content that should not be shown"
+        )
+        engine._existing_policy_adaptation_reference = AsyncMock(
+            return_value=(
+                "## Challenges to be addressed\n\n"
+                "- Upfront costs exclude low-income tenants. <button>Source</button>\n\n"
+                "## Possible ways to address the challenges\n\n"
+                "- Add targeted grants. <button>Source</button>"
+            )
+        )
+        engine._existing_policy_mechanisms_reference = AsyncMock(
+            return_value=(
+                "## Policy mechanisms to be considered for mitigation\n\n"
+                "- Upfront costs exclude renters. <button>Source</button>"
+            )
+        )
+        session = self._session()
+        session.mitigation_proposal_type = "existing_policy"
+
+        response = asyncio.run(engine._create_mitigation_measure_step("session-1", session))
+
+        policy_position = response.bot_message.index("Selected policy:")
+        hazard_position = response.bot_message.index("Selected hazard:")
+        context_position = response.bot_message.index("Selected context:")
+        mechanisms_position = response.bot_message.index("Policy mechanisms to be considered for mitigation")
+        self.assertLess(policy_position, hazard_position)
+        self.assertLess(hazard_position, context_position)
+        self.assertLess(context_position, mechanisms_position)
+        self.assertIn("Clean Energy Access Act", response.bot_message)
+        self.assertIn("Rising electricity costs", response.bot_message)
+        self.assertIn("Germany, Berlin, Energy", response.bot_message)
+        self.assertIn("Possible ways to address the challenges", response.bot_message)
+        self.assertIn("Add targeted grants.", response.bot_message)
+        self.assertIn("Policy mechanisms to be considered for mitigation", response.bot_message)
+        self.assertIn("Upfront costs exclude renters.", response.bot_message)
+        self.assertIn("Source", response.bot_message)
+        self.assertNotIn("Factsheet content", response.bot_message)
+        self.assertEqual([option.label for option in response.options], [ADOPT_INSPIRED_MITIGATION])
+        self.assertEqual(session.new_policy_inspiration["challenge"], ["Upfront costs exclude low-income tenants."])
+        self.assertEqual(session.new_policy_inspiration["approach"], ["Add targeted grants."])
+
+    def test_existing_policy_adoption_uses_displayed_concepts(self):
+        engine = _InspiredMeasureEngine()
+        engine._existing_policy_adaptation_reference = AsyncMock(return_value=(
+            "## Challenges to be addressed\n\n- Upfront costs exclude low-income tenants.\n\n"
+            "## Possible ways to address the challenges\n\n- Add targeted grants."
+        ))
+        session = self._session()
+        session.mitigation_proposal_type = "existing_policy"
+        asyncio.run(engine._create_mitigation_measure_step("session-1", session))
+        mocked_llm = AsyncMock(return_value=(
+            '{"measure":"Offer targeted grants to low-income tenants.",'
+            '"reason":"Grants reduce the upfront cost barrier."}'
+        ))
+
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=mocked_llm):
+            response = asyncio.run(
+                engine._capture_mitigation_measure("session-1", session, ADOPT_INSPIRED_MITIGATION)
+            )
+
+        self.assertEqual(response.step, "inspired_mitigation_confirmation")
+        self.assertIn("Offer targeted grants", response.bot_message)
+        llm_input = json.loads(mocked_llm.await_args.kwargs["messages"][0]["content"])
+        self.assertEqual(llm_input["important_concepts"]["approach"], ["Add targeted grants."])
+
+    def test_existing_policy_with_an_approach_can_adopt_without_a_challenge(self):
+        engine = _InspiredMeasureEngine()
+        engine._existing_policy_adaptation_reference = AsyncMock(return_value=(
+            "## Challenges to be addressed\n\nNo supported challenge was found.\n\n"
+            "## Possible ways to address the challenges\n\n- Add targeted grants."
+        ))
+        session = self._session()
+        session.mitigation_proposal_type = "existing_policy"
+
+        response = asyncio.run(engine._create_mitigation_measure_step("session-1", session))
+
+        self.assertEqual([option.label for option in response.options], [ADOPT_INSPIRED_MITIGATION])
+        self.assertEqual(session.new_policy_inspiration["approach"], ["Add targeted grants."])
+
+    def test_existing_policy_with_mechanisms_can_adopt_without_d42_concepts(self):
+        engine = _InspiredMeasureEngine()
+        engine._existing_policy_mechanisms_reference = AsyncMock(return_value=(
+            "## Policy mechanisms to be considered for mitigation\n\n"
+            "- **Levy funds are reserved for community projects:** "
+            "Households facing energy bills receive no direct support. <button>Source</button>"
+        ))
+        engine._existing_policy_adaptation_reference = AsyncMock(return_value=(
+            "## Challenges to be addressed\n\nNo challenge is stated in the matched D4.2 record.\n\n"
+            "## Possible ways to address the challenges\n\n"
+            "No approach is stated in the matched D4.2 record."
+        ))
+        session = self._session()
+        session.mitigation_proposal_type = "existing_policy"
+        session.selected_context_policy_summary = None
+
+        response = asyncio.run(engine._create_mitigation_measure_step("session-1", session))
+
+        self.assertEqual([option.label for option in response.options], [ADOPT_INSPIRED_MITIGATION])
+        self.assertEqual(session.new_policy_inspiration["challenge"], [])
+        self.assertEqual(session.new_policy_inspiration["approach"], [])
+        self.assertIn("Households facing energy bills", session.new_policy_inspiration["policy_mechanisms"][0])
+        mocked_llm = AsyncMock(return_value=(
+            '{"measure":"Use levy funds to reduce household energy costs.",'
+            '"reason":"Direct support addresses the bill burden."}'
+        ))
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=mocked_llm):
+            adopted = asyncio.run(
+                engine._capture_mitigation_measure("session-1", session, ADOPT_INSPIRED_MITIGATION)
+            )
+        self.assertEqual(adopted.step, "inspired_mitigation_confirmation")
+
+    def test_existing_policy_without_evidence_has_no_adopt_option(self):
+        engine = _InspiredMeasureEngine()
+        engine._existing_policy_adaptation_reference = AsyncMock(return_value=(
+            "## Challenges to be addressed\n\nNo supported challenge was found.\n\n"
+            "## Possible ways to address the challenges\n\nNo supported adaptation was found."
+        ))
+        session = self._session()
+        session.mitigation_proposal_type = "existing_policy"
+        session.selected_context_policy_summary = None
+
+        response = asyncio.run(engine._create_mitigation_measure_step("session-1", session))
+
+        self.assertEqual(response.options, [])
+        self.assertIsNone(session.new_policy_inspiration)
+
     def test_click_shows_measure_from_shown_concepts_for_confirmation(self):
         engine = _InspiredMeasureEngine()
         session = self._session()

@@ -76,6 +76,16 @@ class OpenConversationFlowActionTests(unittest.TestCase):
         self.assertIn("Select another policy", hazard_list_options)
         self.assertIn("Select another policy", mitigation_creation_options)
 
+    def test_analyse_another_hazard_option_requires_selected_policy(self):
+        session = ChatSession(sector="Energy", selected_hazard="Heat stress")
+        label = "Analyse another hazard for the same selected policy"
+
+        self.assertNotIn(label, ChatService._other_nav_options(session, "mitigation_measure"))
+
+        session.selected_context_policy_id = "policy-1"
+        session.selected_context_policy = "Existing energy policy"
+        self.assertIn(label, ChatService._other_nav_options(session, "mitigation_measure"))
+
     def test_policy_review_removes_stale_hazard_option_from_restored_prompt(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
@@ -235,6 +245,7 @@ class OpenConversationFlowActionTests(unittest.TestCase):
             selected_hazard="Heat stress",
         )
         session.selected_context_policy = "Existing energy policy"
+        session.selected_context_policy_id = "policy-1"
         session.socio_demographic_profiles = ["Older people"]
         session.pending_mitigation_measure = "Provide cooling support"
         session.pending_inspired_mitigation_measure = "Add a cooling fund"
@@ -242,7 +253,7 @@ class OpenConversationFlowActionTests(unittest.TestCase):
 
         response = _run(
             service._handle_other_nav_action(
-                "test-session", session, "Analyse another hazard in the same sector"
+                "test-session", session, "Analyse another hazard for the same selected policy"
             )
         )
 
@@ -254,6 +265,7 @@ class OpenConversationFlowActionTests(unittest.TestCase):
         self.assertIsNone(session.pending_inspired_mitigation_measure)
         self.assertIsNone(session.new_policy_inspiration)
         self.assertEqual(session.selected_context_policy, "Existing energy policy")
+        self.assertEqual(session.selected_context_policy_id, "policy-1")
         self.assertEqual(session.sector, "Energy")
 
     def test_reason_confirmation_add_mitigation_text_enters_measure_flow(self):

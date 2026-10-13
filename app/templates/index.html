@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261008-hide-mitigation-facts" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261013-context-layout" />
   </head>
   <body data-tour-user-id="{{ current_user.id }}">
     <header class="topbar">
@@ -358,6 +358,10 @@
             <dt>Sector</dt>
             <dd id="sessionSector">Not selected</dd>
           </div>
+          <div class="stage-selection-policy" hidden>
+            <dt>Selected policy</dt>
+            <dd id="sessionPolicy"></dd>
+          </div>
         </dl>
         <p id="sessionEmpty" class="session-empty stage-empty"></p>
         <section
@@ -467,7 +471,7 @@
           <iframe
             id="stagePolicySummary"
             class="stage-policy-summary"
-            data-src="{{ url_for('static', path='/policy-summary.html') }}?v=20261007-all-titles"
+            data-src="{{ url_for('static', path='/policy-summary.html') }}?v=20261013-sources"
             title="Selected policy summary"
             hidden
           ></iframe>
@@ -1265,6 +1269,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260904-prompt-source-preference"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261008-clear-hazard-selection"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261013-context-layout"></script>
   </body>
 </html>

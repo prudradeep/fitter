@@ -886,6 +886,178 @@ class MitigationGuidedFlowTests(unittest.TestCase):
         )
         self.assertIn("Other policy effects reviewed", response.bot_message)
 
+    def test_policy_effect_uses_retrieved_text_and_expands_ranking_labels(self):
+        self.session.selected_mitigation_policy = "Citizen participation laws"
+        self.session.pending_mitigation_measure = "Require binding household agreements"
+        self.service._new_policy_suggestion_policy_rows = MagicMock(return_value=[{
+            "policy_title": "Citizen participation laws",
+            "short_description": "Citizens participate in local renewable energy projects.",
+            "hazard_name": "Low participation in renewable energy projects",
+            "mitigation_effect": "Low mitigation",
+            "excel_row_number": 42,
+        }])
+        self.service.grounding_models = MagicMock()
+        self.service.grounding_models.ground_results = AsyncMock(
+            side_effect=lambda _query, results: results
+        )
+        self.service._shared_knowledge_results = AsyncMock(return_value=[{
+            "title": "Citizen participation laws (Bürgerbeteiligungsgesetze)",
+            "content": (
+                "Participation for citizens in renewable energy projects, "
+                "including wind power projects, is intended to raise acceptance."
+            ),
+            "page_number": 3,
+        }])
+        self.service._mitigation_policy_reference_results = MagicMock(return_value=[])
+        llm_response = (
+            '{"effects":[{"source_id":"S1","policy_aspect":"P4 participation rules",'
+            '"problem":"P4 could discourage participation",'
+            '"causal_pathway":"Binding agreements could deter households",'
+            '"supporting_quote":"Participation for citizens in renewable energy projects"}]}'
+        )
+
+        with patch(
+            "app.services.chat_mitigation_creation_guided.ask_llm_chat",
+            new=AsyncMock(return_value=llm_response),
+        ):
+            effects = run(self.service._identify_mitigation_policy_effects(self.session))
+
+        self.assertEqual(len(effects), 1)
+        self.assertEqual(effects[0]["source_label"],
+                         "Citizen participation laws (Bürgerbeteiligungsgesetze), page 3")
+        self.assertNotIn("P4", effects[0]["problem"])
+        self.session.mitigation_policy_effects = effects
+        self.session.mitigation_policy_effect_index = 0
+        message = self.service._mitigation_policy_effect_review_step(
+            "session-1", self.session
+        ).bot_message
+        self.assertIn("Citizens participate in local renewable energy projects", message)
+        self.assertIn("Participation for citizens in renewable energy projects", message)
+        self.assertNotIn("P4", message)
+
+    def test_policy_effect_discards_unmatched_source_id(self):
+        self.service._mitigation_policy_effect_sources = AsyncMock(return_value=[{
+            "source_id": "S1",
+            "policy_title": "Policy on community energy",
+            "related_hazard": "Low community participation",
+            "mapped_effect": "Medium mitigation",
+            "original_policy_text": "The policy supports community energy participation.",
+            "source_excerpt": "The policy supports community energy participation.",
+            "source_label": "MM Target group.xlsx, row 9",
+        }])
+        with patch(
+            "app.services.chat_mitigation_creation_guided.ask_llm_chat",
+            new=AsyncMock(return_value=(
+                '{"effects":[{"source_id":"S9","policy_aspect":"Funding",'
+                '"problem":"Invented problem","causal_pathway":"Invented pathway"}]}'
+            )),
+        ):
+            effects = run(self.service._identify_mitigation_policy_effects(self.session))
+        self.assertEqual(effects, [])
+
+    def test_policy_effect_discards_a_quote_missing_from_its_source(self):
+        self.service._mitigation_policy_effect_sources = AsyncMock(return_value=[{
+            "source_id": "S1",
+            "policy_title": "Community energy policy",
+            "related_hazard": "Low community participation",
+            "mapped_effect": "Medium mitigation",
+            "original_policy_text": "The policy supports community energy participation.",
+            "source_excerpt": "The policy supports community energy participation.",
+            "source_label": "MM Target group.xlsx, row 9",
+        }])
+        with patch(
+            "app.services.chat_mitigation_creation_guided.ask_llm_chat",
+            new=AsyncMock(return_value=(
+                '{"effects":[{"source_id":"S1","policy_aspect":"Funding",'
+                '"problem":"Invented problem","causal_pathway":"Invented pathway",'
+                '"supporting_quote":"A provision that does not exist in the source"}]}'
+            )),
+        ):
+            effects = run(self.service._identify_mitigation_policy_effects(self.session))
+        self.assertEqual(effects, [])
+
+    def test_policy_effect_keeps_spreadsheet_text_when_document_is_unrelated(self):
+        self.service._new_policy_suggestion_policy_rows = MagicMock(return_value=[{
+            "policy_title": "Community energy participation",
+            "short_description": (
+                "Residents may participate financially in local renewable "
+                "energy projects and receive information about project plans."
+            ),
+            "hazard_name": "Low participation in local renewable energy",
+            "mitigation_effect": "Medium mitigation",
+            "excel_row_number": 17,
+        }])
+        self.service.grounding_models = MagicMock()
+        self.service.grounding_models.ground_results = AsyncMock(
+            side_effect=lambda _query, results: results
+        )
+        self.service._shared_knowledge_results = AsyncMock(return_value=[{
+            "title": "Unrelated energy tariff policy",
+            "content": "Tariffs must be set by the regulator for all households.",
+            "page_number": 8,
+        }])
+        self.service._mitigation_policy_reference_results = MagicMock(return_value=[])
+
+        sources = run(self.service._mitigation_policy_effect_sources(self.session))
+
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["source_label"], "MM Target group.xlsx, row 17")
+        self.assertEqual(
+            sources[0]["source_excerpt"], sources[0]["original_policy_text"]
+        )
+        self.assertNotIn("Tariffs", sources[0]["source_excerpt"])
+
+    def test_policy_effect_loads_document_when_spreadsheet_description_is_empty(self):
+        self.service._new_policy_suggestion_policy_rows = MagicMock(return_value=[{
+            "policy_title": "Citizen participation laws",
+            "short_description": "",
+            "hazard_name": "Low citizen participation",
+            "mitigation_effect": "Low mitigation",
+            "excel_row_number": 4,
+        }])
+        self.service.grounding_models = MagicMock()
+        self.service.grounding_models.ground_results = AsyncMock(
+            side_effect=lambda _query, results: results
+        )
+        self.service._shared_knowledge_results = AsyncMock(return_value=[])
+        self.service._mitigation_policy_reference_results = MagicMock(return_value=[])
+        self.service.db = MagicMock()
+        document = MagicMock()
+        document.id = "document-1"
+        document.title = "Citizen participation laws (Bürgerbeteiligungsgesetze)"
+        self.service.db.scalars.return_value.all.return_value = [document]
+        passage = (
+            "Citizens may participate in local renewable energy projects "
+            "to strengthen community acceptance and local value creation."
+        )
+        with patch(
+            "app.services.chat_mitigation_creation_guided.KnowledgeBaseService"
+        ) as kb_service:
+            kb_service.return_value.document_results.return_value = [{
+                "title": document.title,
+                "content": passage,
+                "page_number": 2,
+            }]
+            sources = run(self.service._mitigation_policy_effect_sources(self.session))
+
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["source_excerpt"], passage)
+        self.assertEqual(sources[0]["source_label"], f"{document.title}, page 2")
+
+    def test_policy_effect_semantic_rank_can_reject_unrelated_policies(self):
+        candidates = [
+            {"content": "Tariff policy: household bills"},
+            {"content": "Community participation: local renewable energy projects"},
+        ]
+        with patch(
+            "app.services.chat_mitigation_creation_guided.ask_llm_chat",
+            new=AsyncMock(return_value='{"ranked_ids":["C2"]}'),
+        ):
+            ranked = run(self.service._semantic_policy_effect_rank(
+                "local renewable energy participation", candidates
+            ))
+        self.assertEqual(ranked, [candidates[1]])
+
     def test_skipped_policy_effect_advances_to_the_next_effect(self):
         self.session.mitigation_policy_effects = [
             {

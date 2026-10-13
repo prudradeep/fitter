@@ -854,6 +854,7 @@ class ChatMitigationCreationPolicyMixin:
                 MitigationMeasurePolicy.policy_title,
                 MitigationMeasurePolicy.policy_type,
                 MitigationMeasurePolicy.short_description,
+                MitigationMeasurePolicy.excel_row_number,
                 MitigationMeasurePolicy.country_id,
                 MitigationMeasurePolicySystemHazard.system_hazard_id,
                 MitigationMeasurePolicySystemHazard.mitigation_effect,

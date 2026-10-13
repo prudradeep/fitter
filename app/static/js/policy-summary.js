@@ -1,8 +1,8 @@
 const policySummarySections = new Map([
   ["policy details", document.querySelector(".policy-items")],
-  ["mechanisms", document.querySelector(".works-items")],
+  ["policy objectives", document.querySelector(".works-items")],
   ["intended benefits", document.querySelector(".benefit-items")],
-  ["socio-demographic groups benefited", document.querySelector(".people-items")],
+  ["target actors/beneficiaries", document.querySelector(".people-items")],
 ]);
 
 function parsePolicySummary(markdown) {
@@ -28,6 +28,14 @@ function parsePolicySummary(markdown) {
       currentItem.text += ` ${line.trim()}`;
     }
   }
+  if (!sections.has("target actors/beneficiaries")) {
+    const legacyGroups = sections.get("target socio demographic groups")
+      || sections.get("socio-demographic groups benefited");
+    if (legacyGroups) sections.set("target actors/beneficiaries", legacyGroups);
+  }
+  if (!sections.has("policy objectives") && sections.has("original policy objectives")) {
+    sections.set("policy objectives", sections.get("original policy objectives"));
+  }
   return sections;
 }
 
@@ -37,7 +45,7 @@ function policyPointTitle(label, text) {
   return words.slice(0, 7).join(" ") + (words.length > 7 ? "…" : "");
 }
 
-function renderPolicySummary(policy, summary) {
+function renderPolicySummary(policy, summary, sources = {}) {
   const title = String(policy || "").trim();
   const content = String(summary || "").trim();
   document.querySelector(".hero h1").textContent = title || "Add a new policy";
@@ -49,12 +57,39 @@ function renderPolicySummary(policy, summary) {
   document.body.classList.toggle("has-summary", hasSummary);
   document.querySelector("#summaryStatus").hidden = hasSummary;
   for (const [heading, container] of policySummarySections) {
-    const cards = (parsed.get(heading) || []).map(({ label, text }) => {
+    const cards = (parsed.get(heading) || []).map(({ label, text }, index) => {
       const card = document.createElement("div");
       card.className = "item";
-      const labelElement = document.createElement("strong");
-      labelElement.textContent = policyPointTitle(label, text);
-      card.append(labelElement);
+      const showLabel = heading !== "policy objectives" || (label && label.toLowerCase() !== "original objective");
+      if (showLabel) {
+        const labelElement = document.createElement("strong");
+        labelElement.textContent = policyPointTitle(label, text);
+        card.append(labelElement);
+      }
+      if (heading === "policy objectives" && text) {
+        const description = document.createElement("p");
+        description.textContent = text;
+        card.append(description);
+      }
+      const sourceHeading = heading === "policy objectives" && !sources[heading]
+        ? "original policy objectives"
+        : heading === "target actors/beneficiaries" && !sources[heading]
+          ? (sources["target socio demographic groups"]
+            ? "target socio demographic groups"
+            : "socio-demographic groups benefited")
+          : heading;
+      const rows = sources[sourceHeading]?.[index];
+      if (Array.isArray(rows) && rows.length) {
+        const source = document.createElement("button");
+        source.type = "button";
+        source.className = "policy-source-tag";
+        source.textContent = "Source";
+        source.setAttribute("aria-label", `Show source context for ${policyPointTitle(label, text)}`);
+        source.addEventListener("click", () => {
+          window.parent.postMessage({ type: "policy-summary:source", rows }, window.location.origin);
+        });
+        card.append(source);
+      }
       return card;
     });
     container.replaceChildren(...cards);
@@ -65,7 +100,7 @@ function renderPolicySummary(policy, summary) {
 window.addEventListener("message", (event) => {
   if (event.origin !== window.location.origin || event.source !== window.parent) return;
   if (event.data?.type !== "policy-summary:update") return;
-  renderPolicySummary(event.data.policy, event.data.summary);
+  renderPolicySummary(event.data.policy, event.data.summary, event.data.sources);
 });
 
 renderPolicySummary("", "");

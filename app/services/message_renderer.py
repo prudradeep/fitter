@@ -95,6 +95,13 @@ def render_message(template_name: str, **context: object) -> str:
             '<small>Provide a document for review</small></li>',
             "",
         )
+        if "policy.document_url" not in prompt:
+            prompt = prompt.replace(
+                '</span>{% if policy.description %}',
+                '</span>{% if policy.document_url %} '
+                '<a href="{{ policy.document_url }}">View document</a>{% endif %}'
+                '{% if policy.description %}',
+            )
     if (
         template_name == "reason_confirmation.md"
         and prompt

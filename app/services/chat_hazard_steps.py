@@ -47,26 +47,73 @@ from app.services.enums import ChatPhase
 from app.services.hazard_salience import survey_respondent_count
 from app.services.knowledge_base import POLICY_DOCUMENT_SCOPE, TEMPORARY_KB_SCOPE
 from app.services.message_renderer import markdown_to_html, render_message
+from app.services.summary_sources import policy_point_sources, policy_summary_with_buttons, summary_points
+from app.services.policy_summary_references import (
+    PolicyReference,
+    d42_policy_reference,
+)
 
 
 ADD_NEW_POLICY_LABEL = "Add a new policy"
 POLICY_SUMMARY_REFERENCE = re.compile(
-    r"§\s*\d+[a-z]?\b|\b(?:section|article|clause)\s+\d+[a-z]?\b",
+    r"§\s*\d+[a-z]?\b|\b(?:sections?|articles?|clauses?|paragraphs?|subsections?|comma)\s+\d+[a-z]?(?:[-.]\d+)?\b"
+    r"|\b(?:law|decree(?:-law|-legislative(?: law)?)?|legislative decree|act|regulation)\s+(?:no\.?\s*)?\d+(?:/\d+)?\b"
+    r"|\b(?:third|fourth|first|second)\s+(?:periods?|paragraphs?|subsections?)\b",
     re.IGNORECASE,
 )
 POLICY_SECTION_HEADING = re.compile(
-    r"(?m)^\s*(?:§\s*|Section\s+|Article\s+)(\d+[a-z]?)\b[^\n]*$",
+    r"(?m)^[ \t]*(?:§[ \t]*|Section[ \t]+|Article[ \t]+|Articolo[ \t]+|Art\.[ \t]*)(\d+[a-z]?)\b[^\n]*$",
     re.IGNORECASE,
 )
 
 
-def _policy_summary_source(source_text: str, limit: int) -> str:
-    """Keep the opening text and the provisions it cites within the prompt."""
-    opening = source_text[:limit]
+def _policy_summary_source(source_text: str, limit: int, policy_title: str = "") -> str:
+    """Select policy-related passages and include provisions cited within them."""
+    if policy_title and len(source_text) > limit:
+        terms = {
+            term.casefold() for term in re.findall(r"[\w-]{5,}", policy_title)
+            if term.casefold() not in {"policy", "local", "public", "economic", "concessions"}
+        }
+        # The source may contain both Italian originals and English translations.
+        if "transport" in terms:
+            terms.update({"trasport", "transport", "buono", "voucher"})
+        passages = [part.strip() for part in source_text.split("\n\n") if part.strip()]
+        is_public_transport = "transport" in terms and "public" in policy_title.casefold()
+
+        def relevance(passage: str) -> int:
+            passage = passage.casefold()
+            if is_public_transport:
+                public_transport = "public transport" in passage or "trasporto pubblico" in passage
+                if not public_transport:
+                    return 0
+                benefit = any(term in passage for term in ("voucher", "buono", "bonus", "abbonament", "subscription"))
+                return 10 if benefit else 3
+            return sum(1 for term in terms if term in passage)
+
+        scored = sorted(
+            range(len(passages)),
+            key=lambda index: (relevance(passages[index]), -index),
+            reverse=True,
+        )
+        selected: set[int] = set()
+        selected_chars = 0
+        budget = min(limit, 18000)
+        for index in scored:
+            if not relevance(passages[index]):
+                break
+            for item in range(index, min(len(passages), index + 2)):
+                if item not in selected:
+                    selected.add(item)
+                    selected_chars += len(passages[item])
+            if selected_chars >= budget:
+                break
+        opening = "\n\n".join(passages[index] for index in sorted(selected))[:budget] if selected else source_text[:limit]
+    else:
+        opening = source_text[:limit]
     cited_numbers = {
         match.group(1).casefold()
         for match in re.finditer(
-            r"(?:§\s*|\b(?:section|article)\s+)(\d+[a-z]?)\b",
+            r"(?:§\s*|\b(?:section|article|articolo|art\.)\s+)(\d+[a-z]?)\b",
             opening, re.IGNORECASE,
         )
     }
@@ -76,7 +123,7 @@ def _policy_summary_source(source_text: str, limit: int) -> str:
     additions = []
     for index, heading in enumerate(headings):
         end = headings[index + 1].start() if index + 1 < len(headings) else len(source_text)
-        if heading.group(1).casefold() not in cited_numbers or end <= limit:
+        if heading.group(1).casefold() not in cited_numbers or source_text[heading.start():end].strip() in opening:
             continue
         additions.append(source_text[heading.start():end].strip()[:4000])
     if not additions:
@@ -119,6 +166,47 @@ POLICY_SOURCE_EXCERPT_TERMS = {
 }
 
 
+def _policy_summary_for_display(summary: str) -> str:
+    """Keep extracted mechanisms available to analysis without showing that section."""
+    visible = re.sub(r"(?ms)^### Mechanisms\s*\n.*?(?=^### |\Z)", "", summary)
+    return re.sub(
+        r"(?m)^### Target Socio demographic groups\s*$",
+        "### Target actors/beneficiaries",
+        visible,
+    ).strip()
+
+
+def _split_inline_bullets(text: str) -> list[str]:
+    """Turn bullet glyphs inside extracted PDF text into separate list items."""
+    return [part.strip() for part in re.split(r"\s*[•●▪]\s*", text) if part.strip()]
+
+
+def _expand_inline_summary_bullets(
+    summary: str, sources: dict[str, list[list[dict[str, str]]]] | None,
+) -> tuple[str, dict[str, list[list[dict[str, str]]]]]:
+    """Also repair saved summaries that contain PDF bullets inside one item."""
+    expanded_sources: dict[str, list[list[dict[str, str]]]] = {}
+    output: list[str] = []
+    section = ""
+    index = 0
+    for line in summary.splitlines():
+        if line.startswith("### "):
+            section = line[4:].strip().casefold()
+            index = 0
+        match = re.match(r"^(\s*-\s+)(.*)$", line)
+        if not section or not match:
+            output.append(line)
+            continue
+        pieces = _split_inline_bullets(match.group(2)) or [match.group(2)]
+        output.extend(f"{match.group(1)}{piece}" for piece in pieces)
+        section_sources = (sources or {}).get(section, [])
+        if section_sources:
+            source = section_sources[index] if index < len(section_sources) else []
+            expanded_sources.setdefault(section, []).extend([source] * len(pieces))
+        index += 1
+    return "\n".join(output), expanded_sources
+
+
 def _policy_source_excerpt_fallback(source_text: str) -> dict[str, list[tuple[str, str]]]:
     """Expose short, complete document passages when the model summary fails."""
     sentences: list[str] = []
@@ -133,6 +221,7 @@ def _policy_source_excerpt_fallback(source_text: str) -> dict[str, list[tuple[st
                 or "\ufffd" in sentence
                 or re.search(r"\b(?:publisher|footnotes to|amended by)\b", key)
                 or re.search(r"[§?]{1,2}\s*\d|;\s*\d+\.$", sentence)
+                or POLICY_SUMMARY_REFERENCE.search(sentence)
                 or not re.search(r"\b(?:the|this|all|residents|citizens|persons)\b", key)
             ):
                 continue
@@ -243,27 +332,36 @@ class ChatHazardStepsMixin:
     def _policy_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         policies = self._policy_rows_for_selected_context(session)
         session.phase = "policy"
-        policy_document_ids = {
-            str(policy_id)
-            for policy_id in self.db.scalars(
-                select(KnowledgeDocument.policy_id).where(
-                    KnowledgeDocument.policy_id.in_(
-                        [policy_id for policy_id, _ in policies]
+        policy_documents = self.db.scalars(
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.policy_id.in_(
+                    [policy_id for policy_id, _ in policies]
+                ),
+                or_(
+                    and_(
+                        KnowledgeDocument.scope == POLICY_DOCUMENT_SCOPE,
+                        KnowledgeDocument.user_id.is_(None),
                     ),
-                    or_(
-                        and_(
-                            KnowledgeDocument.scope == POLICY_DOCUMENT_SCOPE,
-                            KnowledgeDocument.user_id.is_(None),
-                        ),
-                        and_(
-                            KnowledgeDocument.scope == "policy_reference",
-                            KnowledgeDocument.user_id == self.user_id,
-                        ),
+                    and_(
+                        KnowledgeDocument.scope == "policy_reference",
+                        KnowledgeDocument.user_id == self.user_id,
                     ),
-                )
-            ).all()
-            if policy_id
-        }
+                ),
+            )
+        ).all()
+        policy_document_ids = {str(doc.policy_id) for doc in policy_documents if doc.policy_id}
+        policy_document_urls: dict[str, str] = {}
+        for document in policy_documents:
+            if not document.policy_id or not document.source_uri:
+                continue
+            url = str(document.source_uri).strip()
+            try:
+                parsed = urlsplit(url)
+                if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+                    continue
+            except ValueError:
+                continue
+            policy_document_urls.setdefault(str(document.policy_id), escape(url, quote=True))
         return ChatResponse(
             session_id=session_id,
             step="policy",
@@ -277,6 +375,7 @@ class ChatHazardStepsMixin:
                         "title": title,
                         "description": "",
                         "document_available": policy_id in policy_document_ids,
+                        "document_url": policy_document_urls.get(policy_id),
                     }
                     for policy_id, title in policies
                 ],
@@ -298,6 +397,7 @@ class ChatHazardStepsMixin:
             session.selected_context_policy_id = None
             session.selected_context_policy = None
             session.selected_context_policy_summary = None
+            session.selected_context_policy_sources = None
             session.pending_context_policy_document_ids = None
             session.context_policy_clarifications = None
             session.pending_context_policy_detail = None
@@ -343,6 +443,7 @@ class ChatHazardStepsMixin:
             return self._policy_step(session_id, session)
         session.selected_context_policy_id, session.selected_context_policy = matched
         session.selected_context_policy_summary = None
+        session.selected_context_policy_sources = None
         session.adding_context_policy = False
         selected_record = self.db.get(Policy, matched[0])
         session.new_context_policy_summary_only = bool(
@@ -374,6 +475,70 @@ class ChatHazardStepsMixin:
             .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index)
         ).all()
         return "\n\n".join(str(row).strip() for row in rows if str(row).strip())
+
+    def _set_policy_summary_sources(
+        self, session: ChatSession, document_ids: list[str] | None = None,
+    ) -> None:
+        d42 = self._policy_summary_reference(session)
+        ids = document_ids or session.pending_context_policy_document_ids or self._stored_context_policy_document_ids(session)
+        chunks: list[dict[str, object]] = []
+        if d42:
+            chunks.extend(
+                dict(title=d42.document, source_uri=d42.source_uri,
+                     page_number=d42.page_for_field(label), content=f"{label}: {value}")
+                for label, value in d42.fields.items()
+            )
+        elif ids:
+            rows = self.db.execute(
+                select(KnowledgeDocument.title, KnowledgeDocument.source_uri,
+                       KnowledgeChunk.page_number, KnowledgeChunk.content)
+                .join(KnowledgeChunk, KnowledgeChunk.document_id == KnowledgeDocument.id)
+                .where(KnowledgeDocument.id.in_(ids))
+                .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index)
+            ).all()
+            chunks.extend(dict(title=title, source_uri=uri, page_number=page,
+                               content=content) for title, uri, page, content in rows)
+        session.selected_context_policy_sources = policy_point_sources(
+            session.selected_context_policy_summary or "", chunks,
+            None if d42 else session.context_policy_clarifications,
+        )
+        objective = d42.fields.get("Original Policy Objective", "") if d42 else ""
+        if objective and d42:
+            objective_page = d42.page_for_field("Original Policy Objective")
+            for section, index, _label, detail in summary_points(
+                session.selected_context_policy_summary or ""
+            ):
+                if section == "policy objectives" and detail.strip() in _split_inline_bullets(objective):
+                    session.selected_context_policy_sources[section][index] = [
+                        {"field": "Document", "value": d42.document},
+                        {"field": "Source", "value": d42.source_uri},
+                        *([{"field": "Page", "value": str(objective_page)}]
+                          if objective_page else []),
+                        {"field": "Referenced excerpt", "value": objective},
+                    ]
+
+    def _policy_summary_reference(
+        self, session: ChatSession,
+    ) -> PolicyReference | None:
+        if session.adding_context_policy or not hasattr(self, "db"):
+            return None
+        return d42_policy_reference(
+            self.db, country=session.country, sector=session.sector,
+            selected_policy=session.selected_context_policy,
+        )
+
+    @staticmethod
+    def _policy_summary_display(session: ChatSession) -> str:
+        sources = dict(session.selected_context_policy_sources or {})
+        if "target actors/beneficiaries" not in sources and "target socio demographic groups" in sources:
+            sources["target actors/beneficiaries"] = sources["target socio demographic groups"]
+        summary, sources = _expand_inline_summary_bullets(
+            _policy_summary_for_display(session.selected_context_policy_summary or ""),
+            sources,
+        )
+        return policy_summary_with_buttons(
+            summary, sources,
+        )
 
     def _stored_context_policy_document_ids(self, session: ChatSession) -> list[str]:
         if not session.selected_context_policy_id:
@@ -427,8 +592,9 @@ class ChatHazardStepsMixin:
         document_context = self._context_policy_document_context(
             session, document_ids or self._stored_context_policy_document_ids(session)
         )
+        d42 = self._policy_summary_reference(session)
         details = str(policy.policy or "").strip() if policy else ""
-        if not document_context:
+        if not document_context and not d42:
             session.phase = "policy_reference"
             return ChatResponse(
                 session_id=session_id,
@@ -452,6 +618,7 @@ class ChatHazardStepsMixin:
         )
         summary = re.sub(r"(?m)^- \*\*Document excerpt:\*\*\s*", "- ", summary)
         session.selected_context_policy_summary = summary
+        self._set_policy_summary_sources(session, document_ids)
         session.phase = "policy_summary"
         validation_intro = ""
         if session.context_policy_validation and not session.context_policy_validation.get("missing"):
@@ -467,7 +634,7 @@ class ChatHazardStepsMixin:
             session_id=session_id,
             step="policy_summary",
             bot_message=markdown_to_html(
-                f"## {session.selected_context_policy}\n\n{validation_intro}{summary}\n\n"
+                f"## {session.selected_context_policy}\n\n{validation_intro}{self._policy_summary_display(session)}\n\n"
                 f"{hazard_section}"
                 f"{closing_message}"
             ),
@@ -483,23 +650,46 @@ class ChatHazardStepsMixin:
         self, session: ChatSession, source_text: str, catalog_details: str,
         clarifications: list[str] | None = None,
     ) -> str:
+        d42 = self._policy_summary_reference(session)
+        if d42:
+            source_text = "Matched D4.2 policy portfolio record:\n" + "\n".join(
+                f"{label}: {value}" for label, value in d42.fields.items()
+            )
+            catalog_details = ""
+            clarifications = []
         instructions = (
-            "Summarize this policy using only the supplied text. Return JSON with four arrays: "
-            "policy_details (Policy details), mechanisms (Mechanisms), "
+            "Summarize this policy using only the supplied text. Return JSON with five arrays: "
+            "policy_details (Policy details), original_objectives (Policy Objectives), "
+            "mechanisms (Mechanisms), "
             "intended_benefits (Intended benefits), and "
-            "benefited_groups (Socio-demographic groups benefited). "
+            "benefited_groups (Target actors/beneficiaries). "
+            "Under original_objectives, report the policy's explicitly stated original aims "
+            "from the source. Do not infer objectives from mechanisms or expected benefits. "
+            "Under mechanisms, capture how the policy works for later analysis of hazards, "
+            "disadvantaged groups, and mitigation measures. "
             "Each array must contain short, distinct bullet points with a concise label and a "
             "complete explanatory sentence in the text field. Use 2-4 bullets per section when "
             "the source supports them. For example, label a legal provision 'Legal Basis', "
             "a participation rule 'Participation Rights', and an outcome 'Regional Value Creation'. "
             "Under benefited_groups, identify people or population groups defined by residence, "
             "income, age, occupation, or other supported characteristics. "
+            "Use the stated mechanisms to explain how each supported group benefits, "
+            "without inventing eligibility or effects. "
             "Briefly explain how each group benefits. "
             "Do not treat institutions or places as socio-demographic groups. "
             "For every reference to another provision, read that provision in the supplied "
             "source and combine its actual rule with the referring sentence into a meaningful "
             "explanation. Write the resulting rule in plain language in the relevant bullet. "
-            "Do not put section numbers, section symbols, article numbers, or cross-references "
+            "Only describe measures directly relevant to the named policy. An omnibus law may "
+            "contain unrelated measures; exclude them even if they appear beside relevant text. "
+            "Distinguish an existing policy's original design from proposed adaptations, "
+            "current gaps, and challenges; do not present those proposals as existing benefits "
+            "or mechanisms. "
+            "When a D4.2 record is supplied, use only that record for every section. "
+            "Do not use Proposed Adjustment or Description of the Proposal as evidence of "
+            "the current policy's details, benefits, mechanisms, or beneficiaries. "
+            "Do not put law or decree numbers, section numbers, section symbols, article numbers, "
+            "paragraph numbers, or cross-references "
             "in any label or text field. If a cited provision is absent, do not guess its content; "
             "state only what the available source establishes. "
             "If a section is unsupported, return one bullet labeled 'Not identified' with text "
@@ -507,9 +697,10 @@ class ChatHazardStepsMixin:
         )
         fields = (
             ("policy_details", "Policy details"),
-            ("mechanisms", "Mechanisms"),
+            ("original_objectives", "Policy Objectives"),
             ("intended_benefits", "Intended benefits"),
-            ("benefited_groups", "Socio-demographic groups benefited"),
+            ("benefited_groups", "Target actors/beneficiaries"),
+            ("mechanisms", "Mechanisms"),
         )
         schema = {
             "type": "object",
@@ -531,14 +722,24 @@ class ChatHazardStepsMixin:
                 for key, _ in fields
             },
         }
-        excerpt_fallback = _policy_source_excerpt_fallback(source_text)
+        focused_source = _policy_summary_source(
+            source_text, 48000, session.selected_context_policy or ""
+        )
+        excerpt_fallback = {} if d42 else _policy_source_excerpt_fallback(focused_source)
+        source_objectives = d42.fields.get("Original Policy Objective", "") if d42 else ""
+        policy_type = d42.fields.get("Policy Type", "") if d42 else ""
         valid_sections: dict[str, list[dict[str, str]]] = {}
+        if source_objectives:
+            valid_sections["original_objectives"] = [
+                {"label": "", "text": point}
+                for point in _split_inline_bullets(source_objectives)
+            ]
         for source_limit in (48000, 24000):
             prompt = (
                 f"{instructions}\n\n"
                 f"Policy: {session.selected_context_policy}\n"
                 f"Context: {session.country}, {session.region}, {session.sector}\n\n"
-                f"Source text:\n{_policy_summary_source(source_text, source_limit)}\n\n"
+                f"Source text:\n{_policy_summary_source(source_text, source_limit, session.selected_context_policy or '')}\n\n"
                 "User clarifications (label these as user-provided, not document facts):\n"
                 f"{chr(10).join((clarifications or [])[-10:]) or 'None'}"
             )
@@ -555,6 +756,8 @@ class ChatHazardStepsMixin:
             parsed = parse_json_object(response) if not is_llm_unavailable_response(response) else None
             if isinstance(parsed, dict):
                 for key, _ in fields:
+                    if key == "original_objectives" and source_objectives:
+                        continue
                     items = parsed.get(key)
                     if not isinstance(items, list) or not items:
                         continue
@@ -572,26 +775,43 @@ class ChatHazardStepsMixin:
                         for item in items
                     ):
                         continue
-                    if excerpt_fallback[key] and all(
+                    if excerpt_fallback.get(key) and all(
                         item["label"].strip().casefold() == "not identified"
                         for item in items
                     ):
                         continue
                     valid_sections[key] = items
-            if len(valid_sections) == len(fields):
+            if policy_type and "policy_details" in valid_sections:
+                details = [
+                    item for item in valid_sections["policy_details"]
+                    if item["label"].strip().casefold() != "not identified"
+                ]
+                if not any(policy_type.casefold() in item["text"].casefold() for item in details):
+                    details.insert(0, {"label": "Policy type", "text": policy_type})
+                valid_sections["policy_details"] = details
+            if all(key in valid_sections for key, _ in fields if key != "original_objectives"):
                 return "\n\n".join(
                     f"### {heading}\n\n" + "\n".join(
-                        f"- **{item['label'].strip()}:** {item['text'].strip()}"
-                        for item in valid_sections[key]
+                        (
+                            f"- **{item['label'].strip()}:** {item['text'].strip()}"
+                            if item["label"].strip() else f"- {item['text'].strip()}"
+                        )
+                        for item in valid_sections.get(key, [{
+                            "label": "Not identified", "text": "Not stated in the supplied text."
+                        }])
                     )
                     for key, heading in fields
                 )
         fallback = {
             "policy_details": (
-                "Available details",
-                catalog_details or session.selected_context_policy or "Not established from the supplied text.",
+                "Policy type" if policy_type else "Available details" if catalog_details else "Not identified",
+                policy_type or (
+                    catalog_details if catalog_details and not POLICY_SUMMARY_REFERENCE.search(catalog_details)
+                    else "Not stated in the supplied text."
+                ),
             ),
             "mechanisms": ("Not identified", "Not separately stated in the available policy material."),
+            "original_objectives": ("Not identified", "Not stated in the supplied text."),
             "intended_benefits": ("Not identified", "Not separately stated in the available policy material."),
             "benefited_groups": ("Not identified", "Not identified in the available policy material."),
         }
@@ -602,7 +822,7 @@ class ChatHazardStepsMixin:
                     (item["label"].strip(), item["text"].strip())
                     for item in valid_sections[key]
                 ]
-            elif excerpt_fallback[key]:
+            elif excerpt_fallback.get(key):
                 bullets = excerpt_fallback[key]
             else:
                 bullets = [fallback[key]]
@@ -750,7 +970,7 @@ class ChatHazardStepsMixin:
             step="policy_summary_review",
             bot_message=markdown_to_html(
                 f"## {session.selected_context_policy}\n\n"
-                f"{session.selected_context_policy_summary or 'No summary is available.'}\n\n"
+                f"{self._policy_summary_display(session) or 'No summary is available.'}\n\n"
                 "Please review this summary before adding the policy. "
                 "You can add details from the uploaded document or clarify relevant context."
             ),
@@ -795,6 +1015,7 @@ class ChatHazardStepsMixin:
         session.selected_context_policy_summary = await self._summarize_context_policy(
             session, source, "", session.context_policy_clarifications,
         )
+        self._set_policy_summary_sources(session)
         return self._new_policy_summary_review_response(session_id, session)
 
     async def _handle_new_policy_summary_review(
@@ -909,6 +1130,7 @@ class ChatHazardStepsMixin:
         session.selected_context_policy_summary = await self._summarize_context_policy(
             session, source, "", session.context_policy_clarifications,
         )
+        self._set_policy_summary_sources(session)
         return self._new_policy_summary_review_response(session_id, session)
 
     async def _new_policy_hazard_suggestions_step(
@@ -937,6 +1159,7 @@ class ChatHazardStepsMixin:
             session, source, "", session.context_policy_clarifications,
         )
         session.selected_context_policy_summary = summary
+        self._set_policy_summary_sources(session, document_ids)
         system_policies = self.db.scalars(select(Policy).where(
             Policy.country_id == session.country_id,
             Policy.sector_id == session.sector_id,

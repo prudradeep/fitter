@@ -8,6 +8,7 @@ __pycache__/
 .tmp/
 data/old*
 data/*.faiss
+data/*.json
 data/grounding-logs/
 data/service-runtime/
 *_test_*.xlsx

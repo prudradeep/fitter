@@ -1,5 +1,7 @@
 import json
 import logging
+import re
+from html import unescape
 
 from app.schemas import ChatResponse, Option
 from app.llm import ask_llm_chat
@@ -59,7 +61,7 @@ class ChatMitigationStepsMixin:
         session.pending_inspired_mitigation_reason = None
         mechanism_suggestions: list[dict[str, object]] = []
         mechanism_planning = getattr(self, "_mitigation_mechanism_planning_overview", None)
-        if mechanism_planning is not None:
+        if mechanism_planning is not None and session.mitigation_proposal_type != "existing_policy":
             try:
                 overview = await mechanism_planning(session)
                 candidates = overview.get("mechanisms") if isinstance(overview, dict) else []
@@ -71,8 +73,47 @@ class ChatMitigationStepsMixin:
                 logger.exception("Could not load policy mechanism suggestions")
         factsheet_reference = ""
         session.new_policy_inspiration = None
+        adaptation_provider = getattr(self, "_existing_policy_adaptation_reference", None)
+        if session.mitigation_proposal_type == "existing_policy" and adaptation_provider is not None:
+            mechanism_provider = getattr(self, "_existing_policy_mechanisms_reference", None)
+            mechanism_reference = ""
+            if mechanism_provider:
+                try:
+                    mechanism_reference = str(await mechanism_provider(session) or "")
+                except Exception:
+                    logger.exception("Could not load policy mechanisms for mitigation")
+                    mechanism_reference = (
+                        "## Policy mechanisms to be considered for mitigation\n\n"
+                        "No grounded mechanism is available."
+                    )
+            adaptation_reference = str(await adaptation_provider(session) or "")
+            concepts = self._existing_policy_adaptation_concepts(
+                "\n\n".join((mechanism_reference, adaptation_reference))
+            )
+            if (
+                (session.selected_context_policy or session.selected_mitigation_policy)
+                and (session.selected_hazard or session.accepted_custom_hazard)
+                and (
+                    concepts["challenge"]
+                    or concepts["approach"]
+                    or concepts["policy_mechanisms"]
+                    or session.selected_context_policy_summary
+                )
+            ):
+                session.new_policy_inspiration = concepts
+            selected_context = ", ".join(
+                value for value in (session.country, session.region, session.sector) if value
+            ) or "Not selected"
+            policy_context = "\n\n".join((
+                f"**Selected policy:** {session.selected_context_policy or session.selected_mitigation_policy or 'Not selected'}",
+                f"**Selected hazard:** {session.selected_hazard or session.accepted_custom_hazard or 'Not selected'}",
+                f"**Selected context:** {selected_context}",
+            ))
+            factsheet_reference = "\n\n".join(
+                value for value in (policy_context, mechanism_reference, adaptation_reference) if value
+            )
         factsheet_provider = getattr(self, "_hazard_with_mitigation_factsheet_reference", None)
-        if factsheet_provider is not None:
+        if session.mitigation_proposal_type != "existing_policy" and factsheet_provider is not None:
             interpretation: dict[str, list[str]] = {}
             interpreter = getattr(self, "_interpret_new_policy_factsheet", None)
             if interpreter is not None and session.mitigation_proposal_type != "existing_policy":
@@ -92,7 +133,7 @@ class ChatMitigationStepsMixin:
                 session.new_policy_inspiration = interpretation
         main_kb_reference = ""
         main_kb_provider = getattr(self, "_hazard_with_mitigation_main_kb_reference", None)
-        if main_kb_provider is not None:
+        if main_kb_provider is not None and session.mitigation_proposal_type != "existing_policy":
             main_kb_reference = str(await main_kb_provider(session) or "")
         prompt = render_message(
             "mitigation_measure_reason.md",
@@ -119,6 +160,31 @@ class ChatMitigationStepsMixin:
             input_mode="mitigation_measure",
             error=False,
         )
+
+    @staticmethod
+    def _existing_policy_adaptation_concepts(reference: str) -> dict[str, list[str]]:
+        """Use the supported points shown under the existing-policy concept headings."""
+        headings = {
+            "challenges to be addressed": "challenge",
+            "possible ways to address the challenges": "approach",
+            "stakeholders to involve": "stakeholders",
+            "policy mechanisms to be considered for mitigation": "policy_mechanisms",
+        }
+        concepts: dict[str, list[str]] = {key: [] for key in headings.values()}
+        section = ""
+        for line in reference.splitlines():
+            heading = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
+            if heading:
+                section = headings.get(heading.group(1).casefold(), "")
+                continue
+            bullet = re.match(r"^\s*[-*]\s+(.+)$", line)
+            if not section or not bullet:
+                continue
+            point = re.sub(r"<button\b[^>]*>.*?</button>", "", bullet.group(1), flags=re.I)
+            point = unescape(re.sub(r"<[^>]+>", "", point)).strip()
+            if point:
+                concepts[section].append(point)
+        return concepts
 
     async def _handle_reason_confirmation(
         self, session_id: str, session: ChatSession, message: str
@@ -884,7 +950,18 @@ class ChatMitigationStepsMixin:
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         concepts = session.new_policy_inspiration or {}
-        if not concepts.get("challenge") or not concepts.get("approach"):
+        has_existing_policy_context = (
+            session.mitigation_proposal_type == "existing_policy"
+            and (
+                concepts.get("challenge")
+                or concepts.get("approach")
+                or concepts.get("policy_mechanisms")
+                or session.selected_context_policy_summary
+            )
+        )
+        if not has_existing_policy_context and (
+            not concepts.get("challenge") or not concepts.get("approach")
+        ):
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_measure",
@@ -903,8 +980,11 @@ class ChatMitigationStepsMixin:
                 "twin-transition policy using its title and summary, the country, "
                 "region, sector, selected hazard, affected groups, and the supplied "
                 "proposal concepts. The measure must prevent or reduce the selected "
-                "hazard in the policy's implementation and use at least one supplied "
-                "approach to address a listed challenge. Name an implementer or target "
+                "hazard in the policy's implementation. Use a supplied approach when "
+                "one is available. Otherwise, propose an adaptation based on the "
+                "supplied policy mechanisms or policy summary that addresses the "
+                "selected hazard. A policy mechanism describes the problem to change, "
+                "not a mitigation measure to copy. Name an implementer or target "
                 "group only when supported by the supplied context. Keep the measure "
                 "consistent with any stated green or digital objectives; do not assume "
                 "objectives absent from the policy summary. Explain in one concise "

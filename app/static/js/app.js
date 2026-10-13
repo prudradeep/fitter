@@ -231,6 +231,7 @@ const sessionFields = {
   country: document.querySelector("#sessionCountry"),
   region: document.querySelector("#sessionRegion"),
   sector: document.querySelector("#sessionSector"),
+  policy: document.querySelector("#sessionPolicy"),
 };
 
 const appState = {
@@ -735,6 +736,7 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
           type: "policy-summary:update",
           policy: session.selected_context_policy || "",
           summary: session.selected_context_policy_summary || "",
+          sources: session.selected_context_policy_sources || {},
         }, window.location.origin);
       }
     }
@@ -827,8 +829,16 @@ stagePolicySummary?.addEventListener("load", () => {
       type: "policy-summary:update",
       policy: appState.currentSession.selected_context_policy || "",
       summary: appState.currentSession.selected_context_policy_summary || "",
+      sources: appState.currentSession.selected_context_policy_sources || {},
     }, window.location.origin);
   }
+});
+
+window.addEventListener("message", (event) => {
+  if (event.origin !== window.location.origin || event.source !== stagePolicySummary?.contentWindow) return;
+  if (event.data?.type !== "policy-summary:source") return;
+  const rows = event.data.rows;
+  if (Array.isArray(rows)) openHazardEvidenceDialog("", JSON.stringify(rows));
 });
 
 async function renderCountrySelectionMap() {
@@ -3214,14 +3224,19 @@ function updateSessionCard(session) {
     [sessionFields.country, session?.country],
     [sessionFields.region, session?.region],
     [sessionFields.sector, session?.sector],
+    [sessionFields.policy, session?.selected_context_policy],
   ].forEach(([field, value]) => {
     if (!field) return;
     field.textContent = value || "";
     if (field.parentElement) field.parentElement.hidden = !value;
   });
-  const hasSession = Boolean(session?.country || session?.region || session?.sector);
+  const visibleLocationCards = [session?.country, session?.region, session?.sector]
+    .filter(Boolean).length;
+  const hasSession = Boolean(visibleLocationCards || session?.selected_context_policy);
   if (sessionEmpty) sessionEmpty.hidden = hasSession;
-  document.querySelector(".stage-selection")?.classList.toggle("has-session", hasSession);
+  const stageSelection = document.querySelector(".stage-selection");
+  stageSelection?.classList.toggle("has-session", hasSession);
+  stageSelection?.style.setProperty("--visible-location-columns", String(Math.max(1, visibleLocationCards)));
   updateNewSessionButton();
   renderSelectedHazardContext(session);
   updateStageVisual(appState.currentStep, appState.currentSession, appState.currentOptions);
@@ -3302,6 +3317,9 @@ function renderSelectedHazardContext(session = {}) {
 
   selectedHazardContext.hidden = appState.currentStep === "hazard_profile_selection"
     || (showMitigationReviewPanel ? !mitigationMeasure : !hazard);
+  selectedHazardContext.closest(".stage-visual-panel")?.classList.toggle(
+    "has-selected-context", !selectedHazardContext.hidden,
+  );
   if (selectedContextLabel) {
     selectedContextLabel.textContent = showMitigationReviewPanel ? "Proposed mitigation measure" : "Selected hazard";
   }

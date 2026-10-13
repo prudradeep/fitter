@@ -26,6 +26,7 @@ from app.services.chat_formatters import format_additional_hazards
 from app.services.chat_session import ChatSession, ChatSessionStore
 from app.services.knowledge_base import POLICY_REFERENCE_SCOPE
 from app.services.custom_hazard_validation import validate_context_policy_document
+from app.services.message_renderer import render_message
 
 
 class PolicyReferenceMitigationContextTests(unittest.TestCase):
@@ -195,6 +196,58 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         self.db.close()
         Base.metadata.drop_all(bind=self.engine)
         self.engine.dispose()
+
+    def test_policy_selection_links_only_url_backed_documents(self) -> None:
+        policies = [
+            Policy(country_id="country-1", sector_id="sector-1", policy=title)
+            for title in ("A URL policy", "B Uploaded policy", "C Invalid source")
+        ]
+        self.db.add_all(policies)
+        self.db.flush()
+        self.db.add_all([
+            KnowledgeDocument(
+                title=policy.policy,
+                policy_id=policy.id,
+                scope="policy_document",
+                source_type="url" if index == 0 else "pdf",
+                source_uri=source,
+            )
+            for index, (policy, source) in enumerate(zip(
+                policies,
+                ("https://example.org/policy.pdf?lang=en&version=2", "policy.pdf", "javascript:alert(1)"),
+            ))
+        ])
+        self.db.commit()
+
+        session = ChatSession(country_id="country-1", sector_id="sector-1")
+        response = self.service._policy_step("session-1", session)
+
+        self.assertEqual(response.bot_message.count("Policy document: Available"), 3)
+        self.assertEqual(response.bot_message.count("View document"), 1)
+        self.assertIn(
+            'href="https://example.org/policy.pdf?lang=en&amp;version=2"',
+            response.bot_message,
+        )
+        self.assertIn('target="_blank" rel="noopener noreferrer"', response.bot_message)
+
+    def test_saved_policy_selection_template_shows_document_link(self) -> None:
+        saved_template = (
+            '{% for policy in policies %}<li><strong>{{ policy.title }}</strong> '
+            '<span>Policy document: Available</span>'
+            '{% if policy.description %}<small>{{ policy.description }}</small>{% endif %}</li>'
+            '{% endfor %}'
+        )
+        with patch("app.services.message_renderer.load_prompt_from_db", return_value=saved_template):
+            html = render_message(
+                "policy_selection.md",
+                policies=[{
+                    "title": "Example policy",
+                    "description": "",
+                    "document_url": "https://example.org/policy.pdf",
+                }],
+            )
+
+        self.assertIn('href="https://example.org/policy.pdf"', html)
 
     def test_untyped_policy_keeps_country_sector_hazards(self) -> None:
         self.service.db = MagicMock()
@@ -446,7 +499,7 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
             )
 
         prompt = ask_llm.call_args.kwargs["messages"][0]["content"]
-        self.assertIn("Socio-demographic groups benefited", prompt)
+        self.assertIn("Target actors/beneficiaries", prompt)
         self.assertIn("Briefly explain how each group benefits", prompt)
         self.assertIn("Nearby residents", prompt)
 
@@ -463,7 +516,7 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
                 )
             )
 
-        self.assertIn("Socio-demographic groups benefited", summary)
+        self.assertIn("Target actors/beneficiaries", summary)
         self.assertIn("Not identified", summary)
 
     def test_policy_summary_fallback_uses_readable_document_excerpts(self) -> None:
@@ -519,6 +572,7 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         session = ChatSession(selected_context_policy="Clean electricity support")
         response = json.dumps({
             "policy_details": [{"label": "Scope", "text": "The policy funds solar generation."}],
+            "original_objectives": [{"label": "Clean power", "text": "The policy aims to expand solar generation."}],
             "mechanisms": [{"label": "Grants", "text": "Grants support rooftop installations."}],
             "intended_benefits": [{"label": "Renewable Supply", "text": "More renewable electricity."}],
             "benefited_groups": [{"label": "Low-income Households", "text": "They receive grants."}],
@@ -533,15 +587,23 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
 
         self.assertEqual(ask_llm.await_count, 1)
         for heading in (
-            "Policy details", "Mechanisms", "Intended benefits",
-            "Socio-demographic groups benefited",
+            "Policy details", "Policy Objectives", "Mechanisms", "Intended benefits",
+            "Target actors/beneficiaries",
         ):
             self.assertIn(f"### {heading}\n\n- **", summary)
         self.assertIn("- **Low-income Households:** They receive grants.", summary)
         from app.services.message_renderer import markdown_to_html
         rendered = markdown_to_html(summary)
-        self.assertEqual(rendered.count("<h3>"), 4)
-        self.assertEqual(rendered.count("<li>"), 4)
+        self.assertEqual(rendered.count("<h3>"), 5)
+        self.assertEqual(rendered.count("<li>"), 5)
+
+        from app.services.chat_hazard_steps import _policy_summary_for_display
+
+        visible_summary = _policy_summary_for_display(summary)
+        self.assertIn("### Policy Objectives", visible_summary)
+        self.assertNotIn("### Mechanisms", visible_summary)
+        self.assertNotIn("Grants support rooftop installations.", visible_summary)
+        self.assertIn("### Mechanisms", summary)
 
     def test_policy_summary_retries_incomplete_response(self) -> None:
         session = ChatSession(selected_context_policy="Clean electricity support")
@@ -583,6 +645,59 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
 
         self.assertIn("Residents may receive a share of project revenue.", excerpt)
         self.assertIn("The operator may offer an annual payment.", excerpt)
+
+    def test_policy_summary_focuses_long_omnibus_source_on_selected_policy(self) -> None:
+        from app.services.chat_hazard_steps import _policy_summary_source
+
+        source = (
+            "Gas storage facilities receive a subsidy.\n\n" + "Unrelated energy rules.\n\n" * 18000
+            + "Public transport passengers may receive a voucher for local travel.\n\n"
+            + "The transport voucher covers the cost of one subscription."
+        )
+        excerpt = _policy_summary_source(
+            source, 48000, "Economic incentives for local public transport"
+        )
+
+        self.assertIn("transport voucher covers the cost", excerpt)
+        self.assertNotIn("Gas storage facilities", excerpt)
+
+    def test_policy_summary_retries_law_and_paragraph_references(self) -> None:
+        session = ChatSession(selected_context_policy="Public transport support")
+        def response(detail: str) -> str:
+            return json.dumps({
+                "policy_details": [{"label": "Eligibility", "text": detail}],
+                "mechanisms": [{"label": "Voucher", "text": "Eligible passengers receive a voucher."}],
+                "intended_benefits": [{"label": "Access", "text": "The voucher lowers travel costs."}],
+                "benefited_groups": [{"label": "Passengers", "text": "They pay less for travel."}],
+            })
+
+        with patch(
+            "app.services.chat_hazard_steps.ask_llm_chat",
+            new_callable=AsyncMock,
+            side_effect=[
+                response("Law No. 50 of 2022 applies to paragraph 1."),
+                response("Passengers with qualifying income may receive the voucher."),
+            ],
+        ) as ask_llm:
+            summary = asyncio.run(self.service._summarize_context_policy(
+                session, "Eligible passengers may receive a transport voucher.", ""
+            ))
+
+        self.assertEqual(ask_llm.await_count, 2)
+        self.assertNotIn("Law No.", summary)
+        self.assertIn("Passengers with qualifying income", summary)
+
+    def test_policy_summary_detects_references_shown_in_transport_example(self) -> None:
+        from app.services.chat_hazard_steps import POLICY_SUMMARY_REFERENCE
+
+        for example in (
+            "Legislative Decree No. 50 of 2016",
+            "Decree-Legislative Law No. 34 of 2020",
+            "Articles 119 and 121",
+            "the third and fourth periods",
+        ):
+            with self.subTest(example=example):
+                self.assertIsNotNone(POLICY_SUMMARY_REFERENCE.search(example))
 
     def test_policy_summary_sends_more_than_twelve_thousand_source_characters(self) -> None:
         session = ChatSession(selected_context_policy="Wind participation")

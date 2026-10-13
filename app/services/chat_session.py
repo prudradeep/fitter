@@ -22,6 +22,7 @@ class ChatSession:
     selected_context_policy_id: str | None = None
     selected_context_policy: str | None = None
     selected_context_policy_summary: str | None = None
+    selected_context_policy_sources: dict[str, list[list[dict[str, str]]]] | None = None
     pending_context_policy_document_ids: list[str] | None = None
     context_policy_clarifications: list[str] | None = None
     pending_context_policy_detail: str | None = None
@@ -194,6 +195,7 @@ class ChatSession:
             sector=self.sector,
             selected_context_policy=self.selected_context_policy,
             selected_context_policy_summary=self.selected_context_policy_summary,
+            selected_context_policy_sources=self.selected_context_policy_sources,
             selected_hazard=self.selected_hazard,
             mitigation_measure=mitigation_measure,
             mitigation_revision_stage=self.mitigation_revision_stage,

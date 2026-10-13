@@ -119,8 +119,8 @@ class ChatNavigationStepsMixin:
             return None
 
         action = normalize(message)
-        if action == normalize("Analyse another hazard in the same sector"):
-            if session.sector is None:
+        if action == normalize("Analyse another hazard for the same selected policy"):
+            if session.sector is None or not session.selected_context_policy_id:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
             self._discard_temporary_policy_references(session)
             self._clear_selected_hazard_context(session)
@@ -158,6 +158,7 @@ class ChatNavigationStepsMixin:
             session.selected_context_policy_id = None
             session.selected_context_policy = None
             session.selected_context_policy_summary = None
+            session.selected_context_policy_sources = None
             session.pending_context_policy_document_ids = None
             session.context_policy_clarifications = None
             session.pending_context_policy_detail = None
@@ -290,6 +291,7 @@ class ChatNavigationStepsMixin:
         session.selected_context_policy_id = None
         session.selected_context_policy = None
         session.selected_context_policy_summary = None
+        session.selected_context_policy_sources = None
         session.pending_context_policy_document_ids = None
         session.context_policy_clarifications = None
         session.pending_context_policy_detail = None
@@ -538,8 +540,8 @@ class ChatNavigationStepsMixin:
         options: list[str] = []
         if session.mitigation_measure or session.pending_mitigation_measure:
             options.append("Write mitigation measure again")
-        if session.sector and session.selected_hazard:
-            options.append("Analyse another hazard in the same sector")
+        if session.sector and session.selected_hazard and session.selected_context_policy_id:
+            options.append("Analyse another hazard for the same selected policy")
         if session.sector and step == "hazard_profile_selection":
             options.append("Go back to list of hazards")
         if session.sector and step not in {"sector", *POLICY_FLOW_STEPS}:

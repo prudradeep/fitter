@@ -103,6 +103,13 @@ body.is-resizing-panels {
   grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
 
+.stage-visual-panel.has-hazard-guide.has-selected-context,
+.stage-visual-panel.has-sector-guide.has-selected-context,
+.stage-visual-panel.has-policy-summary.has-selected-context,
+.stage-visual-panel.has-mitigation-guide.has-selected-context {
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+}
+
 .stage-visual-panel.has-mitigation-context {
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
 }
@@ -1065,7 +1072,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
 
 .stage-selection {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--visible-location-columns, 3), minmax(0, 1fr));
   gap: 8px;
   margin: 0;
   opacity: 0.62;
@@ -1082,6 +1089,15 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.72);
   padding: 8px;
+}
+
+.stage-selection .stage-selection-policy {
+  grid-column: 1 / -1;
+}
+
+.stage-selection .stage-selection-policy dd {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .stage-selection dt {
