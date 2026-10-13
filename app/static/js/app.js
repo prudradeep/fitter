@@ -8,7 +8,6 @@ const voiceLanguageKey = storageKeys.voiceLanguage || "dr_transition_voice_langu
 const voiceRateKey = storageKeys.voiceRate || "dr_transition_voice_rate";
 const voiceVolumeKey = storageKeys.voiceVolume || "dr_transition_voice_volume";
 const typingEffectKey = storageKeys.typingEffect || "dr_transition_typing_effect_enabled";
-const autoConversationKey = storageKeys.autoConversation || "dr_transition_auto_conversation_enabled";
 const validationModeKey = storageKeys.validationMode || "dr_transition_validation_mode";
 const crowdSourcingKey = storageKeys.crowdSourcing || "dr_transition_crowd_sourcing_enabled";
 const promptSourceKeyPrefix = storageKeys.promptSource || "dr_transition_prompt_source";
@@ -58,7 +57,6 @@ const replayUiTourButton = document.querySelector("#replayUiTourButton");
 const closeSettingsButton = document.querySelector("#closeSettingsButton");
 const voiceAssistantToggle = document.querySelector("#voiceAssistantToggle");
 const typingEffectToggle = document.querySelector("#typingEffectToggle");
-const autoConversationToggle = document.querySelector("#autoConversationToggle");
 const validationModeToggle = document.querySelector("#validationModeToggle");
 const validationModeLabel = document.querySelector("#validationModeLabel");
 const crowdSourcingToggle = document.querySelector("#crowdSourcingToggle");
@@ -1652,13 +1650,13 @@ function voiceAssistantEnabled() {
 }
 
 function typingEffectEnabled() {
-  return typingEffectToggle ? typingEffectToggle.checked : true;
+  return Boolean(typingEffectToggle?.checked);
 }
 
 function configureTypingEffectControl() {
   if (!typingEffectToggle) return;
   const saved = localStorage.getItem(typingEffectKey);
-  typingEffectToggle.checked = saved === null ? true : saved === "true";
+  typingEffectToggle.checked = saved === "true";
 }
 
 function currentValidationMode() {
@@ -1675,7 +1673,7 @@ function configureValidationModeControl() {
 }
 
 function crowdSourcingEnabled() {
-  return localStorage.getItem(crowdSourcingKey) === "true";
+  return localStorage.getItem(crowdSourcingKey) !== "false";
 }
 
 function configureCrowdSourcingControl() {
@@ -1891,9 +1889,6 @@ function configureVoiceControls() {
   const speechSupported = "speechSynthesis" in window;
   if (!voiceAssistantToggle) return;
   voiceAssistantToggle.checked = localStorage.getItem(voiceEnabledKey) === "true";
-  if (autoConversationToggle) {
-    autoConversationToggle.checked = localStorage.getItem(autoConversationKey) === "true";
-  }
   voiceAssistantToggle.disabled = !speechSupported;
   populateVoicePreferenceControls();
   syncVoicePreferenceVisibility();
@@ -5751,7 +5746,7 @@ async function restoreSession(nextSessionId) {
 }
 
 function autoConversationEnabled() {
-  return Boolean(autoConversationToggle?.checked);
+  return false;
 }
 
 function stopAutoConversation() {
@@ -5765,8 +5760,6 @@ function scheduleAutoConversationTurn(delay = 900) {
   stopAutoConversation();
   if (!autoConversationEnabled() || loading || !sessionId) return;
   if (autoConversationTurns >= autoConversationTurnLimit) {
-    if (autoConversationToggle) autoConversationToggle.checked = false;
-    localStorage.setItem(autoConversationKey, "false");
     console.warn("Auto conversation stopped after reaching the turn limit.");
     return;
   }
@@ -6142,16 +6135,6 @@ validationModeToggle?.addEventListener("change", () => {
 
 crowdSourcingToggle?.addEventListener("change", () => {
   localStorage.setItem(crowdSourcingKey, String(crowdSourcingToggle.checked));
-});
-
-autoConversationToggle?.addEventListener("change", () => {
-  localStorage.setItem(autoConversationKey, String(autoConversationToggle.checked));
-  autoConversationTurns = 0;
-  if (autoConversationToggle.checked) {
-    scheduleAutoConversationTurn(300);
-  } else {
-    stopAutoConversation();
-  }
 });
 
 voicePreferenceSelect?.addEventListener("change", () => {

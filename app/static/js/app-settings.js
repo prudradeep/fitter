@@ -8,7 +8,6 @@ window.DrTransitionSettings = {
     voiceRate: "dr_transition_voice_rate",
     voiceVolume: "dr_transition_voice_volume",
     typingEffect: "dr_transition_typing_effect_enabled",
-    autoConversation: "dr_transition_auto_conversation_enabled",
     validationMode: "dr_transition_validation_mode",
     crowdSourcing: "dr_transition_crowd_sourcing_enabled",
     promptSource: "dr_transition_prompt_source",

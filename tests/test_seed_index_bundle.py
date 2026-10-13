@@ -171,6 +171,32 @@ def test_offline_bundle_includes_matching_clean_database(tmp_path: Path, monkeyp
     assert install_offline_seed_bundle(settings, bundle) == "client database or index already exists"
 
 
+def test_offline_bundle_excludes_private_knowledge_scopes(tmp_path: Path) -> None:
+    database = tmp_path / "source.db"
+    _source_database(database, synced=False)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "INSERT INTO knowledge_documents VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 1, NULL, NULL)",
+            ("private-document", "temporary", "url", "private-temporary-document", "user-1", "session-1"),
+        )
+        db.execute(
+            "INSERT INTO knowledge_chunks VALUES (?, ?, ?, 1, NULL, NULL)",
+            ("private-chunk", "private-document", "user-1"),
+        )
+    index_base = tmp_path / "knowledge.faiss"
+    _source_index(tmp_path / "knowledge.main.faiss")
+
+    EXPORTER.export_bundle(
+        database, index_base, tmp_path / "bundle", "nomic-embed-text", "", ["main"], offline=True,
+    )
+
+    seed_path = tmp_path / "bundle" / "seed.db"
+    with sqlite3.connect(seed_path) as clean:
+        assert clean.execute("SELECT COUNT(*) FROM knowledge_documents").fetchone()[0] == 1
+        assert clean.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0] == 1
+    assert b"private-temporary-document" not in seed_path.read_bytes()
+
+
 def test_offline_export_rejects_user_policy(tmp_path: Path) -> None:
     database = tmp_path / "source.db"
     _source_database(database, synced=False)
@@ -197,15 +223,37 @@ def test_offline_export_includes_locally_seeded_policy_vectors(tmp_path: Path) -
             "INSERT INTO knowledge_chunks VALUES (?, ?, NULL, 1, NULL, NULL)",
             ("policy-chunk-1", "policy-document-1"),
         )
+        db.execute(
+            "INSERT INTO knowledge_documents VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 1, NULL, NULL)",
+            ("private-policy-reference", "policy_reference", "url", "https://example.org/private.pdf",
+             "user-1", "session-1"),
+        )
+        db.execute(
+            "INSERT INTO knowledge_chunks VALUES (?, ?, ?, 1, NULL, NULL)",
+            ("private-policy-chunk", "private-policy-reference", "user-1"),
+        )
     index_base = tmp_path / "knowledge.faiss"
     _source_index(tmp_path / "knowledge.main.faiss")
-    _source_index(tmp_path / "knowledge.policy_reference.faiss", chunk_id="policy-chunk-1")
+    shared_index = faiss.IndexIDMap2(faiss.IndexFlatIP(2))
+    shared_index.add_with_ids(
+        np.array([[1.0, 0.0], [0.0, 1.0]], dtype="float32"),
+        np.array([EXPORTER.vector_id("policy-chunk-1"), EXPORTER.vector_id("private-policy-chunk")],
+                 dtype="int64"),
+    )
+    faiss.write_index(shared_index, str(tmp_path / "knowledge.policy_reference.faiss"))
     manifest = EXPORTER.export_bundle(
         database, index_base, tmp_path / "bundle", "nomic-embed-text", "",
         ["main", "policy_document"], offline=True,
     )
     assert {entry["scope"] for entry in manifest["indexes"]} == {"main", "policy_document"}
+    assert faiss.read_index(str(tmp_path / "knowledge.policy_reference.faiss")).ntotal == 2
+    bundled_index = faiss.read_index(str(tmp_path / "bundle" / "knowledge.policy_reference.faiss"))
+    assert bundled_index.ntotal == 1
+    assert list(faiss.vector_to_array(bundled_index.id_map)) == [EXPORTER.vector_id("policy-chunk-1")]
     with sqlite3.connect(tmp_path / "bundle" / "seed.db") as clean:
         assert clean.execute(
             "SELECT COUNT(*) FROM knowledge_documents WHERE scope = 'policy_document'"
         ).fetchone()[0] == 1
+        assert clean.execute(
+            "SELECT COUNT(*) FROM knowledge_documents WHERE scope = 'policy_reference'"
+        ).fetchone()[0] == 0

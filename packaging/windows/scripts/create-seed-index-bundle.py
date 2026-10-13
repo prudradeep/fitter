@@ -15,6 +15,7 @@ from contextlib import closing
 from pathlib import Path
 
 import faiss
+import numpy as np
 
 SCOPES = {"main": "main", "sector_prompt": "sector_prompts", "policy_document": "policy_reference"}
 OFFLINE_REFERENCE_TABLES = {
@@ -36,62 +37,72 @@ def _quote_identifier(name: str) -> str:
 
 
 def _write_offline_database(source: sqlite3.Connection, target: Path, scopes: set[str]) -> None:
-    extra_scopes = {
-        str(row[0]) for row in source.execute("SELECT DISTINCT scope FROM knowledge_documents")
-    } - scopes
-    if extra_scopes:
-        raise ValueError(f"Offline source has knowledge scopes without matching indexes: {sorted(extra_scopes)}")
-    unsafe_policy = source.execute(
-        "SELECT 1 FROM policies WHERE source = 'user' OR created_by_user_id IS NOT NULL LIMIT 1"
-    ).fetchone()
-    if unsafe_policy:
-        raise ValueError("Offline source contains a user-created policy")
-    for name in OFFLINE_REFERENCE_TABLES:
-        columns = {str(row[1]) for row in source.execute(f"PRAGMA table_info({_quote_identifier(name)})")}
-        if "source" in columns and source.execute(
-            f"SELECT 1 FROM {_quote_identifier(name)} WHERE lower(source) IN ('user', 'custom', 'upload') LIMIT 1"
-        ).fetchone():
-            raise ValueError(f"Offline source contains user-created rows in {name}")
-        if "sync_deleted_at" in columns and source.execute(
-            f"SELECT 1 FROM {_quote_identifier(name)} WHERE sync_deleted_at IS NOT NULL LIMIT 1"
-        ).fetchone():
-            raise ValueError(f"Offline source contains deleted rows in {name}")
-        for column in {"user_id", "created_by_user_id", "session_key"} & columns:
-            if source.execute(
-                f"SELECT 1 FROM {_quote_identifier(name)} WHERE {_quote_identifier(column)} IS NOT NULL LIMIT 1"
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    try:
+        with closing(sqlite3.connect(temporary)) as clean:
+            source.backup(clean)
+            clean.execute("PRAGMA journal_mode = DELETE")
+            clean.execute("PRAGMA foreign_keys = OFF")
+            clean.execute("PRAGMA secure_delete = ON")
+            placeholders = ", ".join("?" for _ in scopes)
+            included_scopes = tuple(sorted(scopes))
+            clean.execute(
+                "DELETE FROM knowledge_chunks WHERE document_id IN "
+                f"(SELECT id FROM knowledge_documents WHERE scope NOT IN ({placeholders}))",
+                included_scopes,
+            )
+            clean.execute(
+                f"DELETE FROM knowledge_documents WHERE scope NOT IN ({placeholders})",
+                included_scopes,
+            )
+            if clean.execute(
+                "SELECT 1 FROM policies WHERE source = 'user' OR created_by_user_id IS NOT NULL LIMIT 1"
             ).fetchone():
-                raise ValueError(f"Offline source contains user-owned rows in {name}")
-    with closing(sqlite3.connect(target)) as clean:
-        source.backup(clean)
-        clean.execute("PRAGMA journal_mode = DELETE")
-        clean.execute("PRAGMA foreign_keys = OFF")
-        clean.execute("PRAGMA secure_delete = ON")
-        table_names = [
-            str(row[0]) for row in clean.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-            )
-        ]
-        for name in table_names:
-            if name not in OFFLINE_REFERENCE_TABLES:
-                clean.execute(f"DELETE FROM {_quote_identifier(name)}")
-            else:
+                raise ValueError("Offline source contains a user-created policy")
+            for name in OFFLINE_REFERENCE_TABLES:
                 columns = {str(row[1]) for row in clean.execute(f"PRAGMA table_info({_quote_identifier(name)})")}
-                metadata = columns & {
-                    "sync_id", "origin_device_id", "sync_revision", "sync_updated_at", "sync_deleted_at"
-                }
-                if metadata:
-                    assignments = ", ".join(f"{_quote_identifier(column)} = NULL" for column in sorted(metadata))
-                    clean.execute(f"UPDATE {_quote_identifier(name)} SET {assignments}")
-        clean.commit()
-        missing_reference = clean.execute("PRAGMA foreign_key_check").fetchone()
-        if missing_reference:
-            raise ValueError(
-                "Offline snapshot has a missing referenced row after removing client data "
-                f"({missing_reference[0]} -> {missing_reference[2]})"
-            )
-        clean.execute("VACUUM")
-        if clean.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-            raise ValueError("Offline snapshot failed SQLite integrity check")
+                if "source" in columns and clean.execute(
+                    f"SELECT 1 FROM {_quote_identifier(name)} WHERE lower(source) IN ('user', 'custom', 'upload') LIMIT 1"
+                ).fetchone():
+                    raise ValueError(f"Offline source contains user-created rows in {name}")
+                if "sync_deleted_at" in columns and clean.execute(
+                    f"SELECT 1 FROM {_quote_identifier(name)} WHERE sync_deleted_at IS NOT NULL LIMIT 1"
+                ).fetchone():
+                    raise ValueError(f"Offline source contains deleted rows in {name}")
+                for column in {"user_id", "created_by_user_id", "session_key"} & columns:
+                    if clean.execute(
+                        f"SELECT 1 FROM {_quote_identifier(name)} WHERE {_quote_identifier(column)} IS NOT NULL LIMIT 1"
+                    ).fetchone():
+                        raise ValueError(f"Offline source contains user-owned rows in {name}")
+            table_names = [
+                str(row[0]) for row in clean.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+                )
+            ]
+            for name in table_names:
+                if name not in OFFLINE_REFERENCE_TABLES:
+                    clean.execute(f"DELETE FROM {_quote_identifier(name)}")
+                else:
+                    columns = {str(row[1]) for row in clean.execute(f"PRAGMA table_info({_quote_identifier(name)})")}
+                    metadata = columns & {
+                        "sync_id", "origin_device_id", "sync_revision", "sync_updated_at", "sync_deleted_at"
+                    }
+                    if metadata:
+                        assignments = ", ".join(f"{_quote_identifier(column)} = NULL" for column in sorted(metadata))
+                        clean.execute(f"UPDATE {_quote_identifier(name)} SET {assignments}")
+            clean.commit()
+            missing_reference = clean.execute("PRAGMA foreign_key_check").fetchone()
+            if missing_reference:
+                raise ValueError(
+                    "Offline snapshot has a missing referenced row after removing client data "
+                    f"({missing_reference[0]} -> {missing_reference[2]})"
+                )
+            clean.execute("VACUUM")
+            if clean.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise ValueError("Offline snapshot failed SQLite integrity check")
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def vector_id(chunk_id: str) -> int:
@@ -174,21 +185,40 @@ def export_bundle(
             expected = {vector_id(str(row["id"])) for row in chunks}
             index = faiss.read_index(str(index_file))
             actual = {int(value) for value in faiss.vector_to_array(index.id_map)}
-            if len(expected) != len(chunks) or len(actual) != index.ntotal or actual != expected:
+            extra = actual - expected
+            if len(expected) != len(chunks) or len(actual) != index.ntotal or expected - actual:
                 raise ValueError(f"FAISS IDs do not exactly match {scope} knowledge chunks")
+            if extra:
+                private_reference_ids = {
+                    vector_id(str(row[0]))
+                    for row in db.execute(
+                        """SELECT c.id FROM knowledge_chunks c
+                           JOIN knowledge_documents d ON d.id = c.document_id
+                           WHERE d.scope = 'policy_reference'"""
+                    )
+                } if scope == "policy_document" else set()
+                if not extra <= private_reference_ids:
+                    raise ValueError(f"FAISS IDs do not exactly match {scope} knowledge chunks")
             entries.append({
                 "scope": scope,
                 "file": filename,
                 "sha256": sha256(index_file),
-                "vectors": index.ntotal,
+                "vectors": len(expected),
                 "dimensions": index.d,
             })
-            source_files.append((index_file, filename))
+            source_files.append((index_file, filename, extra))
         output.mkdir(parents=True, exist_ok=True)
         if offline:
             _write_offline_database(db, output / "seed.db", set(scopes))
-    for source, filename in source_files:
-        shutil.copy2(source, output / filename)
+    for source, filename, extra in source_files:
+        if extra:
+            index = faiss.read_index(str(source))
+            removed = index.remove_ids(np.array(sorted(extra), dtype="int64"))
+            if removed != len(extra):
+                raise ValueError(f"Could not exclude private policy-reference vectors from {filename}")
+            faiss.write_index(index, str(output / filename))
+        else:
+            shutil.copy2(source, output / filename)
     for entry in entries:
         entry["sha256"] = sha256(output / str(entry["file"]))
     manifest = {

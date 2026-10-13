@@ -128,30 +128,10 @@
                     <small>Share strictly checked co-created hazards and mitigation measures.</small>
                   </span>
                   <span class="voice-switch">
-                    <input id="crowdSourcingToggle" type="checkbox" />
+                    <input id="crowdSourcingToggle" type="checkbox" checked />
                     <span class="switch-track" aria-hidden="true"></span>
                   </span>
                 </label>
-                {% if current_user.role == 'admin' %}
-                  <label class="settings-row">
-                    <span class="settings-row-icon settings-row-icon-blue" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" role="img" focusable="false">
-                        <path d="M4 6h12v8H8l-4 4V6Z" />
-                        <path d="M16 10h4v8h-8v-4" />
-                        <path d="M9 10h4" />
-                        <path d="M11 8v4" />
-                      </svg>
-                    </span>
-                    <span>
-                      <strong>Auto conversation</strong>
-                      <small>Let the LLM simulate user replies for flow testing.</small>
-                    </span>
-                    <span class="voice-switch">
-                      <input id="autoConversationToggle" type="checkbox" />
-                      <span class="switch-track" aria-hidden="true"></span>
-                    </span>
-                  </label>
-                {% endif %}
                 <button id="voicePreferenceButton" class="settings-action-button voice-preference-entry" type="button" hidden>
                   <span class="settings-action-icon settings-action-icon-blue" aria-hidden="true">
                     <svg viewBox="0 0 24 24" role="img" focusable="false">
