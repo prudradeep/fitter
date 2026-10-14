@@ -49,7 +49,6 @@ class ChatMitigationCreationGuidedMixin:
             for heading, label in (
                 ("Challenges to be addressed", "Sectoral Challenge Addressed"),
                 ("Proposed adaptations for the policy", "Description of the Proposal"),
-                ("Original policy objective", "Original Policy Objective"),
             ):
                 labels = ("Proposed Adjustment", label) if heading == "Proposed adaptations for the policy" else (label,)
                 lines: list[str] = []
@@ -1435,9 +1434,24 @@ class ChatMitigationCreationGuidedMixin:
         session.mitigation_policy_effects = None
         session.mitigation_policy_effect_index = 0
         session.mitigation_creation_summary = None
-        session.mitigation_target_population = None
+        adopted_measure = session.accepted_inspired_mitigation_measure == session.pending_mitigation_measure
+        adopted_pathways = (
+            dict(session.accepted_inspired_mitigation_group_pathways or {})
+            if adopted_measure
+            else {}
+        )
+        if not adopted_measure:
+            session.accepted_inspired_mitigation_measure = None
+            session.accepted_inspired_mitigation_group_pathways = None
+        session.mitigation_target_population = (
+            list(adopted_pathways)
+            if adopted_measure else (
+                list(session.policy_adaptation_target_groups or [])
+                if len(session.policy_adaptation_answers or []) == 3 else None
+            )
+        )
         session.mitigation_user_added_groups = None
-        session.mitigation_dg_benefit_explanations = None
+        session.mitigation_dg_benefit_explanations = adopted_pathways or None
         session.mitigation_dg_pathway_groups = None
         session.mitigation_dg_evidence = None
         session.mitigation_dg_evidence_index = 0
@@ -1478,10 +1492,19 @@ class ChatMitigationCreationGuidedMixin:
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         """Resolve measure-specific beneficiary gaps before reflection and policy effects."""
-        groups = session.mitigation_target_population or self._mitigation_target_population_labels(
-            session
+        adopted_measure = session.accepted_inspired_mitigation_measure == session.pending_mitigation_measure
+        groups = (
+            session.mitigation_target_population
+            if adopted_measure else
+            session.mitigation_target_population or self._mitigation_target_population_labels(session)
         )
         if not groups:
+            if adopted_measure:
+                return await self._continue_with_knowledge_base_evidence_or_request_user_evidence(
+                    session_id, session,
+                    session.pending_mitigation_measure or "",
+                    session.pending_mitigation_reason or "",
+                )
             session.phase = "mitigation_dg_input"
             session.mitigation_revision_stage = "initial_target_population"
             return ChatResponse(
@@ -2555,9 +2578,16 @@ class ChatMitigationCreationGuidedMixin:
         return await self._start_guided_mitigation_flow(session_id, session, revised)
 
     async def _guided_dg_suggestion_step(self, session_id, session) -> ChatResponse:
-        groups = session.mitigation_target_population or self._mitigation_target_population_labels(session)
+        adopted_measure = session.accepted_inspired_mitigation_measure == session.pending_mitigation_measure
+        groups = (
+            session.mitigation_target_population
+            if adopted_measure else
+            session.mitigation_target_population or self._mitigation_target_population_labels(session)
+        )
         session.mitigation_target_population = groups
         if not groups:
+            if adopted_measure:
+                return await self._guided_dg_evidence_decision_step(session_id, session)
             session.phase = "mitigation_dg_input"
             return ChatResponse(
                 session_id=session_id,

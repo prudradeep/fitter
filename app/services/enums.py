@@ -89,6 +89,8 @@ class ChatPhase(AppStrEnum):
     MITIGATION = "mitigation"
     MITIGATION_MEASURE = "mitigation_measure"
     INSPIRED_MITIGATION_CONFIRMATION = "inspired_mitigation_confirmation"
+    POLICY_ADAPTATION_QUESTION = "policy_adaptation_question"
+    POLICY_ADAPTATION_EVIDENCE = "policy_adaptation_evidence"
     MITIGATION_DUPLICATE_SUGGESTION = "mitigation_duplicate_suggestion"
     MITIGATION_DUPLICATE_REPORT = "mitigation_duplicate_report"
     MITIGATION_REASON = "mitigation_reason"

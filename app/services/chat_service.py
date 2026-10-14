@@ -380,6 +380,11 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
+        if session.phase in {"policy_adaptation_question", "policy_adaptation_evidence"}:
+            return await self._handle_policy_adaptation_answer(
+                current_session_id, session, clean_message
+            )
+
         if clean_message and not self._could_be_fuzzy_selection(session, clean_message):
             meaning_check = await self._validate_text_meaning(clean_message)
         else:

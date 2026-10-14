@@ -339,6 +339,11 @@ class ChatNavigationStepsMixin:
         session.pending_inspired_mitigation_reason = None
         session.pending_inspired_mitigation_description = None
         session.pending_inspired_mitigation_groups = None
+        session.pending_inspired_mitigation_group_pathways = None
+        session.pending_inspired_mitigation_grounding_note = None
+        session.pending_inspired_mitigation_barrier_issue = None
+        session.accepted_inspired_mitigation_measure = None
+        session.accepted_inspired_mitigation_group_pathways = None
         session.inspired_mitigation_considered_groups = None
         session.pending_inspired_mitigation_policy_about = None
         session.pending_inspired_mitigation_hazard_pathway = None
@@ -882,6 +887,12 @@ class ChatNavigationStepsMixin:
         if session.phase == "inspired_mitigation_confirmation":
             return self._inspired_mitigation_confirmation_response(
                 session_id, session, error=error
+            )
+
+        if session.phase in {"policy_adaptation_question", "policy_adaptation_evidence"}:
+            return self._policy_adaptation_question_response(
+                session_id, session, evidence=session.phase == "policy_adaptation_evidence",
+                error=error,
             )
 
         if session.phase == "mitigation_duplicate_suggestion":
