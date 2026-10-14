@@ -6,6 +6,10 @@ INSPIRED_MITIGATION_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes, use this measure"),
     Option(id=2, label="No, write my own measure"),
 ]
+INSPIRED_MITIGATION_REVISION_OPTIONS = [
+    Option(id=1, label="Revise measure to cover all groups"),
+    Option(id=2, label="Write my own measure"),
+]
 
 POST_SECTOR_OPTIONS = [
     Option(id=1, label="Start Mitigation Planning"),
@@ -27,10 +31,14 @@ STATS_DEEP_DIVE_OPTIONS = [
 ]
 
 SOCIO_DEMOGRAPHIC_OPTIONS = [
+    Option(id=1, label="Confirm & Continue"),
+    Option(id=2, label="Add more DGs"),
+    Option(id=3, label="Know more about the hazard"),
+]
+
+MITIGATION_CHOICE_OPTIONS = [
     Option(id=1, label="Create a new mitigation proposal"),
     Option(id=2, label="Propose adaptations in the existing policy"),
-    Option(id=3, label="Add more DGs"),
-    Option(id=4, label="Know more about the hazard"),
 ]
 
 ADD_DGS_OPTIONS = [

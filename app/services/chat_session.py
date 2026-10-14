@@ -60,6 +60,12 @@ class ChatSession:
     pending_mitigation_measure: str | None = None
     pending_inspired_mitigation_measure: str | None = None
     pending_inspired_mitigation_reason: str | None = None
+    pending_inspired_mitigation_description: str | None = None
+    pending_inspired_mitigation_groups: list[str] | None = None
+    inspired_mitigation_considered_groups: list[str] | None = None
+    pending_inspired_mitigation_policy_about: str | None = None
+    pending_inspired_mitigation_hazard_pathway: str | None = None
+    pending_inspired_mitigation_uncovered_groups: list[str] | None = None
     pending_mitigation_reason: str | None = None
     pending_mitigation_evidence: str | None = None
     mitigation_evidence_declined: bool = False

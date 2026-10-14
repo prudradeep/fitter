@@ -48,10 +48,10 @@ class ChatMitigationCreationGuidedMixin:
             sections: list[str] = []
             for heading, label in (
                 ("Challenges to be addressed", "Sectoral Challenge Addressed"),
-                ("Possible ways to address the challenges", "Description of the Proposal"),
+                ("Proposed adaptations for the policy", "Description of the Proposal"),
                 ("Original policy objective", "Original Policy Objective"),
             ):
-                labels = ("Proposed Adjustment", label) if heading == "Possible ways to address the challenges" else (label,)
+                labels = ("Proposed Adjustment", label) if heading == "Proposed adaptations for the policy" else (label,)
                 lines: list[str] = []
                 seen: set[str] = set()
                 for source_label in labels:
@@ -80,9 +80,9 @@ class ChatMitigationCreationGuidedMixin:
                         "## Challenges to be addressed\n\n"
                         "No challenge is stated in the matched D4.2 record."
                     )
-                elif heading == "Possible ways to address the challenges":
+                elif heading == "Proposed adaptations for the policy":
                     sections.append(
-                        "## Possible ways to address the challenges\n\n"
+                        "## Proposed adaptations for the policy\n\n"
                         "No approach is stated in the matched D4.2 record."
                     )
             return "\n\n".join([concepts_heading, *sections, self._adaptation_profiles_section(session)]).strip()
@@ -230,7 +230,7 @@ class ChatMitigationCreationGuidedMixin:
         if not ids:
             return (
                 "## Challenges to be addressed\n\nNo linked policy document is available.\n\n"
-                "## Possible ways to address the challenges\n\n"
+                "## Proposed adaptations for the policy\n\n"
                 "No matching D4.2 record or linked policy document is available."
             )
         rows = self.db.execute(
@@ -260,7 +260,7 @@ class ChatMitigationCreationGuidedMixin:
         if not passages:
             return (
                 "## Challenges to be addressed\n\nNo relevant passage was found in the linked policy document.\n\n"
-                "## Possible ways to address the challenges\n\n"
+                "## Proposed adaptations for the policy\n\n"
                 "No relevant passage was found in the linked policy document."
             )
         response = await ask_llm_chat(
@@ -336,9 +336,9 @@ class ChatMitigationCreationGuidedMixin:
             ]
             lines.append(f"- {proposal} {source_button(source_rows)}")
         adaptations_section = (
-            "## Possible ways to address the challenges\n\n" + "\n".join(lines)
+            "## Proposed adaptations for the policy\n\n" + "\n".join(lines)
             if lines else
-            "## Possible ways to address the challenges\n\nNo supported adaptation was found in the linked policy document."
+            "## Proposed adaptations for the policy\n\nNo supported adaptation was found in the linked policy document."
         )
         return challenge_section + "\n\n" + adaptations_section
 

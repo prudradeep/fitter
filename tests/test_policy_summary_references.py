@@ -203,7 +203,7 @@ def test_existing_policy_adaptations_use_only_matched_d42_with_source_for_each_p
         assert "## Current policy gaps" not in reference
         assert "## Proposed adaptations" not in reference
         assert "## Challenges to be addressed" in reference
-        assert "## Possible ways to address the challenges" in reference
+        assert "## Proposed adaptations for the policy" in reference
         assert "Offer reduced annual fares to eligible riders." in reference
         assert "Improve access to public transport." in reference
         assert "- Low-income riders\n" in reference or reference.endswith("- Low-income riders")
@@ -288,7 +288,7 @@ def test_existing_policy_adaptations_fall_back_to_linked_document():
         assert "## Challenges to be addressed" in reference
         assert "Low-income adults face unaffordable fares." in reference
         assert "Extend annual passes to low-income adults." in reference
-        assert "## Possible ways to address the challenges" in reference
+        assert "## Proposed adaptations for the policy" in reference
         assert "## Proposed adaptations" not in reference
         assert "Transport policy document" in reference
         assert "https://example.org/transport-policy.pdf" in reference
@@ -336,7 +336,7 @@ def test_user_created_policy_uses_its_document_even_when_title_matches_d42():
         assert "User policy document" in reference
         assert "&quot;Page&quot;, &quot;value&quot;: &quot;2&quot;" in reference
         assert "FITTER D4.2 FINAL.pdf" not in reference
-        assert "## Possible ways to address the challenges" in reference
+        assert "## Proposed adaptations for the policy" in reference
         service._shared_knowledge_results = AsyncMock(return_value=[])
         with patch("app.services.chat_mitigation_creation_guided.ask_llm_chat",
                    new=AsyncMock(return_value=json.dumps({"mechanisms": []}))) as ask_llm:
@@ -356,7 +356,7 @@ def test_unmatched_policy_without_linked_document_still_shows_challenges_heading
         reference = asyncio.run(service._existing_policy_adaptation_reference(session))
         assert "## Challenges to be addressed" in reference
         assert "No linked policy document is available." in reference
-        assert "## Possible ways to address the challenges" in reference
+        assert "## Proposed adaptations for the policy" in reference
     finally:
         db.close()
 

@@ -2004,7 +2004,10 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
       return "Select a hazard above, or type the hazard name...";
     }
     if (step === "socio_demographic_review") {
-      return "Select Add more DGs or Move to next step...";
+      return "Select Add more DGs or Confirm & Continue...";
+    }
+    if (step === "mitigation_choice") {
+      return "Choose a mitigation measure option...";
     }
     if (step === "stats_deep_dive") {
       return "Ask a follow-up question, or choose the next action...";

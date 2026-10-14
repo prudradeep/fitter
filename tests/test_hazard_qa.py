@@ -10,7 +10,7 @@ from app.db.session import Base
 from app.models import SystemHazard, SystemHazardSocioDemographic
 from app.services.chat_grounded_question_steps import ChatGroundedQuestionStepsMixin
 from app.services.chat_hazard_steps import ChatHazardStepsMixin
-from app.services.chat_options import SOCIO_DEMOGRAPHIC_OPTIONS
+from app.services.chat_options import MITIGATION_CHOICE_OPTIONS, SOCIO_DEMOGRAPHIC_OPTIONS
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
 from app.services.knowledge_base import MAIN_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE
@@ -18,6 +18,24 @@ from app.schemas import ChatResponse
 
 
 class HazardQuestionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mitigation_options_appear_after_confirmation(self) -> None:
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(selected_hazard="Heat stress", phase="socio_demographic_review")
+
+        confirmation = await service._handle_socio_demographic_review(
+            "session-1", session, "Confirm & Continue"
+        )
+
+        self.assertEqual(session.phase, "mitigation_choice")
+        self.assertEqual(confirmation.step, "mitigation_choice")
+        self.assertEqual(confirmation.options, MITIGATION_CHOICE_OPTIONS)
+        service._create_mitigation_measure_step = AsyncMock(return_value=confirmation)
+        await service._handle_mitigation_choice(
+            "session-1", session, "Create a new mitigation proposal"
+        )
+        self.assertEqual(session.mitigation_proposal_type, "new_policy")
+        service._create_mitigation_measure_step.assert_awaited_once()
+
     async def test_sector_context_uses_full_selected_hazard_block(self) -> None:
         service = ChatGroundedQuestionStepsMixin()
         prompt = (

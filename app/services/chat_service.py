@@ -45,6 +45,7 @@ from app.services.chat_options import (
     IMPLEMENTATION_READINESS_OPTIONS,
     MITIGATION_EVIDENCE_DECISION_OPTIONS,
     MITIGATION_EVIDENCE_INPUT_OPTIONS,
+    MITIGATION_CHOICE_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
     POST_SECTOR_OPTIONS,
     REASON_CONFIRMATION_OPTIONS,
@@ -525,6 +526,11 @@ class ChatService(
 
         if session.phase == "socio_demographic_review":
             return await self._handle_socio_demographic_review(
+                current_session_id, session, clean_message
+            )
+
+        if session.phase == "mitigation_choice":
+            return await self._handle_mitigation_choice(
                 current_session_id, session, clean_message
             )
 
@@ -2022,6 +2028,8 @@ class ChatService(
             labels = [option.label for option in CUSTOM_HAZARD_PROFILE_REASON_OPTIONS]
         elif session.phase == "socio_demographic_review":
             labels = [option.label for option in SOCIO_DEMOGRAPHIC_OPTIONS]
+        elif session.phase == "mitigation_choice":
+            labels = [option.label for option in MITIGATION_CHOICE_OPTIONS]
         elif session.phase == "reason_confirmation":
             labels = [option.label for option in REASON_CONFIRMATION_OPTIONS]
         elif session.phase == "mitigation_evidence_decision":
@@ -2105,6 +2113,8 @@ class ChatService(
             return [option.label for option in CUSTOM_HAZARD_PROFILE_REASON_OPTIONS]
         if session.phase == "socio_demographic_review":
             return [option.label for option in SOCIO_DEMOGRAPHIC_OPTIONS]
+        if session.phase == "mitigation_choice":
+            return [option.label for option in MITIGATION_CHOICE_OPTIONS]
         if session.phase == "reason_confirmation":
             return [option.label for option in REASON_CONFIRMATION_OPTIONS]
         if session.phase == "other_actions":

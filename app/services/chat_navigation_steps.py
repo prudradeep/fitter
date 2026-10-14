@@ -18,6 +18,7 @@ from app.services.chat_options import (
     MITIGATION_DUPLICATE_OPTIONS,
     MITIGATION_EVIDENCE_DECISION_OPTIONS,
     MITIGATION_EVIDENCE_INPUT_OPTIONS,
+    MITIGATION_CHOICE_OPTIONS,
     MITIGATION_REVIEW_OPTIONS,
     OTHER_NAV_OPTIONS,
     POST_SECTOR_OPTIONS,
@@ -336,6 +337,12 @@ class ChatNavigationStepsMixin:
         session.pending_mitigation_measure = None
         session.pending_inspired_mitigation_measure = None
         session.pending_inspired_mitigation_reason = None
+        session.pending_inspired_mitigation_description = None
+        session.pending_inspired_mitigation_groups = None
+        session.inspired_mitigation_considered_groups = None
+        session.pending_inspired_mitigation_policy_about = None
+        session.pending_inspired_mitigation_hazard_pathway = None
+        session.pending_inspired_mitigation_uncovered_groups = None
         session.new_policy_inspiration = None
         cls._clear_mitigation_clarity_state(session)
         session.suggested_mitigation_measure_id = None
@@ -685,6 +692,16 @@ class ChatNavigationStepsMixin:
                 step="socio_demographic_review",
                 bot_message=message,
                 options=SOCIO_DEMOGRAPHIC_OPTIONS,
+                session=session.summary(),
+                error=error,
+            )
+
+        if session.phase == "mitigation_choice":
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_choice",
+                bot_message=message,
+                options=MITIGATION_CHOICE_OPTIONS,
                 session=session.summary(),
                 error=error,
             )

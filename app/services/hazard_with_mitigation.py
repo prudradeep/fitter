@@ -406,7 +406,7 @@ def inferred_adaptations_reference(
         "## Challenges to be addressed\n\n" + (
             "\n".join(challenges) if challenges else "No matching factsheet challenge was found."
         ),
-        "## Possible ways to address the challenges\n\n" + "\n".join(adaptations),
+        "## Proposed adaptations for the policy\n\n" + "\n".join(adaptations),
         "## Stakeholders to involve\n\n" + (
             "\n".join(stakeholders) if stakeholders else "No matching factsheet stakeholders were found."
         ),
@@ -575,7 +575,7 @@ def _important_new_proposal_concepts_section(
         return ""
     headings = (
         ("challenge", "Challenges to be addressed", "Prioritised challenge addressed"),
-        ("approach", "Possible ways to address the challenges", "Policy description"),
+        ("approach", "Proposed adaptations for the policy", "Policy description"),
         ("stakeholders", "Possible stakeholders to involve", "Participatory dimension & stakeholders"),
     )
     sections: list[str] = []

@@ -25,6 +25,7 @@ from app.services.chat_formatters import format_hazards
 from app.services.chat_json import parse_json_object
 from app.services.chat_options import (
     HAZARD_ENTRY_OPTIONS,
+    MITIGATION_CHOICE_OPTIONS,
     POST_SECTOR_OPTIONS,
     REGIONAL_POPULATION_COMPARISON_LABEL,
     SOCIO_DEMOGRAPHIC_OPTIONS,
@@ -2200,8 +2201,8 @@ class ChatHazardStepsMixin:
             option_matcher = getattr(self, "_open_option_label_from_text", None)
             if option_matcher is not None:
                 exact_label = option_matcher(message, SOCIO_DEMOGRAPHIC_OPTIONS)
-        if exact_label is None:
-            exact_label = self._socio_demographic_label_from_open_text(message)
+        if exact_label is None and self._socio_demographic_label_from_open_text(message) == "Add more DGs":
+            exact_label = "Add more DGs"
         if exact_label is None:
             open_selection_handler = getattr(self, "_open_selection_response_from_any_step", None)
             if open_selection_handler is not None:
@@ -2239,6 +2240,44 @@ class ChatHazardStepsMixin:
         if action == normalize("Add more DGs"):
             return self._start_additional_dg_questions(session_id, session)
 
+        if action == normalize("Confirm & Continue"):
+            session.phase = "mitigation_choice"
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_choice",
+                bot_message="Choose a mitigation measure option to continue.",
+                options=MITIGATION_CHOICE_OPTIONS,
+                session=session.summary(),
+                error=False,
+            )
+
+        return ChatResponse(
+            session_id=session_id,
+            step="socio_demographic_review",
+            bot_message=self.invalid_message,
+            options=SOCIO_DEMOGRAPHIC_OPTIONS,
+            session=session.summary(),
+            error=True,
+        )
+
+    async def _handle_mitigation_choice(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        exact_label = exact_option_label(message, MITIGATION_CHOICE_OPTIONS)
+        if exact_label is None:
+            option_matcher = getattr(self, "_open_option_label_from_text", None)
+            if option_matcher is not None:
+                exact_label = option_matcher(message, MITIGATION_CHOICE_OPTIONS)
+        if exact_label is None:
+            candidate = self._socio_demographic_label_from_open_text(message)
+            if candidate in {option.label for option in MITIGATION_CHOICE_OPTIONS}:
+                exact_label = candidate
+        if exact_label is None:
+            fuzzy_label = match_option_label(message, MITIGATION_CHOICE_OPTIONS)
+            if fuzzy_label is not None:
+                return self._fuzzy_confirmation_step(session_id, session, fuzzy_label)
+        action = normalize(exact_label or message)
+
         if action == normalize("Create a new mitigation proposal"):
             session.mitigation_proposal_type = "new_policy"
             return await self._create_mitigation_measure_step(session_id, session)
@@ -2253,9 +2292,9 @@ class ChatHazardStepsMixin:
 
         return ChatResponse(
             session_id=session_id,
-            step="socio_demographic_review",
+            step="mitigation_choice",
             bot_message=self.invalid_message,
-            options=SOCIO_DEMOGRAPHIC_OPTIONS,
+            options=MITIGATION_CHOICE_OPTIONS,
             session=session.summary(),
             error=True,
         )

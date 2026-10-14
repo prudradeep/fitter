@@ -81,6 +81,7 @@ class ChatPhase(AppStrEnum):
     TARGET_POPULATION_QUESTION = "target_population_question"
     HAZARD_PROFILE_SELECTION = "hazard_profile_selection"
     SOCIO_DEMOGRAPHIC_REVIEW = "socio_demographic_review"
+    MITIGATION_CHOICE = "mitigation_choice"
     REASON_CONFIRMATION = "reason_confirmation"
     OTHER_ACTIONS = "other_actions"
     ADD_DGS = "add_dgs"
