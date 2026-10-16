@@ -34,6 +34,7 @@ from app.services.chat_mitigation_steps import ChatMitigationStepsMixin
 from app.services.chat_navigation_steps import ChatNavigationStepsMixin
 from app.services.chat_options import (
     ADOPT_INSPIRED_MITIGATION,
+    CREATE_POLICY_ADAPTATIONS,
     CUSTOM_HAZARD_FINAL_OPTIONS,
     CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
     CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS,
@@ -374,6 +375,11 @@ class ChatService(
             return await self._adopt_inspired_mitigation_response(
                 current_session_id, session
             )
+        if (
+            session.phase == "mitigation_measure"
+            and clean_message.casefold() == CREATE_POLICY_ADAPTATIONS.casefold()
+        ):
+            return self._start_policy_adaptation_questions(current_session_id, session)
 
         if session.phase == "inspired_mitigation_confirmation":
             return await self._handle_inspired_mitigation_confirmation(
@@ -389,6 +395,14 @@ class ChatService(
         # before the general wizard message quality checks.
         if session.phase == "new_policy_confirmation":
             return await self._handle_new_policy_confirmation(
+                current_session_id, session, clean_message
+            )
+        if session.phase == "new_policy_validation_clarification":
+            return await self._handle_new_policy_validation_clarification(
+                current_session_id, session, clean_message
+            )
+        if session.phase == "new_policy_validation_evidence":
+            return await self._handle_new_policy_validation_evidence(
                 current_session_id, session, clean_message
             )
         if session.phase == "new_policy_target_population_question":
@@ -632,6 +646,14 @@ class ChatService(
             "mitigation_dg_input": self._handle_mitigation_dg_input,
             "mitigation_dg_evidence_decision": self._handle_mitigation_dg_evidence_decision,
             "mitigation_dg_evidence_input": self._handle_mitigation_dg_evidence_input,
+            "inspired_mitigation_expansion_input": self._handle_inspired_mitigation_expansion_input,
+            "inspired_mitigation_expansion_evidence": self._handle_inspired_mitigation_expansion_evidence,
+            "inspired_mitigation_group_pathway_input": self._handle_inspired_mitigation_group_pathway_input,
+            "inspired_mitigation_group_pathway_evidence": self._handle_inspired_mitigation_group_pathway_evidence,
+            "new_policy_target_group_pathway_input": self._handle_new_policy_target_group_pathway_input,
+            "new_policy_target_group_pathway_evidence": self._handle_new_policy_target_group_pathway_evidence,
+            "policy_adaptation_group_pathway_input": self._handle_policy_adaptation_group_pathway_input,
+            "policy_adaptation_group_pathway_evidence": self._handle_policy_adaptation_group_pathway_evidence,
             "mitigation_equity": self._handle_mitigation_equity,
             "mitigation_final_summary_review": self._handle_mitigation_final_summary_review,
         }
@@ -839,6 +861,8 @@ class ChatService(
         if session.phase.startswith("mitigation_") or session.phase in {
             "complete",
             "new_policy_confirmation",
+            "new_policy_validation_clarification",
+            "new_policy_validation_evidence",
             "new_policy_target_population_question",
             "custom_hazard_input",
             "custom_hazard_clarification",
@@ -849,6 +873,14 @@ class ChatService(
             "mitigation_measure",
             "mitigation_reason",
             "mitigation_clarity",
+            "inspired_mitigation_expansion_input",
+            "inspired_mitigation_expansion_evidence",
+            "inspired_mitigation_group_pathway_input",
+            "inspired_mitigation_group_pathway_evidence",
+            "new_policy_target_group_pathway_input",
+            "new_policy_target_group_pathway_evidence",
+            "policy_adaptation_group_pathway_input",
+            "policy_adaptation_group_pathway_evidence",
             "evaluation_question",
         }:
             # Follow-up chat and these phase-specific handlers must receive the

@@ -347,7 +347,7 @@ def country_existing_policy_adaptation_sources(
     for block in blocks:
         fields = _existing_policy_fields(block)
         focus_key = normalize_for_match(fields.get("Sectoral focus", ""))
-        if sector_key and focus_key and focus_key != sector_key:
+        if sector_key and focus_key != sector_key:
             continue
         if fields.get("Original policy objectives") and fields.get("Proposed adaptations"):
             fields["_source_document"] = document.get("title", "Policy adaptation factsheet")
@@ -575,7 +575,6 @@ def _important_new_proposal_concepts_section(
         return ""
     headings = (
         ("challenge", "Challenges to be addressed", "Prioritised challenge addressed"),
-        ("approach", "Proposed adaptations for the policy", "Policy description"),
         ("stakeholders", "Possible stakeholders to involve", "Participatory dimension & stakeholders"),
     )
     sections: list[str] = []

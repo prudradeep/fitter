@@ -914,10 +914,46 @@ class ChatNavigationStepsMixin:
                 session_id, session, error=error
             )
 
+        if session.phase in {
+            "new_policy_validation_clarification",
+            "new_policy_validation_evidence",
+        }:
+            return self._new_policy_validation_prompt(
+                session_id, session,
+                evidence=session.phase == "new_policy_validation_evidence",
+                retry=session.new_policy_validation_retry_pending,
+                error=error,
+            )
+
         if session.phase in {"policy_adaptation_question", "policy_adaptation_evidence"}:
             return self._policy_adaptation_question_response(
                 session_id, session, evidence=session.phase == "policy_adaptation_evidence",
                 error=error,
+            )
+
+        if session.phase in {
+            "policy_adaptation_group_pathway_input",
+            "policy_adaptation_group_pathway_evidence",
+        }:
+            return self._policy_adaptation_group_pathway_prompt(
+                session_id, session,
+                evidence=session.phase == "policy_adaptation_group_pathway_evidence",
+                error=error,
+            )
+
+        if session.phase in {
+            "new_policy_target_group_pathway_input",
+            "new_policy_target_group_pathway_evidence",
+        }:
+            groups = session.new_policy_target_pathway_groups or []
+            index = int(session.new_policy_target_pathway_index or 0)
+            group = groups[index] if index < len(groups) else "this group"
+            if session.phase == "new_policy_target_group_pathway_evidence":
+                return self._new_policy_target_group_pathway_evidence_prompt(
+                    session_id, session, group, error=error,
+                )
+            return self._new_policy_target_group_pathway_prompt(
+                session_id, session, error=error,
             )
 
         if session.phase == "mitigation_duplicate_suggestion":

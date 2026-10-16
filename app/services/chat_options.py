@@ -2,18 +2,16 @@ from app.models import Country, Region, Sector
 from app.schemas import Option
 
 ADOPT_INSPIRED_MITIGATION = "Adopt mitigation measure for my context"
+CREATE_POLICY_ADAPTATIONS = "Create new adaptations in the policy"
 INSPIRED_MITIGATION_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes, use this measure"),
-    Option(id=2, label="No, write my own measure"),
 ]
 INSPIRED_MITIGATION_REVISION_OPTIONS = [
-    Option(id=1, label="Revise measure to address access barrier"),
-    Option(id=2, label="Write my own measure"),
+    Option(id=1, label="Address access barrier"),
 ]
 INSPIRED_MITIGATION_PARTIAL_OPTIONS = [
     Option(id=1, label="Yes, use this measure"),
-    Option(id=2, label="Revise measure to cover more groups"),
-    Option(id=3, label="No, write my own measure"),
+    Option(id=2, label="Modify measure to cover more groups"),
 ]
 POLICY_ADAPTATION_SKIP_OPTIONS = [
     Option(id=1, label="Skip this question"),

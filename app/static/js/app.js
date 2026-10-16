@@ -456,7 +456,7 @@ function stageKeyForStep(step = "", mode = appState.inputMode) {
   ) {
     return "hazards";
   }
-  if (step.startsWith("mitigation") || step === "mitigation" || step === "inspired_mitigation_confirmation") return "mitigation";
+  if (step.startsWith("mitigation") || step === "mitigation" || step.startsWith("inspired_mitigation") || step.startsWith("policy_adaptation") || step.startsWith("new_policy_target_group_pathway")) return "mitigation";
   if (step.startsWith("evaluation") || step === "complete") return "evaluation";
   return "country";
 }
@@ -741,8 +741,11 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
     stagePolicySummary.parentElement?.classList.toggle("has-policy-summary", showPolicySummary);
     stagePolicySummary.closest(".stage-visual-panel")?.classList.toggle("has-policy-summary", showPolicySummary);
   }
-  const showMitigationGuide = ["hazard_profile_selection", "socio_demographic_review", "mitigation", "inspired_mitigation_confirmation"]
-    .includes(appState.currentStep) || appState.currentStep.startsWith("mitigation_");
+  const showMitigationGuide = ["hazard_profile_selection", "socio_demographic_review", "mitigation"]
+    .includes(appState.currentStep) || appState.currentStep.startsWith("mitigation_")
+    || appState.currentStep.startsWith("inspired_mitigation_")
+    || appState.currentStep.startsWith("policy_adaptation_")
+    || appState.currentStep.startsWith("new_policy_target_group_pathway_");
   if (stageMitigationGuide) {
     stageMitigationGuide.hidden = !showMitigationGuide;
     if (showMitigationGuide && !stageMitigationGuide.getAttribute("src")) {
@@ -3151,9 +3154,11 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
     && !String(session.custom_hazard.text || "").trim()
     && !session.selected_hazard,
   );
-  const effectiveMode = hasPendingCustomProfileReason(session) || isNewHazardEntry
-    ? "textarea"
-    : mode;
+  const effectiveMode = mode === "options_only"
+    ? mode
+    : hasPendingCustomProfileReason(session) || isNewHazardEntry
+      ? "textarea"
+      : mode;
   appState.inputMode = effectiveMode;
   appState.currentOptions = options || [];
   syncTargetPopulationQuestion(step, appState.currentOptions);
@@ -3161,13 +3166,14 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
   const reasonEvidenceMode = ["reason_evidence", "reason_only", "evidence_only", "policy_reference", "mitigation_measure"].includes(effectiveMode);
   const evaluationMode = effectiveMode === "evaluation_question";
   const textareaMode = effectiveMode === "textarea";
+  const optionsOnlyMode = effectiveMode === "options_only";
   micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode;
   const placeholder = placeholderForStep(step, options, session);
   messageInput.placeholder = placeholder;
   textareaInput.placeholder = placeholder;
   setReasonEvidencePlaceholders(step, effectiveMode);
   reasonEvidenceFields.classList.toggle("mitigation-mode", effectiveMode === "mitigation_measure");
-  messageInputRow.hidden = reasonEvidenceMode || evaluationMode;
+  messageInputRow.hidden = reasonEvidenceMode || evaluationMode || optionsOnlyMode;
   messageInput.hidden = textareaMode;
   textareaInput.hidden = !textareaMode;
   reasonEvidenceFields.hidden = !reasonEvidenceMode;
@@ -3193,6 +3199,13 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
     evaluationReasonInput.value = "";
     evaluationEvidenceInput.value = "";
     scoreInput.focus();
+  } else if (optionsOnlyMode) {
+    messageInput.value = "";
+    textareaInput.value = "";
+    reasonInput.value = "";
+    secondaryReasonInput.value = "";
+    evidenceInput.value = "";
+    evidenceFileInput.value = "";
   } else {
     reasonInput.value = "";
     secondaryReasonInput.value = "";
