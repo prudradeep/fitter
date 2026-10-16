@@ -385,6 +385,21 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
+        # These are structured choices and multi-select answers. Route them
+        # before the general wizard message quality checks.
+        if session.phase == "new_policy_confirmation":
+            return await self._handle_new_policy_confirmation(
+                current_session_id, session, clean_message
+            )
+        if session.phase == "new_policy_target_population_question":
+            return await self._handle_new_policy_target_population_answer(
+                current_session_id, session, clean_message
+            )
+        if session.phase == "new_policy_target_pathway":
+            return await self._handle_new_policy_target_pathway(
+                current_session_id, session, clean_message
+            )
+
         if clean_message and not self._could_be_fuzzy_selection(session, clean_message):
             meaning_check = await self._validate_text_meaning(clean_message)
         else:
@@ -823,6 +838,8 @@ class ChatService(
             return False
         if session.phase.startswith("mitigation_") or session.phase in {
             "complete",
+            "new_policy_confirmation",
+            "new_policy_target_population_question",
             "custom_hazard_input",
             "custom_hazard_clarification",
             "custom_hazard_title_clarification",

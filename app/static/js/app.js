@@ -2004,7 +2004,7 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
       return "Select a hazard above, or type the hazard name...";
     }
     if (step === "socio_demographic_review") {
-      return "Select Add more DGs or Confirm & Continue...";
+      return "Select Add more DGs or Confirm & Continue to mitigation...";
     }
     if (step === "mitigation_choice") {
       return "Choose a mitigation measure option...";
@@ -2148,7 +2148,8 @@ function isQuickSelectPopulationLabel(label) {
 }
 
 function isTargetPopulationActionLabel(label) {
-  return ["Skip", "Skip all"].includes(label) || isQuickSelectPopulationLabel(label);
+  return ["Skip", "Skip all", "Skip this question"].includes(label)
+    || isQuickSelectPopulationLabel(label);
 }
 
 function updateOptionHighlight() {
@@ -3625,7 +3626,7 @@ function renderOptions(options, otherOptions = []) {
   }
   clearElement(optionTray);
   appState.highlightedOptionLabel = "";
-  if (appState.inputMode === "target_population_multi") {
+  if (appState.inputMode === "target_population_multi" || appState.inputMode === "policy_type_multi") {
     renderTargetPopulationOptions(appState.currentOptions);
     renderOtherOptionsMenu();
     return;
@@ -4280,14 +4281,58 @@ async function openHazardMetricDataDialog(button) {
 }
 
 function selectedTargetPopulationLabels(questionId) {
+  const policyAdaptationByQuestion = appState.currentSession?.policy_adaptation_target_population_by_question;
+  if (
+    appState.currentStep === "target_population_question"
+    && appState.currentSession?.mitigation_proposal_type === "existing_policy"
+    && policyAdaptationByQuestion
+  ) {
+    return new Set(
+      (Array.isArray(policyAdaptationByQuestion[String(questionId)])
+        ? policyAdaptationByQuestion[String(questionId)] : [])
+        .map((label) => normalizeForMatch(label))
+        .filter(Boolean),
+    );
+  }
+  const byQuestion = appState.currentSession?.new_policy_target_population_by_question;
+  if (
+    appState.currentSession?.mitigation_proposal_type === "new_policy"
+    && byQuestion
+    && Object.prototype.hasOwnProperty.call(byQuestion, String(questionId))
+  ) {
+    return new Set(
+      (Array.isArray(byQuestion[String(questionId)]) ? byQuestion[String(questionId)] : [])
+        .map((label) => normalizeForMatch(label))
+        .filter(Boolean),
+    );
+  }
   const answer = [...targetPopulationAnswers].reverse().find(
-    (item) => Number(item.question_id) === Number(questionId),
+    (item) => String(item.question_id ?? "") === String(questionId ?? ""),
   );
   const selected = Array.isArray(answer?.selected)
     ? answer.selected
     : String(answer?.answer || "").split(",");
+  const question = targetPopulationQuestions.find(
+    (item) => String(item.id ?? "") === String(questionId ?? ""),
+  );
+  const questionKey = normalizeForMatch(question?.question || "");
+  const proposalSelected = Array.isArray(appState.currentSession?.new_policy_target_population)
+    ? appState.currentSession.new_policy_target_population
+      .map((entry) => {
+        const value = String(entry || "");
+        const separator = value.indexOf(":");
+        if (separator < 0 || normalizeForMatch(value.slice(0, separator)) !== questionKey) {
+          return "";
+        }
+        return value.slice(separator + 1).trim();
+      })
+      .filter(Boolean)
+    : [];
+  const selectedForCurrentFlow = appState.currentSession?.mitigation_proposal_type === "new_policy"
+    ? proposalSelected
+    : selected;
   return new Set(
-    selected
+    selectedForCurrentFlow
       .map((label) => normalizeForMatch(label))
       .filter(Boolean),
   );
@@ -4335,7 +4380,7 @@ function openTargetPopulationDialog() {
 function targetPopulationBatchPayload() {
   return Array.from(targetPopulationDialogBody?.querySelectorAll(".target-dialog-question") || [])
     .map((section) => ({
-      question_id: Number(section.dataset.questionId),
+      question_id: String(section.dataset.questionId || "").trim(),
       answers: Array.from(section.querySelectorAll("[data-quick-target-option='true']:checked"))
         .map((input) => input.value)
         .filter(Boolean),

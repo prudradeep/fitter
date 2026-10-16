@@ -75,7 +75,11 @@ class ChatSession:
     policy_adaptation_evidence: list[str] | None = None
     policy_adaptation_index: int = 0
     policy_adaptation_pending_answer: str | None = None
+    policy_adaptation_reflection: str | None = None
     policy_adaptation_target_groups: list[str] | None = None
+    policy_adaptation_types: list[str] | None = None
+    policy_adaptation_question_stage: str | None = None
+    policy_adaptation_target_population_by_question: dict[str, list[str]] | None = None
     pending_mitigation_reason: str | None = None
     pending_mitigation_evidence: str | None = None
     mitigation_evidence_declined: bool = False
@@ -95,6 +99,15 @@ class ChatSession:
     mitigation_reason: str | None = None
     mitigation_target_population: list[str] | None = None
     mitigation_proposal_type: str | None = None
+    new_policy_entry_stage: str | None = None
+    new_policy_types: list[str] | None = None
+    new_policy_title: str | None = None
+    new_policy_description: str | None = None
+    new_policy_type: str | None = None
+    new_policy_target_population: list[str] | None = None
+    new_policy_target_population_by_question: dict[str, list[str]] | None = None
+    new_policy_target_group_pathways: dict[str, str] | None = None
+    new_policy_target_pathway_groups: list[str] | None = None
     mitigation_mechanism_candidates: list[dict[str, object]] | None = None
     selected_mitigation_mechanism: str | None = None
     selected_mitigation_policy: str | None = None
@@ -213,12 +226,22 @@ class ChatSession:
             selected_context_policy_summary=self.selected_context_policy_summary,
             selected_context_policy_sources=self.selected_context_policy_sources,
             selected_hazard=self.selected_hazard,
+            mitigation_proposal_type=self.mitigation_proposal_type,
             mitigation_measure=mitigation_measure,
             mitigation_revision_stage=self.mitigation_revision_stage,
             benefited_profiles=benefited_profiles,
             mitigation_review=self._mitigation_review_summary(self.mitigation_validation),
             target_population_questions=self.target_population_questions or [],
             target_population_answers=[dict(answer) for answer in (self.target_population_answers or [])],
+            new_policy_target_population=list(self.new_policy_target_population or []),
+            new_policy_target_population_by_question={
+                str(question_id): list(labels)
+                for question_id, labels in (self.new_policy_target_population_by_question or {}).items()
+            },
+            policy_adaptation_target_population_by_question={
+                str(question_id): list(labels)
+                for question_id, labels in (self.policy_adaptation_target_population_by_question or {}).items()
+            },
             hazard_count=system_hazard_count
             + regional_hazard_count
             + len(self.additional_hazards or []),
@@ -583,6 +606,17 @@ class ChatSessionStore:
             ChatPhase.POLICY_SUMMARY_CLARIFICATION.value,
         }:
             values["phase"] = str(values["current_step"])
+        # Restore proposal confirmation if an older server discarded its
+        # unregistered phase and persisted the generic fallback step.
+        if (
+            values["phase"] == ChatPhase.WIZARD.value
+            and values.get("mitigation_proposal_type") == "new_policy"
+            and values.get("new_policy_title")
+            and values.get("new_policy_description")
+            and not values.get("mitigation_record_id")
+            and values.get("current_step") in {"complete", "new_policy_confirmation"}
+        ):
+            values["phase"] = ChatPhase.NEW_POLICY_CONFIRMATION.value
         if (
             values["phase"] == ChatPhase.WIZARD.value
             and values.get("pending_context_policy_document_ids")

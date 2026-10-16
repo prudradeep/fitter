@@ -10,7 +10,6 @@ from app.services.chat_options import (
     ADOPT_INSPIRED_MITIGATION,
     INSPIRED_MITIGATION_CONFIRMATION_OPTIONS,
     INSPIRED_MITIGATION_PARTIAL_OPTIONS,
-    INSPIRED_MITIGATION_REVISION_OPTIONS,
     POLICY_ADAPTATION_SKIP_OPTIONS,
 )
 from app.services.chat_session import ChatSession, ChatSessionStore
@@ -61,6 +60,79 @@ class _InspiredMeasureEngine(ChatMitigationStepsMixin):
 
 
 class AdoptInspiredMitigationTests(unittest.TestCase):
+    def test_new_policy_questions_then_reflection(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        first = asyncio.run(engine._create_mitigation_measure_step("session-1", session))
+        self.assertIn("Important concepts for your new proposal", first.bot_message)
+        self.assertIn("policy title and short description", first.bot_message.lower())
+        self.assertEqual(session.new_policy_entry_stage, "description")
+
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new_callable=AsyncMock) as review:
+            review.return_value = json.dumps({
+                "clear": False,
+                "relevant": False,
+                "clarification_question": "Explain how the proposal reduces electricity costs.",
+            })
+            clarification = asyncio.run(engine._capture_mitigation_measure(
+                "session-1", session,
+                "Title: Tenant bill support\nDescription: Provide grants to tenants for energy bills.",
+            ))
+            self.assertIn("Explain how", clarification.bot_message)
+            self.assertEqual(session.new_policy_entry_stage, "description")
+
+            review.return_value = json.dumps({
+                "clear": True, "relevant": True, "clarification_question": "",
+            })
+            policy_type = asyncio.run(engine._capture_mitigation_measure(
+                "session-1", session,
+                "Target low-income tenants so the grants lower rising electricity costs.",
+            ))
+        self.assertEqual(session.new_policy_entry_stage, "type")
+        self.assertEqual([option.label for option in policy_type.options], [
+            "Regulation", "Economic incentives", "Public services", "Information/education",
+        ])
+        invalid_type = asyncio.run(engine._capture_mitigation_measure(
+            "session-1", session, "something else",
+        ))
+        self.assertTrue(invalid_type.error)
+        self.assertEqual(session.new_policy_entry_stage, "type")
+        engine._mitigation_mechanism_reflection_step = AsyncMock(return_value=ChatResponse(
+            session_id="session-1", step="mitigation_mechanism_reflection_review",
+            bot_message="Reflection on the mitigation measure", session=session.summary(),
+        ))
+        reflection = asyncio.run(engine._capture_mitigation_measure(
+            "session-1", session, "Economic incentives",
+        ))
+        self.assertEqual(reflection.step, "mitigation_mechanism_reflection_review")
+        self.assertEqual(session.new_policy_title, "Tenant bill support")
+        self.assertEqual(session.new_policy_type, "Economic incentives")
+        self.assertIn("lower rising electricity costs", session.pending_mitigation_measure)
+
+    def test_new_policy_reflection_uses_proposal_inputs(self):
+        engine = ChatService.__new__(ChatService)
+        session = self._session()
+        session.new_policy_title = "Tenant bill support"
+        session.new_policy_description = "Provide targeted grants to reduce tenants' electricity costs."
+        session.new_policy_type = "Economic incentives"
+        session.pending_mitigation_measure = session.new_policy_description
+        session.mitigation_mechanisms = []
+        with patch("app.services.chat_mitigation_creation_guided.ask_llm_chat", new_callable=AsyncMock) as llm:
+            llm.return_value = json.dumps({
+                "mechanism": "Lower the energy bill paid by tenants",
+                "reflection": "Targeted grants lower tenants' energy bills and reduce the cost hazard.",
+            })
+            response = asyncio.run(engine._mitigation_mechanism_reflection_step(
+                "session-1", session,
+            ))
+        prompt = llm.await_args.kwargs["messages"][0]["content"]
+        self.assertIn("Tenant bill support", prompt)
+        self.assertIn("Economic incentives", prompt)
+        self.assertIn("Provide targeted grants", prompt)
+        self.assertEqual(session.mitigation_mechanisms, ["Lower the energy bill paid by tenants"])
+        self.assertEqual(response.step, "mitigation_mechanism_reflection_review")
+        self.assertIn("Targeted grants lower", response.bot_message)
+
     def test_explicit_new_access_condition_is_detected(self):
         self.assertIn("required payment", ChatMitigationStepsMixin._obvious_inspired_access_barrier(
             "Deduct a mandatory, pre-approved participation fee before households can access the scheme."
@@ -829,34 +901,78 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
         self.assertIn(answers[1], engine._capture_mitigation_measure.await_args.args[2])
         self.assertIn(answers[0], engine._capture_mitigation_measure.await_args.args[2])
 
-    def test_skip_all_questions_returns_to_measure_input_from_question_or_evidence(self):
+    def test_skip_advances_one_question_and_preserves_validated_answers(self):
         engine = _InspiredMeasureEngine()
-        for phase in ("policy_adaptation_question", "policy_adaptation_evidence"):
-            with self.subTest(phase=phase):
-                session = self._session()
-                session.phase = phase
-                session.policy_adaptation_index = 1
-                session.policy_adaptation_answers = ["An earlier answer"]
-                session.policy_adaptation_evidence = ["An earlier source"]
-                session.policy_adaptation_pending_answer = "A pending answer"
-                shown = engine._policy_adaptation_question_response(
-                    "session-1", session, evidence=phase == "policy_adaptation_evidence"
-                )
-                self.assertEqual(shown.options, POLICY_ADAPTATION_SKIP_OPTIONS)
-                with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
-                    side_effect=AssertionError("Skip must not assess the answer")
-                )):
-                    response = asyncio.run(engine._handle_policy_adaptation_answer(
-                        "session-1", session, POLICY_ADAPTATION_SKIP_OPTIONS[0].label
-                    ))
-                self.assertEqual(response.step, "mitigation_measure")
-                self.assertEqual(response.input_mode, "mitigation_measure")
-                self.assertEqual(response.options, [])
-                self.assertIn("Questions skipped", response.bot_message)
-                self.assertEqual(session.policy_adaptation_answers, [])
-                self.assertEqual(session.policy_adaptation_evidence, [])
-                self.assertIsNone(session.policy_adaptation_pending_answer)
-                self.assertEqual(session.selected_hazard, "Rising electricity costs")
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        session.policy_adaptation_index = 1
+        session.policy_adaptation_answers = ["Validated policy gap"]
+        session.policy_adaptation_evidence = ["Validated source"]
+        session.policy_adaptation_pending_answer = "Unvalidated adjustment"
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
+            side_effect=AssertionError("Skip must not assess the answer")
+        )):
+            response = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, POLICY_ADAPTATION_SKIP_OPTIONS[0].label
+            ))
+        self.assertIn("Question 3 of 3", response.bot_message)
+        self.assertEqual(response.options, POLICY_ADAPTATION_SKIP_OPTIONS)
+        self.assertEqual(session.policy_adaptation_answers, ["Validated policy gap", ""])
+        self.assertEqual(session.policy_adaptation_evidence, ["Validated source", ""])
+        self.assertIsNone(session.policy_adaptation_pending_answer)
+        self.assertEqual(session.policy_adaptation_index, 2)
+
+    def test_skip_from_evidence_discards_pending_answer_and_advances_one_question(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        session.phase = "policy_adaptation_evidence"
+        session.policy_adaptation_index = 0
+        session.policy_adaptation_answers = []
+        session.policy_adaptation_pending_answer = "Unvalidated policy gap"
+        response = asyncio.run(engine._handle_policy_adaptation_answer(
+            "session-1", session, POLICY_ADAPTATION_SKIP_OPTIONS[0].label
+        ))
+        self.assertIn("Question 2 of 3", response.bot_message)
+        self.assertEqual(session.policy_adaptation_answers, [""])
+        self.assertIsNone(session.policy_adaptation_pending_answer)
+
+    def test_skipping_adjustment_requests_own_measure_after_third_question(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        session.policy_adaptation_index = 2
+        session.policy_adaptation_answers = ["Validated policy gap", ""]
+        session.policy_adaptation_evidence = ["Validated source", ""]
+        engine._create_mitigation_measure_step = AsyncMock(return_value=ChatResponse(
+            session_id="session-1", step="mitigation_measure",
+            bot_message="Write your own measure", session=session.summary(),
+        ))
+        response = asyncio.run(engine._handle_policy_adaptation_answer(
+            "session-1", session, POLICY_ADAPTATION_SKIP_OPTIONS[0].label
+        ))
+        self.assertEqual(response.step, "mitigation_measure")
+        self.assertIn("Validated policy gap", response.bot_message)
+        self.assertEqual(session.policy_adaptation_answers, ["Validated policy gap", "", ""])
+        engine._create_mitigation_measure_step.assert_awaited_once()
+
+    def test_skipping_first_and_third_uses_validated_adjustment_only(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        session.policy_adaptation_index = 2
+        session.policy_adaptation_answers = ["", "Expand renter eligibility and fund bills."]
+        session.policy_adaptation_evidence = ["", "Validated source"]
+        engine._capture_mitigation_measure = AsyncMock(return_value=ChatResponse(
+            session_id="session-1", step="mitigation_clarity",
+            bot_message="Review", session=session.summary(),
+        ))
+        asyncio.run(engine._handle_policy_adaptation_answer(
+            "session-1", session, POLICY_ADAPTATION_SKIP_OPTIONS[0].label
+        ))
+        handoff = engine._capture_mitigation_measure.await_args.args[2]
+        self.assertIn("Expand renter eligibility", handoff)
+        self.assertNotIn("Reason:", handoff)
+        self.assertIsNone(session.policy_adaptation_target_groups)
 
     def test_no_branch_clarifies_and_requests_missing_evidence(self):
         engine = _InspiredMeasureEngine()

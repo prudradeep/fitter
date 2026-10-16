@@ -399,6 +399,76 @@ def _019_policy_hazard_links(connection: Connection) -> None:
         _create_index(connection, "policy_hazard_links", f"ix_policy_hazard_links_{column}", column)
 
 
+def _020_unique_policy_titles(connection: Connection) -> None:
+    """Merge duplicate displayed policy titles and enforce country/sector/title uniqueness."""
+    if not _table_exists(connection, "policies"):
+        return
+    connection.execute(text("""
+        CREATE TEMP TABLE policy_title_duplicates AS
+        SELECT id AS duplicate_id, canonical_id
+        FROM (
+          SELECT id,
+                 FIRST_VALUE(id) OVER (
+                   PARTITION BY country_id, sector_id,
+                     LOWER(TRIM(CASE WHEN INSTR(policy, CHAR(10)) > 0
+                       THEN SUBSTR(policy, 1, INSTR(policy, CHAR(10)) - 1)
+                       ELSE policy END))
+                   ORDER BY LENGTH(policy) DESC, created_at, id
+                 ) AS canonical_id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY country_id, sector_id,
+                     LOWER(TRIM(CASE WHEN INSTR(policy, CHAR(10)) > 0
+                       THEN SUBSTR(policy, 1, INSTR(policy, CHAR(10)) - 1)
+                       ELSE policy END))
+                   ORDER BY LENGTH(policy) DESC, created_at, id
+                 ) AS row_num
+          FROM policies
+        ) ranked
+        WHERE row_num > 1
+    """))
+    tables = {row[0] for row in connection.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )).all()}
+    for table in ("knowledge_documents", "custom_hazards"):
+        if table in tables:
+            connection.execute(text(f"""
+                UPDATE {table}
+                SET policy_id = (SELECT canonical_id FROM policy_title_duplicates
+                                 WHERE duplicate_id = {table}.policy_id)
+                WHERE policy_id IN (SELECT duplicate_id FROM policy_title_duplicates)
+            """))
+    if "policy_hazard_links" in tables:
+        connection.execute(text("""
+            DELETE FROM policy_hazard_links
+            WHERE policy_id IN (SELECT duplicate_id FROM policy_title_duplicates)
+              AND EXISTS (
+                SELECT 1 FROM policy_title_duplicates d
+                JOIN policy_hazard_links existing ON existing.policy_id = d.canonical_id
+                WHERE d.duplicate_id = policy_hazard_links.policy_id
+                  AND existing.system_hazard_id IS policy_hazard_links.system_hazard_id
+                  AND existing.additional_hazard_id IS policy_hazard_links.additional_hazard_id
+              )
+        """))
+        connection.execute(text("""
+            UPDATE policy_hazard_links
+            SET policy_id = (SELECT canonical_id FROM policy_title_duplicates
+                             WHERE duplicate_id = policy_hazard_links.policy_id)
+            WHERE policy_id IN (SELECT duplicate_id FROM policy_title_duplicates)
+        """))
+    connection.execute(text("""
+        DELETE FROM policies
+        WHERE id IN (SELECT duplicate_id FROM policy_title_duplicates)
+    """))
+    connection.execute(text("DROP TABLE policy_title_duplicates"))
+    connection.execute(text("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_policies_country_sector_title
+        ON policies(country_id, sector_id,
+          LOWER(TRIM(CASE WHEN INSTR(policy, CHAR(10)) > 0
+            THEN SUBSTR(policy, 1, INSTR(policy, CHAR(10)) - 1)
+            ELSE policy END)))
+    """))
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -419,6 +489,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("017_faiss_index_flags", _017_faiss_index_flags),
     ("018_crowd_sourced_policies", _018_crowd_sourced_policies),
     ("019_policy_hazard_links", _019_policy_hazard_links),
+    ("020_unique_policy_titles", _020_unique_policy_titles),
 )
 
 

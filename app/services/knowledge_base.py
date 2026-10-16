@@ -31,7 +31,7 @@ from app.services.document_language import (
     translate_chunks_to_english,
 )
 from app.services.document_text import (
-    compact_text,
+    clean_document_text,
     extract_docx_text,
     extract_pdf_page_texts,
     html_to_text,
@@ -300,7 +300,7 @@ class KnowledgeBaseService:
         *,
         translate_to_english: bool = False,
     ) -> dict[str, object]:
-        chunks = chunk_text(compact_text(text))
+        chunks = chunk_document_text(clean_document_text(text))
         if translate_to_english:
             chunks = await self._english_document_chunks(chunks)
         return await self.ingest_chunks(chunks, title, source_type, source_uri)
@@ -1438,6 +1438,102 @@ def chunk_text(text: str, page_number: int | None = None) -> list[ChunkDraft]:
     return chunks
 
 
+_SECTION_LINE = re.compile(
+    r"^(?:(?:chapter|part|section|article|art\.?|§)\s*[\dIVXLCDM]+|"
+    r"\d+(?:\.\d+)*(?:[.)])?\s+\S)",
+    re.IGNORECASE,
+)
+_LIST_LINE = re.compile(r"^(?:[-*•▪◦‣]|\(?\d+[.)]|\([a-z]\))\s+")
+
+
+def chunk_document_text(text: str, page_number: int | None = None) -> list[ChunkDraft]:
+    """Chunk at paragraph, heading, list, and table boundaries where possible."""
+    limit = get_settings().knowledge_chunk_size
+    blocks: list[str] = []
+    paragraph: list[str] = []
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            blocks.append(" ".join(paragraph).strip())
+            paragraph.clear()
+
+    for raw_line in clean_document_text(text).splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush_paragraph()
+            continue
+        heading = bool(_SECTION_LINE.match(line)) or (
+            len(line) <= 120 and any(char.isalpha() for char in line) and line.upper() == line
+        ) or (
+            len(line) <= 120 and len(line.split()) <= 14
+            and line.istitle() and line[-1:] not in ".?!;,:"
+        )
+        if heading or _LIST_LINE.match(line) or "|" in line:
+            flush_paragraph()
+            blocks.append(line)
+        else:
+            paragraph.append(line)
+    flush_paragraph()
+
+    units: list[str] = []
+    for block in blocks:
+        if len(block) <= limit:
+            units.append(block)
+            continue
+        sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9(\[])", block)
+        if len(sentences) == 1:
+            words = block.split()
+            pending = ""
+            for word in words:
+                candidate = f"{pending} {word}".strip()
+                if pending and len(candidate) > limit:
+                    units.append(pending)
+                    pending = word
+                else:
+                    pending = candidate
+            if pending:
+                units.append(pending)
+            continue
+        pending = ""
+        for sentence in sentences:
+            if len(sentence) > limit:
+                if pending:
+                    units.append(pending)
+                    pending = ""
+                word_part = ""
+                for word in sentence.split():
+                    candidate = f"{word_part} {word}".strip()
+                    if word_part and len(candidate) > limit:
+                        units.append(word_part)
+                        word_part = word
+                    else:
+                        word_part = candidate
+                if word_part:
+                    units.append(word_part)
+                continue
+            candidate = f"{pending} {sentence}".strip()
+            if pending and len(candidate) > limit:
+                units.append(pending)
+                pending = sentence
+            else:
+                pending = candidate
+        if pending:
+            units.append(pending)
+
+    chunks: list[ChunkDraft] = []
+    pending = ""
+    for unit in units:
+        candidate = f"{pending}\n{unit}".strip()
+        if pending and len(candidate) > limit:
+            chunks.append(ChunkDraft(pending, page_number))
+            pending = unit
+        else:
+            pending = candidate
+    if pending:
+        chunks.append(ChunkDraft(pending, page_number))
+    return chunks
+
+
 def file_source_type(filename: str) -> str:
     lowered = filename.casefold()
     if lowered.endswith(".pdf"):
@@ -1456,9 +1552,9 @@ def extract_file_chunks(filename: str, content: bytes) -> list[ChunkDraft]:
     if lowered.endswith(".pdf"):
         return extract_pdf_chunks(content)
     if lowered.endswith(".docx"):
-        return chunk_text(compact_text(extract_docx_text(content)))
+        return chunk_document_text(clean_document_text(extract_docx_text(content)))
     if lowered.endswith((".md", ".txt")):
-        return chunk_text(compact_text(content.decode("utf-8", errors="ignore")))
+        return chunk_document_text(clean_document_text(content.decode("utf-8", errors="ignore")))
     return []
 
 
@@ -1480,11 +1576,11 @@ async def extract_url_chunks(
         "wordprocessingml.document" in content_type
         or lookup_url.casefold().split("?", 1)[0].endswith(".docx")
     ):
-        return chunk_text(compact_text(extract_docx_text(content)))
+        return chunk_document_text(clean_document_text(extract_docx_text(content)))
     text = content.decode(encoding or "utf-8", errors="ignore")
     if "html" in content_type or "<html" in text[:500].casefold():
         text = html_to_text(text)
-    return chunk_text(compact_text(text))
+    return chunk_document_text(clean_document_text(text))
 
 
 async def _fetch_public_url(
@@ -1565,6 +1661,6 @@ def extract_pdf_chunks(content: bytes) -> list[ChunkDraft]:
     for index, raw_text in enumerate(extract_pdf_page_texts(content), start=1):
         if is_index_page_text(raw_text):
             continue
-        page_text = compact_text(raw_text)
-        chunks.extend(chunk_text(page_text, index))
+        page_text = clean_document_text(raw_text)
+        chunks.extend(chunk_document_text(page_text, index))
     return chunks

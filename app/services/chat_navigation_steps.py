@@ -200,6 +200,15 @@ class ChatNavigationStepsMixin:
             if session.selected_hazard is None:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
             session.phase = "mitigation_measure"
+            session.new_policy_entry_stage = (
+                "type" if session.mitigation_proposal_type == "new_policy" else None
+            )
+            session.new_policy_title = None
+            session.new_policy_description = None
+            session.new_policy_type = None
+            session.new_policy_types = None
+            session.new_policy_target_population = None
+            session.new_policy_target_population_by_question = None
             session.pending_mitigation_measure = None
             self._clear_mitigation_clarity_state(session)
             session.mitigation_measure = None
@@ -227,13 +236,24 @@ class ChatNavigationStepsMixin:
                 step="mitigation_measure",
                 bot_message=render_message(
                     "mitigation_measure_reason.md",
+                    new_policy_entry=session.new_policy_entry_stage == "description",
+                    policy_type_entry=session.new_policy_entry_stage == "type",
                     hazard=session.selected_hazard or "the selected hazard",
                     dgs=format_all_dgs(session),
                     mitigation_examples=self._mitigation_measure_examples(session.sector_id),
                 ),
-                options=[],
+                options=(
+                    self._new_policy_type_options()
+                    if session.new_policy_entry_stage == "type" else
+                    [Option(id=1, label=ADOPT_INSPIRED_MITIGATION)]
+                    if session.new_policy_inspiration and session.mitigation_proposal_type != "new_policy" else []
+                ),
                 session=session.summary(),
-                input_mode="mitigation_measure",
+                input_mode=(
+                    "policy_type_multi"
+                    if session.new_policy_entry_stage == "type"
+                    else "mitigation_measure"
+                ),
                 error=False,
             )
 
@@ -871,16 +891,21 @@ class ChatNavigationStepsMixin:
             )
 
         if session.phase == "mitigation_measure":
+            if session.new_policy_entry_stage == "type":
+                return self._new_policy_type_step(session_id, session, error=error)
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_measure",
                 bot_message=message,
                 options=(
-                    [Option(id=1, label=ADOPT_INSPIRED_MITIGATION)]
-                    if session.new_policy_inspiration else []
+                    self._new_policy_type_options()
+                    if session.new_policy_entry_stage == "type"
+                    else [Option(id=1, label=ADOPT_INSPIRED_MITIGATION)]
+                    if session.new_policy_inspiration and session.mitigation_proposal_type != "new_policy"
+                    else []
                 ),
                 session=session.summary(),
-                input_mode="mitigation_measure",
+                input_mode=("policy_type_multi" if session.new_policy_entry_stage == "type" else "mitigation_measure"),
                 error=error,
             )
 

@@ -2,11 +2,17 @@
 **{{ error_reason }}**
 
 {% endif %}
+{% if mitigation_proposal %}
+## Target population group
+{% else %}
 ## Affected Population Group
+{% endif %}
 
+{% if not mitigation_proposal %}
 Hazard to be co-created:
 
 - **{{ hazard }}**
+{% endif %}
 
 Question {{ current }} of {{ total }}
 

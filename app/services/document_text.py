@@ -101,7 +101,7 @@ VOID_TAGS = {
 def extract_pdf_page_texts(content: bytes, max_pages: int | None = None) -> list[str]:
     reader = PdfReader(io.BytesIO(content))
     pages = reader.pages if max_pages is None else reader.pages[:max_pages]
-    return [page.extract_text() or "" for page in pages]
+    return [page.extract_text(extraction_mode="layout") or "" for page in pages]
 
 
 def extract_docx_text(content: bytes) -> str:
@@ -109,12 +109,27 @@ def extract_docx_text(content: bytes) -> str:
         document_xml = archive.read("word/document.xml")
     root = ElementTree.fromstring(document_xml)
     namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    paragraphs: list[str] = []
-    for paragraph in root.iter(f"{namespace}p"):
-        text = "".join(node.text or "" for node in paragraph.iter(f"{namespace}t")).strip()
-        if text:
-            paragraphs.append(text)
-    return "\n".join(paragraphs)
+    body = root.find(f"{namespace}body")
+    if body is None:
+        return ""
+    blocks: list[str] = []
+    for element in body:
+        if element.tag == f"{namespace}p":
+            text = "".join(node.text or "" for node in element.iter(f"{namespace}t")).strip()
+            if text:
+                blocks.append(text)
+        elif element.tag == f"{namespace}tbl":
+            for row in element.findall(f"{namespace}tr"):
+                cells = []
+                for cell in row.findall(f"{namespace}tc"):
+                    cell_text = " ".join(
+                        "".join(node.text or "" for node in paragraph.iter(f"{namespace}t")).strip()
+                        for paragraph in cell.findall(f"{namespace}p")
+                    ).strip()
+                    cells.append(cell_text)
+                if any(cells):
+                    blocks.append(" | ".join(cells))
+    return "\n".join(blocks)
 
 
 def html_to_text(html: str) -> str:
@@ -138,6 +153,29 @@ def remove_web_boilerplate_text(text: str) -> str:
 def compact_text(text: str, max_chars: int | None = None) -> str:
     compacted = re.sub(r"\s+", " ", text).strip()
     return compacted[:max_chars] if max_chars is not None else compacted
+
+
+def clean_document_text(text: str) -> str:
+    """Clean extraction noise while retaining paragraph and line structure."""
+    value = (text or "").replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n")
+    lines: list[str] = []
+    for raw_line in value.split("\n"):
+        line = re.sub(r"\t+", " | ", raw_line)
+        line = re.sub(r" {2,}", " | ", line)
+        line = re.sub(r"[\f\v ]+", " ", line).strip()
+        if not line:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        # PDF table-of-contents leaders and decorative dotted separators.
+        line = re.sub(r"\.{3,}", " ", line)
+        line = re.sub(r"\s+", " ", line).strip()
+        if re.fullmatch(r"[\s·•._\-=–—]{3,}", line):
+            continue
+        lines.append(line)
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
 
 
 class TextExtractor(HTMLParser):

@@ -526,7 +526,7 @@ def _policy_mechanisms_section(
     if not lines:
         return ""
     return (
-        "## Policy mechanisms to be considered for mitigation\n\n"
+        "## Policy mechanisms worth considering for mitigation\n\n"
         + "\n".join(lines)
         + "\n\n"
     )
@@ -603,7 +603,7 @@ def _important_new_proposal_concepts_section(
             ))
     if not sections:
         return ""
-    return "# Important concepts for your new proposal\n\n" + "\n\n".join(sections) + "\n\n"
+    return "\n\n".join(sections) + "\n\n"
 
 
 _NEW_POLICY_FIELDS = (

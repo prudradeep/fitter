@@ -34,12 +34,11 @@ class ChatMitigationCreationGuidedMixin:
         """Show the matched D4.2 proposal or grounded policy-document fallback."""
         if not hasattr(self, "db") or not session.selected_context_policy:
             return ""
-        concepts_heading = "# Important concepts for your new proposal"
         policy = self.db.get(Policy, session.selected_context_policy_id) if session.selected_context_policy_id else None
         if policy and policy.source == "user":
             inferred = await self._inferred_existing_policy_adaptations(session)
             if inferred:
-                return "\n\n".join((concepts_heading, inferred, self._adaptation_profiles_section(session))).strip()
+                return "\n\n".join((inferred, self._adaptation_profiles_section(session))).strip()
         reference = None if policy and policy.source == "user" else d42_policy_reference(
             self.db, country=session.country, sector=session.sector,
             selected_policy=session.selected_context_policy,
@@ -84,9 +83,9 @@ class ChatMitigationCreationGuidedMixin:
                         "## Proposed adaptations for the policy\n\n"
                         "No approach is stated in the matched D4.2 record."
                     )
-            return "\n\n".join([concepts_heading, *sections, self._adaptation_profiles_section(session)]).strip()
+            return "\n\n".join([*sections, self._adaptation_profiles_section(session)]).strip()
         document_reference = await self._policy_document_adaptation_reference(session)
-        return "\n\n".join((concepts_heading, document_reference, self._adaptation_profiles_section(session))).strip()
+        return "\n\n".join((document_reference, self._adaptation_profiles_section(session))).strip()
 
     @staticmethod
     def _adaptation_profiles_section(session: ChatSession) -> str:
@@ -99,7 +98,7 @@ class ChatMitigationCreationGuidedMixin:
 
     async def _existing_policy_mechanisms_reference(self, session: ChatSession) -> str:
         """Ground policy-to-hazard mechanisms in D4.2 or knowledge passages."""
-        heading = "## Policy mechanisms to be considered for mitigation"
+        heading = "## Policy mechanisms worth considering for mitigation"
         if not hasattr(self, "db"):
             return heading + "\n\nNo grounded mechanism is available."
         policy = self.db.get(Policy, session.selected_context_policy_id) if session.selected_context_policy_id else None
@@ -1638,6 +1637,14 @@ class ChatMitigationCreationGuidedMixin:
                     f"Selected hazard: {session.selected_hazard or session.accepted_custom_hazard or ''}\n"
                     f"Chosen mechanism: {'; '.join(session.mitigation_mechanisms or [])}\n"
                     f"Mapped policy: {session.selected_mitigation_policy or 'Not identified'}\n"
+                    f"New policy title: {session.new_policy_title or ''}\n"
+                    f"New policy type: {session.new_policy_type or ''}\n"
+                    f"Validated policy gap: {(session.policy_adaptation_answers or [''])[0]}\n"
+                    f"Selected adaptation policy types: {', '.join(session.policy_adaptation_types or [])}\n"
+                    f"Proposed policy changes: {(session.policy_adaptation_answers or ['', ''])[1]}\n"
+                    f"Validated target groups: {', '.join(session.policy_adaptation_target_groups or [])}\n"
+                    f"Selected mitigation target groups: {', '.join(session.mitigation_target_population or [])}\n"
+                    f"User-described target group pathways: {json.dumps(session.new_policy_target_group_pathways or {}, ensure_ascii=False)}\n"
                     f"Policy-to-hazard linkage: {str(guidance.get('causal_linkage') or '')}\n"
                     f"Mitigation measure: {session.pending_mitigation_measure or ''}"
                 ),
@@ -1647,6 +1654,10 @@ class ChatMitigationCreationGuidedMixin:
             response_format="json",
         )
         payload = None if is_llm_unavailable_response(response) else parse_json_object(response)
+        if not session.mitigation_mechanisms and isinstance(payload, dict):
+            mechanism = str(payload.get("mechanism") or "").strip()
+            if mechanism:
+                session.mitigation_mechanisms = [mechanism]
         reflection = (
             str(payload.get("reflection") or "").strip()
             if isinstance(payload, dict)
@@ -1654,8 +1665,10 @@ class ChatMitigationCreationGuidedMixin:
         )
         if not reflection:
             reflection = (
-                f"The proposed measure should be assessed for how its concrete actions change "
-                f"the chosen mechanism: {'; '.join(session.mitigation_mechanisms or [])}."
+                f"{session.new_policy_title}: {session.new_policy_description}"
+                if session.new_policy_title and session.new_policy_description
+                else f"The proposed measure should be assessed for how its concrete actions change "
+                     f"the chosen mechanism: {'; '.join(session.mitigation_mechanisms or [])}."
             )
         reflection = re.sub(r"\bcausal\s+", "", reflection, flags=re.IGNORECASE)
         reflection = re.sub(r"\bcausally\b", "directly", reflection, flags=re.IGNORECASE)
@@ -1668,11 +1681,34 @@ class ChatMitigationCreationGuidedMixin:
     ) -> ChatResponse:
         session.mitigation_mechanism_reflection = reflection
         session.phase = "mitigation_mechanism_reflection_review"
+        proposal_context = (
+            f"**Policy title:** {session.new_policy_title}\n\n"
+            f"**Policy type:** {session.new_policy_type or 'Not specified'}\n\n"
+            if session.new_policy_title else ""
+        )
+        target_population_context = (
+            "**Selected target groups:** "
+            + "; ".join(session.mitigation_target_population)
+            + "\n\n"
+            if session.mitigation_target_population else ""
+        )
+        target_pathways_context = (
+            "**How the measure benefits each group:**\n"
+            + "\n".join(
+                f"- **{group}:** {pathway}"
+                for group, pathway in (session.new_policy_target_group_pathways or {}).items()
+            )
+            + "\n\n"
+            if session.new_policy_target_group_pathways else ""
+        )
         return ChatResponse(
             session_id=session_id,
             step="mitigation_mechanism_reflection_review",
             bot_message=markdown_to_html(
                 "## Reflection on the mitigation measure\n\n"
+                f"{proposal_context}"
+                f"{target_population_context}"
+                f"{target_pathways_context}"
                 f"{reflection}\n\n"
                 "Confirm this reflection or clarify how the measure will change the chosen mechanism."
             ),
@@ -2501,6 +2537,10 @@ class ChatMitigationCreationGuidedMixin:
             f"{group}: {value}" for group, value in dg_evidence.items()
         ) or "No group evidence supplied"
         return (
+            (f"- **New policy title:** {session.new_policy_title} {input_source('Policy title', session.new_policy_title)}\n"
+             f"- **New policy type:** {session.new_policy_type or 'Not provided'} {input_source('Policy type', session.new_policy_type or 'Not provided')}\n"
+             if session.new_policy_title else "")
+            +
             f"- **Measure:** {measure} {input_source('Mitigation measure', measure)}\n"
             f"- **Mechanisms mitigated:** {mechanisms} {input_source('Selected mechanisms', mechanisms)}\n"
             f"- **How the measure mitigates the mechanism:** {reflection} {input_source('Mechanism reflection', reflection)}\n"
@@ -2788,6 +2828,7 @@ class ChatMitigationCreationGuidedMixin:
             session.mitigation_revision_stage = None
             session.mitigation_dg_pathway_groups = None
             return await self._guided_dg_suggestion_step(session_id, session)
+
         if session.mitigation_revision_stage in {
             "benefit_pathway",
             "initial_benefit_pathway",
@@ -2908,6 +2949,15 @@ class ChatMitigationCreationGuidedMixin:
         session.mitigation_dg_evidence = {}
         session.mitigation_dg_evidence_index = 0
         return await self._guided_dg_evidence_decision_step(session_id, session)
+
+    async def _handle_new_policy_target_pathway(self, session_id, session, message):
+        """Advance legacy pathway-stage sessions to the reflection."""
+        session.new_policy_target_pathway_groups = None
+        session.mitigation_target_population = list(
+            session.new_policy_target_population or session.mitigation_target_population or []
+        )
+        session.phase = "mitigation_measure"
+        return await self._mitigation_mechanism_reflection_step(session_id, session)
 
     async def _validate_added_mitigation_dg(self, session: ChatSession, group: str) -> dict[str, object]:
         response = await ask_llm_chat(

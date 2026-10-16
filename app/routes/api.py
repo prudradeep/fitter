@@ -119,10 +119,10 @@ def _should_restore_persisted_current_prompt(
     current_step: str,
 ) -> bool:
     saved_step = str(getattr(chat_session, "current_step", "") or "").strip()
-    if not saved_step:
-        return False
-    phase = str(getattr(chat_session, "phase", "") or "").strip()
-    return phase in {"", "wizard"}
+    # The current prompt is persisted independently from the session phase.
+    # Policy and other wizard flows use their own phase names, so limiting
+    # restoration to the legacy "wizard" phase drops their saved options.
+    return bool(saved_step)
 
 
 def _session_data_needs_message_recovery(

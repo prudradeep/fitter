@@ -23,12 +23,16 @@ class SessionSummary(BaseModel):
     selected_context_policy_summary: str | None = None
     selected_context_policy_sources: dict[str, list[list[dict[str, str]]]] | None = None
     selected_hazard: str | None = None
+    mitigation_proposal_type: str | None = None
     mitigation_measure: str | None = None
     mitigation_revision_stage: str | None = None
     benefited_profiles: list[str] = Field(default_factory=list)
     mitigation_review: dict[str, object] | None = None
     target_population_questions: list[dict[str, object]] = Field(default_factory=list)
     target_population_answers: list[dict[str, object]] = Field(default_factory=list)
+    new_policy_target_population: list[str] = Field(default_factory=list)
+    new_policy_target_population_by_question: dict[str, list[str]] = Field(default_factory=dict)
+    policy_adaptation_target_population_by_question: dict[str, list[str]] = Field(default_factory=dict)
     hazard_count: int = 0
     top_hazards: list[dict[str, object]] = Field(default_factory=list)
     affected_profile_count: int = 0

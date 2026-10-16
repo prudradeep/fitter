@@ -16,7 +16,7 @@ INSPIRED_MITIGATION_PARTIAL_OPTIONS = [
     Option(id=3, label="No, write my own measure"),
 ]
 POLICY_ADAPTATION_SKIP_OPTIONS = [
-    Option(id=1, label="Skip all 3 questions and write my own measure"),
+    Option(id=1, label="Skip this question"),
 ]
 
 POST_SECTOR_OPTIONS = [
@@ -39,9 +39,8 @@ STATS_DEEP_DIVE_OPTIONS = [
 ]
 
 SOCIO_DEMOGRAPHIC_OPTIONS = [
-    Option(id=1, label="Confirm & Continue"),
+    Option(id=1, label="Confirm & Continue to mitigation"),
     Option(id=2, label="Add more DGs"),
-    Option(id=3, label="Know more about the hazard"),
 ]
 
 MITIGATION_CHOICE_OPTIONS = [

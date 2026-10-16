@@ -2240,12 +2240,17 @@ class ChatHazardStepsMixin:
         if action == normalize("Add more DGs"):
             return self._start_additional_dg_questions(session_id, session)
 
-        if action == normalize("Confirm & Continue"):
+        if action == normalize("Confirm & Continue to mitigation"):
             session.phase = "mitigation_choice"
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_choice",
-                bot_message="Choose a mitigation measure option to continue.",
+                bot_message=markdown_to_html(
+                    "To mitigate the potential negative effects (hazards) of the policy under analysis you could: \n\n"
+                    "1) Create new policy proposals (beyond adjusting elements of the policy under analysis)\n"
+                    "2) Adjust some concrete/specific elements of the policy under analysis (e.g. modifying some "
+                    "articles of the regulation or adjusting the beneficiaries of a public programme)"
+                ),
                 options=MITIGATION_CHOICE_OPTIONS,
                 session=session.summary(),
                 error=False,
