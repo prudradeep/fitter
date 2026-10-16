@@ -18,7 +18,7 @@ class ChatProfileRenderingMixin:
         lines = [
             f"### Socio-demographic profiles most affected by {hazard}",
             "",
-            "Understanding which population groups are most affected, and their regional population share, helps target mitigation measures effectively.",
+            "As displayed, the twin transition policy proposal under analysis, unintentionally, is creating the selected hazard and affecting some population profiles (disadvantaged groups) as shown below:.",
         ]
         summary = str(hazard_summary or "").strip()
         if summary:

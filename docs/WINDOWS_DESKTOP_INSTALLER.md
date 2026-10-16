@@ -290,7 +290,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionOnlineSetup-0.1.11.exe
+build/windows-installer/DrTransitionOnlineSetup-0.1.12.exe
 ```
 
 If you only run `build-python-services.ps1`, you will get the service executables

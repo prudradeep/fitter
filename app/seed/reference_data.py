@@ -1192,6 +1192,16 @@ def _seed_policies_xlsx(connection) -> None:
             )
         ).mappings()
     }
+    existing_titles = {
+        (
+            str(row["country_id"]),
+            str(row["sector_id"]),
+            str(row["policy"] or "").split("\n", 1)[0].strip().lower(),
+        )
+        for row in connection.execute(
+            text("SELECT country_id, sector_id, policy FROM policies")
+        ).mappings()
+    }
     for row in rows:
         country_id = country_by_name.get(_normalize_mitigation_example_key(str(row["country"] or "")))
         sector_id = sector_by_name.get(_normalize_mitigation_example_key(str(row["sector"] or "")))
@@ -1200,6 +1210,14 @@ def _seed_policies_xlsx(connection) -> None:
             continue
         row_number = int(row["excel_row_number"])
         if row_number in existing_rows:
+            skipped += 1
+            continue
+        policy_title_key = (
+            country_id,
+            sector_id,
+            str(row["policy"] or "").split("\n", 1)[0].strip().lower(),
+        )
+        if policy_title_key in existing_titles:
             skipped += 1
             continue
         connection.execute(
@@ -1223,6 +1241,7 @@ def _seed_policies_xlsx(connection) -> None:
             },
         )
         existing_rows.add(row_number)
+        existing_titles.add(policy_title_key)
         inserted += 1
 
     logger.info(
