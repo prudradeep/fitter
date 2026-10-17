@@ -11,7 +11,7 @@ INSPIRED_MITIGATION_REVISION_OPTIONS = [
 ]
 INSPIRED_MITIGATION_PARTIAL_OPTIONS = [
     Option(id=1, label="Yes, use this measure"),
-    Option(id=2, label="Modify measure to cover more groups"),
+    Option(id=2, label="Modify measure"),
 ]
 POLICY_ADAPTATION_SKIP_OPTIONS = [
     Option(id=1, label="Skip this question"),

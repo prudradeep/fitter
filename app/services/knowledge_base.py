@@ -773,7 +773,7 @@ class KnowledgeBaseService:
     def promote_temporary_documents(
         self,
         *,
-        target_scope: str = MAIN_KB_SCOPE,
+        target_scope: str = VALIDATED_EVIDENCE_SCOPE,
         provenance: str | None = None,
         country_id: str | None = None,
         region_id: str | None = None,
@@ -781,6 +781,10 @@ class KnowledgeBaseService:
         document_ids: list[str] | None = None,
         exclude_document_ids: list[str] | None = None,
     ) -> int:
+        if target_scope == MAIN_KB_SCOPE:
+            raise ValueError(
+                "User-submitted temporary evidence cannot be promoted into the core knowledge bank."
+            )
         if self.scope != TEMPORARY_KB_SCOPE or not self.session_key:
             return 0
         query = select(KnowledgeDocument).where(

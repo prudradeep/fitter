@@ -3238,7 +3238,10 @@ class ChatMitigationCreationGuidedMixin:
             response_format="json",
         )
         payload = None if is_llm_unavailable_response(response) else parse_json_object(response)
-        return payload if isinstance(payload, dict) else {"relevant": True, "reason": ""}
+        return payload if isinstance(payload, dict) else {
+            "relevant": False,
+            "reason": "Evidence relevance could not be checked against the selected sector objective and fairness principles.",
+        }
 
     async def _handle_mitigation_equity(self, session_id, session, message):
         action = normalize(
@@ -3328,11 +3331,24 @@ class ChatMitigationCreationGuidedMixin:
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
     async def _guided_text_review(
-        self, field_name: str, value: str, session: ChatSession
+        self, field_name: str, value: str, session: ChatSession, *, fail_closed: bool = False,
     ) -> dict[str, object]:
         current_effect = self._current_mitigation_policy_effect(session)
+        current_measure = (
+            session.pending_inspired_mitigation_measure or session.accepted_inspired_mitigation_measure
+            if field_name == "requested change to the mitigation measure"
+            else session.pending_mitigation_measure or session.mitigation_measure
+        )
+        review_context = load_nested_prompt_file("llm/mitigation_guided_input_clarity.txt")
+        if field_name == "requested change to the mitigation measure":
+            review_context += (
+                "\nFor this requested change, accept changes to any part of the measure. "
+                "Changing which groups the measure covers is allowed but not required. "
+                "Check that the user input makes the desired action or change specific enough "
+                "to implement. Ask one focused question if it is ambiguous or overgeneralised."
+            )
         response = await ask_llm_chat(
-            context=load_nested_prompt_file("llm/mitigation_guided_input_clarity.txt"),
+            context=review_context,
             messages=[
                 {
                     "role": "user",
@@ -3340,7 +3356,7 @@ class ChatMitigationCreationGuidedMixin:
                         f"Field: {field_name}\n"
                         f"Selected hazard: {session.selected_hazard or session.accepted_custom_hazard or ''}\n"
                         f"Chosen mechanism: {'; '.join(session.mitigation_mechanisms or [])}\n"
-                        f"Mitigation measure: {session.pending_mitigation_measure or session.mitigation_measure or ''}\n"
+                        f"Mitigation measure: {current_measure or ''}\n"
                         f"Current potential policy problem: {str((current_effect or {}).get('problem') or '')}\n"
                         f"Text: {value}"
                     ),
@@ -3354,6 +3370,16 @@ class ChatMitigationCreationGuidedMixin:
         if isinstance(payload, dict):
             return payload
         clean = re.sub(r"\s+", " ", value).strip()
+        if fail_closed:
+            return {
+                "clear": False,
+                "relevant": False,
+                "normalized_text": clean,
+                "clarification_question": (
+                    "I could not check the requested change for ambiguity or overgeneralisation. "
+                    "Please rephrase it with the specific change you want."
+                ),
+            }
         vague = normalize_for_match(clean) in {
             "it helps",
             "helps people",
