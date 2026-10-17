@@ -1772,15 +1772,16 @@ class ChatMitigationCreationGuidedMixin:
         )
         target_population_context = (
             "**Selected target groups:** "
-            + "; ".join(session.mitigation_target_population)
+            + "; ".join(self._group_target_population_labels(
+                session.mitigation_target_population
+            ))
             + "\n\n"
             if session.mitigation_target_population else ""
         )
         target_pathways_context = (
             "**How the measure benefits each group:**\n"
-            + "\n".join(
-                f"- **{group}:** {pathway}"
-                for group, pathway in (session.new_policy_target_group_pathways or {}).items()
+            + self._format_grouped_target_population_pathways(
+                session.new_policy_target_group_pathways
             )
             + "\n\n"
             if session.new_policy_target_group_pathways else ""
@@ -2731,9 +2732,8 @@ class ChatMitigationCreationGuidedMixin:
             return self._request_mitigation_dg_pathway(
                 session_id, session, groups_missing_pathways
             )
-        lines = "\n".join(
-            f"- **{group}:** {benefit_reasons[group]}"
-            for group in groups
+        lines = self._format_grouped_target_population_pathways(
+            {group: benefit_reasons[group] for group in groups}
         )
         return ChatResponse(
             session_id=session_id,
@@ -2755,12 +2755,12 @@ class ChatMitigationCreationGuidedMixin:
         self, session_id: str, session: ChatSession, groups: list[str], *, initial: bool = False
     ) -> ChatResponse:
         """Ask for a measure-specific pathway when one cannot be grounded automatically."""
-        session.mitigation_dg_pathway_groups = groups
+        session.mitigation_dg_pathway_groups = self._group_target_population_labels(groups)
         session.mitigation_revision_stage = (
             "initial_benefit_pathway" if initial else "benefit_pathway"
         )
         session.phase = "mitigation_dg_input"
-        group = groups[0]
+        group = session.mitigation_dg_pathway_groups[0]
         measure = session.pending_mitigation_measure or session.mitigation_measure or "this measure"
         return ChatResponse(
             session_id=session_id,
@@ -2768,12 +2768,14 @@ class ChatMitigationCreationGuidedMixin:
             bot_message=markdown_to_html(
                 f"I could not identify how **{measure}** specifically benefits "
                 f"**{group}**. Describe the pathway: what the measure does and how "
-                "that benefits this group."
+                "that benefits this group. You may skip this group or skip all groups."
             ),
             options=(
-                []
+                self._guided_options("Skip all groups")
                 if initial
-                else self._guided_options("Back to suggested disadvantaged groups")
+                else self._guided_options(
+                    "Back to suggested disadvantaged groups", "Skip all groups"
+                )
             ),
             session=session.summary(),
             input_mode="textarea",
@@ -2897,6 +2899,26 @@ class ChatMitigationCreationGuidedMixin:
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
     async def _handle_mitigation_dg_input(self, session_id, session, message):
+        if (
+            normalize(message) == normalize("Skip all groups")
+            and session.mitigation_revision_stage in {
+                "benefit_pathway", "initial_benefit_pathway",
+            }
+        ):
+            initial = session.mitigation_revision_stage == "initial_benefit_pathway"
+            explanations = dict(session.mitigation_dg_benefit_explanations or {})
+            for pathway_group in session.mitigation_dg_pathway_groups or []:
+                for selected_group in self._target_population_labels_for_pathway(
+                    pathway_group, session.mitigation_target_population
+                ):
+                    explanations[selected_group] = "User skipped providing this pathway."
+            session.mitigation_dg_benefit_explanations = explanations
+            session.mitigation_dg_pathway_groups = None
+            session.mitigation_revision_stage = None
+            if initial:
+                return await self._initial_mitigation_benefit_check(session_id, session)
+            return await self._guided_dg_suggestion_step(session_id, session)
+
         action = normalize(
             exact_option_label(
                 message,
@@ -2929,7 +2951,10 @@ class ChatMitigationCreationGuidedMixin:
                 return await self._guided_dg_suggestion_step(session_id, session)
             group = groups.pop(0)
             explanations = dict(session.mitigation_dg_benefit_explanations or {})
-            explanations[group] = pathway
+            for selected_group in self._target_population_labels_for_pathway(
+                group, session.mitigation_target_population
+            ):
+                explanations[selected_group] = pathway
             session.mitigation_dg_benefit_explanations = explanations
             if groups:
                 return self._request_mitigation_dg_pathway(

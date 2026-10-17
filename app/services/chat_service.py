@@ -327,6 +327,14 @@ class ChatService(
     async def _chat_response(
         self, current_session_id: str, session: ChatSession, clean_message: str
     ) -> ChatResponse:
+        if (
+            session.phase == "new_policy_target_group_pathway_input"
+            and normalize(clean_message) == normalize("Skip this group")
+        ):
+            return await self._handle_new_policy_target_group_pathway_input(
+                current_session_id, session, clean_message
+            )
+
         if session.pending_fuzzy_option:
             fuzzy_response = await self._handle_pending_fuzzy_option(
                 current_session_id, session, clean_message
@@ -2096,6 +2104,8 @@ class ChatService(
             labels = ["Clarify the relevance", "Provide policy again"]
         elif session.phase == "mitigation_equity":
             labels = ["Skip this"]
+        elif session.phase == "new_policy_target_group_pathway_input":
+            labels = ["Skip this group"]
         elif session.phase == "mitigation_review":
             labels = [option.label for option in MITIGATION_REVIEW_OPTIONS]
         elif session.phase == "implementation_readiness_assessment":

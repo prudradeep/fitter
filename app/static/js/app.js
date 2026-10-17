@@ -3161,6 +3161,12 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
       : mode;
   appState.inputMode = effectiveMode;
   appState.currentOptions = options || [];
+  const contextAdaptationChoice = (options || []).some((option) =>
+    String(option?.label || option || "").trim() === "Adopt mitigation measure for my context",
+  ) && (options || []).some((option) =>
+    String(option?.label || option || "").trim() === "Create new adaptations in the policy",
+  );
+  document.querySelector("#chatForm")?.classList.toggle("context-adaptation-choice", contextAdaptationChoice);
   syncTargetPopulationQuestion(step, appState.currentOptions);
   updateStageVisual(step, session || appState.currentSession, appState.currentOptions);
   const reasonEvidenceMode = ["reason_evidence", "reason_only", "evidence_only", "policy_reference", "mitigation_measure"].includes(effectiveMode);

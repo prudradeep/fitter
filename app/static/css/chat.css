@@ -2180,6 +2180,10 @@
     transform 180ms ease;
 }
 
+.chat-form.context-adaptation-choice #sendButton {
+  display: none;
+}
+
 .chat-form .mic-button {
   display: grid;
   place-items: center;

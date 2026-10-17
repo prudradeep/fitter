@@ -8,9 +8,6 @@ Select and mention all types of policy you are creating. You may select multiple
 {% elif new_policy_entry %}
 Please provide a **policy title and short description** for your new proposal. Give it a short, descriptive name and explain in a few sentences what it will do and how it will reduce the selected hazard.
 
-**Policy title:**
-
-**Short description:**
 {% else %}
 What is the mitigation measure, and how will it reduce the selected hazard for the affected profiles?
 
