@@ -29,7 +29,7 @@ from app.routes.auth import router as auth_router
 from app.routes.sync import router as sync_router
 from app.security import apply_security_headers, create_csrf_token, csrf_request_allowed, csrf_token_valid
 from app.seed_data import seed_main_kb_from_files
-from app.services.coverage import get_coverage_rows
+from app.services.coverage import get_coverage_map_rows, get_coverage_rows
 from app.services.prompt_store import enable_prompt_db_reads_if_rows, seed_prompts_from_files
 from app.services.policy_knowledge_seed import migrate_policy_documents_from_main, seed_policy_documents_from_urls
 from app.services.seed_index_bundle import install_seed_indexes
@@ -294,6 +294,31 @@ async def index(
 ) -> Response:
     if current_user is None:
         return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
+    if settings.auth_only_mode:
+        csrf_token = request.cookies.get(CSRF_COOKIE_NAME)
+        if not csrf_token_valid(csrf_token, settings):
+            csrf_token = create_csrf_token(settings)
+        response = templates.TemplateResponse(
+            request,
+            "auth_landing.html",
+            {
+                "app_name": settings.app_name,
+                "current_user": current_user,
+                "csrf_token": csrf_token,
+                "coverage_map_rows": get_coverage_map_rows(),
+                "auth_only": True,
+                "auth_only_message": settings.auth_only_message,
+            },
+        )
+        response.set_cookie(
+            CSRF_COOKIE_NAME,
+            csrf_token,
+            max_age=settings.auth_cookie_max_age_seconds,
+            httponly=False,
+            samesite="lax",
+            secure=settings.use_secure_auth_cookie,
+        )
+        return response
     coverage_rows = get_coverage_rows()
     csrf_token = request.cookies.get(CSRF_COOKIE_NAME)
     if not csrf_token_valid(csrf_token, settings):

@@ -279,6 +279,29 @@
     font-size: 1.08rem;
   }
 
+  .signed-in-account {
+    align-items: center;
+    gap: 12px;
+    margin-top: 30px;
+    padding: 14px;
+  }
+
+  .signed-in-avatar {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .signed-in-details {
+    font-size: 0.82rem;
+  }
+
+  .signed-in-logout button {
+    min-height: 42px;
+    padding: 0 13px;
+    font-size: 0.85rem;
+  }
+
   .about-project-modal {
     width: calc(100vw - 18px);
     height: calc(100vh - 18px);

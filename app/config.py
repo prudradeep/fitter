@@ -64,6 +64,8 @@ def _frozen_program_data_path(relative_path: str) -> str:
 
 class Settings(BaseSettings):
     app_name: str = "Dr Transition"
+    auth_only_mode: bool = False
+    auth_only_message: str = ""
     app_mode: str = ""
     app_env: str = "development"
     app_debug: bool = False

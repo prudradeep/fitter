@@ -493,6 +493,96 @@
   transform: translateY(-1px);
 }
 
+.signed-in-account {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: min(100%, 620px);
+  box-sizing: border-box;
+  margin-top: 48px;
+  padding: 16px 18px;
+  border: 1px solid #e2d9f0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fbf9ff 0%, #f5f1fb 100%);
+  box-shadow: 0 8px 22px rgba(45, 35, 75, 0.08);
+}
+
+.signed-in-avatar {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 52px;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #8c43e6 0%, #5c20b0 100%);
+  color: #ffffff;
+  font-size: 1.35rem;
+  font-weight: 750;
+}
+
+.signed-in-details {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  color: #3f4c61;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.signed-in-details .signed-in-label {
+  color: #762dcc;
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+}
+
+.signed-in-details strong {
+  color: #333746;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.signed-in-logout {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.signed-in-logout button {
+  min-height: 46px;
+  border: 1px solid #6d28c5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #6521b9;
+  padding: 0 20px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 700;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.signed-in-logout button:hover {
+  border-color: #6521b9;
+  background: #6521b9;
+  color: #ffffff;
+}
+
+.auth-only-landing-page .about-project-button {
+  margin-top: 18px;
+}
+
+.signed-in-message {
+  width: min(100%, 620px);
+  box-sizing: border-box;
+  margin: 14px 0 0;
+  padding: 13px 16px;
+  border-left: 4px solid #762dcc;
+  border-radius: 0 8px 8px 0;
+  background: #f5f1fb;
+  color: #3f4c61;
+  font-size: 0.98rem;
+  line-height: 1.5;
+}
+
 .about-project-modal {
   width: min(1120px, calc(100vw - 28px));
   height: min(860px, calc(100vh - 28px));

@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ page_title or "Dr Transition" }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260626-hazard-pop-practical-flow" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261019-auth-landing" />
   </head>
-  <body class="auth-page auth-landing-page">
+  <body class="auth-page auth-landing-page{% if auth_only %} auth-only-landing-page{% endif %}">
     {% set active_mode = auth_mode or "login" %}
     <main class="landing-shell">
       <section class="landing-map-panel" aria-label="European coverage map">
@@ -32,9 +32,27 @@
           <li>The Socio demographic profiles affected by the policies in your region</li>
           <li>Mitigation Plans to counter the Hazards and corresponding Negative Impacts</li>
         </ol>
-        <button id="startAnalysisButton" class="start-analysis-button" type="button">
-          Start Analysis
-        </button>
+        {% if auth_only %}
+          <div class="signed-in-account">
+            <span class="signed-in-avatar" aria-hidden="true">{{ current_user.name[:1] | upper }}</span>
+            <div class="signed-in-details">
+              <span class="signed-in-label">SIGNED IN</span>
+              <strong>{{ current_user.name }}</strong>
+              <span>{{ current_user.email }}</span>
+            </div>
+            <form class="signed-in-logout" method="post" action="/logout">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <button type="submit">Sign out</button>
+            </form>
+          </div>
+          {% if auth_only_message %}
+            <p class="signed-in-message" role="status">{{ auth_only_message }}</p>
+          {% endif %}
+        {% else %}
+          <button id="startAnalysisButton" class="start-analysis-button" type="button">
+            Start Analysis
+          </button>
+        {% endif %}
         <button id="aboutProjectButton" class="about-project-button" type="button">
           About the Project
         </button>
@@ -55,6 +73,7 @@
       </div>
     </dialog>
 
+    {% if not auth_only %}
     <dialog
       id="authModal"
       class="auth-modal"
@@ -217,6 +236,7 @@
         </section>
       </div>
     </dialog>
+    {% endif %}
 
     <script src="{{ url_for('static', path='/vendor/highcharts/highmaps.js') }}"></script>
     <script src="{{ url_for('static', path='/js/auth-map.js') }}"></script>
