@@ -71,6 +71,7 @@ class ChatSession:
     pending_inspired_mitigation_policy_about: str | None = None
     pending_inspired_mitigation_hazard_pathway: str | None = None
     pending_inspired_mitigation_evidence_analysis: dict[str, object] | None = None
+    pending_inspired_mitigation_causal_analysis: dict[str, object] | None = None
     pending_inspired_mitigation_needs_context: bool = False
     pending_inspired_mitigation_user_context: str | None = None
     pending_inspired_mitigation_uncovered_groups: list[str] | None = None
@@ -92,6 +93,7 @@ class ChatSession:
     policy_adaptation_pending_review: dict[str, object] | None = None
     policy_adaptation_clarification_history: list[dict[str, str]] | None = None
     policy_adaptation_reflection: str | None = None
+    policy_adaptation_mitigation_analysis: dict[str, object] | None = None
     policy_adaptation_target_groups: list[str] | None = None
     policy_adaptation_types: list[str] | None = None
     policy_adaptation_question_stage: str | None = None

@@ -60,6 +60,95 @@ class _InspiredMeasureEngine(ChatMitigationStepsMixin):
 
 
 class AdoptInspiredMitigationTests(unittest.TestCase):
+    def test_causal_pathway_remains_clear_without_explicit_source_support(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        session.pending_inspired_mitigation_reason = "Make participation obligations predictable."
+        response = {
+            "status": "clear", "policy_action": "Standardise and disclose liability rules",
+            "mechanism_changed": "Makes participation obligations more predictable",
+            "direct_effect": "Households can better anticipate their obligations",
+            "hazard_reduction": "Reduces uncertainty, but does not itself lower monthly bills",
+            "explanation": "Standardised, transparent obligations may improve predictability, but do not directly reduce household bills.",
+            "missing_link": "", "clarification_question": "",
+            "evidence_support": "not_assessed",
+        }
+        result = engine._normalize_inspired_mitigation_causality(response)
+        self.assertEqual(result["status"], "clear")
+        self.assertEqual(result["evidence_support"], "not_assessed")
+        self.assertIn("directly reduce household bills", result["explanation"])
+
+    def test_missing_affordability_link_gets_one_focused_question(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        response = {
+            "status": "clarify", "policy_action": "Standardise liability rules",
+            "mechanism_changed": "Improves predictability of obligations",
+            "direct_effect": "Households can anticipate participation costs",
+            "hazard_reduction": "", "explanation": "The proposal may improve predictability, but does not state how it changes monthly bills.",
+            "missing_link": "how predictable obligations reduce household bill pressure",
+            "clarification_question": "What part of the measure reduces households' monthly bill pressure?",
+            "evidence_support": "partially_supported",
+        }
+        result = engine._normalize_inspired_mitigation_causality(response)
+        self.assertEqual(result["status"], "clarify")
+        self.assertIn("monthly bill pressure", result["clarification_question"])
+        session.pending_inspired_mitigation_measure = "Standardise liability rules"
+        session.pending_inspired_mitigation_causal_analysis = result
+        session.pending_inspired_mitigation_needs_context = True
+        session.pending_inspired_mitigation_evidence_analysis = {"rewrites": [], "sources": []}
+        summary = engine._inspired_mitigation_confirmation_response("session-1", session)
+        self.assertIn("predictability", summary.bot_message)
+        self.assertIn("missing connection", summary.bot_message)
+        self.assertNotIn("I could not find a source-supported mitigation mechanism", summary.bot_message)
+
+    def test_malformed_causal_response_is_unavailable_not_a_clarification(self):
+        engine = _InspiredMeasureEngine()
+        result = engine._normalize_inspired_mitigation_causality(None)
+        self.assertEqual(result, {"analysis_unavailable": True})
+
+    def test_confirmation_renders_only_explanation_not_evidence_breakdown(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        session.pending_inspired_mitigation_measure = "Standardise financial participation rules."
+        session.pending_inspired_mitigation_causal_analysis = {
+            "status": "clear",
+            "mitigation_explanation": (
+                "Standardised liability rules make participation obligations more predictable. "
+                "That may help households anticipate related costs, although predictability alone "
+                "does not lower monthly bills."
+            ),
+            "evidence_support": "partially_supported",
+        }
+        session.pending_inspired_mitigation_evidence_analysis = {
+            "causes": [{"quoted_text": "private retrieved text", "source_ids": [1]}],
+            "cause_adaptations": [{"quoted_text": "internal linkage", "source_ids": [1]}],
+            "sources": [{"id": 1, "title": "private-source.pdf"}],
+        }
+
+        response = engine._inspired_mitigation_confirmation_response("session-1", session)
+
+        self.assertIn("How the proposed measure mitigates the selected hazard", response.bot_message)
+        self.assertIn("Standardised liability rules", response.bot_message)
+        self.assertNotIn("D4.2 passages describing how the hazard arises", response.bot_message)
+        self.assertNotIn("Adaptations addressing hazard-causing provisions", response.bot_message)
+        self.assertNotIn("private-source.pdf", response.bot_message)
+        self.assertNotIn("private retrieved text", response.bot_message)
+        self.assertNotIn("Policy Objectives", response.bot_message)
+
+    def test_unavailable_analysis_is_not_rendered_as_mitigation_explanation(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        session.pending_inspired_mitigation_measure = "Standardise financial participation rules."
+        session.pending_inspired_mitigation_causal_analysis = {"analysis_unavailable": True}
+
+        response = engine._inspired_mitigation_confirmation_response("session-1", session)
+
+        self.assertIn("Standardise financial participation rules", response.bot_message)
+        self.assertNotIn("Causal analysis is temporarily unavailable", response.bot_message)
+        self.assertNotIn("How the proposed measure mitigates", response.bot_message)
+        self.assertTrue(response.error)
+
     def test_new_policy_questions_then_reflection(self):
         engine = _InspiredMeasureEngine()
         session = self._session()
