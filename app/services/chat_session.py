@@ -70,6 +70,9 @@ class ChatSession:
     inspired_mitigation_considered_groups: list[str] | None = None
     pending_inspired_mitigation_policy_about: str | None = None
     pending_inspired_mitigation_hazard_pathway: str | None = None
+    pending_inspired_mitigation_evidence_analysis: dict[str, object] | None = None
+    pending_inspired_mitigation_needs_context: bool = False
+    pending_inspired_mitigation_user_context: str | None = None
     pending_inspired_mitigation_uncovered_groups: list[str] | None = None
     inspired_mitigation_expansion_input: str | None = None
     inspired_mitigation_expansion_evidence: str | None = None
@@ -86,6 +89,8 @@ class ChatSession:
     policy_adaptation_evidence: list[str] | None = None
     policy_adaptation_index: int = 0
     policy_adaptation_pending_answer: str | None = None
+    policy_adaptation_pending_review: dict[str, object] | None = None
+    policy_adaptation_clarification_history: list[dict[str, str]] | None = None
     policy_adaptation_reflection: str | None = None
     policy_adaptation_target_groups: list[str] | None = None
     policy_adaptation_types: list[str] | None = None
@@ -97,6 +102,7 @@ class ChatSession:
     policy_adaptation_group_pathway_skipped: list[str] | None = None
     policy_adaptation_group_pathway_unverified: list[str] | None = None
     policy_adaptation_group_pathway_pending: str | None = None
+    policy_adaptation_group_pathway_stage: str | None = None
     pending_mitigation_reason: str | None = None
     pending_mitigation_evidence: str | None = None
     mitigation_evidence_declined: bool = False

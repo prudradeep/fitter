@@ -873,6 +873,7 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
             session_id="session-1", step="mitigation_clarity", bot_message="Review",
             session=session.summary(),
         ))
+        engine._target_population_questions = lambda: []
         session.phase = "inspired_mitigation_confirmation"
         session.pending_inspired_mitigation_measure = "Suggested measure"
         asyncio.run(engine._handle_inspired_mitigation_confirmation("session-1", session, "No"))
@@ -896,7 +897,8 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
         self.assertIn("Question 2 of 3", first.bot_message)
         self.assertIn("Question 3 of 3", second.bot_message)
         self.assertEqual(final.step, "mitigation_clarity")
-        self.assertEqual(session.policy_adaptation_answers, answers)
+        self.assertEqual(session.policy_adaptation_answers[:2], answers[:2])
+        self.assertIn(answers[2], session.policy_adaptation_answers[2])
         self.assertEqual(session.mitigation_target_population, ["Low-income tenants"])
         self.assertIn(answers[1], engine._capture_mitigation_measure.await_args.args[2])
         self.assertIn(answers[0], engine._capture_mitigation_measure.await_args.args[2])
@@ -909,6 +911,7 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
         session.policy_adaptation_answers = ["Validated policy gap"]
         session.policy_adaptation_evidence = ["Validated source"]
         session.policy_adaptation_pending_answer = "Unvalidated adjustment"
+        engine._target_population_questions = lambda: []
         with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
             side_effect=AssertionError("Skip must not assess the answer")
         )):
@@ -981,11 +984,18 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
         session.phase = "policy_adaptation_question"
         unclear = {**POLICY_ALIGNED, "status": "clarify", "clarification": "Which eligibility rule excludes tenants?",
                    "support_source_ids": []}
+        second_unclear = {
+            "plausible_policy_gap": False, "policy_connection": True,
+            "hazard_pathway": False, "contradiction": False,
+            "missing_relationship": "policy_gap",
+            "explanation": "Identify the specific policy limitation affecting tenants.",
+        }
         clear = {**POLICY_ALIGNED, "status": "clear", "support_source_ids": []}
-        evidence_review = {**POLICY_ALIGNED, "status": "clear", "support_source_ids": [],
-                           "user_evidence_relevant": True}
+        evidence_review = {"relevant": True, "support_source_ids": []}
         with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
-            side_effect=[json.dumps(item) for item in (unclear, clear, evidence_review)]
+            side_effect=[json.dumps(item) for item in (
+                unclear, second_unclear, clear, evidence_review,
+            )]
         )):
             clarification = asyncio.run(engine._handle_policy_adaptation_answer(
                 "session-1", session, "The policy is unfair to tenants."
@@ -998,15 +1008,15 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
                 "session-1", session,
                 "Source: eligibility report. Finding: renters cannot apply. This supports the exclusion gap."
             ))
-        self.assertIn("Which eligibility rule", clarification.bot_message)
+        self.assertIn("specific policy limitation", clarification.bot_message)
         self.assertEqual(session.policy_adaptation_answers, [
             "The policy excludes renters from grants, leaving energy bills high."
         ])
-        self.assertIn("knowledge-base evidence", evidence.bot_message)
+        self.assertIn("Evidence is optional", evidence.bot_message)
         self.assertIn("Question 2 of 3", next_question.bot_message)
         self.assertIn("eligibility report", session.policy_adaptation_evidence[0])
 
-    def test_no_branch_rejects_irrelevant_user_evidence(self):
+    def test_irrelevant_optional_evidence_does_not_reject_answer_or_get_stored(self):
         engine = _InspiredMeasureEngine()
         engine._policy_adaptation_sources = AsyncMock(return_value=[])
         session = self._session()
@@ -1014,9 +1024,7 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
         with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
             side_effect=[
                 json.dumps({**POLICY_ALIGNED, "status": "clear", "support_source_ids": []}),
-                json.dumps({**POLICY_ALIGNED, "status": "clear", "support_source_ids": [],
-                            "user_evidence_relevant": False,
-                            "clarification": "This source does not describe the policy gap."}),
+                json.dumps({"relevant": False, "support_source_ids": []}),
             ]
         )):
             asyncio.run(engine._handle_policy_adaptation_answer(
@@ -1025,10 +1033,12 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
             response = asyncio.run(engine._handle_policy_adaptation_answer(
                 "session-1", session, "Source: a report on unrelated road traffic."
             ))
-        self.assertEqual(response.step, "policy_adaptation_evidence")
-        self.assertIn("does not describe the policy gap", response.bot_message)
-        self.assertFalse(session.policy_adaptation_answers)
-        self.assertEqual(session.policy_adaptation_index, 0)
+        self.assertIn("Question 2 of 3", response.bot_message)
+        self.assertEqual(session.policy_adaptation_answers, [
+            "The eligibility rule excludes tenants from grants."
+        ])
+        self.assertEqual(session.policy_adaptation_evidence, [""])
+        self.assertEqual(session.policy_adaptation_index, 1)
 
     def test_policy_relevance_failure_asks_for_specific_policy_link(self):
         engine = _InspiredMeasureEngine()
@@ -1047,7 +1057,7 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
                 "The funding condition makes energy costs higher for renters."
             ))
         self.assertIn("Clean Energy Access Act", response.bot_message)
-        self.assertIn("provision, eligibility rule, or implementation gap", response.bot_message)
+        self.assertIn("selected hazard", response.bot_message)
         self.assertEqual(session.phase, "policy_adaptation_question")
         self.assertFalse(session.policy_adaptation_answers)
 
@@ -1114,6 +1124,258 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
         self.assertEqual(session.policy_adaptation_index, 0)
         self.assertFalse(session.policy_adaptation_answers)
         self.assertEqual(mocked_llm.await_count, 2)
+
+    def test_short_meaningful_answer_is_not_rejected_by_length_gate(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[
+            {"kind": "D4.2", "title": "Policy factsheet", "content": "Renters excluded."}
+        ])
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
+            return_value=json.dumps({**POLICY_ALIGNED, "status": "clear", "support_source_ids": [1]})
+        )):
+            response = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, "Renters excluded."
+            ))
+        self.assertIn("Question 2 of 3", response.bot_message)
+        self.assertEqual(session.policy_adaptation_answers, ["Renters excluded."])
+
+    def test_aligned_answer_without_citation_metadata_is_not_rejected(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[])
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
+            return_value=json.dumps({"status": "clear", "policy_relevance": "aligned"})
+        )):
+            response = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session,
+                "The funding gap leaves renters exposed to higher energy costs."
+            ))
+        self.assertEqual(response.step, "policy_adaptation_evidence")
+        self.assertEqual(session.policy_adaptation_pending_answer,
+                         "The funding gap leaves renters exposed to higher energy costs.")
+        self.assertEqual(session.policy_adaptation_index, 0)
+
+    def test_contradicted_policy_answer_is_not_accepted(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[])
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
+            return_value=json.dumps({
+                "status": "clear", "policy_relevance": "contradicted",
+                "policy_clarification": "The supplied policy passage says renters are eligible.",
+            })
+        )):
+            response = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, "Renters are excluded from every grant."
+            ))
+        self.assertIn("renters are eligible", response.bot_message)
+        self.assertFalse(session.policy_adaptation_answers)
+
+    def test_continue_without_evidence_advances_question_once(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[])
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
+            return_value=json.dumps({**POLICY_ALIGNED, "status": "clear", "support_source_ids": []})
+        )):
+            prompt = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, "Renters cannot apply for this subsidy."
+            ))
+        self.assertEqual(session.phase, "policy_adaptation_evidence")
+        self.assertEqual(session.policy_adaptation_index, 0)
+        self.assertIn("optional", prompt.bot_message.lower())
+        next_question = asyncio.run(engine._handle_policy_adaptation_answer(
+            "session-1", session, "Continue without evidence"
+        ))
+        self.assertIn("Question 2 of 3", next_question.bot_message)
+        self.assertEqual(session.policy_adaptation_answers,
+                         ["Renters cannot apply for this subsidy."])
+        self.assertEqual(session.policy_adaptation_index, 1)
+
+    def test_question2_continue_without_evidence_does_not_duplicate_or_revalidate(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[])
+        engine._target_population_questions = lambda: []
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        session.policy_adaptation_index = 1
+        session.policy_adaptation_answers = ["Renters lack subsidy access."]
+        session.policy_adaptation_evidence = [""]
+        mocked_llm = AsyncMock(return_value=json.dumps({
+            **POLICY_ALIGNED, "status": "clear", "support_source_ids": [],
+        }))
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=mocked_llm):
+            prompt = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, "Create a new renter support fund."
+            ))
+            next_question = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, "Continue without evidence"
+            ))
+        self.assertIn("Question 3 of 3", next_question.bot_message)
+        self.assertEqual(session.policy_adaptation_answers, [
+            "Renters lack subsidy access.", "Create a new renter support fund.",
+        ])
+        self.assertEqual(session.policy_adaptation_index, 2)
+        self.assertEqual(mocked_llm.await_count, 1)
+        self.assertEqual(prompt.step, "policy_adaptation_evidence")
+
+    def test_question2_prompt_allows_new_mechanisms(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[])
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        session.policy_adaptation_index = 1
+        session.policy_adaptation_answers = ["Renters are excluded from subsidy access."]
+        session.policy_adaptation_evidence = [""]
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=AsyncMock(
+            return_value=json.dumps({**POLICY_ALIGNED, "status": "clear", "support_source_ids": [1]})
+        )) as llm:
+            asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session,
+                "Create a new household fund with renter eligibility and direct bill payments."
+            ))
+        prompt_text = llm.await_args.kwargs["context"]
+        self.assertIn("need not already exist", prompt_text)
+        self.assertIn("new funding", prompt_text)
+
+    def test_question1_secondary_review_accepts_plausible_indirect_gap(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[
+            {"kind": "D4.2", "title": "Policy reference",
+             "content": "Participation is organised through municipal authorities."}
+        ])
+        session = self._session()
+        session.selected_context_policy = "Citizen Participation Laws"
+        session.selected_context_policy_summary = "Standardises participation and liability rules nationwide."
+        session.selected_hazard = "Heating and cooling costs increase"
+        session.phase = "policy_adaptation_question"
+        answer = (
+            "Limited direct citizen participation and no uniform benefit-sharing may exclude "
+            "financially vulnerable households from renewable energy benefits that could offset "
+            "heating and cooling expenses. The gap may fail to reduce their net energy burden."
+        )
+        primary = {
+            "status": "clarify", "policy_relevance": "unclear",
+            "clarification": "Name the policy connection.", "policy_link": "",
+            "policy_basis": "none", "policy_source_ids": [], "support_source_ids": [1],
+        }
+        second = {
+            "plausible_policy_gap": True, "policy_connection": True,
+            "hazard_pathway": True, "contradiction": False,
+            "missing_relationship": "none", "explanation": "The gap may limit household benefits.",
+        }
+        mocked_llm = AsyncMock(side_effect=[json.dumps(primary), json.dumps(second)])
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=mocked_llm):
+            response = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, answer
+            ))
+        self.assertIn("Question 2 of 3", response.bot_message)
+        self.assertEqual(session.policy_adaptation_answers, [answer])
+        self.assertEqual(mocked_llm.await_count, 2)
+
+    def test_question1_secondary_review_asks_for_missing_hazard_pathway(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[])
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        mocked_llm = AsyncMock(side_effect=[
+            json.dumps({"status": "clarify", "policy_relevance": "aligned"}),
+            json.dumps({
+                "plausible_policy_gap": True, "policy_connection": True,
+                "hazard_pathway": False, "contradiction": False,
+                "missing_relationship": "hazard_pathway",
+                "explanation": "Explain how the gap fails to reduce the selected hazard.",
+            }),
+        ])
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=mocked_llm):
+            response = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, "The policy has no direct household benefit-sharing rule."
+            ))
+        self.assertIn("fails to reduce the selected hazard", response.bot_message)
+        self.assertEqual(session.policy_adaptation_clarification_history[-1]["requirement"], "hazard_pathway")
+        self.assertFalse(session.policy_adaptation_answers)
+
+    def test_followup_answer_is_compared_with_prior_clarification(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[
+            {"kind": "D4.2", "title": "Policy reference", "content": "A documented participation gap."}
+        ])
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        first_and_second = [
+            json.dumps({"status": "clarify", "policy_relevance": "unclear"}),
+            json.dumps({
+                "plausible_policy_gap": False, "policy_connection": False,
+                "hazard_pathway": False, "contradiction": False,
+                "missing_relationship": "policy_connection",
+                "explanation": "Connect the limitation to a current policy objective or gap.",
+            }),
+        ]
+        followup = json.dumps({
+            **POLICY_ALIGNED, "status": "clear", "support_source_ids": [1],
+        })
+        mocked_llm = AsyncMock(side_effect=first_and_second + [followup])
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=mocked_llm):
+            asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, "The policy does not include citizens in benefit sharing."
+            ))
+            response = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session,
+                "Its objective is nationwide participation, but municipal-only processes leave households out and limit their energy savings."
+            ))
+        payload = json.loads(mocked_llm.await_args_list[2].kwargs["messages"][0]["content"])
+        self.assertEqual(payload["previous_clarifications"][-1]["requirement"], "policy_connection")
+        self.assertIn("Its objective is nationwide participation", payload["previous_clarifications"][-1]["response"])
+        self.assertIn("Question 2 of 3", response.bot_message)
+        self.assertFalse(session.policy_adaptation_clarification_history)
+
+    def test_incomplete_enum_response_retries_instead_of_rejecting_answer(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[
+            {"kind": "D4.2", "title": "Policy reference", "content": "A documented access gap."}
+        ])
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        mocked_llm = AsyncMock(side_effect=[
+            json.dumps({"policy_relevance": "aligned"}),
+            json.dumps({**POLICY_ALIGNED, "status": "clear", "support_source_ids": [1]}),
+        ])
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=mocked_llm):
+            response = asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, "The documented gap leaves renters without bill support."
+            ))
+        self.assertIn("Question 2 of 3", response.bot_message)
+        self.assertEqual(session.policy_adaptation_answers,
+                         ["The documented gap leaves renters without bill support."])
+        self.assertEqual(mocked_llm.await_count, 2)
+
+    def test_d42_proposal_is_not_sent_as_current_policy_source(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[
+            {"kind": "D4.2_proposal", "title": "Proposed adaptation", "content": "Add a new grant."}
+        ])
+        session = self._session()
+        session.phase = "policy_adaptation_question"
+        mocked_llm = AsyncMock(side_effect=[
+            json.dumps({"status": "clear", "policy_relevance": "unclear"}),
+            json.dumps({
+                "plausible_policy_gap": False, "policy_connection": False,
+                "hazard_pathway": True, "contradiction": False,
+                "missing_relationship": "policy_connection",
+                "explanation": "A current policy objective or gap is needed.",
+            }),
+        ])
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat", new=mocked_llm):
+            asyncio.run(engine._handle_policy_adaptation_answer(
+                "session-1", session, "The policy should add a grant for renters."
+            ))
+        secondary_payload = json.loads(mocked_llm.await_args_list[1].kwargs["messages"][0]["content"])
+        self.assertEqual(secondary_payload["current_policy_sources"], [])
 
     def test_confirmation_survives_session_restore(self):
         engine = _InspiredMeasureEngine()

@@ -367,6 +367,9 @@ class ChatNavigationStepsMixin:
         session.inspired_mitigation_considered_groups = None
         session.pending_inspired_mitigation_policy_about = None
         session.pending_inspired_mitigation_hazard_pathway = None
+        session.pending_inspired_mitigation_evidence_analysis = None
+        session.pending_inspired_mitigation_needs_context = False
+        session.pending_inspired_mitigation_user_context = None
         session.pending_inspired_mitigation_uncovered_groups = None
         session.new_policy_inspiration = None
         cls._clear_mitigation_clarity_state(session)
@@ -510,6 +513,16 @@ class ChatNavigationStepsMixin:
 
     def _attach_other_options(self, response: ChatResponse, session: ChatSession) -> None:
         self._apply_country_profile_count(response, session)
+        if (
+            str(session.policy_adaptation_question_stage or "").endswith(
+                ("_advisory_decision", "_advisory_clarification")
+            )
+            or session.policy_adaptation_group_pathway_stage in {
+                "advisory_decision", "advisory_clarification",
+            }
+        ):
+            response.other_options = []
+            return
         hide_new_hazard = response.step in POLICY_FLOW_STEPS or session.phase in POLICY_FLOW_STEPS
         main_options = {normalize(option.label) for option in response.options}
         response_specific_options = [

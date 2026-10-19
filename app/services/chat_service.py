@@ -1548,6 +1548,7 @@ class ChatService(
             step="add_dgs",
             bot_message=render_message(
                 "target_population_question.md",
+                mitigation_proposal=False,
                 hazard=session.selected_hazard or "the selected hazard",
                 question=question["question"],
                 current=session.target_population_index + 1,
@@ -1759,6 +1760,7 @@ class ChatService(
             step="target_population_question",
             bot_message=render_message(
                 "target_population_question.md",
+                mitigation_proposal=False,
                 hazard=session.accepted_custom_hazard or "the new hazard",
                 question=question["question"],
                 current=session.target_population_index + 1,
