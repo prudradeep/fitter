@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.13"
+#define MyAppVersion "0.1.14"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 #ifndef InstallerPayloadPath
@@ -56,6 +56,11 @@ Source: "scripts\Get-ModelRecommendation.ps1"; Flags: dontcopy
 [Icons]
 Name: "{group}\Dr Transition"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\Dr Transition"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[UninstallDelete]
+; Remove client-owned databases, indexes, uploads, configuration, and runtime logs.
+Name: "{commonappdata}\DrTransition"; Type: filesandordirs
+Name: "{localappdata}\DrTransition"; Type: filesandordirs
 
 [Run]
 Filename: "{cmd}"; Parameters: "/C if exist ""{app}\config\.env"" if not exist ""{commonappdata}\DrTransition\.env"" copy /Y ""{app}\config\.env"" ""{commonappdata}\DrTransition\.env"""; Flags: runhidden

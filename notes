@@ -377,6 +377,25 @@ python .\packaging\windows\scripts\create-seed-index-bundle.py --offline --datab
 .\packaging\windows\scripts\build-release.ps1 -OfflineAdmin -NoVersionBump -PrepackageDependencies -SeedIndexBundlePath .\build\seed-indexes
 ----------------------------------------------------------------------------------------------------
 
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+cd /opt/dr-transition
+set -a
+source /etc/dr-transition.env
+set +a
+
+uv run python scripts/apply_migrations.py --apply-base-schema
+uv run python scripts/apply_migrations.py
+uv run python -m app.seed_data
+
+uv run python -m app.seed_data --skip-schema --seed-prompts-from-files --reindex-sector-prompts --seed-main-kb-from-files --skip-default-user
+
+uv run python scripts/import_offline_kb.py --source build/seed-indexes/seed.db --dry-run
+
+uv run python scripts/import_offline_kb.py --source build/seed-indexes/seed.db
+
+sudo systemctl restart dr-transition
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
 
 
 Hazard:

@@ -25,6 +25,11 @@ window instead of failing silently. That window reports:
 - Whether the configured chat and embedding models are downloaded in Ollama
 - The local log directory for bundled service errors
 
+Uninstalling the client removes its application files and client-owned data in
+`%ProgramData%\DrTransition` and `%LOCALAPPDATA%\DrTransition`. This includes
+the local database, knowledge indexes, uploads, runtime configuration, and logs.
+Ollama and its downloaded models are installed separately and are not removed.
+
 ## Layout
 
 ```text
@@ -290,7 +295,7 @@ build/windows-installer/payload/
 Then compiles:
 
 ```text
-build/windows-installer/DrTransitionOnlineSetup-0.1.13.exe
+build/windows-installer/DrTransitionOnlineSetup-0.1.14.exe
 ```
 
 If you only run `build-python-services.ps1`, you will get the service executables

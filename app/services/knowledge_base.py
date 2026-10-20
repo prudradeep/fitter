@@ -1208,7 +1208,11 @@ class KnowledgeBaseService:
         await self.rebuild_index()
         return True
 
-    async def rebuild_index(self) -> dict[str, object]:
+    async def rebuild_index(
+        self,
+        *,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> dict[str, object]:
         """Replace this scope's vectors using the currently configured provider."""
         scopes = (
             (POLICY_REFERENCE_SCOPE, POLICY_DOCUMENT_SCOPE)
@@ -1226,7 +1230,12 @@ class KnowledgeBaseService:
                 self._index_path.unlink(missing_ok=True)
                 self._index_metadata_path.unlink(missing_ok=True)
             return {"error": False, "indexed_chunks": 0, "scope": self.scope}
-        embeddings = await self._embed_many([str(row.content) for row in rows])
+        embeddings: list[list[float]] = []
+        total = len(rows)
+        for completed, row in enumerate(rows, start=1):
+            embeddings.append(await self._embed(str(row.content)))
+            if progress_callback is not None:
+                progress_callback(completed, total)
         vectors = normalize_vectors(embeddings)
         ids = np.array([vector_id_for_chunk_id(str(row.id)) for row in rows], dtype="int64")
         identity = self._embedding_identity(embeddings[0])
