@@ -25,7 +25,9 @@ window instead of failing silently. That window reports:
 - Whether the configured chat and embedding models are downloaded in Ollama
 - The local log directory for bundled service errors
 
-Uninstalling the client removes its application files and client-owned data in
+When the installer detects an existing installation, it offers three choices:
+update while keeping client data, reset client data and then update, or uninstall
+the application and remove its client data. Reset and uninstall remove data in
 `%ProgramData%\DrTransition` and `%LOCALAPPDATA%\DrTransition`. This includes
 the local database, knowledge indexes, uploads, runtime configuration, and logs.
 Ollama and its downloaded models are installed separately and are not removed.

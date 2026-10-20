@@ -1066,7 +1066,11 @@ class KnowledgeBaseService:
             self._save_index(empty)
         return True
 
-    async def ensure_indexed_from_database(self) -> dict[str, object]:
+    async def ensure_indexed_from_database(
+        self,
+        *,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> dict[str, object]:
         """Reconcile local flags and add any vectors missing from this scope's FAISS index."""
         self._require_faiss()
         rows = self.db.execute(
@@ -1079,7 +1083,13 @@ class KnowledgeBaseService:
             .order_by(KnowledgeChunk.document_id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
         ).all()
         if not rows:
-            return {"created": False, "chunks": 0, "index_path": str(self._index_path)}
+            return {
+                "created": False,
+                "chunks": 0,
+                "skipped_existing": 0,
+                "total_chunks": 0,
+                "index_path": str(self._index_path),
+            }
         if self._index_path.exists():
             with FAISS_LOCK:
                 existing_index = self._load_existing_index()
@@ -1129,17 +1139,23 @@ class KnowledgeBaseService:
 
         if configuration_error:
             failed_count = len(pending)
+            if progress_callback is not None and pending:
+                progress_callback(len(pending), len(pending))
         else:
-            for chunk in pending:
+            for completed, chunk in enumerate(pending, start=1):
                 try:
                     embedding = await self._embed(chunk.content)
                 except Exception:
                     failed_count += 1
                     logger.exception("Could not index knowledge chunk %s in scope %s", chunk.id, self.scope)
+                    if progress_callback is not None:
+                        progress_callback(completed, len(pending))
                     continue
                 batch.append((chunk, embedding))
                 if len(batch) >= 32:
                     flush_batch()
+                if progress_callback is not None:
+                    progress_callback(completed, len(pending))
             flush_batch()
         for document_id, document in documents.items():
             document.faiss_indexed = int(all(
@@ -1149,6 +1165,8 @@ class KnowledgeBaseService:
         return {
             "created": bool(indexed_count),
             "chunks": indexed_count,
+            "skipped_existing": len(rows) - len(pending),
+            "total_chunks": len(rows),
             "failed": failed_count,
             "error": configuration_error,
             "index_path": str(self._index_path),

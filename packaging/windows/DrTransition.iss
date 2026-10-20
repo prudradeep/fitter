@@ -78,6 +78,10 @@ var
   CredentialsForCopy: String;
   CopyCredentialsButton: TNewButton;
   TestMySqlConnectionButton: TNewButton;
+  ExistingInstallPage: TInputOptionWizardPage;
+  ExistingUninstallString: String;
+  ExistingInstallDetected: Boolean;
+  ExitAfterExistingUninstall: Boolean;
 
 procedure SetDatabaseDefaultsEditable(Editable: Boolean);
 begin
@@ -95,7 +99,14 @@ function InitializeSetup(): Boolean;
 begin
   Result := IsWin64;
   if not Result then
+  begin
     MsgBox('Dr Transition requires 64-bit Windows.', mbCriticalError, MB_OK);
+    Exit;
+  end;
+
+  ExistingInstallDetected := RegQueryStringValue(HKLM64,
+    'Software\Microsoft\Windows\CurrentVersion\Uninstall\{9A34E5CC-A8AA-40E4-9F81-6E20E3E3A8D8}_is1',
+    'UninstallString', ExistingUninstallString);
 end;
 
 function PowerShellStringLiteral(Value: String): String;
@@ -318,7 +329,26 @@ end;
 procedure InitializeWizard();
 var
   MessageText: String;
+  AfterPageID: Integer;
 begin
+  AfterPageID := wpWelcome;
+  if ExistingInstallDetected then
+  begin
+    ExistingInstallPage := CreateInputOptionPage(
+      wpWelcome,
+      'Existing Installation',
+      'Dr Transition is already installed.',
+      'Choose what to do before setup continues. Close Dr Transition first if you choose to reset its data.',
+      True,
+      False
+    );
+    ExistingInstallPage.Add('Update the application and keep existing client data');
+    ExistingInstallPage.Add('Reset client data, then update the application');
+    ExistingInstallPage.Add('Uninstall the application and remove its client data');
+    ExistingInstallPage.SelectedValueIndex := 0;
+    AfterPageID := ExistingInstallPage.ID;
+  end;
+
   MessageText :=
     'The installer will install the Dr Transition desktop launcher, bundled backend executables, and local runtime configuration.' + #13#10#13#10 +
     'Recommended minimums:' + #13#10 +
@@ -331,7 +361,7 @@ begin
     'Ollama, SQLite, and model setup are handled by the packaging helper scripts for this sync-client installer.';
 #endif
   CompatibilityPage := CreateOutputMsgPage(
-    wpWelcome,
+    AfterPageID,
     'System Compatibility',
     'Review the Dr Transition desktop requirements.',
     MessageText
@@ -654,8 +684,48 @@ begin
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  ResultCode: Integer;
+  ProgramDataPath: String;
+  LocalAppDataPath: String;
+  DataRemoved: Boolean;
 begin
   Result := True;
+
+  if ExistingInstallDetected and (CurPageID = ExistingInstallPage.ID) then
+  begin
+    case ExistingInstallPage.SelectedValueIndex of
+      1:
+        begin
+          ProgramDataPath := ExpandConstant('{commonappdata}\DrTransition');
+          LocalAppDataPath := ExpandConstant('{localappdata}\DrTransition');
+          DataRemoved := DelTree(ProgramDataPath, True, True, True);
+          DataRemoved := DelTree(LocalAppDataPath, True, True, True) and DataRemoved;
+          if not DataRemoved then
+          begin
+            MsgBox(
+              'Some client data could not be removed. Close Dr Transition and try again.',
+              mbError, MB_OK);
+            Result := False;
+            Exit;
+          end;
+        end;
+      2:
+        begin
+          if Exec('>', ExistingUninstallString, '', SW_SHOWNORMAL,
+            ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+          begin
+            ExitAfterExistingUninstall := True;
+            WizardForm.Close;
+          end
+          else
+            MsgBox('Dr Transition could not be uninstalled. Setup will not continue.',
+              mbCriticalError, MB_OK);
+          Result := False;
+          Exit;
+        end;
+    end;
+  end;
 
 #ifdef OfflineAdminInstaller
   if False and (CurPageID = DatabasePage.ID) then
@@ -770,7 +840,7 @@ end;
 
 procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
 begin
-  if SetupStoppedByCompatibility then
+  if SetupStoppedByCompatibility or ExitAfterExistingUninstall then
     Confirm := False;
 end;
 

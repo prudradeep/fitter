@@ -2,7 +2,9 @@
 
 The SQLite snapshot is read-only. Document and chunk IDs are regenerated so the
 import can coexist with rows already seeded on the server. FAISS indexes are
-then rebuilt with the server's configured embedding provider and model.
+then indexed with the server's configured embedding provider and model. Existing
+FAISS vectors are retained; only missing chunks are embedded unless an explicit
+``--index-only`` rebuild is requested.
 """
 
 from __future__ import annotations
@@ -354,7 +356,7 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
     return result
 
 
-async def _rebuild_indexes(session_factory) -> int:
+async def _index_scopes(session_factory, *, rebuild: bool = False) -> int:
     from app.services.knowledge_base import (
         MAIN_KB_SCOPE,
         POLICY_DOCUMENT_SCOPE,
@@ -369,7 +371,8 @@ async def _rebuild_indexes(session_factory) -> int:
             started_at = time.monotonic()
             last_report_at = started_at
             last_report_count = 0
-            print(f"Building FAISS index for {scope}...", flush=True)
+            action = "Rebuilding" if rebuild else "Checking for unindexed chunks in"
+            print(f"{action} FAISS index for {scope}...", flush=True)
 
             def report_progress(completed: int, total: int) -> None:
                 nonlocal last_report_at, last_report_count
@@ -392,20 +395,42 @@ async def _rebuild_indexes(session_factory) -> int:
                     last_report_at = now
                     last_report_count = completed
 
-            rebuilt = await service.rebuild_index(progress_callback=report_progress)
-            if rebuilt.get("error"):
+            if rebuild:
+                result = await service.rebuild_index(progress_callback=report_progress)
+                if result.get("error"):
+                    failures += 1
+                    print(f"Index failed for {scope}: {result}", flush=True)
+                    continue
+                reconciled = await service.ensure_indexed_from_database()
+                indexed = int(result.get("indexed_chunks", 0))
+                failed = int(reconciled.get("failed", 0))
+                if reconciled.get("error"):
+                    failed += 1
+            else:
+                # This checks vector IDs in the existing FAISS file and only
+                # embeds chunks whose IDs are absent. It also reconciles the
+                # per-row faiss_indexed flags with the actual index contents.
+                reconciled = await service.ensure_indexed_from_database(
+                    progress_callback=report_progress,
+                )
+                indexed = int(reconciled.get("chunks", 0))
+                skipped = int(reconciled.get("skipped_existing", 0))
+                failed = int(reconciled.get("failed", 0))
+                if reconciled.get("error"):
+                    failed += 1
+            if failed:
                 failures += 1
-                print(f"Index failed for {scope}: {rebuilt}", flush=True)
-                continue
-            reconciled = await service.ensure_indexed_from_database()
-            if reconciled.get("failed") or reconciled.get("error"):
-                failures += 1
-            print(
-                f"Index {scope}: {rebuilt.get('indexed_chunks', 0)} chunks rebuilt; "
-                f"flags reconciled={reconciled.get('chunks', 0)}, "
-                f"failed={reconciled.get('failed', 0)}",
-                flush=True,
-            )
+            if rebuild:
+                print(
+                    f"Index {scope}: {indexed} chunks rebuilt; failed={failed}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"Index {scope}: added={indexed}, already indexed and skipped={skipped}, "
+                    f"failed={failed}",
+                    flush=True,
+                )
     return failures
 
 
@@ -423,8 +448,8 @@ def main() -> int:
         help="Server environment file, e.g. /etc/dr-transition.env",
     )
     parser.add_argument("--dry-run", action="store_true", help="Validate mappings without importing")
-    parser.add_argument("--no-index", action="store_true", help="Import rows without rebuilding FAISS")
-    parser.add_argument("--index-only", action="store_true", help="Rebuild indexes without importing")
+    parser.add_argument("--no-index", action="store_true", help="Import rows without indexing; a later normal run indexes only missing chunks")
+    parser.add_argument("--index-only", action="store_true", help="Force-rebuild indexes without importing")
     args = parser.parse_args()
     if args.dry_run and (args.no_index or args.index_only):
         parser.error("--dry-run cannot be combined with --no-index or --index-only")
@@ -461,7 +486,7 @@ def main() -> int:
             print("Import result:", json.dumps(result, sort_keys=True), flush=True)
         if args.dry_run or args.no_index:
             return 0
-        failures = asyncio.run(_rebuild_indexes(SessionLocal))
+        failures = asyncio.run(_index_scopes(SessionLocal, rebuild=args.index_only))
         return 1 if failures else 0
     except Exception as exc:
         print(f"Offline KB import failed: {exc}", file=sys.stderr, flush=True)

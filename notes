@@ -378,6 +378,8 @@ python .\packaging\windows\scripts\create-seed-index-bundle.py --offline --datab
 ----------------------------------------------------------------------------------------------------
 
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+sudo su - deploy-user
+
 cd /opt/dr-transition
 set -a
 source /etc/dr-transition.env
@@ -385,6 +387,9 @@ set +a
 
 uv run python scripts/apply_migrations.py --apply-base-schema
 uv run python scripts/apply_migrations.py
+
+uv run python -c 'from app.db.session import SessionLocal; from app.services.sync_service import SyncService; db=SessionLocal(); print("Adding required sync columns and indexes...", flush=True); SyncService(db).ensure_schema(); print("Sync schema is ready.") ; db.close()'
+
 uv run python -m app.seed_data
 
 uv run python -m app.seed_data --skip-schema --seed-prompts-from-files --reindex-sector-prompts --seed-main-kb-from-files --skip-default-user
@@ -394,6 +399,9 @@ uv run python scripts/import_offline_kb.py --source build/seed-indexes/seed.db -
 uv run python scripts/import_offline_kb.py --source build/seed-indexes/seed.db
 
 sudo systemctl restart dr-transition
+
+sudo journalctl -u dr-transition --since "10 minutes ago" --no-pager
+sudo journalctl -fu dr-transition
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
