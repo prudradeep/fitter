@@ -308,7 +308,7 @@ class ChatCustomHazardEvidenceMixin:
         sources = "\n".join(source_lines[:6])
         body = message or markdown_to_html(
             "## Hazard evidence\n\n"
-            "I found relevant evidence in the core or validated secondary knowledge base.\n\n"
+            "I found relevant evidence in the available knowledge.\n\n"
             f"**AI reflection:** {reflection}\n\n"
             + (f"**Evidence-to-hazard relationship:** {relationship}\n\n" if relationship else "")
             + (f"**Sources considered:**\n{sources}\n\n" if sources else "")

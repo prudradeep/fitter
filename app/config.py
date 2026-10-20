@@ -23,7 +23,9 @@ DEFAULT_DEVELOPMENT_CSP = (
 DEFAULT_PRODUCTION_CSP = (
     "default-src 'self'; "
     "script-src 'self'; "
-    "style-src-elem 'self' 'sha256-yS172IizOreK2Qh0ulx24zSACxrjrRl7Lat16D6Iwf8='; "
+    "style-src-elem 'self' 'sha256-yS172IizOreK2Qh0ulx24zSACxrjrRl7Lat16D6Iwf8=' "
+    "'sha256-ndfpjqg/zt1bVLjzUvDR9bdKzpT1zKQ+NDFa6ScI+C4=' "
+    "'sha256-0fEybFknPo7k0m8sDa79FHMjsau7DrQqUI+gZjIVT74='; "
     "style-src-attr 'unsafe-inline'; "
     "img-src 'self' data: https:; "
     "font-src 'self' data:; "

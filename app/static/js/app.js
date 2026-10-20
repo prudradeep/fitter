@@ -206,6 +206,7 @@ const mitigationSupportCorpus = document.querySelector("#mitigationSupportCorpus
 const mitigationLastNote = document.querySelector("#mitigationLastNote");
 const stageVisualTitle = document.querySelector("#stageVisualTitle");
 const stageVisualText = document.querySelector("#stageVisualText");
+const stageRegionIcon = document.querySelector("#stageRegionIcon");
 const stageSectorTable = document.querySelector("#stageSectorTable");
 const stageSectorTableBody = document.querySelector("#stageSectorTableBody");
 const stageProgressFill = document.querySelector("#stageProgressFill");
@@ -214,11 +215,15 @@ const stageProgressToggle = document.querySelector("#stageProgressToggle");
 const stageProgressCurrent = document.querySelector("#stageProgressCurrent");
 const stageSteps = Array.from(document.querySelectorAll("[data-stage-key]"));
 const stageMap = document.querySelector("#stageMap");
+const stageIntroGuide = document.querySelector("#stageIntroGuide");
+const stageSectorAnalysisImage = document.querySelector("#stageSectorAnalysisImage");
 const stageIconGrid = document.querySelector("#stageIconGrid");
 const stageHazardGuide = document.querySelector("#stageHazardGuide");
 const stageSectorGuide = document.querySelector("#stageSectorGuide");
 const stagePolicySummary = document.querySelector("#stagePolicySummary");
 const stageMitigationGuide = document.querySelector("#stageMitigationGuide");
+const stageSystemsInquiryGuide = document.querySelector("#stageSystemsInquiryGuide");
+const stageThankYouGuide = document.querySelector("#stageThankYouGuide");
 const stageCoverageRows = JSON.parse(stageMap?.dataset.coverage || "[]");
 const europeMapPath = stageMap?.dataset.europeMapPath || "";
 const appShell = document.querySelector(".app-shell");
@@ -484,6 +489,7 @@ function updateStageVisual(step = "", session = {}, options = appState.currentOp
   const key = stageKeyForStep(step, appState.inputMode);
   const visual = stageVisuals[key] || stageVisuals.country;
   const showingPracticalConsiderations = shouldShowPracticalConsiderationsVisual(step, session);
+  if (stageRegionIcon) stageRegionIcon.hidden = key !== "region";
   if (stageVisualTitle) {
     stageVisualTitle.textContent = showingPracticalConsiderations
       ? ""
@@ -718,6 +724,8 @@ function mapTopologyUrl(path) {
 }
 
 async function renderDynamicStageVisual(key, session = {}, options = appState.currentOptions) {
+  if (stageIntroGuide) stageIntroGuide.hidden = true;
+  if (stageSectorAnalysisImage) stageSectorAnalysisImage.hidden = true;
   const policySummarySteps = new Set([
     "policy_reference", "policy_clarification", "policy_summary",
     "policy_summary_review", "policy_summary_details", "policy_summary_clarification",
@@ -745,29 +753,53 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
     .includes(appState.currentStep) || appState.currentStep.startsWith("mitigation_")
     || appState.currentStep.startsWith("inspired_mitigation_")
     || appState.currentStep.startsWith("policy_adaptation_")
-    || appState.currentStep.startsWith("new_policy_target_group_pathway_");
+    || appState.currentStep.startsWith("new_policy_target_group_pathway_")
+    || appState.currentStep.startsWith("evaluation");
+  const showThankYouGuide = ["system_inquiry_complete", "complete"].includes(appState.currentStep);
+  const showSystemsInquiryGuide = appState.currentStep.startsWith("system_inquiry") && !showThankYouGuide;
+  const showMitigationPlanningPanel = showMitigationGuide || showSystemsInquiryGuide || showThankYouGuide;
   if (stageMitigationGuide) {
     stageMitigationGuide.hidden = !showMitigationGuide;
     if (showMitigationGuide && !stageMitigationGuide.getAttribute("src")) {
       stageMitigationGuide.src = stageMitigationGuide.dataset.src;
     }
-    stageMitigationGuide.parentElement?.classList.toggle("has-mitigation-guide", showMitigationGuide);
+    stageMitigationGuide.parentElement?.classList.toggle("has-mitigation-guide", showMitigationPlanningPanel);
     const visualPanel = stageMitigationGuide.closest(".stage-visual-panel");
-    visualPanel?.classList.toggle("has-mitigation-guide", showMitigationGuide);
+    visualPanel?.classList.toggle("has-mitigation-guide", showMitigationPlanningPanel);
     visualPanel?.classList.toggle(
       "has-mitigation-context",
-      showMitigationGuide && selectedHazardContext && !selectedHazardContext.hidden,
+      showMitigationPlanningPanel && selectedHazardContext && !selectedHazardContext.hidden,
     );
   }
-  const showHazardGuide = appState.currentStep === "hazards"
-    && session?.custom_hazard
-    && !String(session.custom_hazard.raw_text || "").trim()
-    && !session.selected_hazard
-    && options.some((option) => normalizeForMatch(option.label || "") === "go back to list of hazards");
+  if (stageSystemsInquiryGuide) {
+    stageSystemsInquiryGuide.hidden = !showSystemsInquiryGuide;
+    if (showSystemsInquiryGuide && !stageSystemsInquiryGuide.getAttribute("src")) {
+      stageSystemsInquiryGuide.src = stageSystemsInquiryGuide.dataset.src;
+    }
+  }
+  if (stageThankYouGuide) {
+    stageThankYouGuide.hidden = !showThankYouGuide;
+    if (showThankYouGuide && !stageThankYouGuide.getAttribute("src")) {
+      stageThankYouGuide.src = stageThankYouGuide.dataset.src;
+    }
+  }
+  const showHazardGuide = appState.currentStep === "hazards";
   if (stageHazardGuide) {
     stageHazardGuide.hidden = !showHazardGuide;
     stageHazardGuide.parentElement?.classList.toggle("has-hazard-guide", Boolean(showHazardGuide));
     stageHazardGuide.closest(".stage-visual-panel")?.classList.toggle("has-hazard-guide", Boolean(showHazardGuide));
+    if (showHazardGuide) {
+      const sendHazardGuideData = () => stageHazardGuide.contentWindow?.postMessage({
+        type: "hazard-guide:update",
+        sector: session.sector || "",
+        mostRelevant: (Array.isArray(session.top_hazards) ? session.top_hazards : [])
+          .map((hazard) => String(hazard?.hazard || "").trim()).filter(Boolean).slice(0, 3),
+        additional: additionalHazardPopulationRows(session)
+          .map((hazard) => hazard.hazard).filter(Boolean),
+      }, window.location.origin);
+      stageHazardGuide.onload = sendHazardGuideData;
+      if (stageHazardGuide.contentDocument?.readyState === "complete") sendHazardGuideData();
+    }
   }
   const sectorName = normalizeForMatch(session?.sector || "");
   const sectorGuideSource = {
@@ -777,7 +809,7 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
     transport: stageSectorGuide?.dataset.transportSrc,
     "transport mobility": stageSectorGuide?.dataset.transportSrc,
   }[sectorName];
-  const showSectorGuide = Boolean(sectorGuideSource && !showHazardGuide && !showPolicySummary && !showMitigationGuide);
+  const showSectorGuide = Boolean(sectorGuideSource && !showHazardGuide && !showPolicySummary && !showMitigationPlanningPanel);
   if (stageSectorGuide) {
     stageSectorGuide.hidden = !showSectorGuide;
     if (showSectorGuide) {
@@ -795,7 +827,7 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
     stageSectorGuide.parentElement?.classList.toggle("has-sector-guide", showSectorGuide);
     stageSectorGuide.closest(".stage-visual-panel")?.classList.toggle("has-sector-guide", showSectorGuide);
   }
-  if (showHazardGuide || showPolicySummary || showMitigationGuide) {
+  if (showHazardGuide || showPolicySummary || showMitigationPlanningPanel) {
     stageVisualRenderId += 1;
     if (stageMap) stageMap.hidden = true;
     if (stageIconGrid) stageIconGrid.hidden = true;
@@ -807,6 +839,24 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
     if (stageMap) stageMap.hidden = true;
     if (stageIconGrid) stageIconGrid.hidden = true;
     stageMap?.parentElement?.classList.remove("has-map-summary");
+    return;
+  }
+  if (key === "sector" && stageSectorAnalysisImage) {
+    stageVisualRenderId += 1;
+    if (stageMap) stageMap.hidden = true;
+    if (stageIconGrid) stageIconGrid.hidden = true;
+    stageMap?.parentElement?.classList.remove("has-map-summary");
+    stageSectorAnalysisImage.hidden = false;
+    restartStageAnimation(stageSectorAnalysisImage);
+    return;
+  }
+  if (key === "country" && stageIntroGuide) {
+    stageVisualRenderId += 1;
+    if (stageMap) stageMap.hidden = true;
+    if (stageIconGrid) stageIconGrid.hidden = true;
+    stageMap?.parentElement?.classList.remove("has-map-summary");
+    stageIntroGuide.hidden = false;
+    restartStageAnimation(stageIntroGuide);
     return;
   }
   if (session?.selected_hazard) {

@@ -377,11 +377,13 @@
           </details>
           <div id="mitigationReviewContext" class="mitigation-review-context" hidden>
             <div>
-              <span>Targeted socio-demographic profiles</span>
-              <ul id="benefitedProfileList" class="affected-profile-list"></ul>
-              <p id="benefitedProfileEmpty" class="affected-profile-empty">
-                Target profiles will appear once identified.
-              </p>
+              <details id="benefitedProfilesDetails" class="benefited-profiles-details" open>
+                <summary>Targeted socio-demographic profiles</summary>
+                <ul id="benefitedProfileList" class="affected-profile-list"></ul>
+                <p id="benefitedProfileEmpty" class="affected-profile-empty">
+                  Target profiles will appear once identified.
+                </p>
+              </details>
             </div>
             <dl class="mitigation-review-facts" hidden>
               <div>
@@ -431,12 +433,26 @@
             data-coverage='{{ coverage_rows | tojson }}'
             data-europe-map-path="custom/europe.geo.json"
           ></div>
+          <iframe
+            id="stageIntroGuide"
+            class="stage-intro-guide"
+            src="{{ url_for('static', path='/intro.html') }}"
+            title="Introduction to Dr Transition"
+            hidden
+          ></iframe>
+          <img
+            id="stageSectorAnalysisImage"
+            class="stage-sector-analysis-image"
+            src="{{ url_for('static', path='/img/sector_analysis.png') }}"
+            alt="Sector analysis across energy, housing, and transport"
+            hidden
+          >
           <div id="stageIconGrid" class="stage-icon-grid" aria-label="Stage icons"></div>
           <iframe
             id="stageHazardGuide"
             class="stage-hazard-guide"
-            src="{{ url_for('static', path='/hazard.html') }}?v=20261007-circles-v2"
-            title="What is a hazard?"
+            src="{{ url_for('static', path='/hazard/index.html') }}"
+            title="Hazard analysis guide"
             hidden
           ></iframe>
           <iframe
@@ -462,12 +478,33 @@
             title="Mitigation planning guide"
             hidden
           ></iframe>
+          <iframe
+            id="stageSystemsInquiryGuide"
+            class="stage-systems-inquiry-guide"
+            data-src="{{ url_for('static', path='/systems_thinking_inquiry.html') }}"
+            title="Systems thinking inquiry guide"
+            hidden
+          ></iframe>
+          <iframe
+            id="stageThankYouGuide"
+            class="stage-thankyou-guide"
+            data-src="{{ url_for('static', path='/thankyou.html') }}"
+            title="Thank you for using Dr. Transition"
+            hidden
+          ></iframe>
         </div>
         <div class="stage-copy">
           <h2 id="stageVisualTitle">Starting your roadmap</h2>
           <p id="stageVisualText">
             Your selections and evidence will shape this workspace as the guided analysis moves forward.
           </p>
+          <img
+            id="stageRegionIcon"
+            class="stage-region-icon"
+            src="{{ url_for('static', path='/img/region-icon.png') }}"
+            alt="Map of Europe highlighting a selected region"
+            hidden
+          >
           <div id="stageSectorTable" class="stage-sector-table" hidden>
             <table aria-label="Sectors analyzed and sectoral objectives">
               <thead>

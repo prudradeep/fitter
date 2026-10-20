@@ -380,7 +380,7 @@
 }
 
 .landing-copy .roadmap-kicker {
-  margin: 20px 0 20px;
+  margin: 20px 0 10px;
   color: #121827;
   font-size: clamp(1.2rem, 1.8vw, 1.55rem);
   font-weight: 500;
@@ -417,7 +417,7 @@
 }
 
 .landing-copy .roadmap-list {
-  gap: 20px;
+  gap: 10px;
 }
 
 .landing-copy .roadmap-list li {
@@ -499,8 +499,8 @@
   gap: 16px;
   width: min(100%, 620px);
   box-sizing: border-box;
-  margin-top: 48px;
-  padding: 16px 18px;
+  margin-top: 28px;
+  padding: 16px;
   border: 1px solid #e2d9f0;
   border-radius: 12px;
   background: linear-gradient(135deg, #fbf9ff 0%, #f5f1fb 100%);
@@ -579,7 +579,7 @@
   border-radius: 0 8px 8px 0;
   background: #f5f1fb;
   color: #3f4c61;
-  font-size: 0.98rem;
+  font-size: 0.78rem;
   line-height: 1.5;
 }
 

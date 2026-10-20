@@ -1611,14 +1611,24 @@ class ChatMitigationStepsMixin:
                 "policy mechanisms summary."
             )
             session.new_policy_validation_pending_question = clarification
-            return self._new_policy_validation_prompt(session_id, session, message=clarification)
+            return self._new_policy_validation_prompt(
+                session_id, session,
+                message=(
+                    f"{clarification}\n\n"
+                    "Please revise the proposal title and short description to address this concern."
+                ),
+            )
         if review.get("status") == "irrelevant" or required_relevance[2] != "relevant" or not pathway:
             clarification = str(review.get("clarification") or "").strip() or (
                 "What does the proposed policy do, and how would that action reduce the selected hazard?"
             )
             session.new_policy_validation_pending_question = clarification
             return self._new_policy_validation_prompt(
-                session_id, session, message=clarification,
+                session_id, session,
+                message=(
+                    f"{clarification}\n\n"
+                    "Please revise the proposal title and short description to address this concern."
+                ),
             )
         support_ids = review.get("support_source_ids")
         supported = review.get("supported") is True and bool(secondary_sources) and isinstance(support_ids, list) and any(
@@ -2115,7 +2125,7 @@ class ChatMitigationStepsMixin:
             session.phase = "new_policy_target_group_pathway_evidence"
             return self._new_policy_target_group_pathway_evidence_prompt(
                 session_id, session, group,
-                message="I could not verify the pathway's factual claims in the secondary knowledge base. Evidence is optional; provide relevant evidence or skip.",
+                message="I could not verify the pathway's factual claims in the available knowledge. Evidence is optional; provide relevant evidence or skip.",
             )
         pathways = dict(session.new_policy_target_group_pathways or {})
         verified = bool(evidence or (payload.get("supported") is True and supported))
@@ -2630,17 +2640,11 @@ class ChatMitigationStepsMixin:
             isinstance(review_payload, dict)
             and review_payload.get("introduces_barrier") is True
         )
-        uncertain_barrier_review = bool(sources) and (
-            not isinstance(review_payload, dict)
-            or review_payload.get("introduces_barrier") is not False
-        )
         barrier_issue = self._obvious_inspired_access_barrier(measure)
         if barrier_flag and not barrier_issue:
             barrier_issue = str(review_payload.get("barrier_reason") or "").strip() or (
                 "The draft introduces a new access barrier."
             )
-        if uncertain_barrier_review and not barrier_issue:
-            barrier_issue = "The draft's effect on access barriers could not be verified."
         session.pending_inspired_mitigation_barrier_issue = barrier_issue or None
         if barrier_issue:
             session.pending_inspired_mitigation_uncovered_groups = list(required_groups)
@@ -2657,7 +2661,7 @@ class ChatMitigationStepsMixin:
                 unverified_user_groups=unverified_user_groups,
                 skipped_user_groups=skipped_user_groups,
             )
-        session.pending_inspired_mitigation_grounding_note = barrier_issue or None
+        session.pending_inspired_mitigation_grounding_note = None
         session.phase = "inspired_mitigation_confirmation"
         return self._inspired_mitigation_confirmation_response(session_id, session)
 
@@ -2945,11 +2949,15 @@ class ChatMitigationStepsMixin:
             for group in groups if pathways.get(group)
         ]
         group_rows.extend(
-            f"- **{group}:** Skipped by the user"
+            f"- **{group}:** Not provided"
             for group in skipped_groups
             if normalize_for_match(group) not in pathway_group_keys
         )
-        group_text = "\n".join(group_rows) or "No group has a supported benefit pathway yet."
+        group_section = (
+            "**Suggested disadvantaged groups benefited:**\n\n"
+            + "\n".join(group_rows) + "\n\n"
+            if any(pathways.get(group) for group in groups) else ""
+        )
         uncovered = list(dict.fromkeys([
             *(session.pending_inspired_mitigation_uncovered_groups or []),
             *(group for group in groups if not pathways.get(group)),
@@ -2974,9 +2982,11 @@ class ChatMitigationStepsMixin:
             + "\n".join(f"- {group}" for group in uncovered) + "\n\n"
             if uncovered else ""
         )
-        grounding_note = (
-            f"{session.pending_inspired_mitigation_grounding_note}\n\n"
-            if session.pending_inspired_mitigation_grounding_note else ""
+        barrier_issue = str(session.pending_inspired_mitigation_barrier_issue or "").strip()
+        access_barrier_section = (
+            "**Access barriers identified:**\n\n"
+            f"- {barrier_issue}\n\n"
+            if barrier_issue else ""
         )
         return ChatResponse(
             session_id=session_id,
@@ -2987,9 +2997,8 @@ class ChatMitigationStepsMixin:
                 f"**{measure}**\n\n"
                 f"**What this policy is about:** {policy_about}\n\n"
                 f"{('**How the proposed measure mitigates the selected hazard:** ' + hazard_pathway + chr(10) + chr(10)) if hazard_pathway else ''}"
-                "**Suggested disadvantaged groups benefited:**\n\n"
-                f"{group_text}\n\n"
-                f"{uncovered_section}{grounding_note}{closing}"
+                f"{group_section}"
+                f"{access_barrier_section}{uncovered_section}{closing}"
             ),
             options=([*INSPIRED_MITIGATION_REVISION_OPTIONS,
                       Option(id=3, label=INSPIRED_MITIGATION_PARTIAL_OPTIONS[1].label)] if needs_revision
@@ -3120,8 +3129,13 @@ class ChatMitigationStepsMixin:
             ) if str(group).strip()
         ))
         pathways = session.pending_inspired_mitigation_group_pathways or {}
+        pathways_by_key = {
+            normalize_for_match(group): pathway
+            for group, pathway in pathways.items()
+            if normalize_for_match(group) and str(pathway or "").strip()
+        }
         skipped = {normalize_for_match(group) for group in (session.inspired_mitigation_pathway_skipped_groups or [])}
-        missing = [group for group in targets if not pathways.get(group)
+        missing = [group for group in targets if not pathways_by_key.get(normalize_for_match(group))
                    and normalize_for_match(group) not in skipped]
         if not missing:
             session.inspired_mitigation_pathway_review_complete = True
@@ -3237,8 +3251,8 @@ class ChatMitigationStepsMixin:
         )
         support_payload = None if is_llm_unavailable_response(support) else parse_json_object(support)
         supported_ids = support_payload.get("source_ids") if isinstance(support_payload, dict) else None
-        claims_supported = bool(secondary) and isinstance(supported_ids, list) and any(
-            type(source_id) is int and 1 <= source_id <= len(secondary)
+        claims_supported = bool(kb_sources) and isinstance(supported_ids, list) and any(
+            type(source_id) is int and 1 <= source_id <= len(kb_sources)
             for source_id in supported_ids
         )
         if not (isinstance(support_payload, dict)
@@ -3389,10 +3403,16 @@ class ChatMitigationStepsMixin:
                 + "What would you like to change or add to this measure? You can describe any change, "
                 "including who it should reach and how it would help."
             ),
-            options=[], session=session.summary(), input_mode="textarea", error=error,
+            options=[Option(id=1, label="Back to confirmation")],
+            session=session.summary(), input_mode="textarea", error=error,
         )
 
     async def _handle_inspired_mitigation_expansion_input(self, session_id, session, message):
+        if normalize(message) == normalize("Back to confirmation"):
+            session.inspired_mitigation_expansion_input = None
+            session.inspired_mitigation_expansion_evidence = None
+            session.inspired_mitigation_expansion_clarifications = 0
+            return self._inspired_mitigation_confirmation_response(session_id, session)
         meaning = await validate_text_meaning(message)
         if meaning.classification != "LIKELY_MEANINGFUL":
             return self._inspired_mitigation_expansion_input_step(
@@ -3482,8 +3502,8 @@ class ChatMitigationStepsMixin:
                 session_id=session_id,
                 step="inspired_mitigation_expansion_evidence",
                 bot_message=markdown_to_html(
-                    "I could not verify all factual claims in that change from the validated "
-                    "secondary knowledge base. You may provide optional evidence relevant to "
+                    "I could not verify all factual claims in that change from the available "
+                    "knowledge. You may provide optional evidence relevant to "
                     "your requested change, the existing policy or its objectives or mechanisms, "
                     "the sectoral objective, or green and digital transition concepts, or skip "
                     "and continue without evidence."

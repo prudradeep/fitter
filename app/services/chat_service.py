@@ -1318,7 +1318,8 @@ class ChatService(
                     "Required content:\n"
                     "- Return this exact message, without Markdown or additional text: "
                     "Welcome back to Dr Transition. Let's start by setting a policy context. "
-                    "Select your country"
+                    "Select your country. \n\n"
+                    "To explore policy contexts beyond the 6 case study countries, [Click here](https://ekbbo0tw5gtz4n1ipghnu348.152.67.156.137.sslip.io/)."
                 ),
             }
         ]
@@ -1391,7 +1392,8 @@ class ChatService(
         if previous_sessions:
             message = (
                 "Welcome back to Dr Transition. "
-                "Let's start by setting a policy context. Select your country"
+                "Let's start by setting a policy context. Select your country.\n\n"
+                "To explore policy contexts beyond the 6 case study countries, [Click here](https://ekbbo0tw5gtz4n1ipghnu348.152.67.156.137.sslip.io/)."
             )
         else:
             message = render_message("welcome.md")
