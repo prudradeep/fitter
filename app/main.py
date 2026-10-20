@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.auth import AUTH_COOKIE_NAME, CSRF_COOKIE_NAME, get_current_user, require_admin_user
+from app.auth import AUTH_COOKIE_NAME, CSRF_COOKIE_NAME, get_current_user, is_admin_user, require_admin_user
 from app.config import get_settings
 from app.db.migrations_runtime import repair_partial_installer_schema, run_runtime_migrations
 from app.db.session import SessionLocal, get_db, validate_database_connection
@@ -294,7 +294,7 @@ async def index(
 ) -> Response:
     if current_user is None:
         return RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
-    if settings.auth_only_mode:
+    if settings.auth_only_mode and not is_admin_user(current_user):
         csrf_token = request.cookies.get(CSRF_COOKIE_NAME)
         if not csrf_token_valid(csrf_token, settings):
             csrf_token = create_csrf_token(settings)

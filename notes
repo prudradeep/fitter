@@ -365,7 +365,7 @@ uv run python -m app.seed_data --include-basic-data --seed-prompts-from-files
 
 uv run python -c "from app.db.migrations_runtime import run_runtime_migrations; from app.services.prompt_store import seed_prompts_from_files; run_runtime_migrations(seed_reference_data=False); print(f'Seeded/updated {seed_prompts_from_files(overwrite=True)} prompt rows')"
 
-uv run python scripts/create_sync_client.py --name "Admin workstation" --user-email "pradeep@localhost.com" --main-kb --sector-prompts --reindex-sector-prompts --manage-prompts
+uv run python scripts/create_sync_client.py --name "Admin workstation" --user-email "admin@drtransition.local" --main-kb --sector-prompts --reindex-sector-prompts --manage-prompts
 
 
 uv run python scripts/create_sync_client.py --name "Clients"
