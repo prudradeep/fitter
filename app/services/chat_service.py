@@ -1630,7 +1630,7 @@ class ChatService(
         answer_text = ", ".join(selected_labels)
         session.additional_dg_answers.append(
             {
-                "question_id": int(question["id"]),
+                "question_id": str(question["id"]),
                 "question": str(question["question"]),
                 "answer": answer_text,
             }
@@ -1638,14 +1638,14 @@ class ChatService(
         for selected in selected_labels:
             question_option_id = self.db.scalar(
                 select(QuestionOption.id).where(
-                    QuestionOption.question_id == int(question["id"]),
+                    QuestionOption.question_id == str(question["id"]),
                     QuestionOption.option == selected,
                 )
             )
             self._store_question_response(
                 session_id,
                 session,
-                question_id=int(question["id"]),
+                question_id=str(question["id"]),
                 category="additional_target_population",
                 response_text=selected,
                 question_option_id=question_option_id,

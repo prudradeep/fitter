@@ -4,14 +4,22 @@ import re
 import textwrap
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import unescape
 from io import BytesIO
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    AdditionalHazard,
+    Country,
+    CustomHazard,
     EvaluationQuestion,
+    Region,
+    Sector,
+    SystemHazard,
     SystemHazardSocioDemographic,
+    UserHazard,
     UserHazardSocioDemographic,
     UserMitigationMeasure,
     UserQuestionResponse,
@@ -133,9 +141,7 @@ def _scope_title(scope: str) -> str:
 
 
 def _pdf_scope_title(scope: str, title: str) -> str:
-    if scope in {REPORT_SCOPE_USER_HAZARD, REPORT_SCOPE_ALL_HAZARD}:
-        return ""
-    return title
+    return ""
 
 
 def _report_lines(
@@ -148,65 +154,414 @@ def _report_lines(
 ) -> list[str]:
     hazard = str(session_data.get("selected_hazard") or "Selected hazard").strip()
     profile_rows = _hazard_profile_rows(db, session_data, measures)
+    country = _session_label(db, session_data, "country", Country)
+    region = _session_label(db, session_data, "region", Region)
+    sector = _session_label(db, session_data, "sector", Sector)
+    sector_objective = _sectoral_objective(sector)
+    policy_summary_lines = _policy_summary_lines(
+        str(session_data.get("selected_context_policy_summary") or "")
+    )
+    hazard_details = _hazard_details(db, session_data, measures)
     lines = [
-        "DR TRANSITION MITIGATION MEASURE REPORT",
+        "FITTER Digital Platform (Dr Transition) Report",
         title,
-        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
         "",
-        "Policy Objectives",
-        f"- General objectives: Support a fair twin-transition response for {hazard}.",
-        "- Specific objectives: Reduce exposure for affected groups and improve transition-policy fit.",
-        "- Operational objectives: Document mitigation design, target groups, evidence, evaluation, and system-inquiry reflections.",
-        "- Success indicators: Evaluation scores, coverage of affected groups, and system-inquiry resolution states.",
+        "Analysis Coverage",
+        f"- Country: {country}",
+        f"- Region: {region}",
+        f"- Sector: {sector}",
         "",
-        "Stakeholder and Hazard Analysis",
-        "HAZARD_CONTEXT::"
-        + json.dumps(
-            {
-                "country": session_data.get("country") or "Not available",
-                "region": session_data.get("region") or "Not available",
-                "sector": session_data.get("sector") or "Not available",
-                "hazard": hazard,
-            },
-            ensure_ascii=False,
-        ),
+        "Sectoral Coverage",
+        f"- Selected sector: {sector}",
+        f"- Mapped sectoral objective under twin transition: {sector_objective}",
+        "",
+        "Policy in Focus",
+        "POLICY_TITLE::" + _clean(str(session_data.get("selected_context_policy") or "Not available")),
+        *(policy_summary_lines or ["- Policy summary is not available in this session."]),
+        "",
+        "Hazard in Highlight",
+        f"- Hazard: {hazard}",
+        *hazard_details,
         "HAZARD_PROFILE_TABLE::" + json.dumps(profile_rows[:8], ensure_ascii=False),
-        _hazard_narrative(hazard, profile_rows),
         "",
-        "Identified Gaps and Areas Requiring Improvement",
-        *_system_inquiry_summary_lines(measures),
-        "",
-        "Mitigation Measure Creation",
     ]
     for index, measure in enumerate(measures, start=1):
-        lines.append("MEASURE_CARD::" + json.dumps(_measure_card_payload(index, measure, profile_rows), ensure_ascii=False))
-    lines.extend(
-        [
-            "",
-            "Mitigation Measure Evaluation",
-            "Criterion | Score | Evidence | Comments",
-        ]
-    )
-    for index, measure in enumerate(measures, start=1):
-        answers = _evaluation_answers(db, measure.id)
-        lines.append(f"Measure {index}: {_clean(measure.measure)}")
-        if not answers:
-            lines.append("- No evaluation answers recorded.")
-        for answer in answers:
-            lines.append("EVAL_ROW::" + json.dumps(answer, ensure_ascii=False))
-    lines.extend(
-        [
-            "RADAR_CHART::" + json.dumps(_radar_series(db, measures), ensure_ascii=False),
-            "",
-            "Comparison of Mitigation Measures",
-            "COMPARISON_CARDS::" + json.dumps(_comparison_cards(db, measures), ensure_ascii=False),
-            _comparison_summary(db, measures),
-            "",
-            "Conclusions and Recommendations",
-            _conclusion(measures),
-        ]
-    )
+        lines.extend(_mitigation_measure_report_lines(db, measure, index, session_data, profile_rows))
+    if len(measures) > 1:
+        plan_cards = _comparison_cards(db, measures)
+        lines.extend(
+            [
+                "",
+                "Mitigation Plan Overview",
+                "PLAN_SCORE_TABLE::" + json.dumps(plan_cards, ensure_ascii=False),
+                "PLAN_RADAR_CHART::" + json.dumps(_radar_series(db, measures), ensure_ascii=False),
+                "PLAN_COMBINED_EULER::" + json.dumps(_combined_target_groups(measures), ensure_ascii=False),
+            ]
+        )
+    lines.extend(["", "Conclusions and Recommendations", _conclusion(measures)])
     return lines
+
+
+def _combined_target_groups(measures: list[UserMitigationMeasure]) -> list[dict[str, object]]:
+    return [
+        {"label": f"M{index}", "groups": _dedupe_text_list(_json_list(measure.target_population))}
+        for index, measure in enumerate(measures, start=1)
+    ]
+
+
+def _mitigation_measure_report_lines(
+    db: Session,
+    measure: UserMitigationMeasure,
+    index: int,
+    session_data: dict[str, object],
+    profile_rows: list[dict[str, str]],
+) -> list[str]:
+    creation = _json_object(measure.creation_details_json)
+    target_data = _json_object(measure.target_groups_json)
+    inquiry = _json_object(measure.system_inquiry_json)
+    is_current = str(session_data.get("mitigation_record_id") or "") == measure.id
+
+    proposal_type = str(
+        (session_data.get("mitigation_proposal_type") if is_current else None)
+        or creation.get("proposal_type")
+        or ""
+    ).strip()
+    if not proposal_type:
+        proposal_type = "new_policy" if creation.get("new_policy_title") else (
+            "existing_policy" if creation.get("selected_policy") else ""
+        )
+    type_label = {
+        "existing_policy": "Adaptation of the selected policy",
+        "new_policy": "New Mitigation Proposal",
+    }.get(proposal_type, proposal_type)
+    policy_title = _clean(str(creation.get("new_policy_title") or ""))
+    title = policy_title or _clean(measure.measure)
+    description = _clean(str(creation.get("new_policy_description") or measure.reason or ""))
+    if not _has_report_content(description):
+        description = ""
+    creation_summary = str(creation.get("summary") or "").strip()
+    final_conclusion = str(measure.conclusion or "").strip()
+
+    lines = [f"MEASURE_SECTION::Mitigation Measure {index}"]
+    if type_label:
+        lines.append(f"MEASURE_TYPE::{type_label}")
+    if title:
+        lines.append(f"MEASURE_TITLE::{title}")
+    if description:
+        lines.append("MEASURE_SUBSECTION::Description")
+        description_fields = _measure_description_fields(description)
+        if description_fields:
+            for label, detail in description_fields:
+                lines.extend([f"MEASURE_FIELD::{label}", detail])
+        else:
+            lines.append(description)
+    if _has_report_content(_clean(creation_summary)) or _has_report_content(_clean(final_conclusion)):
+        summary_lines = _measure_summary_lines(creation_summary or final_conclusion)
+        if summary_lines:
+            lines.extend(["MEASURE_SUBSECTION::Full Final Summary", *summary_lines])
+    if creation_summary and final_conclusion and _clean(creation_summary) != _clean(final_conclusion):
+        conclusion_lines = _measure_summary_lines(final_conclusion)
+        if conclusion_lines:
+            lines.extend(["MEASURE_SUBSECTION::Final Review Conclusion", *conclusion_lines])
+
+    pathways = creation.get("disadvantaged_group_pathways")
+    if is_current and isinstance(session_data.get("mitigation_dg_benefit_explanations"), dict):
+        pathways = session_data.get("mitigation_dg_benefit_explanations")
+    pathway_lines: list[str] = []
+    if isinstance(pathways, dict):
+        for group, pathway in pathways.items():
+            if _has_report_content(str(pathway or "")):
+                pathway_lines.append(f"- {group}: {_clean(str(pathway))}")
+    mechanisms = creation.get("mechanisms")
+    if isinstance(mechanisms, list):
+        for mechanism in mechanisms:
+            if _has_report_content(str(mechanism or "")):
+                pathway_lines.append(f"- Mechanism: {_clean(str(mechanism))}")
+    guidance = creation.get("mechanism_guidance")
+    if isinstance(guidance, dict):
+        for group, value in guidance.items():
+            detail = _flatten_report_value(value)
+            if _has_report_content(detail):
+                pathway_lines.append(f"- {group}: {detail}")
+    if pathway_lines:
+        lines.extend(["MEASURE_SUBSECTION::Disadvantaged Group Pathways and Mechanisms", *pathway_lines])
+
+    ai_reflection = _clean(str(creation.get("mechanism_reflection") or ""))
+    if is_current:
+        ai_reflection = _clean(str(session_data.get("mitigation_mechanism_reflection") or ai_reflection))
+    if _has_report_content(ai_reflection):
+        lines.extend(["MEASURE_SUBSECTION::AI Reflection", ai_reflection])
+    answers = creation.get("access_barrier_answers") or target_data.get("target_population_answers")
+    if is_current and isinstance(session_data.get("target_population_answers"), list):
+        answers = session_data.get("target_population_answers")
+    clarification_lines = _access_barrier_answer_lines(answers)
+    history = (
+        session_data.get("mitigation_clarification_history")
+        if is_current
+        else creation.get("mitigation_clarification_history")
+    )
+    clarification_lines.extend(_access_barrier_answer_lines(history))
+    if clarification_lines:
+        lines.extend(["MEASURE_SUBSECTION::Access Barrier Clarification Answers", *clarification_lines])
+
+    equity = _clean(str(creation.get("equity") or ""))
+    if is_current:
+        equity = _clean(str(session_data.get("mitigation_equity") or equity))
+    venn_payload = _population_venn_payload(profile_rows, measure)
+    if _has_report_content(equity) or _has_population_venn_data(venn_payload):
+        lines.append("MEASURE_SUBSECTION::Final Reflection on Targeted Groups")
+        if _has_report_content(equity):
+            lines.append(equity)
+        if _has_population_venn_data(venn_payload):
+            lines.append("POPULATION_VENN::" + json.dumps(venn_payload, ensure_ascii=False))
+
+    evaluation_answers = [
+        answer
+        for answer in _evaluation_answers(db, measure.id)
+        if isinstance(answer.get("numeric_score"), int)
+    ]
+    if evaluation_answers:
+        lines.append("MEASURE_SUBSECTION::Self Evaluation Scores")
+        for answer in evaluation_answers:
+            lines.append(
+                f"- {answer['criterion']}: {answer['score']}/10. "
+                f"Comments: {answer['comments']}. Evidence: {answer['evidence']}"
+            )
+        radar_data = _radar_series(db, [measure])
+        if _has_radar_scores(radar_data):
+            lines.append("RADAR_CHART::" + json.dumps(radar_data, ensure_ascii=False))
+
+    inquiry_lines: list[str] = []
+    inquiry_reflection = _clean(str(inquiry.get("reflection") or inquiry.get("summary") or ""))
+    if _has_report_content(inquiry_reflection):
+        inquiry_lines.append(inquiry_reflection)
+    annotations = inquiry.get("annotations")
+    if isinstance(annotations, list):
+        for annotation in annotations:
+            if not isinstance(annotation, dict):
+                continue
+            label = str(annotation.get("lens_title") or annotation.get("lens_id") or "Systems inquiry").strip()
+            state = str(annotation.get("resolution_state") or "").replace("_", " ").strip()
+            observation = _clean(str(annotation.get("observation") or ""))
+            question = _clean(str(annotation.get("question") or ""))
+            response = _clean(str(annotation.get("followup_response") or annotation.get("user_response") or ""))
+            evaluation = _clean(str(annotation.get("evaluation") or ""))
+            detail = "; ".join(
+                f"{name}: {part}"
+                for name, part in (
+                    ("Status", state),
+                    ("Observation", observation),
+                    ("Question", question),
+                    ("Response", response),
+                    ("Reflection", evaluation),
+                )
+                if part
+            )
+            if detail:
+                inquiry_lines.append(f"- {label}: {detail}")
+    if inquiry_lines:
+        lines.extend(["MEASURE_SUBSECTION::Systems Thinking and Systems Inquiry", *inquiry_lines])
+    return lines + [""]
+
+
+def _access_barrier_answer_lines(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    lines: list[str] = []
+    pending_question = ""
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().casefold()
+        content = _clean(str(item.get("content") or ""))
+        if role == "assistant" and content:
+            pending_question = content
+            continue
+        if role == "user" and content:
+            if pending_question:
+                lines.append(f"- Clarification question: {pending_question}")
+            lines.append(f"- Clarification answer: {content}")
+            pending_question = ""
+            continue
+        question = _clean(str(item.get("question") or item.get("prompt") or ""))
+        answer = item.get("selected") or item.get("answer") or item.get("response")
+        answer_text = _flatten_report_value(answer)
+        if not _has_report_content(answer_text):
+            continue
+        if question and answer_text:
+            lines.append(f"- {question}: {answer_text}")
+        elif answer_text:
+            lines.append(f"- {answer_text}")
+    return lines
+
+
+def _measure_description_fields(description: str) -> list[tuple[str, str]]:
+    labels = {
+        "mechanisms mitigated": "Mechanisms Mitigated",
+        "mapped policy": "Mapped Policy",
+        "mechanism reflection": "Mechanism Reflection",
+    }
+    marker = re.compile(
+        r"(?i)(?<!\w)(mechanisms mitigated|mapped policy|mechanism reflection):\s*"
+    )
+    matches = list(marker.finditer(description))
+    if not matches:
+        return []
+    prefix = description[:matches[0].start()].strip(" ;.\n")
+    result: list[tuple[str, str]] = []
+    if prefix and prefix.casefold() not in {"description", "description:"}:
+        result.append(("Description", _clean(prefix.removeprefix("Description:").strip())))
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(description)
+        value = _clean(description[match.end():end].strip(" ;.\n"))
+        if value:
+            result.append((labels[match.group(1).casefold()], value))
+    return result
+
+
+def _measure_summary_lines(summary: str) -> list[str]:
+    if not summary.strip():
+        return []
+    text = re.sub(r"(?is)<button\b[^>]*>.*?</button>", " ", summary)
+    text = unescape(re.sub(r"<[^>]+>", " ", text))
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"(?m)^\s*[-*]\s+(?=\*\*[^*]+:\*\*)", "", text)
+    text = re.sub(r"\*\*([^*]+)\*\*(?=\s+[A-Z])", r"\n### \1\n", text)
+    text = re.sub(r"\s*#{1,6}\s*", "\n### ", text)
+    text = re.sub(r"\s*\*\*([^*]+):\*\*\s*", r"\n- **\1:** ", text)
+    text = re.sub(r"\s+-\s+(?=\*\*[^*]+\*\*:)", "\n- ", text)
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading_match = re.match(r"^#{1,4}\s+(.+)$", line)
+        if heading_match:
+            label = _clean(re.sub(r"[*_`]+", "", heading_match.group(1))).rstrip(":")
+            if label:
+                lines.append(f"MEASURE_FIELD::{label}")
+            continue
+        field_match = re.match(r"^[-*]\s*\*\*(.+?)\*\*:\s*(.*)$", line)
+        if field_match:
+            label = _clean(re.sub(r"[*_`]+", "", field_match.group(1)))
+            value = _clean(re.sub(r"[*_`]+", "", field_match.group(2)))
+            if value and _has_report_content(value):
+                lines.extend([f"MEASURE_FIELD::{label}", value])
+            continue
+        label_match = re.match(r"^[-*]?\s*(.+?):\s*$", line)
+        if label_match:
+            label = _clean(re.sub(r"[*_`#]+", "", label_match.group(1)))
+            if label:
+                lines.append(f"MEASURE_FIELD::{label}")
+            continue
+        line = _clean(re.sub(r"[*_`]+", "", line))
+        line = re.sub(r"^[-*]\s+", "", line)
+        if _has_report_content(line):
+            lines.append(f"- {line}")
+    return lines
+
+
+def _flatten_report_value(value: object) -> str:
+    if isinstance(value, list):
+        return "; ".join(part for part in (_flatten_report_value(item) for item in value) if part)
+    if isinstance(value, dict):
+        return "; ".join(
+            f"{key}: {detail}"
+            for key, item in value.items()
+            if (detail := _flatten_report_value(item))
+        )
+    return _clean(str(value or ""))
+
+
+def _has_report_content(value: str) -> bool:
+    return _clean(value).casefold() not in {
+        "", "not available", "not recorded", "none", "n/a", "no data",
+    }
+
+
+def _session_label(db: Session, data: dict[str, object], key: str, model) -> str:
+    value = _clean(str(data.get(key) or ""))
+    if value:
+        return value
+    row_id = str(data.get(f"{key}_id") or "").strip()
+    row = db.get(model, row_id) if row_id else None
+    return _clean(str(getattr(row, "name", "") or "Not available"))
+
+
+def _policy_summary_lines(summary: str) -> list[str]:
+    if not summary.strip():
+        return []
+    normalized = re.sub(r"\s*(###\s+)", r"\n\1", summary.strip())
+    chunks = re.split(r"(?m)^###\s+", normalized)
+    output: list[str] = []
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        heading, _, body = chunk.partition("\n")
+        if not body and " - " in heading:
+            heading, body = heading.split(" - ", 1)
+        heading = _clean(re.sub(r"[*_`]+", "", heading))
+        body = re.sub(
+            r"(?i)\*{0,2}not identified:\*{0,2}\s*not stated in the supplied text\.?",
+            "",
+            body,
+        )
+        body = re.sub(r"\s+-\s+(?=\*\*[^*]+:\*\*)", "\n- ", body)
+        body = re.sub(r"(?m)^\s*[-*]\s*", "\n- ", body)
+        entries: list[str] = []
+        for entry in body.splitlines():
+            entry = _clean(entry)
+            entry = re.sub(r"[*_`]+", "", entry).strip(" -")
+            if not entry or re.search(r"(?i)not identified:\s*not stated in the supplied text", entry):
+                continue
+            entries.append(f"- {entry}")
+        if entries:
+            if heading:
+                output.append(f"POLICY_SUBSECTION::{heading}")
+            output.extend(entries)
+    return output
+
+
+def _sectoral_objective(sector: str) -> str:
+    try:
+        from app.services.custom_hazard_validation import policy_objective_for_sector
+
+        return policy_objective_for_sector(sector)
+    except (ImportError, AttributeError):
+        return "the selected sector policy objective"
+
+
+def _hazard_details(
+    db: Session,
+    session_data: dict[str, object],
+    measures: list[UserMitigationMeasure],
+) -> list[str]:
+    details: list[str] = []
+    custom_payload = session_data.get("custom_hazard")
+    if isinstance(custom_payload, dict):
+        for label, key in (("Summary", "summary"), ("Reason", "reason"), ("Evidence", "evidence")):
+            value = _clean(str(custom_payload.get(key) or ""))
+            if value:
+                details.append(f"- {label}: {value}")
+
+    for model, attr in (
+        (CustomHazard, "custom_hazard_id"),
+        (UserHazard, "user_hazard_id"),
+        (SystemHazard, "system_hazard_id"),
+        (AdditionalHazard, "additional_hazard_id"),
+    ):
+        record_id = next((str(getattr(measure, attr, "") or "") for measure in measures if getattr(measure, attr, None)), "")
+        row = db.get(model, record_id) if record_id else None
+        if row is None:
+            continue
+        for label, field in (("Summary", "summary"), ("Reason", "reason"), ("Evidence", "evidence")):
+            value = _clean(str(getattr(row, field, None) or ""))
+            if value and not any(item.casefold().startswith(f"- {label.casefold()}:") for item in details):
+                details.append(f"- {label}: {value}")
+        break
+    return details
 
 
 def _measure_creation_lines(index: int, measure: UserMitigationMeasure) -> list[str]:
@@ -262,7 +617,11 @@ def _hazard_profile_rows(
     measures: list[UserMitigationMeasure],
 ) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
-    for item in session_data.get("affected_profile_details") or []:
+    for item in (
+        session_data.get("affected_profile_details")
+        or session_data.get("selected_hazard_displayed_profile_details")
+        or []
+    ):
         if not isinstance(item, dict):
             continue
         profile = _clean(str(item.get("name") or item.get("profile") or ""))
@@ -275,7 +634,11 @@ def _hazard_profile_rows(
                 "basis": _clean(str(item.get("statistical_basis") or item.get("explanation") or "")),
             }
         )
-    for item in session_data.get("affected_profiles") or []:
+    for item in (
+        session_data.get("affected_profiles")
+        or session_data.get("selected_hazard_displayed_profiles")
+        or []
+    ):
         profile = _clean(str(item or ""))
         if profile:
             rows.append({"profile": profile, "source": "Session summary", "basis": ""})
@@ -477,7 +840,7 @@ def _radar_series(
                 "scores": scores,
             }
         )
-    return {"criteria": criteria[:8], "series": series[:5]}
+    return {"criteria": criteria[:8], "series": series}
 
 
 def _comparison_cards(
@@ -646,15 +1009,15 @@ def _simple_pdf(lines: list[str]) -> bytes:
 
 def _layout_pdf_pages(lines: list[str]) -> list[str]:
     sections = {
-        "Policy Objectives",
-        "Stakeholder and Hazard Analysis",
-        "Identified Gaps and Areas Requiring Improvement",
-        "Mitigation Measure Creation",
-        "Mitigation Measure Evaluation",
+        "Analysis Coverage",
+        "Sectoral Coverage",
+        "Policy in Focus",
+        "Hazard in Highlight",
+        "Mitigation Plan Overview",
         "Comparison of Mitigation Measures",
         "Conclusions and Recommendations",
     }
-    title = lines[0] if lines else "DR TRANSITION MITIGATION MEASURE REPORT"
+    title = lines[0] if lines else "FITTER Digital Platform (Dr Transition) Report"
     subtitle = lines[1] if len(lines) > 1 else "Mitigation report"
     generated = lines[2] if len(lines) > 2 else ""
     body = lines[4:] if len(lines) > 4 else lines[3:]
@@ -669,9 +1032,10 @@ def _layout_pdf_pages(lines: list[str]) -> list[str]:
         current = _page_shell(len(pages) + 1, subtitle)
         y = 720
 
-    def ensure_space(required: int) -> None:
+    def ensure_space(required: int) -> tuple[list[str], int]:
         if y - required < 58:
             new_page()
+        return current, y
 
     index = 0
     while index < len(body):
@@ -679,6 +1043,85 @@ def _layout_pdf_pages(lines: list[str]) -> list[str]:
         text = _clean(line)
         if not text:
             y -= 8
+            index += 1
+            continue
+        if text.startswith("MEASURE_SECTION::"):
+            label = text.removeprefix("MEASURE_SECTION::")
+            ensure_space(42)
+            current.append(_rect(42, y - 22, 528, 25, 0.36, 0.16, 0.75))
+            current.append(_text(54, y - 15, label.upper(), "/F2", 10, 1, 1, 1))
+            y -= 40
+            index += 1
+            continue
+        if text.startswith("MEASURE_TYPE::"):
+            label = text.removeprefix("MEASURE_TYPE::")
+            ensure_space(32)
+            current.append(_rect(50, y - 24, 512, 27, 0.95, 0.93, 1.0))
+            current.append(_text(62, y - 15, "PROPOSAL TYPE", "/F2", 6, 0.36, 0.16, 0.75))
+            current.append(_text(150, y - 16, _fit_text(label, 68), "/F2", 9, 0.10, 0.08, 0.18))
+            y -= 35
+            index += 1
+            continue
+        if text.startswith("MEASURE_TITLE::"):
+            title = text.removeprefix("MEASURE_TITLE::")
+            wrapped = textwrap.wrap(title, width=78, replace_whitespace=False) or [title]
+            height = 38 + 12 * (len(wrapped) - 1)
+            ensure_space(height + 7)
+            current.append(_rect(50, y - height, 512, height, 0.95, 0.93, 1.0))
+            current.append(_rect(50, y - height, 5, height, 0.36, 0.16, 0.75))
+            current.append(_text(64, y - 13, "MITIGATION MEASURE TITLE", "/F2", 6, 0.36, 0.16, 0.75))
+            title_y = y - 29
+            for title_line in wrapped:
+                current.append(_text(64, title_y, title_line, "/F2", 10, 0.10, 0.08, 0.18))
+                title_y -= 12
+            y -= height + 9
+            index += 1
+            continue
+        if text.startswith("MEASURE_FIELD::"):
+            label = text.removeprefix("MEASURE_FIELD::")
+            next_height = _line_required_height(body[index + 1]) if index + 1 < len(body) else 0
+            ensure_space(22 + next_height)
+            current.append(_text(54, y - 12, _fit_text(label.upper(), 80), "/F2", 7, 0.36, 0.16, 0.75))
+            y -= 20
+            index += 1
+            continue
+        if text.startswith("MEASURE_SUBSECTION::"):
+            label = text.removeprefix("MEASURE_SUBSECTION::")
+            following_height = _line_required_height(body[index + 1]) if index + 1 < len(body) else 0
+            next_line = body[index + 1] if index + 1 < len(body) else ""
+            if next_line.startswith("POPULATION_VENN::"):
+                following_height = 170
+            elif next_line.startswith("RADAR_CHART::"):
+                following_height = 330
+            elif next_line.startswith("MEASURE_FIELD::") and index + 2 < len(body):
+                following_height = 22 + _line_required_height(body[index + 2])
+            ensure_space(32 + following_height)
+            current.append(_rect(50, y - 19, 4, 18, 0.36, 0.16, 0.75))
+            current.append(_text(60, y - 13, _fit_text(label, 74), "/F2", 9, 0.20, 0.23, 0.34))
+            y -= 31
+            index += 1
+            continue
+        if text.startswith("POLICY_TITLE::"):
+            policy_title = text.removeprefix("POLICY_TITLE::")
+            title_lines = textwrap.wrap(policy_title, width=78, replace_whitespace=False) or [policy_title]
+            card_height = 37 + 12 * (len(title_lines) - 1)
+            ensure_space(card_height + 8)
+            current.append(_rect(50, y - card_height, 512, card_height, 0.95, 0.93, 1.0))
+            current.append(_rect(50, y - card_height, 5, card_height, 0.36, 0.16, 0.75))
+            current.append(_text(66, y - 13, "SELECTED POLICY", "/F2", 6, 0.36, 0.16, 0.75))
+            title_y = y - 29
+            for title_line in title_lines:
+                current.append(_text(66, title_y, title_line, "/F2", 10, 0.10, 0.08, 0.18))
+                title_y -= 12
+            y -= card_height + 10
+            index += 1
+            continue
+        if text.startswith("POLICY_SUBSECTION::"):
+            label = text.removeprefix("POLICY_SUBSECTION::")
+            ensure_space(30)
+            current.append(_rect(54, y - 18, 4, 17, 0.36, 0.16, 0.75))
+            current.append(_text(66, y - 13, _fit_text(label, 72), "/F2", 9, 0.20, 0.23, 0.34))
+            y -= 31
             index += 1
             continue
         if text.startswith("EVAL_ROW::"):
@@ -693,12 +1136,40 @@ def _layout_pdf_pages(lines: list[str]) -> list[str]:
                 y = _draw_radar_chart(current, chart_data, y)
             index += 1
             continue
+        if text.startswith("POPULATION_VENN::"):
+            population = _marker_payload(text, "POPULATION_VENN::")
+            if isinstance(population, dict) and _has_population_venn_data(population):
+                ensure_space(170)
+                y = _draw_measure_population_venn(current, population, y)
+            index += 1
+            continue
         if text.startswith("COMPARISON_CARDS::"):
             cards = _marker_payload(text, "COMPARISON_CARDS::")
             if isinstance(cards, list) and cards:
                 required = 58 * min(len(cards), 5) + 18
                 ensure_space(required)
                 y = _draw_comparison_cards(current, cards, y)
+            index += 1
+            continue
+        if text.startswith("PLAN_SCORE_TABLE::"):
+            cards = _marker_payload(text, "PLAN_SCORE_TABLE::")
+            if isinstance(cards, list) and cards:
+                current, y = _draw_plan_score_table(current, cards, y, ensure_space)
+            index += 1
+            continue
+        if text.startswith("PLAN_RADAR_CHART::"):
+            chart_data = _marker_payload(text, "PLAN_RADAR_CHART::")
+            if _has_radar_scores(chart_data):
+                series_count = len(chart_data.get("series", [])) if isinstance(chart_data, dict) else 0
+                ensure_space(330 + max(0, (series_count - 1) // 5) * 12)
+                y = _draw_radar_chart(current, chart_data, y, title="Overlapping self-evaluation scores")
+            index += 1
+            continue
+        if text.startswith("PLAN_COMBINED_EULER::"):
+            groups = _marker_payload(text, "PLAN_COMBINED_EULER::")
+            if isinstance(groups, list) and groups:
+                ensure_space(230 + 13 * len(groups))
+                y = _draw_combined_target_euler(current, groups, y)
             index += 1
             continue
         if text.startswith("HAZARD_CONTEXT::"):
@@ -775,8 +1246,6 @@ def _next_content_required_height(lines: list[str], start_index: int) -> int:
 
 
 def _section_required_height(section: str, lines: list[str], section_index: int) -> int:
-    if section == "Mitigation Measure Evaluation":
-        return 40 + _next_lines_required_height(lines, section_index + 1, 3)
     return 40 + _next_content_required_height(lines, section_index + 1)
 
 
@@ -821,11 +1290,11 @@ def _line_required_height(text: str) -> int:
         return 34
     if text.startswith("- ") or text.startswith("  - "):
         content = text.lstrip(" -")
-        width = 86 if not text.startswith("  ") else 80
+        width = 100 if not text.startswith("  ") else 96
         return 16 + 13 * max(1, len(textwrap.wrap(content, width=width, replace_whitespace=False)))
     if text.startswith("|") or " | " in text:
         return 24
-    return 18 + 13 * max(1, len(textwrap.wrap(text, width=96, replace_whitespace=False)))
+    return 18 + 13 * max(1, len(textwrap.wrap(text, width=112, replace_whitespace=False)))
 
 
 def _cover_page(title: str, subtitle: str, generated: str) -> list[str]:
@@ -834,17 +1303,14 @@ def _cover_page(title: str, subtitle: str, generated: str) -> list[str]:
     cover = [
         _rect(0, 618, 612, 174, 0.07, 0.11, 0.20),
         _rect(0, 600, 612, 20, 0.36, 0.16, 0.75),
-        _text(48, 735, "DR TRANSITION", "/F2", 13, 0.85, 0.78, 1.0),
-        _text(48, 700, "Mitigation Measure Report", "/F2", 25, 1, 1, 1),
+        _text(48, 735, "FITTER Digital Platform (Dr Transition)", "/F2", 13, 0.85, 0.78, 1.0),
+        _text(48, 700, "Report", "/F2", 25, 1, 1, 1),
     ]
     if subtitle:
         cover.append(_text(49, 672, _fit_text(subtitle, 62), "/F1", 13, 0.90, 0.93, 1.0))
     cover.extend(
         [
             _text(49, generated_y, generated, "/F1", 9, 0.78, 0.84, 0.94),
-            _rect(48, 558, 516, 42, 0.96, 0.97, 1.0),
-            _text(64, 582, "Professional policy report generated from the mitigation workflow", "/F2", 11, 0.10, 0.08, 0.18),
-            _text(64, 564, "Structure follows the supplied report.docx template sections.", "/F1", 9, 0.36, 0.42, 0.52),
         ]
     )
     page.extend(cover)
@@ -855,10 +1321,10 @@ def _page_shell(page_number: int, subtitle: str) -> list[str]:
     return [
         _rect(0, 0, 612, 792, 1, 1, 1),
         _rect(0, 772, 612, 20, 0.07, 0.11, 0.20),
-        _text(42, 778, "DR TRANSITION", "/F2", 8, 1, 1, 1),
+        _text(42, 778, "FITTER Digital Platform (Dr Transition)", "/F2", 8, 1, 1, 1),
         _text(420, 778, _fit_text(subtitle, 34), "/F1", 7, 0.83, 0.87, 0.94),
         _line(42, 44, 570, 44, 0.86, 0.88, 0.92),
-        _text(42, 28, "Mitigation Measure Report", "/F1", 8, 0.40, 0.46, 0.55),
+        _text(42, 28, "Report", "/F1", 8, 0.40, 0.46, 0.55),
         _text(540, 28, f"Page {page_number}", "/F1", 8, 0.40, 0.46, 0.55),
     ]
 
@@ -963,7 +1429,7 @@ def _draw_measure_population_venn(commands: list[str], payload: dict[str, object
 
     commands.append(_rect(62, y - 138, 488, 146, 1.0, 1.0, 1.0))
     commands.append(_line(62, y + 8, 550, y + 8, 0.86, 0.88, 0.92))
-    commands.append(_text(74, y - 12, "Affected and target populations", "/F2", 10, 0.10, 0.08, 0.18))
+    commands.append(_text(74, y - 12, "Euler diagram: affected and target groups", "/F2", 10, 0.10, 0.08, 0.18))
 
     hazard_radius = min(55, max(34, 30 + affected_count * 5))
     target_radius = min(48, max(30, 28 + target_count * 5))
@@ -1049,7 +1515,7 @@ def _draw_measure_card(commands: list[str], card: dict[str, object], y: int) -> 
     return y
 
 
-def _draw_paragraph(commands: list[str], text: str, y: int, *, x: int = 54, width: int = 96) -> int:
+def _draw_paragraph(commands: list[str], text: str, y: int, *, x: int = 54, width: int = 112) -> int:
     wrapped = textwrap.wrap(text, width=width, replace_whitespace=False) or [""]
     for line in wrapped:
         if y < 62:
@@ -1061,7 +1527,7 @@ def _draw_paragraph(commands: list[str], text: str, y: int, *, x: int = 54, widt
 
 def _draw_bullet(commands: list[str], text: str, y: int, *, indent: int) -> int:
     content = text.lstrip(" -")
-    wrapped = textwrap.wrap(content, width=86 if indent < 65 else 80, replace_whitespace=False) or [content]
+    wrapped = textwrap.wrap(content, width=100 if indent < 65 else 96, replace_whitespace=False) or [content]
     commands.append(_text(indent - 13, y, "-", "/F2", 10, 0.36, 0.16, 0.75))
     for index, line in enumerate(wrapped):
         commands.append(_text(indent, y, line, "/F1", 9, 0.12, 0.16, 0.23))
@@ -1119,14 +1585,17 @@ def _draw_cell(
         y -= 10
 
 
-def _draw_radar_chart(commands: list[str], data: object, y: int) -> int:
+def _draw_radar_chart(
+    commands: list[str], data: object, y: int, *, title: str | None = None
+) -> int:
     if not isinstance(data, dict):
         return y
     criteria = [str(item) for item in data.get("criteria", []) if str(item).strip()]
     series = [item for item in data.get("series", []) if isinstance(item, dict)]
     if len(criteria) < 3 or not series:
         return y
-    commands.append(_text(210, y - 8, "Evaluation score profile", "/F2", 14, 0.10, 0.08, 0.18))
+    chart_title = title or ("Individual self-evaluation profile" if len(series) == 1 else "Evaluation score profile")
+    commands.append(_text(190, y - 8, chart_title, "/F2", 14, 0.10, 0.08, 0.18))
     center_x = 306
     center_y = y - 170
     radius = 105
@@ -1162,7 +1631,7 @@ def _draw_radar_chart(commands: list[str], data: object, y: int) -> int:
     for score_label, level in (("0", 0), ("5", 5), ("10", 10)):
         commands.append(_text(center_x - 18, int(center_y + radius * level / 10), score_label, "/F1", 7, 0.40, 0.46, 0.55))
     legend_y = center_y - radius - 36
-    for index, item in enumerate(series[:5]):
+    for index, item in enumerate(series):
         color = colors[index % len(colors)]
         scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
         points = [
@@ -1180,10 +1649,92 @@ def _draw_radar_chart(commands: list[str], data: object, y: int) -> int:
             commands.append(_polyline(points + [points[0]], *color, width=1.8))
             for px, py in points:
                 commands.append(_circle(px, py, 2.2, *color))
-        legend_x = 78 + index * 96
+        legend_x = 78 + (index % 5) * 96
+        legend_row = index // 5
         commands.append(_rect(legend_x, legend_y - 4, 10, 7, *color))
-        commands.append(_text(legend_x + 14, legend_y - 3, _fit_text(str(item.get("label") or f"M{index + 1}"), 10), "/F2", 8, 0.12, 0.16, 0.23))
-    return y - 318
+        commands.append(_text(legend_x + 14, legend_y - 3 - legend_row * 12, _fit_text(str(item.get("label") or f"M{index + 1}"), 10), "/F2", 8, 0.12, 0.16, 0.23))
+    return y - 318 - max(0, (len(series) - 1) // 5) * 12
+
+
+def _draw_plan_score_table(
+    commands: list[str], cards: list[object], y: int, ensure_space: object
+) -> tuple[list[str], int]:
+    commands, y = ensure_space(50)
+    commands.append(_text(54, y - 6, "Self-evaluation score by mitigation measure", "/F2", 10, 0.10, 0.08, 0.18))
+    y -= 20
+    commands, y = ensure_space(24)
+    commands.append(_rect(50, y - 17, 512, 20, 0.07, 0.11, 0.20))
+    commands.append(_text(60, y - 12, "Measure", "/F2", 8, 1, 1, 1))
+    commands.append(_text(155, y - 12, "Mitigation measure", "/F2", 8, 1, 1, 1))
+    commands.append(_text(430, y - 12, "Average", "/F2", 8, 1, 1, 1))
+    commands.append(_text(500, y - 12, "Scored", "/F2", 8, 1, 1, 1))
+    y -= 24
+    for index, card in enumerate(cards):
+        if not isinstance(card, dict):
+            continue
+        commands, y = ensure_space(25)
+        commands.append(_rect(50, y - 16, 512, 22, 0.97, 0.95, 1.0) if index % 2 == 0 else _rect(50, y - 16, 512, 22, 0.98, 0.99, 1.0))
+        commands.append(_text(60, y - 10, str(card.get("label") or f"M{index + 1}"), "/F2", 8, 0.36, 0.16, 0.75))
+        commands.append(_text(155, y - 10, _fit_text(str(card.get("measure") or ""), 45), "/F1", 8, 0.10, 0.08, 0.18))
+        average = card.get("average_score")
+        commands.append(_text(435, y - 10, "—" if average is None else f"{average}/10", "/F2", 8, 0.05, 0.55, 0.66))
+        commands.append(_text(510, y - 10, str(card.get("evaluation_count") or 0), "/F1", 8, 0.10, 0.08, 0.18))
+        y -= 24
+    return commands, y - 8
+
+
+def _draw_combined_target_euler(commands: list[str], groups: list[object], y: int) -> int:
+    valid = [item for item in groups if isinstance(item, dict)]
+    if not valid:
+        return y
+    commands.append(_text(54, y - 6, "Combined Euler diagram of targeted disadvantaged groups", "/F2", 10, 0.10, 0.08, 0.18))
+    y -= 24
+    colors = [(0.36, 0.16, 0.75), (0.05, 0.55, 0.66), (0.86, 0.30, 0.16), (0.10, 0.55, 0.28), (0.50, 0.32, 0.04)]
+    shown = valid
+    radius = min(50, max(20, 245 / max(1, len(shown))))
+    start_x = 96
+    spacing = min(66, 368 / max(1, len(shown) - 1)) if len(shown) > 1 else 0
+    center_y = y - 57
+    normalized: list[set[str]] = []
+    for index, item in enumerate(shown):
+        target_list = _object_text_list(item.get("groups"))
+        normalized.append({value.casefold() for value in target_list})
+        center_x = start_x + index * spacing
+        color = colors[index % len(colors)]
+        commands.append(_circle_outline(center_x, center_y, radius, *color))
+        commands.append(_text(int(center_x - 11), int(center_y + 5), str(item.get("label") or f"M{index + 1}"), "/F2", 8, *color))
+        commands.append(_text(int(center_x - 8), int(center_y - 9), str(len(target_list)), "/F1", 7, 0.25, 0.31, 0.40))
+    shared = set().union(*(items for items in normalized)) if normalized else set()
+    shared = {group for group in shared if sum(group in items for items in normalized) > 1}
+    shared_names = sorted(
+        {
+            group
+            for item in shown
+            for group in _object_text_list(item.get("groups"))
+            if group.casefold() in shared
+        },
+        key=str.casefold,
+    )
+    commands.append(_text(54, center_y - radius - 17, _fit_text(f"Groups targeted by multiple measures ({len(shared)}): {_list_text(shared_names)}", 100), "/F2", 7, 0.25, 0.31, 0.40))
+    list_y = center_y - radius - 31
+    for index, item in enumerate(shown):
+        names = _object_text_list(item.get("groups"))
+        label = str(item.get("label") or f"M{index + 1}")
+        commands.append(_text(54, list_y, f"{label}: {_fit_text(_list_text(names), 82)}", "/F1", 7, *colors[index % len(colors)]))
+        list_y -= 13
+    return list_y - 8
+
+
+def _circle_outline(x: float, y: float, radius: float, r: float, g: float, b: float) -> str:
+    c = radius * 0.55228475
+    return (
+        f"{r:.3f} {g:.3f} {b:.3f} RG 1.5 w "
+        f"{x + radius:.1f} {y:.1f} m "
+        f"{x + radius:.1f} {y + c:.1f} {x + c:.1f} {y + radius:.1f} {x:.1f} {y + radius:.1f} c "
+        f"{x - c:.1f} {y + radius:.1f} {x - radius:.1f} {y + c:.1f} {x - radius:.1f} {y:.1f} c "
+        f"{x - radius:.1f} {y - c:.1f} {x - c:.1f} {y - radius:.1f} {x:.1f} {y - radius:.1f} c "
+        f"{x + c:.1f} {y - radius:.1f} {x + radius:.1f} {y - c:.1f} {x + radius:.1f} {y:.1f} c S"
+    )
 
 
 def _draw_comparison_cards(commands: list[str], cards: list[object], y: int) -> int:

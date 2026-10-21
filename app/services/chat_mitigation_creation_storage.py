@@ -20,6 +20,7 @@ class ChatMitigationCreationStorageMixin:
                     "mechanisms": list(session.mitigation_mechanisms or []),
                     "selected_mechanism": session.selected_mitigation_mechanism or "",
                     "selected_policy": session.selected_mitigation_policy or "",
+                    "proposal_type": session.mitigation_proposal_type or "",
                     "new_policy_title": session.new_policy_title or "",
                     "new_policy_description": session.new_policy_description or "",
                     "new_policy_type": session.new_policy_type or "",
@@ -30,9 +31,12 @@ class ChatMitigationCreationStorageMixin:
                     or (evaluated.get("evidence") if isinstance(evaluated, dict) else "")
                     or "",
                     "summary": session.mitigation_creation_summary or "",
+                    "disadvantaged_group_pathways": session.mitigation_dg_benefit_explanations or {},
                     "disadvantaged_groups": list(session.mitigation_target_population or []),
                     "disadvantaged_group_evidence": session.mitigation_dg_evidence or {},
                     "equity": session.mitigation_equity or "",
+                    "access_barrier_answers": session.target_population_answers or [],
+                    "mitigation_clarification_history": session.mitigation_clarification_history or [],
                 }
             )
             self.db.commit()
