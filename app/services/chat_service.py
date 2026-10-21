@@ -399,6 +399,21 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
+        # Add more DGs answers are selections from the displayed option list.
+        # Numeric labels such as age ranges are valid selections, but the
+        # general text-quality gate treats them as gibberish (no letters).
+        if session.phase == "add_dgs":
+            return await self._capture_additional_dgs(
+                current_session_id, session, clean_message
+            )
+
+        # This step has its own reason/evidence validation and a Skip action.
+        # Handle Skip before the generic text-quality check rejects it as too short.
+        if session.phase == "dg_reason_evidence":
+            return await self._validate_dgs_against_stats(
+                current_session_id, session, clean_message
+            )
+
         # These are structured choices and multi-select answers. Route them
         # before the general wizard message quality checks.
         if session.phase == "new_policy_confirmation":
@@ -527,11 +542,6 @@ class ChatService(
         if session.phase == "stats_deep_dive":
             return await self._handle_stats_deep_dive(current_session_id, session, clean_message)
 
-        if session.phase == "target_population_question":
-            return await self._handle_target_population_answer(
-                current_session_id, session, clean_message
-            )
-
         mitigation_dialogue_handlers = {
             "mitigation_mechanism_selection": self._handle_mitigation_mechanism_selection,
             "mitigation_mechanism_reflection_review": self._handle_mitigation_mechanism_reflection_review,
@@ -583,16 +593,6 @@ class ChatService(
 
         if session.phase == "other_actions":
             return await self._handle_other_actions(
-                current_session_id, session, clean_message
-            )
-
-        if session.phase == "add_dgs":
-            return await self._capture_additional_dgs(
-                current_session_id, session, clean_message
-            )
-
-        if session.phase == "dg_reason_evidence":
-            return await self._validate_dgs_against_stats(
                 current_session_id, session, clean_message
             )
 
@@ -1661,14 +1661,25 @@ class ChatService(
     async def _finalize_additional_dg_questions(
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
-        profiles = [
-            profile["name"]
-            for profile in self._target_population_profiles_from_answers(
-                session.additional_dg_answers or [],
-                session.selected_hazard or "the selected hazard",
+        profiles: list[str] = []
+        for answer in session.additional_dg_answers or []:
+            question = str(answer.get("question") or "").strip()
+            stored_selected = answer.get("selected")
+            selected = (
+                [str(label).strip() for label in stored_selected if str(label).strip()]
+                if isinstance(stored_selected, list)
+                else [
+                    label.strip()
+                    for label in str(answer.get("answer") or "").split(",")
+                    if label.strip()
+                ]
             )
-            if profile.get("name")
-        ]
+            selected = list(dict.fromkeys(selected))
+            if not question or not selected:
+                continue
+            profile = self._additional_dg_group_profile_name(question, selected)
+            if profile and normalize(profile) not in {normalize(item) for item in profiles}:
+                profiles.append(profile)
         if not profiles:
             session.phase = "socio_demographic_review"
             return ChatResponse(
@@ -1745,6 +1756,13 @@ class ChatService(
             input_mode="reason_evidence",
             error=False,
         )
+
+    @staticmethod
+    def _additional_dg_group_profile_name(question: str, selected: list[str]) -> str:
+        question_label = question.strip().rstrip(".: ")
+        if len(selected) == 1:
+            return ChatService._target_population_profile_name(question_label, selected[0])
+        return f"{question_label}: {', '.join(selected)}"
 
     def _target_population_question_step(
         self,

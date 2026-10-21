@@ -4350,6 +4350,20 @@ async function openHazardMetricDataDialog(button) {
 }
 
 function selectedTargetPopulationLabels(questionId) {
+  if (appState.currentStep === "add_dgs") {
+    const answers = Array.isArray(appState.currentSession?.additional_dg_answers)
+      ? appState.currentSession.additional_dg_answers
+      : [];
+    const answer = [...answers].reverse().find(
+      (item) => String(item.question_id ?? "") === String(questionId ?? ""),
+    );
+    const selected = Array.isArray(answer?.selected)
+      ? answer.selected
+      : String(answer?.answer || "").split(",");
+    return new Set(
+      selected.map((label) => normalizeForMatch(label)).filter(Boolean),
+    );
+  }
   const policyAdaptationByQuestion = appState.currentSession?.policy_adaptation_target_population_by_question;
   if (
     appState.currentStep === "target_population_question"

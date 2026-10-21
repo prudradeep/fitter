@@ -271,6 +271,7 @@ class ChatSession:
             mitigation_review=self._mitigation_review_summary(self.mitigation_validation),
             target_population_questions=self.target_population_questions or [],
             target_population_answers=[dict(answer) for answer in (self.target_population_answers or [])],
+            additional_dg_answers=[dict(answer) for answer in (self.additional_dg_answers or [])],
             new_policy_target_population=list(self.new_policy_target_population or []),
             new_policy_target_population_by_question={
                 str(question_id): list(labels)

@@ -30,6 +30,7 @@ class SessionSummary(BaseModel):
     mitigation_review: dict[str, object] | None = None
     target_population_questions: list[dict[str, object]] = Field(default_factory=list)
     target_population_answers: list[dict[str, object]] = Field(default_factory=list)
+    additional_dg_answers: list[dict[str, object]] = Field(default_factory=list)
     new_policy_target_population: list[str] = Field(default_factory=list)
     new_policy_target_population_by_question: dict[str, list[str]] = Field(default_factory=dict)
     policy_adaptation_target_population_by_question: dict[str, list[str]] = Field(default_factory=dict)
