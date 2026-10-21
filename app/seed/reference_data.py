@@ -1368,19 +1368,24 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
     if not rows:
         return
 
-    policy_ids_by_code: dict[str, list[str]] = {}
+    policy_ids_by_code_sector: dict[tuple[str, str], list[str]] = {}
     for row in connection.execute(
         text(
             """
-            SELECT id, policy_code
+            SELECT mitigation_measure_policies.id, mitigation_measure_policies.policy_code,
+                   sectors.name AS sector_name
             FROM mitigation_measure_policies
+            LEFT JOIN sectors ON sectors.id = mitigation_measure_policies.sector_id
             WHERE source = 'xlsx'
             """
         )
     ).mappings():
         policy_code = str(row["policy_code"] or "").strip()
-        if policy_code:
-            policy_ids_by_code.setdefault(policy_code, []).append(str(row["id"]))
+        sector_key = _normalize_mitigation_example_key(str(row["sector_name"] or ""))
+        if policy_code and sector_key:
+            policy_ids_by_code_sector.setdefault((policy_code, sector_key), []).append(
+                str(row["id"])
+            )
 
     hazard_by_sector_name = {
         (
@@ -1398,17 +1403,8 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
         ).mappings()
     }
 
-    inserted = 0
+    expected_links: dict[str, dict[str, dict[str, object]]] = {}
     skipped = 0
-    seen_links = {
-        (str(row["mitigation_measure_policy_id"]), str(row["system_hazard_id"]))
-        for row in connection.execute(
-            text(
-                "SELECT mitigation_measure_policy_id, system_hazard_id "
-                "FROM mitigation_measure_policy_system_hazards"
-            )
-        ).mappings()
-    }
     for row in rows:
         mitigation_effect = str(row.get("mitigation_effect") or "").strip()
         if not mitigation_effect or mitigation_effect.casefold() == "not applicable":
@@ -1429,10 +1425,46 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
             continue
 
         policy_code = str(row.get("policy_code") or "").strip()
-        inserted_for_cell = False
-        for policy_id in policy_ids_by_code.get(policy_code, []):
-            link_key = (policy_id, system_hazard_id)
-            if link_key in seen_links:
+        sector_key = _normalize_mitigation_example_key(str(row.get("hazard_sector") or ""))
+        policy_ids = policy_ids_by_code_sector.get((policy_code, sector_key), [])
+        if not policy_ids:
+            skipped += 1
+            continue
+        for policy_id in policy_ids:
+            expected_links.setdefault(policy_id, {})[system_hazard_id] = {
+                "mitigation_effect": mitigation_effect,
+                "excel_row_number": row.get("excel_row_number"),
+                "excel_column_number": row.get("excel_column_number"),
+            }
+
+    policy_ids_in_workbook = {
+        policy_id
+        for (policy_code, _sector_key), policy_ids in policy_ids_by_code_sector.items()
+        if any(str(row.get("policy_code") or "").strip() == policy_code for row in rows)
+        for policy_id in policy_ids
+    }
+    for policy_id in policy_ids_in_workbook:
+        connection.execute(
+            text(
+                "DELETE FROM mitigation_measure_policy_system_hazards "
+                "WHERE mitigation_measure_policy_id = :policy_id AND source = 'xlsx'"
+            ),
+            {"policy_id": policy_id},
+        )
+
+    occupied_links = {
+        (str(row["mitigation_measure_policy_id"]), str(row["system_hazard_id"]))
+        for row in connection.execute(
+            text(
+                "SELECT mitigation_measure_policy_id, system_hazard_id "
+                "FROM mitigation_measure_policy_system_hazards"
+            )
+        ).mappings()
+    }
+    inserted = 0
+    for policy_id, hazard_links in expected_links.items():
+        for system_hazard_id, details in hazard_links.items():
+            if (policy_id, system_hazard_id) in occupied_links:
                 continue
             connection.execute(
                 text(
@@ -1461,19 +1493,14 @@ def _seed_hazards_xlsx_policy_system_hazards(connection) -> None:
                     "id": str(uuid.uuid4()),
                     "policy_id": policy_id,
                     "system_hazard_id": system_hazard_id,
-                    "mitigation_effect": mitigation_effect,
-                    "excel_row_number": row.get("excel_row_number"),
-                    "excel_column_number": row.get("excel_column_number"),
+                    **details,
                 },
             )
-            seen_links.add(link_key)
+            occupied_links.add((policy_id, system_hazard_id))
             inserted += 1
-            inserted_for_cell = True
-        if not inserted_for_cell:
-            skipped += 1
 
     logger.info(
-        "Loaded %s mitigation-policy system-hazard effect mappings from "
+        "Refreshed %s mitigation-policy system-hazard effect mappings from "
         "hazards.xlsx; skipped %s hazard cells",
         inserted,
         skipped,

@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import Column, DateTime, Integer, String, Table, and_, inspect, or_, select, text, update
+from sqlalchemy import Column, DateTime, Integer, String, Table, and_, case, func, inspect, or_, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import UniqueConstraint
 
@@ -1053,6 +1053,8 @@ class SyncService:
         return row[0] if row else None
 
     def _pk_for_natural_key(self, table: Table, payload_row: dict[str, Any]) -> Any | None:
+        if table.name == "policies":
+            return self._pk_for_policy_title_key(table, payload_row)
         natural_key_columns = first_unique_key_columns(table)
         if not natural_key_columns:
             return None
@@ -1073,6 +1075,41 @@ class SyncService:
             else:
                 return None
         row = self.db.execute(select(only_pk(table)).where(*conditions)).first()
+        return row[0] if row else None
+
+    def _pk_for_policy_title_key(
+        self, table: Table, payload_row: dict[str, Any],
+    ) -> Any | None:
+        """Match the case-insensitive, first-line policy key enforced by SQLite."""
+        fk_sync_ids = payload_row.get("__fk_sync_ids") if isinstance(payload_row.get("__fk_sync_ids"), dict) else {}
+        resolved: dict[str, Any] = {}
+        for name in ("country_id", "sector_id"):
+            column = table.c[name]
+            if name in fk_sync_ids:
+                value = self._resolve_fk_value(
+                    column, str(fk_sync_ids[name]), payload_row.get(name),
+                )
+            else:
+                value = self._resolve_fk_value(column, "", payload_row.get(name))
+            if value is None:
+                return None
+            resolved[name] = value
+        title = str(payload_row.get("policy") or "").splitlines()[0].strip()
+        if not title:
+            return None
+        policy_column = table.c.policy
+        first_line = case(
+            (func.instr(policy_column, "\n") > 0,
+             func.substr(policy_column, 1, func.instr(policy_column, "\n") - 1)),
+            else_=policy_column,
+        )
+        row = self.db.execute(
+            select(only_pk(table)).where(
+                table.c.country_id == resolved["country_id"],
+                table.c.sector_id == resolved["sector_id"],
+                func.lower(func.trim(first_line)) == title.lower(),
+            )
+        ).first()
         return row[0] if row else None
 
     def _payload_is_newer_than_existing(
