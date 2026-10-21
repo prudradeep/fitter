@@ -462,7 +462,7 @@ def ensure_runtime_schema(*, seed_reference_data: bool = False) -> None:
                 if "session_data" not in session_columns:
                     connection.execute(
                         text(
-                            "ALTER TABLE user_sessions ADD COLUMN session_data TEXT "
+                            "ALTER TABLE user_sessions ADD COLUMN session_data MEDIUMTEXT "
                             "NULL AFTER title"
                         )
                     )

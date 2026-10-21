@@ -1,11 +1,4 @@
-"""Import the KB rows from a Windows OfflineAdmin seed bundle into server MySQL.
-
-The SQLite snapshot is read-only. Document and chunk IDs are regenerated so the
-import can coexist with rows already seeded on the server. FAISS indexes are
-then indexed with the server's configured embedding provider and model. Existing
-FAISS vectors are retained; only missing chunks are embedded unless an explicit
-``--index-only`` rebuild is requested.
-"""
+"""Import a complete OfflineAdmin seed snapshot and its FAISS indexes into MySQL."""
 
 from __future__ import annotations
 
@@ -27,6 +20,11 @@ sys.path.insert(0, str(ROOT))
 
 SOURCE_SCOPES = ("main", "sector_prompt", "policy_document")
 INSERT_BATCH_SIZE = 500
+SCOPE_SUFFIXES = {
+    "main": "main",
+    "sector_prompt": "sector_prompts",
+    "policy_document": "policy_reference",
+}
 
 
 def _normalize(value: object) -> str:
@@ -82,6 +80,174 @@ def _validate_bundle(source: Path) -> None:
         raise ValueError("Bundle manifest database filename does not match --source")
     if _sha256(source) != manifest.get("database_sha256"):
         raise ValueError("Offline SQLite database checksum does not match its manifest")
+
+
+def _bundle_manifest(source: Path) -> dict[str, object]:
+    manifest = json.loads((source.parent / "manifest.json").read_text(encoding="utf-8"))
+    indexes = manifest.get("indexes")
+    if not isinstance(indexes, list) or not indexes:
+        raise ValueError("Offline seed bundle has no FAISS indexes")
+    return manifest
+
+
+def _replace_all_database_rows(source: sqlite3.Connection, engine, *, dry_run: bool) -> dict[str, int]:
+    """Replace server application rows with every table snapshot in seed.db."""
+    import json as json_module
+    from datetime import date, datetime, time
+
+    from sqlalchemy import MetaData
+    from sqlalchemy.sql.sqltypes import Boolean, Date, DateTime, JSON, Time
+
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    target_tables = metadata.tables
+    source_names = {
+        str(row[0])
+        for row in source.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    control_tables = {"schema_migrations", "alembic_version"}
+    missing = sorted(source_names - control_tables - set(target_tables))
+    if missing:
+        raise ValueError(
+            "Server schema is missing tables from seed.db: " + ", ".join(missing)
+            + ". Deploy and apply the matching application migrations first."
+        )
+
+    counts: dict[str, int] = {}
+    for name in sorted(source_names - control_tables):
+        source_columns = {str(row[1]) for row in source.execute(f'PRAGMA table_info("{name}")')}
+        target = target_tables[name]
+        target_columns = {column.name for column in target.columns}
+        missing_columns = sorted(source_columns - target_columns)
+        if missing_columns:
+            raise ValueError(
+                f"Server table {name} is missing seed.db columns: {', '.join(missing_columns)}"
+            )
+        for column in target.columns:
+            if (
+                column.name not in source_columns
+                and not column.nullable
+                and column.default is None
+                and column.server_default is None
+                and column.autoincrement is not True
+                and column.computed is None
+            ):
+                raise ValueError(
+                    f"Server table {name} requires column {column.name}, which is absent from seed.db"
+                )
+        counts[name] = int(source.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0])
+
+    if dry_run:
+        return counts
+
+    def convert_row(name: str, row: sqlite3.Row) -> dict[str, object]:
+        converted: dict[str, object] = {}
+        for column in target_tables[name].columns:
+            if column.name not in row.keys():
+                continue
+            value = row[column.name]
+            if value is None:
+                converted[column.name] = None
+                continue
+            kind = column.type
+            if isinstance(kind, DateTime) and isinstance(value, str):
+                converted[column.name] = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            elif isinstance(kind, Date) and not isinstance(kind, DateTime) and isinstance(value, str):
+                converted[column.name] = date.fromisoformat(value[:10])
+            elif isinstance(kind, Time) and isinstance(value, str):
+                converted[column.name] = time.fromisoformat(value)
+            elif isinstance(kind, JSON) and isinstance(value, str):
+                converted[column.name] = json_module.loads(value)
+            elif isinstance(kind, Boolean):
+                converted[column.name] = bool(value)
+            else:
+                converted[column.name] = value
+        return converted
+
+    with engine.connect() as target_connection:
+        target_connection.exec_driver_sql("SET FOREIGN_KEY_CHECKS=0")
+        target_connection.commit()
+        try:
+            with target_connection.begin():
+                # Replace every application table, including MySQL-only tables,
+                # so the resulting server reflects this clean seed snapshot.
+                for name in reversed(sorted(target_tables)):
+                    if name not in control_tables:
+                        target_connection.execute(target_tables[name].delete())
+
+                for name in sorted(source_names - control_tables):
+                    table = target_tables[name]
+                    cursor = source.execute(f'SELECT * FROM "{name}"')
+                    while rows := cursor.fetchmany(250):
+                        target_connection.execute(
+                            table.insert(), [convert_row(name, row) for row in rows]
+                        )
+        finally:
+            target_connection.exec_driver_sql("SET FOREIGN_KEY_CHECKS=1")
+            target_connection.commit()
+    return counts
+
+
+def _install_bundle_indexes(
+    source: Path, manifest: dict[str, object], settings, *, validate_only: bool = False
+) -> None:
+    """Install the bundled vectors whose IDs match the imported SQLite rows."""
+    import faiss
+
+    from app.services.seed_index_bundle import _copy_atomically, _write_ollama_index_metadata
+
+    model = str(manifest.get("embedding_model") or "").strip()
+    if getattr(settings, "embedding_provider", "ollama") != "ollama":
+        raise ValueError("Bundled indexes require the Ollama embedding provider")
+    if model != str(settings.ollama_embedding_model or "").strip():
+        raise ValueError(
+            f"Bundle embedding model {model!r} does not match server model "
+            f"{settings.ollama_embedding_model!r}"
+        )
+    entries = manifest["indexes"]
+    scopes = [str(entry.get("scope") or "") for entry in entries if isinstance(entry, dict)]
+    if len(scopes) != len(entries) or len(set(scopes)) != len(scopes):
+        raise ValueError("Offline seed bundle contains invalid or duplicate FAISS scopes")
+    index_base = Path(settings.faiss_index_path)
+    destinations: list[tuple[Path, Path, int]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Invalid FAISS index entry in bundle manifest")
+        filename = str(entry.get("file") or "")
+        scope = str(entry.get("scope") or "")
+        expected_filename = f"{index_base.stem}.{SCOPE_SUFFIXES.get(scope, '')}{index_base.suffix}"
+        if scope not in SCOPE_SUFFIXES or filename != expected_filename:
+            raise ValueError(f"Unexpected FAISS scope or filename in bundle: {scope!r}, {filename!r}")
+        if Path(filename).name != filename or not filename.endswith(".faiss"):
+            raise ValueError(f"Invalid FAISS bundle filename: {filename!r}")
+        bundled = source.parent / filename
+        if not bundled.is_file() or _sha256(bundled) != entry.get("sha256"):
+            raise ValueError(f"FAISS index checksum does not match manifest: {filename}")
+        index = faiss.read_index(str(bundled))
+        if index.ntotal != entry.get("vectors") or index.d != entry.get("dimensions"):
+            raise ValueError(f"FAISS index metadata does not match manifest: {filename}")
+        destination = index_base.with_name(filename)
+        if destination.exists() and _sha256(destination) != entry.get("sha256"):
+            raise ValueError(f"Server FAISS index already exists: {destination}")
+        destinations.append((bundled, destination, index.d))
+    if validate_only:
+        return
+    installed: list[Path] = []
+    try:
+        for bundled, destination, dimensions in destinations:
+            if not destination.exists():
+                _copy_atomically(bundled, destination)
+                installed.append(destination)
+            metadata = destination.with_suffix(f"{destination.suffix}.metadata.json")
+            if not metadata.exists():
+                installed.append(metadata)
+            _write_ollama_index_metadata(destination, model, dimensions)
+    except Exception:
+        for path in installed:
+            path.unlink(missing_ok=True)
+        raise
 
 
 def _source_policies(connection: sqlite3.Connection) -> dict[str, sqlite3.Row]:
@@ -299,6 +465,21 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
                     ).limit(1)
                 )
             if existing is not None:
+                if str(existing) != source_doc_id:
+                    raise ValueError(
+                        f"Existing {context} has ID {existing}, but bundle vectors require "
+                        f"ID {source_doc_id}. Import into an empty KB or remove the conflicting row."
+                    )
+                existing_chunk_ids = set(
+                    db.scalars(
+                        select(KnowledgeChunk.id).where(
+                            KnowledgeChunk.document_id == source_doc_id
+                        )
+                    ).all()
+                )
+                source_chunk_ids = {str(chunk["id"]) for chunk, *_ in prepared_chunks}
+                if existing_chunk_ids != source_chunk_ids:
+                    raise ValueError(f"Existing {context} has different chunk IDs from the bundle")
                 result["skipped_existing"] += 1
                 continue
 
@@ -309,7 +490,7 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
 
             try:
                 document = KnowledgeDocument(
-                    id=str(uuid.uuid4()),
+                    id=source_doc_id,
                     title=str(source_doc["title"] or "Knowledge document")[:255],
                     source_type=str(source_doc["source_type"] or "document")[:40],
                     source_uri=source_doc["source_uri"],
@@ -328,7 +509,7 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
                     batch = prepared_chunks[offset : offset + INSERT_BATCH_SIZE]
                     db.add_all(
                         KnowledgeChunk(
-                            id=str(uuid.uuid4()),
+                            id=str(chunk["id"]),
                             document_id=document.id,
                             chunk_index=int(chunk["chunk_index"]),
                             content=str(chunk["content"] or ""),
@@ -450,11 +631,21 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Validate mappings without importing")
     parser.add_argument("--no-index", action="store_true", help="Import rows without indexing; a later normal run indexes only missing chunks")
     parser.add_argument("--index-only", action="store_true", help="Force-rebuild indexes without importing")
+    parser.add_argument(
+        "--replace-all-data",
+        action="store_true",
+        help=(
+            "Destructively replace every server application table with all table data "
+            "from seed.db, then install the matching bundled FAISS indexes."
+        ),
+    )
     args = parser.parse_args()
     if args.dry_run and (args.no_index or args.index_only):
         parser.error("--dry-run cannot be combined with --no-index or --index-only")
     if args.no_index and args.index_only:
         parser.error("--no-index and --index-only cannot be combined")
+    if args.replace_all_data and (args.no_index or args.index_only):
+        parser.error("--replace-all-data cannot be combined with --no-index or --index-only")
 
     source_path = args.source.resolve()
     if not args.index_only:
@@ -480,13 +671,59 @@ def main() -> int:
         parser.error("Target must be APP_MODE=server with a MySQL DATABASE_URL")
     try:
         validate_database_connection()
+        bundle_manifest = None
         if not args.index_only:
+            bundle_manifest = _bundle_manifest(source_path)
+            if args.replace_all_data:
+                _install_bundle_indexes(source_path, bundle_manifest, settings, validate_only=True)
             with closing(_open_source(source_path)) as source:
-                result = _import_rows(source, SessionLocal, dry_run=args.dry_run)
+                if args.replace_all_data:
+                    result = _replace_all_database_rows(source, engine, dry_run=args.dry_run)
+                else:
+                    result = _import_rows(source, SessionLocal, dry_run=args.dry_run)
             print("Import result:", json.dumps(result, sort_keys=True), flush=True)
         if args.dry_run or args.no_index:
             return 0
-        failures = asyncio.run(_index_scopes(SessionLocal, rebuild=args.index_only))
+        if bundle_manifest is not None:
+            _install_bundle_indexes(source_path, bundle_manifest, settings)
+            from sqlalchemy import update
+
+            from app.models import KnowledgeChunk, KnowledgeDocument
+
+            scopes = [str(entry["scope"]) for entry in bundle_manifest["indexes"]]
+            with closing(_open_source(source_path)) as source:
+                document_ids = [
+                    str(row[0])
+                    for row in source.execute(
+                        f"SELECT id FROM knowledge_documents WHERE scope IN ({','.join('?' for _ in scopes)})",
+                        tuple(scopes),
+                    )
+                ]
+                chunk_ids = [
+                    str(row[0])
+                    for row in source.execute(
+                        f"SELECT id FROM knowledge_chunks WHERE document_id IN ({','.join('?' for _ in document_ids)})",
+                        tuple(document_ids),
+                    )
+                ] if document_ids else []
+            with SessionLocal() as db:
+                if document_ids:
+                    db.execute(
+                        update(KnowledgeDocument)
+                        .where(KnowledgeDocument.id.in_(document_ids))
+                        .values(faiss_indexed=1)
+                    )
+                if chunk_ids:
+                    db.execute(
+                        update(KnowledgeChunk)
+                        .where(KnowledgeChunk.id.in_(chunk_ids))
+                        .values(faiss_indexed=1)
+                    )
+                db.commit()
+            print("Installed matching bundled FAISS indexes", flush=True)
+            failures = 0
+        else:
+            failures = asyncio.run(_index_scopes(SessionLocal, rebuild=args.index_only))
         return 1 if failures else 0
     except Exception as exc:
         print(f"Offline KB import failed: {exc}", file=sys.stderr, flush=True)

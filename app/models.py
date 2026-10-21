@@ -2,6 +2,7 @@ from datetime import datetime
 import uuid
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -102,7 +103,7 @@ class UserSession(Base):
     session_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     title: Mapped[str | None] = mapped_column(String(220), index=True)
     title_is_manual: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    session_data: Mapped[str | None] = mapped_column(Text)
+    session_data: Mapped[str | None] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"))
     user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("app_users.id", ondelete="SET NULL"), index=True
     )

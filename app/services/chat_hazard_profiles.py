@@ -366,7 +366,8 @@ class ChatHazardProfilesMixin:
         system_hazards = [
             hazard
             for hazard in (session.hazards or [])
-            if cls._stored_hazard_profiles(session, hazard)
+            if session.selected_context_policy_id
+            or cls._stored_hazard_profiles(session, hazard)
         ]
         custom_hazards = [
             hazard

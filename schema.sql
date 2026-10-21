@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   session_key VARCHAR(64) NOT NULL UNIQUE,
   title VARCHAR(220) NULL,
   title_is_manual BOOLEAN NOT NULL DEFAULT FALSE,
-  session_data TEXT NULL,
+  session_data MEDIUMTEXT NULL,
   user_id CHAR(36) NULL,
   country_id CHAR(36) NULL,
   region_id CHAR(36) NULL,

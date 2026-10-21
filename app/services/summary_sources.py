@@ -20,6 +20,27 @@ def source_button(rows: list[dict[str, str]]) -> str:
     )
 
 
+def _is_unidentified_summary_bullet(line: str) -> bool:
+    match = _BULLET.match(line)
+    if not match:
+        return False
+    label = (match.group(1) or "").strip()
+    detail = match.group(2).strip()
+    if not label and ":" in detail:
+        label, detail = detail.split(":", 1)
+
+    def normalized(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+    return (
+        normalized(label) == "not identified"
+        and normalized(detail) in {
+            "not stated in the supplied text",
+            "not stated in supplied text",
+        }
+    )
+
+
 def summary_points(markdown: str):
     """Yield section, point index, label and text in display order."""
     section = ""
@@ -86,19 +107,41 @@ def policy_point_sources(markdown: str, chunks: list[dict[str, object]], clarifi
 
 
 def policy_summary_with_buttons(markdown: str, sources: dict[str, list[list[dict[str, str]]]] | None) -> str:
+    blocks: list[list[str]] = []
+    block: list[str] = []
+    for line in markdown.splitlines():
+        if line.startswith("### ") and block:
+            blocks.append(block)
+            block = []
+        block.append(line)
+    if block:
+        blocks.append(block)
+
     section = ""
     counts: dict[str, int] = {}
     output = []
-    for line in markdown.splitlines():
-        if line.startswith("### "):
-            section = line[4:].strip().casefold()
-            counts[section] = 0
-        match = _BULLET.match(line)
-        if section and match:
-            index = counts.get(section, 0)
-            counts[section] = index + 1
-            choices = (sources or {}).get(section, [])
-            if index < len(choices):
-                line += " " + source_button(choices[index])
-        output.append(line)
+    for block in blocks:
+        heading = block[0] if block and block[0].startswith("### ") else ""
+        if heading:
+            section = heading[4:].strip().casefold()
+            bullets = [line for line in block[1:] if _BULLET.match(line)]
+            if bullets and not any(
+                not _is_unidentified_summary_bullet(line) for line in bullets
+            ):
+                continue
+            counts.setdefault(section, 0)
+        for line in block:
+            if line.startswith("### "):
+                output.append(line)
+                continue
+            match = _BULLET.match(line)
+            if section and match:
+                index = counts.get(section, 0)
+                counts[section] = index + 1
+                if _is_unidentified_summary_bullet(line):
+                    continue
+                choices = (sources or {}).get(section, [])
+                if index < len(choices):
+                    line += " " + source_button(choices[index])
+            output.append(line)
     return "\n".join(output)

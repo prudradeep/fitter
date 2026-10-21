@@ -1,3 +1,4 @@
+import logging
 import re
 from difflib import SequenceMatcher
 from html import escape
@@ -46,10 +47,6 @@ from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.document_language import document_language_guidance
 from app.services.enums import ChatPhase
 from app.services.hazard_salience import survey_respondent_count
-from app.services.hazard_with_mitigation import (
-    _country_factsheet_document,
-    country_factsheet_policy_objectives,
-)
 from app.services.knowledge_base import POLICY_DOCUMENT_SCOPE, TEMPORARY_KB_SCOPE
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.summary_sources import policy_point_sources, policy_summary_with_buttons
@@ -69,6 +66,7 @@ POLICY_SECTION_HEADING = re.compile(
     r"(?m)^[ \t]*(?:§[ \t]*|Section[ \t]+|Article[ \t]+|Articolo[ \t]+|Art\.[ \t]*)(\d+[a-z]?)\b[^\n]*$",
     re.IGNORECASE,
 )
+logger = logging.getLogger("app.services.chat_hazard_creation")
 
 
 def _policy_summary_source(source_text: str, limit: int, policy_title: str = "") -> str:
@@ -498,21 +496,19 @@ class ChatHazardStepsMixin:
         session.selected_context_policy_sources = policy_point_sources(
             session.selected_context_policy_summary or "", chunks,
         )
-        factsheet_objectives = country_factsheet_policy_objectives(
-            self.db, country=session.country, sector=session.sector,
-            selected_policy=session.selected_context_policy,
-        )
-        if factsheet_objectives:
-            factsheet = _country_factsheet_document(self.db, session.country)
+        d42 = self._policy_summary_reference(session)
+        d42_objectives = str((d42.fields if d42 else {}).get("Original Policy Objective") or "").strip()
+        if d42 and d42_objectives:
+            objective_points = _split_inline_bullets(d42_objectives) or [d42_objectives]
             objective_rows = [
-                {"field": "Document", "value": factsheet.get("title", "Policy factsheet")},
-                *([{"field": "Source", "value": factsheet["source_uri"]}]
-                  if factsheet.get("source_uri") else []),
-                {"field": "Factsheet field", "value": "Original policy objectives"},
-                {"field": "Referenced excerpt", "value": factsheet_objectives},
+                {"field": "Document", "value": d42.document},
+                {"field": "Source", "value": d42.source_uri},
+                *([{"field": "Page", "value": str(d42.page_for_field("Original Policy Objective"))}]
+                  if d42.page_for_field("Original Policy Objective") else []),
+                {"field": "Referenced excerpt", "value": d42_objectives},
             ]
             sources = dict(session.selected_context_policy_sources or {})
-            sources["policy objectives"] = [objective_rows]
+            sources["policy objectives"] = [objective_rows for _ in objective_points]
             session.selected_context_policy_sources = sources
 
     def _policy_summary_reference(
@@ -714,22 +710,41 @@ class ChatHazardStepsMixin:
         focused_source = _policy_summary_source(
             source_text, 48000, session.selected_context_policy or ""
         )
-        factsheet_objectives = country_factsheet_policy_objectives(
-            self.db, country=session.country, sector=session.sector,
-            selected_policy=session.selected_context_policy,
-        )
-        def use_factsheet_objectives(summary: str) -> str:
-            if not factsheet_objectives:
+        d42 = self._policy_summary_reference(session)
+        d42_objectives = str((d42.fields if d42 else {}).get("Original Policy Objective") or "").strip()
+        def use_d42_objectives(summary: str) -> str:
+            if not d42_objectives:
                 return summary
+            objectives = _split_inline_bullets(d42_objectives) or [d42_objectives]
+            bullets = "\n".join(f"- {objective}" for objective in objectives)
             return re.sub(
                 r"(?ms)^### Policy Objectives\s*\n.*?(?=^### |\Z)",
-                "### Policy Objectives\n\n- " + factsheet_objectives + "\n\n",
+                "### Policy Objectives\n\n" + bullets + "\n\n",
                 summary,
                 count=1,
             ).rstrip()
 
         excerpt_fallback = _policy_source_excerpt_fallback(focused_source)
         valid_sections: dict[str, list[dict[str, str]]] = {}
+        section_title_labels = {
+            "policy details", "original objectives", "policy objectives",
+            "intended benefits", "benefited groups", "target actors beneficiaries",
+            "mechanisms",
+        }
+
+        def is_section_title_label(item: dict[str, str]) -> bool:
+            label = re.sub(r"[^a-z0-9]+", " ", item.get("label", "").casefold()).strip()
+            return label in section_title_labels
+
+        def is_not_identified(item: dict[str, str]) -> bool:
+            label = re.sub(r"[^a-z0-9]+", " ", item.get("label", "").casefold()).strip()
+            text = re.sub(r"[^a-z0-9]+", " ", item.get("text", "").casefold()).strip()
+            return label == "not identified" or text in {
+                "not identified", "not stated in the supplied text",
+                "none stated in the supplied text", "not stated in supplied text",
+                "none stated in supplied text",
+            }
+
         for source_limit in (48000, 24000):
             prompt = (
                 f"{instructions}\n\n"
@@ -754,6 +769,12 @@ class ChatHazardStepsMixin:
                     items = parsed.get(key)
                     if not isinstance(items, list) or not items:
                         continue
+                    items = [
+                        item for item in items
+                        if isinstance(item, dict) and not is_section_title_label(item)
+                    ]
+                    if not items:
+                        continue
                     if not all(
                         isinstance(item, dict)
                         and isinstance(item.get("label"), str) and item["label"].strip()
@@ -774,19 +795,100 @@ class ChatHazardStepsMixin:
                     ):
                         continue
                     valid_sections[key] = items
-            if all(key in valid_sections for key, _ in fields if key != "original_objectives"):
-                return use_factsheet_objectives("\n\n".join(
-                    f"### {heading}\n\n" + "\n".join(
-                        (
-                            f"- **{item['label'].strip()}:** {item['text'].strip()}"
-                            if item["label"].strip() else f"- {item['text'].strip()}"
-                        )
-                        for item in valid_sections.get(key, [{
-                            "label": "Not identified", "text": "Not stated in the supplied text."
-                        }])
+        def missing_summary_sections() -> list[str]:
+            missing = []
+            for key, _heading in fields:
+                if key == "original_objectives" and d42_objectives:
+                    continue
+                items = valid_sections.get(key, [])
+                if not items and excerpt_fallback.get(key):
+                    continue
+                if not items or any(is_not_identified(item) for item in items):
+                    missing.append(key)
+            return missing
+
+        # The initial summary examines the first 48K characters. If a section
+        # remains unidentified, scan the whole document in overlapping windows
+        # and ask only for the still-missing sections.
+        missing = missing_summary_sections()
+        if missing:
+            window_size = 36000
+            overlap = 2000
+            step = window_size - overlap
+            for offset in range(0, len(source_text), step):
+                if not missing:
+                    break
+                excerpt = source_text[offset:offset + window_size]
+                if not excerpt.strip():
+                    continue
+                chunk_prompt_source = _policy_summary_source(
+                    excerpt, 48000, session.selected_context_policy or "",
+                )
+                retry_schema = {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": missing,
+                    "properties": {key: schema["properties"][key] for key in missing},
+                }
+                retry_instructions = (
+                    "Review this excerpt from the linked policy document for the requested summary sections. "
+                    "Return supported, policy-specific facts only. If this excerpt does not establish a requested "
+                    "section, return one bullet labeled 'Not identified' with text "
+                    "'Not stated in the supplied text.' Do not infer facts from other sections. "
+                    "Keep bullets short and complete, and omit legal or article references.\n\n"
+                    f"Policy: {session.selected_context_policy}\n"
+                    f"Country, region, sector: {session.country}, {session.region}, {session.sector}\n"
+                    f"Requested sections: {', '.join(key for key, heading in fields if key in missing)}\n\n"
+                    f"Linked policy document excerpt:\n{chunk_prompt_source}"
+                )
+                try:
+                    response = await ask_llm_chat(
+                        context="You are a careful policy analyst. Do not invent policy details.",
+                        messages=[{"role": "user", "content": retry_instructions}],
+                        temperature=0.0,
+                        max_tokens=2000,
+                        response_format=retry_schema,
                     )
-                    for key, heading in fields
-                ))
+                except Exception:
+                    response = ""
+                parsed = parse_json_object(response) if not is_llm_unavailable_response(response) else None
+                if not isinstance(parsed, dict):
+                    continue
+                for key in list(missing):
+                    items = parsed.get(key)
+                    if not isinstance(items, list):
+                        continue
+                    items = [
+                        item for item in items
+                        if isinstance(item, dict) and not is_section_title_label(item)
+                    ]
+                    if not items or not all(
+                        isinstance(item, dict)
+                        and isinstance(item.get("label"), str) and item["label"].strip()
+                        and isinstance(item.get("text"), str) and item["text"].strip()
+                        and not re.search(
+                            r"(?:[(:,;]|\b(?:and|or))\s*$",
+                            item["text"].strip(), re.IGNORECASE,
+                        )
+                        and not POLICY_SUMMARY_REFERENCE.search(item["label"] + " " + item["text"])
+                        for item in items
+                    ):
+                        continue
+                    supported = [item for item in items if not is_not_identified(item)]
+                    if supported:
+                        previous = [
+                            item for item in valid_sections.get(key, [])
+                            if not is_not_identified(item)
+                        ]
+                        seen = {(item["label"].strip().casefold(), item["text"].strip().casefold())
+                                for item in previous}
+                        previous.extend(
+                            item for item in supported
+                            if (item["label"].strip().casefold(), item["text"].strip().casefold()) not in seen
+                        )
+                        valid_sections[key] = previous
+                missing = missing_summary_sections()
+
         fallback = {
             "policy_details": (
                 "Not identified", "Not stated in the supplied text."
@@ -813,7 +915,7 @@ class ChatHazardStepsMixin:
                     for label, text in bullets
                 )
             )
-        return use_factsheet_objectives("\n\n".join(sections))
+        return use_d42_objectives("\n\n".join(sections))
 
     async def _handle_context_policy_reference(
         self, session_id: str, session: ChatSession, message: str
@@ -1516,6 +1618,14 @@ class ChatHazardStepsMixin:
                 ),
             )
         ).all()
+        logger.info(
+            "Policy hazard mapping lookup: policy_id=%s title=%r sector_id=%s country_id=%s candidates=%d",
+            policy.id,
+            policy.policy,
+            policy.sector_id,
+            policy.country_id,
+            len(candidates),
+        )
         scored: list[tuple[float, MitigationMeasurePolicy]] = []
         selected_tokens = set(selected_key.split())
         for candidate in candidates:
@@ -1534,10 +1644,29 @@ class ChatHazardStepsMixin:
             if score >= 0.58:
                 scored.append((score, candidate))
         if not scored:
+            logger.warning(
+                "No mitigation policy title matched selected policy: policy_id=%s title=%r",
+                policy.id,
+                policy.policy,
+            )
             return None
         scored.sort(key=lambda item: (-item[0], item[1].id))
         if len(scored) > 1 and scored[0][0] - scored[1][0] < 0.05:
+            logger.warning(
+                "Ambiguous mitigation policy title match: policy_id=%s title=%r matches=%s",
+                policy.id,
+                policy.policy,
+                [(candidate.id, candidate.policy_title, round(score, 3)) for score, candidate in scored[:5]],
+            )
             return None
+        logger.info(
+            "Matched mitigation policy: policy_id=%s title=%r mitigation_policy_id=%s matched_title=%r score=%.3f",
+            policy.id,
+            policy.policy,
+            scored[0][1].id,
+            scored[0][1].policy_title,
+            scored[0][0],
+        )
         return scored[0][1]
 
     async def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
@@ -1552,8 +1681,15 @@ class ChatHazardStepsMixin:
         ):
             session.custom_hazards = self._saved_custom_hazards_for_context(session)
         self._hydrate_custom_hazard_profiles(session)
-        self._limit_hazards_to_selected_policy(session)
         self._filter_session_hazards_without_profiles(session)
+        logger.info(
+            "Hazards display preparation: session_id=%s selected_policy_id=%s system_hazards=%s additional_hazards=%s profile_keys=%s",
+            session_id,
+            session.selected_context_policy_id,
+            session.hazards,
+            session.additional_hazards,
+            list((session.hazard_profiles or {}).keys()),
+        )
         await self._enrich_policy_hazards_with_population_context(session)
         session.phase = "hazards"
         return ChatResponse(

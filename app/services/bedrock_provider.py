@@ -41,15 +41,20 @@ def _client(settings: Settings):
     kwargs: dict[str, str] = {}
     if settings.aws_region.strip():
         kwargs["region_name"] = settings.aws_region.strip()
+    profile = settings.aws_profile.strip()
+    if not profile and not os.getenv("AWS_PROFILE", "").strip():
+        # Botocore treats AWS_PROFILE="" as an empty profile name. Remove it
+        # before creating a fresh session so this process uses its normal
+        # credential chain (including an instance role).
+        os.environ.pop("AWS_PROFILE", None)
     bearer_token = settings.aws_bearer_token_bedrock.get_secret_value().strip()
     if bearer_token:
         # Botocore reads Bedrock API keys from the process environment.
         os.environ["AWS_BEARER_TOKEN_BEDROCK"] = bearer_token
-        return boto3.client("bedrock-runtime", **kwargs)
-    if settings.aws_profile.strip():
-        session = boto3.Session(profile_name=settings.aws_profile.strip())
-        return session.client("bedrock-runtime", **kwargs)
-    return boto3.client("bedrock-runtime", **kwargs)
+    # Avoid boto3.client(), which can reuse a process-wide default session
+    # initialized earlier while AWS_PROFILE was blank.
+    session = boto3.Session(profile_name=profile or None)
+    return session.client("bedrock-runtime", **kwargs)
 
 
 def _chat_sync(

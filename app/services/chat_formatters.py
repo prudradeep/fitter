@@ -157,7 +157,9 @@ def _evidence_http_url(evidence: str) -> str:
 
 def format_hazards(session: ChatSession, *, show_admin_details: bool = False) -> str:
     survey_hazards = [
-        hazard for hazard in (session.hazards or []) if _hazard_has_profiles(session, hazard)
+        hazard
+        for hazard in (session.hazards or [])
+        if session.selected_context_policy_id or _hazard_has_profiles(session, hazard)
     ]
     additional_content = format_additional_hazards(
         session, show_admin_details=show_admin_details
