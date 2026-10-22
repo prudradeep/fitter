@@ -1557,7 +1557,7 @@ class ChatMitigationStepsMixin:
                 "\"supported\":true,"
                 "\"support_source_ids\":[],"
                 "\"evidence_relevant\":false,"
-                "\"summary\":\"concise user-facing summary including policy/sector connection and plausible hazard mechanism\"}.",
+                "\"summary\":\"concise user-facing summary including policy/sector connection and plausible hazard mechanism\"}."
             ),
             messages=[{"role": "user", "content": validation_input}],
             temperature=0.0, max_tokens=1100,
