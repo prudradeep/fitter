@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from html import escape
 from urllib.parse import urlsplit
@@ -6,6 +7,8 @@ from urllib.parse import urlsplit
 from app.services.chat_session import ChatSession
 from app.services.profile_indicator_mapping import proposed_indicator_details
 from app.services.system_hazard_profile_names import profile_name_for_variable
+
+logger = logging.getLogger("app.services.chat_hazard_creation")
 
 
 ADDITIONAL_HAZARDS_INFO_TOOLTIP = (
@@ -280,11 +283,19 @@ def format_custom_hazards(
     *,
     show_admin_details: bool = False,
 ) -> str:
+    candidates = list(session.custom_hazards or [])
     hazards = [
-        hazard
-        for hazard in (session.custom_hazards or [])
-        if _hazard_has_profiles(session, hazard)
+        hazard for hazard in candidates if _hazard_has_profiles(session, hazard)
     ]
+    logger.info(
+        "Co-created hazard formatting: session_id=%s policy_id=%s candidates=%s "
+        "displayed=%s missing_profiles=%s",
+        session.session_key,
+        session.selected_context_policy_id,
+        candidates,
+        hazards,
+        [hazard for hazard in candidates if hazard not in hazards],
+    )
     if not hazards:
         return ""
     lines: list[str] = []

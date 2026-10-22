@@ -471,6 +471,19 @@ class ChatHazardStepsMixin:
         session.selected_context_policy_sources = None
         session.adding_context_policy = False
         selected_record = self.db.get(Policy, matched[0])
+        logger.info(
+            "Context policy selected: session_id=%s user_id=%s policy_id=%s title=%r "
+            "source=%s policy_type=%r country_id=%s sector_id=%s region_id=%s",
+            session_id,
+            self.user_id,
+            matched[0],
+            matched[1],
+            getattr(selected_record, "source", None),
+            getattr(selected_record, "policy_type", None),
+            session.country_id,
+            session.sector_id,
+            session.region_id,
+        )
         session.new_context_policy_summary_only = bool(
             selected_record and selected_record.source == "user" and not self.db.scalar(
                 select(PolicyHazardLink.id).where(PolicyHazardLink.policy_id == selected_record.id).limit(1)
@@ -1499,6 +1512,9 @@ class ChatHazardStepsMixin:
         policy = self.db.get(Policy, session.selected_context_policy_id)
         if policy is None:
             return
+        if session.country_id is not None and session.sector_id is not None:
+            session.custom_hazards = self._saved_custom_hazards_for_context(session)
+            self._hydrate_custom_hazard_profiles(session)
         if getattr(policy, "source", None) == "user":
             links = self.db.scalars(select(PolicyHazardLink).where(
                 PolicyHazardLink.policy_id == policy.id,
@@ -1531,7 +1547,6 @@ class ChatHazardStepsMixin:
         if mitigation_policy is None:
             session.hazards = []
             session.additional_hazards = []
-            session.custom_hazards = []
             return
         mapped_system_hazards = self.db.scalars(
             select(SystemHazard)
@@ -1590,7 +1605,6 @@ class ChatHazardStepsMixin:
         )
         session.hazard_profiles = policy_profiles
         session.additional_hazards = [hazard.name for hazard in mapped_additional_hazards]
-        session.custom_hazards = []
 
     def _set_all_system_hazards_for_selected_sector(self, session: ChatSession) -> None:
         """Restore the sector catalogue for survey case-study policies."""
@@ -1618,13 +1632,18 @@ class ChatHazardStepsMixin:
             return
 
         listed_hazards = list(session.hazards)
+        listed_custom_hazards = list(session.custom_hazards or [])
         listed_profiles = dict(session.hazard_profiles or {})
         await self._rank_session_hazards(session)
         enriched_profiles = dict(session.hazard_profiles or {})
         session.hazards = listed_hazards
         session.hazard_profiles = {
             hazard: enriched_profiles.get(hazard, listed_profiles.get(hazard, []))
-            for hazard in [*listed_hazards, *(session.additional_hazards or [])]
+            for hazard in [
+                *listed_hazards,
+                *(session.additional_hazards or []),
+                *listed_custom_hazards,
+            ]
         }
 
     def _matching_mitigation_measure_policy(
@@ -1708,12 +1727,20 @@ class ChatHazardStepsMixin:
         self._hydrate_custom_hazard_profiles(session)
         self._filter_session_hazards_without_profiles(session)
         self._limit_hazards_to_selected_policy(session)
+        self._hydrate_custom_hazard_profiles(session)
         logger.info(
-            "Hazards display preparation: session_id=%s selected_policy_id=%s system_hazards=%s additional_hazards=%s profile_keys=%s",
+            "Hazards display preparation: session_id=%s user_id=%s selected_policy_id=%s "
+            "system_hazards=%s additional_hazards=%s custom_hazards=%s custom_profile_counts=%s profile_keys=%s",
             session_id,
+            self.user_id,
             session.selected_context_policy_id,
             session.hazards,
             session.additional_hazards,
+            session.custom_hazards,
+            {
+                hazard: len(self._stored_hazard_profiles(session, hazard))
+                for hazard in (session.custom_hazards or [])
+            },
             list((session.hazard_profiles or {}).keys()),
         )
         await self._enrich_policy_hazards_with_population_context(session)
@@ -1842,6 +1869,16 @@ class ChatHazardStepsMixin:
     async def _refresh_session_hazards(
         self, session_id: str, session: ChatSession
     ) -> None:
+        logger.info(
+            "Hazard refresh started: session_id=%s user_id=%s policy_id=%s "
+            "country_id=%s sector_id=%s region_id=%s",
+            session_id,
+            self.user_id,
+            session.selected_context_policy_id,
+            session.country_id,
+            session.sector_id,
+            session.region_id,
+        )
         hazard_items = await self._refresh_hazards_and_profiles_from_llm(
             session_id,
             session,
@@ -1863,12 +1900,26 @@ class ChatHazardStepsMixin:
         }
         session.custom_hazards = self._saved_custom_hazards_for_context(session)
         session.additional_hazards = self._additional_hazards_for_context(session)
+        self._limit_hazards_to_selected_policy(session)
         self._hydrate_custom_hazard_profiles(session)
         self._filter_session_hazards_without_profiles(session)
         await self._rank_session_hazards(session)
         cache_store = getattr(self, "_store_hazard_listing_cache", None)
         if cache_store is not None:
             cache_store(session)
+        logger.info(
+            "Hazard refresh prepared: session_id=%s policy_id=%s system_count=%s "
+            "additional_count=%s custom_hazards=%s custom_profile_counts=%s",
+            session_id,
+            session.selected_context_policy_id,
+            len(session.hazards or []),
+            len(session.additional_hazards or []),
+            session.custom_hazards,
+            {
+                hazard: len(self._stored_hazard_profiles(session, hazard))
+                for hazard in (session.custom_hazards or [])
+            },
+        )
         self._record_activity(
             session_id,
             session,

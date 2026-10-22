@@ -105,25 +105,49 @@ class ChatHazardCatalogMixin:
     def _saved_custom_hazards_for_context(self, session: ChatSession) -> list[str]:
         if session.country_id is None or session.sector_id is None:
             return []
-        shared_rows = self.db.scalars(
+        policy_filter = (
+            CustomHazard.policy_id == session.selected_context_policy_id
+            if session.selected_context_policy_id
+            else CustomHazard.policy_id.is_(None)
+        )
+        candidate_rows = self.db.scalars(
             select(CustomHazard)
             .where(
                 CustomHazard.country_id == session.country_id,
                 CustomHazard.sector_id == session.sector_id,
                 CustomHazard.region_scope_key == (session.region_id or ""),
-                CustomHazard.policy_id == session.selected_context_policy_id
-                if session.selected_context_policy_id
-                else CustomHazard.policy_id.is_(None),
-                or_(
-                    CustomHazard.created_by_user_id == self.user_id,
-                    and_(
-                        CustomHazard.validation_mode == "strict",
-                        CustomHazard.is_crowd_sourced.is_(True),
-                    ),
-                ),
+                policy_filter,
             )
             .order_by(CustomHazard.name)
         ).all()
+        shared_rows = [
+            row
+            for row in candidate_rows
+            if row.created_by_user_id == self.user_id or bool(row.is_crowd_sourced)
+        ]
+        logger.info(
+            "Co-created hazard lookup: session_id=%s user_id=%s policy_id=%s "
+            "country_id=%s sector_id=%s region_id=%s candidates=%s visible=%s rows=%s",
+            session.session_key,
+            self.user_id,
+            session.selected_context_policy_id,
+            session.country_id,
+            session.sector_id,
+            session.region_id,
+            len(candidate_rows),
+            len(shared_rows),
+            [
+                {
+                    "id": row.id,
+                    "name": row.name if row in shared_rows else None,
+                    "created_by_user_id": row.created_by_user_id,
+                    "creator_match": row.created_by_user_id == self.user_id,
+                    "crowd_sourced": bool(row.is_crowd_sourced),
+                    "visible": row in shared_rows,
+                }
+                for row in candidate_rows
+            ],
+        )
         legacy_records = self.db.execute(
             select(UserHazard, UserSession.user_id)
             .join(UserSession, UserSession.id == UserHazard.user_session_id)
@@ -136,10 +160,7 @@ class ChatHazardCatalogMixin:
                 UserHazard.source == "custom",
                 or_(
                     UserSession.user_id == self.user_id,
-                    and_(
-                        UserHazard.validation_mode == "strict",
-                        UserHazard.is_crowd_sourced.is_(True),
-                    ),
+                    UserHazard.is_crowd_sourced.is_(True),
                 ),
             )
             .order_by(UserHazard.name)
@@ -184,6 +205,15 @@ class ChatHazardCatalogMixin:
             key: key in crowd_sourced_hazard_keys and key not in owned_hazard_keys
             for key in seen
         }
+        logger.info(
+            "Co-created hazard lookup result: session_id=%s policy_id=%s "
+            "shared_rows=%s legacy_rows=%s hazards=%s",
+            session.session_key,
+            session.selected_context_policy_id,
+            len(shared_rows),
+            len(legacy_records),
+            hazards,
+        )
         return hazards
 
     def _additional_hazards_for_context(self, session: ChatSession) -> list[str]:
@@ -1035,22 +1065,22 @@ class ChatHazardCatalogMixin:
         if normalize(hazard) == normalize(session.accepted_custom_hazard or ""):
             if session.accepted_custom_hazard_id is not None:
                 return session.accepted_custom_hazard_id
+        policy_filter = (
+            CustomHazard.policy_id == session.selected_context_policy_id
+            if session.selected_context_policy_id
+            else CustomHazard.policy_id.is_(None)
+        )
         try:
             hazard_id = self.db.scalar(
                 select(CustomHazard.id).where(
                     CustomHazard.country_id == session.country_id,
                     CustomHazard.sector_id == session.sector_id,
                     CustomHazard.region_scope_key == (session.region_id or ""),
-                    CustomHazard.policy_id == session.selected_context_policy_id
-                    if session.selected_context_policy_id
-                    else CustomHazard.policy_id.is_(None),
+                    policy_filter,
                     CustomHazard.name_key == self._custom_hazard_name_key(hazard),
                     or_(
                         CustomHazard.created_by_user_id == self.user_id,
-                        and_(
-                            CustomHazard.validation_mode == "strict",
-                            CustomHazard.is_crowd_sourced.is_(True),
-                        ),
+                        CustomHazard.is_crowd_sourced.is_(True),
                     ),
                 )
             )

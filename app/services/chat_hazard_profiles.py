@@ -185,17 +185,46 @@ class ChatHazardProfilesMixin:
                     existing_profiles,
                     stored_profiles,
                 )
+                logger.info(
+                    "Co-created hazard profiles hydrated: session_id=%s policy_id=%s "
+                    "hazard=%r existing=%s stored=%s final=%s",
+                    session.session_key,
+                    session.selected_context_policy_id,
+                    hazard,
+                    len(existing_profiles),
+                    len(stored_profiles),
+                    len(session.hazard_profiles[hazard]),
+                )
                 continue
             profiles = self._target_population_profiles_for_saved_hazard(session, hazard)
             if not profiles:
                 if existing_profiles and session.hazard_profiles is not None:
                     session.hazard_profiles[hazard] = existing_profiles
+                logger.info(
+                    "Co-created hazard profiles hydrated: session_id=%s policy_id=%s "
+                    "hazard=%r existing=%s stored=0 target_population=0 final=%s",
+                    session.session_key,
+                    session.selected_context_policy_id,
+                    hazard,
+                    len(existing_profiles),
+                    len(existing_profiles),
+                )
                 continue
             if session.hazard_profiles is None:
                 session.hazard_profiles = {}
             session.hazard_profiles[hazard] = self._merge_hazard_profile_lists(
                 existing_profiles,
                 profiles,
+            )
+            logger.info(
+                "Co-created hazard profiles hydrated: session_id=%s policy_id=%s "
+                "hazard=%r existing=%s stored=0 target_population=%s final=%s",
+                session.session_key,
+                session.selected_context_policy_id,
+                hazard,
+                len(existing_profiles),
+                len(profiles),
+                len(session.hazard_profiles[hazard]),
             )
 
     @staticmethod
@@ -363,6 +392,7 @@ class ChatHazardProfilesMixin:
 
     @classmethod
     def _filter_session_hazards_without_profiles(cls, session: ChatSession) -> None:
+        custom_before = list(session.custom_hazards or [])
         system_hazards = [
             hazard
             for hazard in (session.hazards or [])
@@ -382,6 +412,15 @@ class ChatHazardProfilesMixin:
         session.hazards = system_hazards
         session.custom_hazards = custom_hazards
         session.additional_hazards = additional_hazards
+        if len(custom_before) != len(custom_hazards):
+            logger.info(
+                "Co-created hazards filtered without profiles: session_id=%s policy_id=%s "
+                "before=%s after=%s",
+                session.session_key,
+                session.selected_context_policy_id,
+                custom_before,
+                custom_hazards,
+            )
 
         allowed = {
             normalize(hazard)
