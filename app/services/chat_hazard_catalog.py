@@ -14,6 +14,7 @@ from app.models import (
     EurostatPopulationCache,
     EvaluationQuestion,
     KnowledgeDocument,
+    MitigationMeasurePolicySystemHazard,
     QuestionOption,
     SystemHazard,
     SystemHazardSocioDemographic,
@@ -888,7 +889,12 @@ class ChatHazardCatalogMixin:
                 )
             )
             self.db.execute(
-                delete(SystemHazard).where(SystemHazard.sector_id == session.sector_id)
+                delete(SystemHazard).where(
+                    SystemHazard.sector_id == session.sector_id,
+                    SystemHazard.id.not_in(
+                        select(MitigationMeasurePolicySystemHazard.system_hazard_id)
+                    ),
+                )
             )
             self.db.commit()
         except Exception:
