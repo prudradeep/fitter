@@ -25,6 +25,18 @@ async def _json_response(*args, **kwargs):
     )
 
 
+async def _reflection_validation_response(*args, **kwargs):
+    return json.dumps(
+        {
+            "clear": True,
+            "objective_relevant": True,
+            "hazard_relevant": True,
+            "twin_transition_relevant": True,
+            "reason": "The reflection links the funding delay to the selected hazard and transport objective.",
+        }
+    )
+
+
 class CustomHazardMechanismFitTests(unittest.TestCase):
     def test_mechanism_fit_replaces_policy_fit_in_new_state(self) -> None:
         state = validator.default_custom_hazard_state()
@@ -193,6 +205,55 @@ class CustomHazardMechanismFitTests(unittest.TestCase):
         self.assertEqual(response.step, "custom_hazard_mechanism_confirmation")
         self.assertEqual(session.phase, ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION)
         self.assertIn("Sectoral Objective Fit", response.bot_message)
+
+    def test_modified_reflection_must_be_confirmed_before_mechanism_input(self) -> None:
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            phase=ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION,
+            custom_hazard={
+                **validator.default_custom_hazard_state(),
+                "raw_text": "Higher charging costs",
+                "selected_mechanism": "Charging mandates increase infrastructure costs",
+                "ai_reflection": "The hazard could follow from the selected objective.",
+            },
+        )
+
+        response = asyncio.run(
+            service._handle_custom_hazard_mechanism_confirmation(
+                "session-1", session, "Modify or provide a reflection"
+            )
+        )
+
+        self.assertEqual(response.step, "custom_hazard_mechanism_input")
+        self.assertEqual(response.input_mode, "textarea")
+        self.assertIn("Modify the reflection", response.bot_message)
+
+        with patch(
+            "app.services.chat_custom_hazard_mechanism.ask_llm_chat",
+            _reflection_validation_response,
+        ):
+            response = asyncio.run(
+                service._handle_custom_hazard_mechanism_input(
+                    "session-1", session, "The program's funding delay slows adoption."
+                )
+            )
+
+        self.assertEqual(response.step, "custom_hazard_mechanism_confirmation")
+        self.assertIn("The program's funding delay slows adoption.", response.bot_message)
+        self.assertTrue(session.custom_hazard["reflection_confirmation_pending"])
+
+        response = asyncio.run(
+            service._handle_custom_hazard_mechanism_confirmation(
+                "session-1", session, "Yes"
+            )
+        )
+
+        self.assertEqual(response.step, "custom_hazard_mechanism_input")
+        self.assertIn("Provide the mechanism", response.bot_message)
+        self.assertFalse(session.custom_hazard["reflection_confirmation_pending"])
+        self.assertEqual(
+            session.custom_hazard["mechanism_input_exit_target"], "sectoral_objective_fit"
+        )
 
     def test_exit_from_mechanism_input_returns_to_causal_linkage_review(self) -> None:
         service = ChatService.__new__(ChatService)

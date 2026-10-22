@@ -67,7 +67,7 @@ CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS = [
 
 CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes"),
-    Option(id=2, label="No, provide a mechanism"),
+    Option(id=2, label="Modify or provide a reflection"),
 ]
 
 CUSTOM_HAZARD_MECHANISM_INPUT_OPTIONS = [
