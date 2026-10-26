@@ -331,27 +331,9 @@ class ChatHazardStepsMixin:
         """Return the reference policies available for the current policy context."""
         return [title for _, title in self._policy_rows_for_selected_context(session)]
 
-    def _policies_with_documents(self, session: ChatSession) -> list[tuple[str, str]]:
-        policies = self._policy_rows_for_selected_context(session)
-        if not policies:
-            return []
-        documents = self.db.scalars(
-            select(KnowledgeDocument).where(
-                KnowledgeDocument.policy_id.in_([policy_id for policy_id, _ in policies]),
-                or_(
-                    and_(
-                        KnowledgeDocument.scope == POLICY_DOCUMENT_SCOPE,
-                        KnowledgeDocument.user_id.is_(None),
-                    ),
-                    and_(
-                        KnowledgeDocument.scope == "policy_reference",
-                        KnowledgeDocument.user_id == self.user_id,
-                    ),
-                ),
-            )
-        ).all()
-        document_policy_ids = {str(doc.policy_id) for doc in documents if doc.policy_id}
-        return [row for row in policies if row[0] in document_policy_ids]
+    def _policies_for_selection(self, session: ChatSession) -> list[tuple[str, str]]:
+        """Return all policies in the selected context, including those without documents."""
+        return self._policy_rows_for_selected_context(session)
 
     def _policy_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         policies = self._policy_rows_for_selected_context(session)
@@ -374,7 +356,6 @@ class ChatHazardStepsMixin:
             )
         ).all()
         policy_document_ids = {str(doc.policy_id) for doc in policy_documents if doc.policy_id}
-        available_policies = [row for row in policies if row[0] in policy_document_ids]
         policy_document_urls: dict[str, str] = {}
         for document in policy_documents:
             if not document.policy_id or not document.source_uri:
@@ -402,12 +383,12 @@ class ChatHazardStepsMixin:
                         "document_available": policy_id in policy_document_ids,
                         "document_url": policy_document_urls.get(policy_id),
                     }
-                    for policy_id, title in available_policies
+                    for policy_id, title in policies
                 ],
             ),
             options=[Option(id=0, label=ADD_NEW_POLICY_LABEL), *[
                 Option(id=index, label=title)
-                for index, (_, title) in enumerate(available_policies, start=1)
+                for index, (_, title) in enumerate(policies, start=1)
             ]],
             session=session.summary(),
             error=False,
@@ -443,7 +424,7 @@ class ChatHazardStepsMixin:
                 session=session.summary(),
                 input_mode="policy_reference",
             )
-        policies = self._policies_with_documents(session)
+        policies = self._policies_for_selection(session)
         matched: tuple[str, str] | None = None
         cleaned = normalize_for_match(message)
         selected_number = re.search(r"\b(\d+)\b", str(message or ""))
@@ -2449,7 +2430,7 @@ class ChatHazardStepsMixin:
             )
 
         if action == normalize("Add more DGs"):
-            return self._start_additional_dg_questions(session_id, session)
+            return self._start_mitigation_additional_dg_review(session_id, session)
 
         if action == normalize("Confirm & Continue to mitigation"):
             session.phase = "mitigation_choice"

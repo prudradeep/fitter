@@ -19,6 +19,8 @@ from app.services.chat_options import (
     CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
     CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS,
     HAZARD_POPULATION_REVIEW_OPTIONS,
+    SOCIO_DEMOGRAPHIC_LISTING_OPTIONS,
+    SOCIO_DEMOGRAPHIC_OPTIONS,
     exact_option_label,
     normalize,
     option_list,
@@ -45,6 +47,226 @@ logger = logging.getLogger(__name__)
 
 
 class ChatCustomHazardPopulationStepsMixin:
+    def _start_mitigation_additional_dg_review(
+        self, session_id: str, session: ChatSession
+    ) -> ChatResponse:
+        hazard = session.selected_hazard or "the selected hazard"
+        profiles = self._stored_hazard_profiles(session, hazard)
+        known = {normalize(str(item.get("name") or item.get("profile") or "")) for item in profiles}
+        for label in session.additional_dgs or []:
+            if normalize(label) not in known:
+                profiles.append({"name": label, "profile": label, "explanation": ""})
+                known.add(normalize(label))
+        session.pending_affected_population_profiles = [dict(item) for item in profiles]
+        session.pending_additional_dgs = []
+        session.pending_additional_dg_group = None
+        session.pending_additional_dg_reason_mode = None
+        return self._mitigation_additional_dg_review_step(session_id, session)
+
+    def _mitigation_additional_dg_review_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        error_reason: str | None = None,
+    ) -> ChatResponse:
+        hazard = session.selected_hazard or "the selected hazard"
+        profiles = session.pending_affected_population_profiles or []
+        message = render_message(
+            "mitigation_affected_population_review.md",
+            hazard=hazard,
+            profiles=self._format_population_profiles_for_review(profiles),
+            error_reason=error_reason or "",
+        )
+        session.phase = "mitigation_additional_dg_review"
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_additional_dg_review",
+            bot_message=message,
+            options=HAZARD_POPULATION_REVIEW_OPTIONS,
+            session=session.summary(),
+            input_mode="textarea",
+            error=bool(error_reason),
+        )
+
+    async def _handle_mitigation_additional_dg_review(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        profiles = [dict(item) for item in (session.pending_affected_population_profiles or [])]
+        action = normalize(exact_option_label(message, HAZARD_POPULATION_REVIEW_OPTIONS) or message)
+        if action == normalize("Confirm affected groups"):
+            if not profiles:
+                return self._mitigation_additional_dg_review_step(
+                    session_id, session, "Add at least one affected group before confirming."
+                )
+            hazard = session.selected_hazard or "the selected hazard"
+            if session.hazard_profiles is None:
+                session.hazard_profiles = {}
+            session.hazard_profiles[hazard] = profiles
+            profile_names = {
+                normalize(str(item.get("name") or item.get("profile") or ""))
+                for item in profiles
+            }
+            user_names = [
+                label for label in (session.additional_dgs or [])
+                if normalize(label) in profile_names
+            ]
+            user_names.extend(
+                str(item.get("name") or item.get("profile") or "").strip()
+                for item in profiles
+                if item.get("source") == "user_review"
+            )
+            session.additional_dgs = list(dict.fromkeys(user_names)) or None
+            session.pending_affected_population_profiles = None
+            session.pending_additional_dgs = None
+            session.phase = "socio_demographic_review"
+            self._record_activity(
+                session_id, session, "socio_demographics_added", hazard
+            )
+            return ChatResponse(
+                session_id=session_id,
+                step="socio_demographic_review",
+                bot_message=(
+                    markdown_to_html(
+                        f"Affected population groups are confirmed for **{hazard}**."
+                    )
+                    + self._format_population_profiles_for_final(profiles)
+                    + markdown_to_html(
+                        "Choose **Confirm & Continue to mitigation** to proceed."
+                    )
+                ),
+                options=SOCIO_DEMOGRAPHIC_LISTING_OPTIONS,
+                session=session.summary(),
+                error=False,
+            )
+
+        revise_match = re.match(r"^(?:revise|edit)\s+(.+?)\s*:\s*(.+)$", message.strip(), re.I)
+        if ":" in message:
+            group_label, reason = [part.strip() for part in message.split(":", 1)]
+            if revise_match:
+                group_label, reason = revise_match.group(1).strip(), revise_match.group(2).strip()
+            match = next((item for item in profiles if self._profiles_are_similar(
+                str(item.get("name") or item.get("profile") or ""), group_label
+            )), None)
+            if match is not None:
+                review = await self._validate_custom_affected_group_reason(
+                    session, str(match.get("name") or match.get("profile") or group_label), reason
+                )
+                if review is not None and not review["valid"]:
+                    return self._mitigation_additional_dg_review_step(
+                        session_id, session, str(review["reason"])
+                    )
+                name = str(match.get("name") or match.get("profile") or group_label)
+                reflection = await self._generate_affected_population_reflection(session, name, reason)
+                match["explanation"] = reason
+                match["reflection"] = reflection
+                session.pending_affected_population_profiles = profiles
+                return self._mitigation_additional_dg_review_step(session_id, session)
+
+        edits = await self._extract_affected_population_edits(
+            session, message, hazard=session.selected_hazard
+        )
+        remove_items = edits.get("remove", [])
+        add_items = edits.get("add", [])
+        if not remove_items and not add_items:
+            return self._mitigation_additional_dg_review_step(
+                session_id,
+                session,
+                "Tell me which affected groups to add or remove, or choose Confirm affected groups.",
+            )
+        profiles = [
+            item for item in profiles
+            if not any(self._profiles_are_similar(
+                str(item.get("name") or item.get("profile") or ""), target
+            ) for target in remove_items)
+        ]
+        queued: list[str] = []
+        for label in add_items:
+            cleaned = self._clean_affected_group_label(label)
+            label_error = self._custom_affected_group_label_error(cleaned)
+            if label_error:
+                session.pending_affected_population_profiles = profiles
+                return self._mitigation_additional_dg_review_step(session_id, session, label_error)
+            if not any(self._profiles_are_similar(
+                str(item.get("name") or item.get("profile") or ""), cleaned
+            ) for item in profiles) and normalize(cleaned) not in {normalize(item) for item in queued}:
+                queued.append(cleaned)
+        session.pending_affected_population_profiles = profiles
+        if queued:
+            session.pending_additional_dgs = queued[1:]
+            session.pending_additional_dg_group = queued[0]
+            session.pending_additional_dg_reason_mode = "add"
+            return self._mitigation_additional_dg_reason_step(session_id, session)
+        if not profiles:
+            return self._mitigation_additional_dg_review_step(
+                session_id, session, "At least one affected population group is required."
+            )
+        return self._mitigation_additional_dg_review_step(session_id, session)
+
+    def _mitigation_additional_dg_reason_step(
+        self, session_id: str, session: ChatSession, error_reason: str | None = None
+    ) -> ChatResponse:
+        group = session.pending_additional_dg_group or "this group"
+        message = f"How does **{session.selected_hazard or 'the selected hazard'}** affect **{group}**?"
+        if error_reason:
+            message = f"**{error_reason}**\n\n{message}"
+        session.phase = "mitigation_additional_dg_reason"
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_additional_dg_reason",
+            bot_message=markdown_to_html(message),
+            options=CUSTOM_HAZARD_PROFILE_REASON_OPTIONS,
+            session=session.summary(),
+            input_mode="textarea",
+            error=bool(error_reason),
+        )
+
+    async def _handle_mitigation_additional_dg_reason(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        group = str(session.pending_additional_dg_group or "").strip()
+        reason = message.strip()
+        if normalize(reason) == normalize("Back to affected groups"):
+            session.pending_additional_dg_group = None
+            session.pending_additional_dgs = None
+            session.pending_additional_dg_reason_mode = None
+            return self._mitigation_additional_dg_review_step(session_id, session)
+        if not group or not reason:
+            return self._mitigation_additional_dg_reason_step(
+                session_id, session, "Please explain the impact on this group."
+            )
+        review = await self._validate_custom_affected_group_reason(session, group, reason)
+        if review is not None and not review["valid"]:
+            return self._mitigation_additional_dg_reason_step(
+                session_id, session, str(review["reason"])
+            )
+        reflection = await self._generate_affected_population_reflection(session, group, reason)
+        profiles = [dict(item) for item in (session.pending_affected_population_profiles or [])]
+        mode = session.pending_additional_dg_reason_mode
+        if mode == "revise":
+            for item in profiles:
+                if self._profiles_are_similar(str(item.get("name") or item.get("profile") or ""), group):
+                    item["explanation"] = reason
+                    item["reflection"] = reflection
+        else:
+            profiles.append({
+                "name": group,
+                "profile": group,
+                "explanation": reason,
+                "reflection": reflection,
+                "source": "user_review",
+                "variable_name": "user_review_affected_population",
+            })
+        session.pending_affected_population_profiles = profiles
+        remaining = list(session.pending_additional_dgs or [])
+        if remaining:
+            session.pending_additional_dg_group = remaining.pop(0)
+            session.pending_additional_dgs = remaining
+            return self._mitigation_additional_dg_reason_step(session_id, session)
+        session.pending_additional_dg_group = None
+        session.pending_additional_dg_reason_mode = None
+        session.pending_additional_dgs = []
+        return self._mitigation_additional_dg_review_step(session_id, session)
+
     def _custom_hazard_population_review_step(
         self,
         session_id: str,
@@ -549,13 +771,23 @@ class ChatCustomHazardPopulationStepsMixin:
         return self._custom_hazard_population_review_step(session_id, session)
 
     async def _extract_affected_population_edits(
-        self, session: ChatSession, message: str
+        self, session: ChatSession, message: str, *, hazard: str | None = None
     ) -> dict[str, list[str]]:
+        explicit_edits = self._fallback_population_edits(message)
+        if explicit_edits.get("add") or explicit_edits.get("remove"):
+            return explicit_edits
+
+        selected_hazard = hazard or session.accepted_custom_hazard or "New hazard"
+        pending_profiles = session.pending_affected_population_profiles
         current = [
+            str(profile.get("name") or profile.get("profile") or "").strip()
+            for profile in pending_profiles
+            if str(profile.get("name") or profile.get("profile") or "").strip()
+        ] if pending_profiles is not None else [
             str(profile.get("name") or profile.get("profile") or "").strip()
             for profile in self._stored_hazard_profiles(
                 session,
-                session.accepted_custom_hazard or "New hazard",
+                selected_hazard,
             )
             if str(profile.get("name") or profile.get("profile") or "").strip()
         ]
@@ -628,10 +860,18 @@ class ChatCustomHazardPopulationStepsMixin:
         if cleaned_reason and not self._is_affected_population_placeholder(cleaned_reason):
             return cleaned_reason[:1200]
 
+        impact_source = (
+            session.selected_hazard
+            if session.phase in {
+                "mitigation_additional_dg_review",
+                "mitigation_additional_dg_reason",
+            }
+            else self._custom_hazard_user_description(session)
+        )
         impact = re.sub(
             r"\s+",
             " ",
-            self._custom_hazard_user_description(session),
+            impact_source,
         ).strip().rstrip(".")
         label = self._clean_affected_group_label(group) or "this group"
         if impact:
@@ -677,14 +917,22 @@ class ChatCustomHazardPopulationStepsMixin:
             reason,
         )
         state = self._custom_hazard_state(session)
+        mitigation_dg_review = session.phase in {
+            "mitigation_additional_dg_review",
+            "mitigation_additional_dg_reason",
+        }
         payload = {
-            "hazard": self._custom_hazard_user_description(session),
+            "hazard": (
+                session.selected_hazard or ""
+                if mitigation_dg_review
+                else self._custom_hazard_user_description(session)
+            ),
             "affected_group": self._clean_affected_group_label(group),
             "validated_impact_reason": fallback,
-            "confirmed_mechanism": str(state.get("selected_mechanism") or "").strip(),
-            "causal_linkage": str(state.get("mechanism_causal_linkage") or "").strip(),
-            "evidence_reflection": str(state.get("evidence_reflection") or "").strip(),
-            "supporting_policy": str(
+            "confirmed_mechanism": "" if mitigation_dg_review else str(state.get("selected_mechanism") or "").strip(),
+            "causal_linkage": "" if mitigation_dg_review else str(state.get("mechanism_causal_linkage") or "").strip(),
+            "evidence_reflection": "" if mitigation_dg_review else str(state.get("evidence_reflection") or "").strip(),
+            "supporting_policy": "" if mitigation_dg_review else str(
                 state.get("supporting_policy_summary")
                 or state.get("supporting_policy_details")
                 or ""

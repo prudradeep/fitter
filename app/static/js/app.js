@@ -2057,7 +2057,7 @@ function placeholderForStep(step, options = [], session = appState.currentSessio
       return "Select a hazard above, or type the hazard name...";
     }
     if (step === "socio_demographic_review") {
-      return "Select Add more DGs or Confirm & Continue to mitigation...";
+      return "Type what to add, remove, or revise, or select Confirm & Continue to mitigation...";
     }
     if (step === "mitigation_choice") {
       return "Choose a mitigation measure option...";

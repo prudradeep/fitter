@@ -110,6 +110,16 @@ def render_message(template_name: str, **context: object) -> str:
         # Older databases can retain this superseded template and override the
         # packaged Yes/No copy. Fall back to the current file in that case.
         prompt = None
+    if (
+        template_name == "socio_demographic_next.md"
+        and prompt
+        and prompt.lstrip().startswith(
+            "Add more socio-demographic profiles severely affected by the hazard"
+        )
+    ):
+        # Older databases can retain the former option-based instruction and
+        # override the packaged free-text review instructions.
+        prompt = None
     template = (
         get_message_environment().from_string(prompt)
         if prompt is not None

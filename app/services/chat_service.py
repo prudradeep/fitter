@@ -50,6 +50,7 @@ from app.services.chat_options import (
     MITIGATION_REVIEW_OPTIONS,
     POST_SECTOR_OPTIONS,
     REASON_CONFIRMATION_OPTIONS,
+    SOCIO_DEMOGRAPHIC_LISTING_OPTIONS,
     SOCIO_DEMOGRAPHIC_OPTIONS,
     STATS_DEEP_DIVE_OPTIONS,
     SYSTEM_INQUIRY_COMPLETE_OPTIONS,
@@ -414,6 +415,33 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
+        # Route explicit affected-group edits before the generic input-quality
+        # check and grounded-question handler can treat them as questions.
+        if session.phase == "socio_demographic_review":
+            selected_action = exact_option_label(clean_message, SOCIO_DEMOGRAPHIC_OPTIONS)
+            if selected_action is None:
+                population_edits = self._fallback_population_edits(clean_message)
+                is_reason_edit = bool(
+                    re.match(r"^(?:revise|edit)\s+.+?:\s*.+$", clean_message, re.I)
+                )
+                if population_edits.get("add") or population_edits.get("remove") or is_reason_edit:
+                    session.hazard_qa_active = False
+                    self._start_mitigation_additional_dg_review(
+                        current_session_id, session
+                    )
+                    return await self._handle_mitigation_additional_dg_review(
+                        current_session_id, session, clean_message
+                    )
+
+        if session.phase == "mitigation_additional_dg_review":
+            return await self._handle_mitigation_additional_dg_review(
+                current_session_id, session, clean_message
+            )
+        if session.phase == "mitigation_additional_dg_reason":
+            return await self._handle_mitigation_additional_dg_reason(
+                current_session_id, session, clean_message
+            )
+
         # These are structured choices and multi-select answers. Route them
         # before the general wizard message quality checks.
         if session.phase == "new_policy_confirmation":
@@ -465,16 +493,31 @@ class ChatService(
         if session.sector is None:
             return await self._select_sector(current_session_id, session, clean_message)
 
-        if session.phase == "socio_demographic_review" and session.hazard_qa_active:
+        if session.phase == "socio_demographic_review":
             selected_action = exact_option_label(clean_message, SOCIO_DEMOGRAPHIC_OPTIONS)
             if selected_action is not None:
                 session.hazard_qa_active = False
                 return await self._handle_socio_demographic_review(
                     current_session_id, session, selected_action
                 )
-            return await self._handle_hazard_qa_question(
-                current_session_id, session, clean_message
+            population_edits = self._parse_custom_affected_group_edit_message(
+                clean_message
             )
+            is_reason_edit = bool(
+                re.match(r"^(?:revise|edit)\s+.+?:\s*.+$", clean_message, re.I)
+            )
+            if population_edits.get("add") or population_edits.get("remove") or is_reason_edit:
+                session.hazard_qa_active = False
+                self._start_mitigation_additional_dg_review(
+                    current_session_id, session
+                )
+                return await self._handle_mitigation_additional_dg_review(
+                    current_session_id, session, clean_message
+                )
+            if session.hazard_qa_active:
+                return await self._handle_hazard_qa_question(
+                    current_session_id, session, clean_message
+                )
 
         if session.phase == "hazard_population_region_comparison":
             return await self._handle_custom_hazard_population_region_comparison(
@@ -1094,7 +1137,7 @@ class ChatService(
                 + "\n"
                 + render_message("socio_demographic_next.md")
             ),
-            options=SOCIO_DEMOGRAPHIC_OPTIONS,
+            options=SOCIO_DEMOGRAPHIC_LISTING_OPTIONS,
             session=session.summary(),
             error=False,
         )
@@ -1183,7 +1226,7 @@ class ChatService(
                 + "\n"
                 + render_message("socio_demographic_next.md")
             ),
-            options=SOCIO_DEMOGRAPHIC_OPTIONS,
+            options=SOCIO_DEMOGRAPHIC_LISTING_OPTIONS,
             session=session.summary(),
             error=False,
         )

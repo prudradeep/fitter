@@ -127,12 +127,6 @@ class ChatCustomHazardMechanismMixin:
         state["selected_mechanism"] = mechanisms[0]
         state["mechanism_source"] = "ai_suggestion"
         transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION)
-        reflection = await self._custom_hazard_ai_reflection(
-            session,
-            hazard,
-            str(state.get("reason") or state.get("objective_fit_reason") or "").strip(),
-        )
-        state["ai_reflection"] = reflection
         evidence_notice = str(state.pop("evidence_relationship_notice", "") or "").strip()
         return self._custom_hazard_mechanism_confirmation_step(
             session_id, session, evidence_notice=evidence_notice
@@ -163,9 +157,9 @@ class ChatCustomHazardMechanismMixin:
             bot_message=markdown_to_html(
                 evidence_prefix
                 + objective_prefix
-                + "## AI reflection\n\n"
-                f"{state.get('ai_reflection') or ''}\n\n"
-                "Does this reflection accurately represent the information you provided?"
+                + "## Proposed mechanism\n\n"
+                f"{state.get('selected_mechanism') or 'No mechanism has been identified.'}\n\n"
+                "Does this mechanism accurately describe how the hazard is caused or worsened?"
             ),
             options=CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS,
         )
@@ -209,26 +203,15 @@ class ChatCustomHazardMechanismMixin:
         if label is None:
             label = match_option_label(message, CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS)
         action = normalize(label or message)
-        if action == normalize("Modify or provide a reflection"):
-            state = self._custom_hazard_state(session)
-            state["reflection_input_pending"] = True
-            state["reflection_confirmation_pending"] = True
-            return self._custom_hazard_mechanism_input_step(
-                session_id,
-                session,
-                detail="Please provide the reflection you want to review.",
-                reflection_input=True,
-            )
         state = self._custom_hazard_state(session)
-        if action == normalize("Yes") and state.get("reflection_confirmation_pending"):
-            state["reflection_confirmation_pending"] = False
-            state["reflection_confirmed"] = True
-            state["mechanism_input_exit_target"] = "sectoral_objective_fit"
-            return self._custom_hazard_mechanism_input_step(session_id, session)
         if action in {
             normalize("No, provide a mechanism"),
+            normalize("Provide a mechanism"),
             normalize("No"),
         }:
+            state["selected_mechanism"] = ""
+            state["mechanism_source"] = ""
+            state["mechanism_confirmed"] = False
             state["mechanism_input_exit_target"] = "sectoral_objective_fit"
             return self._custom_hazard_mechanism_input_step(session_id, session)
         if action != normalize("Yes"):
@@ -286,7 +269,7 @@ class ChatCustomHazardMechanismMixin:
         state["message"] = "No policy, main knowledge-base, or validated-evidence source supported the mechanism."
         return self._custom_hazard_policy_reference_step(
             session_id, session,
-            detail="Please provide a supporting policy URL or file for the confirmed mechanism.",
+            detail="No supporting mechanism evidence was found automatically. You may provide a policy URL or file, or skip this optional step.",
         )
 
     def _accept_mechanism_policy_source(
@@ -294,6 +277,16 @@ class ChatCustomHazardMechanismMixin:
         grounded: list[dict], context: str,
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
+        dimensions = state.setdefault("dimension_scores", {})
+        dimensions["mechanism_fit"] = {
+            "score": max(8, custom_hazard_dimension_floor(state.get("validation_mode"))),
+            "reason": "A policy or knowledge source supports the proposed mechanism and its causal link to the hazard.",
+            "causal_linkage": str(policy.get("causal_linkage") or "").strip(),
+            "confidence": "high",
+            "needs_clarification": False,
+            "clarification_question": "",
+            "status": "SUPPORTED",
+        }
         state["mechanism_knowledge_context"] = context
         state["supporting_policy_summary"] = str(policy.get("summary") or "").strip()
         state["supporting_policy_details"] = str(policy.get("policy_details") or "").strip()

@@ -385,14 +385,28 @@ class ChatValidationServiceMixin:
         reason: str,
     ) -> dict[str, str | bool]:
         state = session.custom_hazard if isinstance(session.custom_hazard, dict) else {}
-        hazard = self._custom_hazard_user_description(session)
+        mitigation_dg_review = session.phase in {
+            "mitigation_additional_dg_review",
+            "mitigation_additional_dg_reason",
+        }
+        hazard = (
+            session.selected_hazard or ""
+            if mitigation_dg_review
+            else self._custom_hazard_user_description(session)
+        )
         payload = {
             "hazard": hazard,
-            "hazard_reason": str(state.get("reason") or "").strip(),
+            "hazard_reason": "" if mitigation_dg_review else str(
+                (state.get("reason") or session.accepted_custom_hazard_reason or "")
+                if not session.selected_hazard
+                or normalize(session.accepted_custom_hazard or "")
+                == normalize(session.selected_hazard)
+                else ""
+            ).strip(),
             "affected_group": self._clean_affected_group_label(group),
             "proposed_impact_reason": re.sub(r"\s+", " ", reason).strip(),
-            "confirmed_mechanism": str(state.get("selected_mechanism") or "").strip(),
-            "causal_linkage": str(state.get("mechanism_causal_linkage") or "").strip(),
+            "confirmed_mechanism": "" if mitigation_dg_review else str(state.get("selected_mechanism") or "").strip(),
+            "causal_linkage": "" if mitigation_dg_review else str(state.get("mechanism_causal_linkage") or "").strip(),
         }
         response = await ask_llm_chat(
             context=load_nested_prompt_file(

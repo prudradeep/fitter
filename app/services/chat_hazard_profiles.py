@@ -18,7 +18,6 @@ from app.models import (
     SystemHazardSocioDemographicPopulationMatch,
     UserHazard,
     UserHazardSocioDemographic,
-    UserQuestionResponse,
     UserSession,
 )
 from app.services.chat_formatters import normalize_markdown_text
@@ -196,35 +195,16 @@ class ChatHazardProfilesMixin:
                     len(session.hazard_profiles[hazard]),
                 )
                 continue
-            profiles = self._target_population_profiles_for_saved_hazard(session, hazard)
-            if not profiles:
-                if existing_profiles and session.hazard_profiles is not None:
-                    session.hazard_profiles[hazard] = existing_profiles
-                logger.info(
-                    "Co-created hazard profiles hydrated: session_id=%s policy_id=%s "
-                    "hazard=%r existing=%s stored=0 target_population=0 final=%s",
-                    session.session_key,
-                    session.selected_context_policy_id,
-                    hazard,
-                    len(existing_profiles),
-                    len(existing_profiles),
-                )
-                continue
-            if session.hazard_profiles is None:
-                session.hazard_profiles = {}
-            session.hazard_profiles[hazard] = self._merge_hazard_profile_lists(
-                existing_profiles,
-                profiles,
-            )
+            if existing_profiles and session.hazard_profiles is not None:
+                session.hazard_profiles[hazard] = existing_profiles
             logger.info(
                 "Co-created hazard profiles hydrated: session_id=%s policy_id=%s "
-                "hazard=%r existing=%s stored=0 target_population=%s final=%s",
+                "hazard=%r existing=%s stored=0 final=%s",
                 session.session_key,
                 session.selected_context_policy_id,
                 hazard,
                 len(existing_profiles),
-                len(profiles),
-                len(session.hazard_profiles[hazard]),
+                len(existing_profiles),
             )
 
     @staticmethod
@@ -436,61 +416,6 @@ class ChatHazardProfilesMixin:
             for hazard, ranking in (session.hazard_rankings or {}).items()
             if normalize(str(hazard)) in allowed
         } or None
-
-    def _target_population_profiles_for_saved_hazard(
-        self, session: ChatSession, hazard: str
-    ) -> list[dict[str, str]]:
-        if session.country_id is None or session.sector_id is None:
-            return []
-        custom_hazard_id = self._custom_hazard_id_for_context(session, hazard)
-        if custom_hazard_id is not None:
-            rows = self.db.execute(
-                select(
-                    EvaluationQuestion.question,
-                    UserQuestionResponse.response_text,
-                )
-                .join(UserSession, UserSession.id == UserQuestionResponse.user_session_id)
-                .join(EvaluationQuestion, EvaluationQuestion.id == UserQuestionResponse.question_id)
-                .where(
-                    UserSession.country_id == session.country_id,
-                    UserQuestionResponse.custom_hazard_id == custom_hazard_id,
-                    EvaluationQuestion.category == "target_population",
-                )
-                .order_by(EvaluationQuestion.sort_order, UserQuestionResponse.created_at)
-            ).all()
-        else:
-            rows = []
-        if not rows:
-            rows = self.db.execute(
-                select(
-                    EvaluationQuestion.question,
-                    UserQuestionResponse.response_text,
-                )
-                .join(UserHazard, UserHazard.id == UserQuestionResponse.user_hazard_id)
-                .join(UserSession, UserSession.id == UserHazard.user_session_id)
-                .join(EvaluationQuestion, EvaluationQuestion.id == UserQuestionResponse.question_id)
-                .where(
-                    UserSession.country_id == session.country_id,
-                    UserHazard.sector_id == session.sector_id,
-                    UserHazard.region_id.is_(None)
-                    if session.region_id is None
-                    else UserHazard.region_id == session.region_id,
-                    UserHazard.source == "custom",
-                    UserHazard.name == hazard,
-                    EvaluationQuestion.category == "target_population",
-                )
-                .order_by(EvaluationQuestion.sort_order, UserQuestionResponse.created_at)
-            ).all()
-        answers = [
-            {
-                "question": normalize_markdown_text(question),
-                "answer": str(response or "").strip(),
-                "selected": [str(response or "").strip()],
-            }
-            for question, response in rows
-            if str(response or "").strip()
-        ]
-        return self._target_population_profiles_from_answers(answers, hazard)
 
     @classmethod
     def _target_population_profiles_from_answers(
@@ -1781,15 +1706,9 @@ class ChatHazardProfilesMixin:
                 }
             )
         profiles.extend(ungrouped)
-        answer_profiles = (
-            self._target_population_profiles_for_saved_hazard(session, hazard)
-            if is_custom_hazard
-            else []
-        )
         return self._merge_custom_hazard_profile_sources(
             shared_profiles,
             profiles,
-            answer_profiles,
         )
 
     @staticmethod

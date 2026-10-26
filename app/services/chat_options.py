@@ -41,6 +41,10 @@ SOCIO_DEMOGRAPHIC_OPTIONS = [
     Option(id=2, label="Add more DGs"),
 ]
 
+SOCIO_DEMOGRAPHIC_LISTING_OPTIONS = [
+    Option(id=1, label="Confirm & Continue to mitigation"),
+]
+
 MITIGATION_CHOICE_OPTIONS = [
     Option(id=1, label="Create a new mitigation proposal"),
     Option(id=2, label="Propose adaptations in the existing policy"),
@@ -67,7 +71,7 @@ CUSTOM_HAZARD_POLICY_CLARIFICATION_OPTIONS = [
 
 CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS = [
     Option(id=1, label="Yes"),
-    Option(id=2, label="Modify or provide a reflection"),
+    Option(id=2, label="No, provide a mechanism"),
 ]
 
 CUSTOM_HAZARD_MECHANISM_INPUT_OPTIONS = [

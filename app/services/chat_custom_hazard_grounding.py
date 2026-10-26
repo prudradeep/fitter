@@ -92,6 +92,7 @@ class ChatCustomHazardGroundingMixin:
             or ""
         ).strip()
         for candidate in (
+            session.selected_hazard,
             session.pending_hazard,
             state.get("resolved_hazard_text"),
             session.accepted_custom_hazard,
@@ -315,12 +316,14 @@ class ChatCustomHazardGroundingMixin:
                 )
                 and not bool(state.get("evidence_decision_asked"))
                 and not bool(state.get("causal_linkage_confirmed"))
+                and not bool(state.get("policy_reference_skipped"))
             ):
                 break
             if (
                 self._custom_hazard_dimension_is_supported(session, "policy_objective_fit")
                 and bool(state.get("evidence_decision_asked"))
                 and not bool(state.get("causal_linkage_confirmed"))
+                and not bool(state.get("policy_reference_skipped"))
             ):
                 break
             active_dimensions = self._next_custom_hazard_dimensions(session)
@@ -598,7 +601,11 @@ class ChatCustomHazardGroundingMixin:
         objective_supported = self._custom_hazard_dimension_is_supported(
             session, "policy_objective_fit"
         )
-        if objective_supported and not bool(state.get("causal_linkage_confirmed")):
+        if (
+            objective_supported
+            and not bool(state.get("causal_linkage_confirmed"))
+            and not bool(state.get("policy_reference_skipped"))
+        ):
             state["reason"] = str(state.get("reason") or self._custom_hazard_dimension_reason(state)).strip()
             state["objective_fit_reason"] = str(state.get("reason") or "").strip()
             return await self._custom_hazard_mechanism_suggestion_step(session_id, session)
@@ -1076,10 +1083,11 @@ class ChatCustomHazardGroundingMixin:
             "Provide a policy document URL or file that supports the proposed mechanism."
         ]
         message = (
-            "**Mechanism Fit - policy source**\n\n"
-            "Provide the policy document as a URL or upload a PDF, DOCX, MD, or TXT file. "
+            "**Mechanism Evidence (optional)**\n\n"
+            "If available, provide a supporting policy document as a URL or upload a PDF, DOCX, MD, or TXT file. "
             "I will check whether it supports the mechanism you provided and trace the "
             "causal link from its provisions, through the mechanism, to the hazard.\n\n"
+            "Choose Skip to continue without a policy document.\n\n"
             "This document is a policy reference only and will not be treated as evidence "
             "that the hazard occurred or affects a population.\n\n"
             f"{document_language_guidance()}"
