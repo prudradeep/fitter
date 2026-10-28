@@ -20,7 +20,7 @@ POLICY_ADAPTATION_SKIP_OPTIONS = [
 POST_SECTOR_OPTIONS = [
     Option(id=1, label="Start Mitigation Planning"),
     Option(id=2, label="Add a new Hazard"),
-    Option(id=3, label="Refresh hazards and DGs"),
+    Option(id=3, label="Refresh hazards and disadvantaged groups"),
 ]
 
 REGIONAL_POPULATION_COMPARISON_LABEL = "Compare regional population"
@@ -33,12 +33,12 @@ CUSTOM_HAZARD_FINAL_OPTIONS = [
 STATS_DEEP_DIVE_OPTIONS = [
     Option(id=1, label="Start Mitigation Planning"),
     Option(id=2, label="Add a new Hazard"),
-    Option(id=3, label="Refresh hazards and DGs"),
+    Option(id=3, label="Refresh hazards and disadvantaged groups"),
 ]
 
 SOCIO_DEMOGRAPHIC_OPTIONS = [
     Option(id=1, label="Confirm & Continue to mitigation"),
-    Option(id=2, label="Add more DGs"),
+    Option(id=2, label="Add more disadvantaged groups"),
 ]
 
 SOCIO_DEMOGRAPHIC_LISTING_OPTIONS = [
@@ -137,9 +137,10 @@ CUSTOM_HAZARD_PROFILE_REASON_OPTIONS = [
 ]
 
 CUSTOM_HAZARD_SUMMARY_REVIEW_OPTIONS = [
-    Option(id=1, label="Continue"),
-    Option(id=2, label="Regenerate summary"),
-    Option(id=3, label="Back to affected groups"),
+    Option(id=1, label="Confirm and save"),
+    Option(id=2, label="Revise title"),
+    Option(id=3, label="Revise summary"),
+    Option(id=4, label="Back to affected groups"),
 ]
 
 MITIGATION_DUPLICATE_OPTIONS = [

@@ -8,4 +8,4 @@ Question {{ current }} of {{ total }}
 
 {{ question }}
 
-Use the score slider below. Reason is optional. Evidence is optional and can be a web URL or supported file: PDF, DOCX, MD, or TXT.
+Choose a score from 1 to 10 by moving the slider below. A score is required for each question; the initial value is None. Reason is optional. Evidence is optional and can be a web URL or supported file: PDF, DOCX, MD, or TXT.

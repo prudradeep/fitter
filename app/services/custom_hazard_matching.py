@@ -201,6 +201,18 @@ def split_group_entry(group: dict[str, Any]) -> list[dict[str, Any]]:
     """Return separate records when one extracted label contains multiple groups."""
     item = coerce_group(group)
     label = str(item.get("group") or "").strip()
+    parenthetical = re.fullmatch(r"[^()]+\(([^()]+)\)\s*", label)
+    if parenthetical:
+        named_groups = [
+            part.strip(" ,;:")
+            for part in re.split(r"\s*(?:,|;|\band\b|&)\s*", parenthetical.group(1), flags=re.IGNORECASE)
+            if part.strip(" ,;:")
+        ]
+        if len(named_groups) > 1 and all(group_is_allowed(part) for part in named_groups):
+            return [
+                {**item, "group": part[:120], "source_text": label[:240]}
+                for part in named_groups
+            ]
     parts = [
         part.strip(" ,;:")
         for part in re.split(r"\s+(?:and|&)\s+", label, flags=re.IGNORECASE)

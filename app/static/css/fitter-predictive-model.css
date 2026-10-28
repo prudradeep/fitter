@@ -1,0 +1,215 @@
+:root{
+  --ink:#22313F;      /* deep navy: structure, text */
+  --ink-2:#4A5866;    /* secondary text */
+  --paper:#F4F5F1;    /* page */
+  --card:#FFFFFF;
+  --rule:#D9DDD6;
+  --thread:#1E6B7B;   /* petrol teal: the evidence thread */
+  --thread-soft:#DDEBEE;
+  --energy:#8E3B46;
+  --housing:#4E7A45;
+  --transport:#4A5A86;
+  --muted:#E8EBE5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#E6EAEE; --ink-2:#AEB8C2; --paper:#16202A; --card:#1E2A36; --rule:#33424F;
+    --thread:#6FB6C4; --thread-soft:#1D3B44; --energy:#E08F99; --housing:#9CC492; --transport:#9AA8D6; --muted:#2A3744;
+  }
+}
+:root[data-theme="dark"]{
+  --ink:#E6EAEE; --ink-2:#AEB8C2; --paper:#16202A; --card:#1E2A36; --rule:#33424F;
+  --thread:#6FB6C4; --thread-soft:#1D3B44; --energy:#E08F99; --housing:#9CC492; --transport:#9AA8D6; --muted:#2A3744;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:"Public Sans",system-ui,sans-serif; font-size:15px; line-height:1.45;
+  -webkit-font-smoothing:antialiased; font-variant-numeric:tabular-nums;
+}
+.wrap{max-width:1200px; margin:0 auto; padding:28px 24px 40px}
+
+/* ---------- Carousel chrome ---------- */
+.head{display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; margin-bottom:14px}
+.head h1{font-size:26px; line-height:1.15; font-weight:800; letter-spacing:-.01em; margin:0}
+.head p{margin:0; color:var(--ink-2); max-width:62ch}
+.tabs{display:flex; align-items:stretch; gap:0; width:100%}
+.tab{
+  appearance:none; flex:1; border:1px solid var(--rule); background:var(--card); color:var(--ink-2); font:inherit; text-align:left;
+  padding:8px 14px; cursor:pointer; display:flex; align-items:center; gap:10px; border-radius:10px; min-width:0;
+}
+.tab .n{width:26px; height:26px; border-radius:50%; border:1.5px solid currentColor; display:grid; place-items:center; font-size:14px; font-weight:700; flex:none}
+.tab .t{display:flex; flex-direction:column; line-height:1.25}
+.tab .t b{font-size:15px; font-weight:700; color:var(--ink)}
+.tab .t span{font-size:12.5px}
+.tab[aria-selected="true"]{background:var(--ink); border-color:var(--ink); color:var(--paper)}
+.tab[aria-selected="true"] .t b{color:var(--paper)}
+.tab[aria-selected="true"] .n{background:var(--thread); border-color:var(--thread); color:#fff}
+.arrow{flex:none; width:28px; display:grid; place-items:center; color:var(--thread)}
+.arrow svg{width:22px; height:22px}
+.head{flex-direction:column; align-items:stretch}
+.tab:focus-visible,.nav button:focus-visible{outline:3px solid var(--thread); outline-offset:2px}
+
+.slide{display:none; background:var(--card); border:1px solid var(--rule); border-radius:16px; padding:32px 32px 26px; position:relative}
+.slide.active{display:block; animation:enter .35s ease}
+@keyframes enter{from{opacity:0; transform:translateX(12px)} to{opacity:1; transform:none}}
+@media (prefers-reduced-motion: reduce){.slide.active{animation:none}}
+
+.slide-top{display:flex; justify-content:space-between; align-items:baseline; gap:16px; flex-wrap:wrap; margin-bottom:22px}
+.slide-top h2{margin:0; font-size:24px; font-weight:800; letter-spacing:-.01em}
+.slide-top .src{font-size:13px; color:var(--ink-2)}
+.slide-top .src b{color:var(--thread); font-weight:700}
+.lede{margin:-12px 0 22px; color:var(--ink-2); max-width:70ch}
+
+.nav{display:flex; justify-content:space-between; align-items:center; margin-top:18px}
+.nav button{
+  appearance:none; font:inherit; font-weight:600; font-size:14px; color:var(--ink); background:var(--card);
+  border:1px solid var(--rule); border-radius:8px; padding:9px 16px; cursor:pointer;
+}
+.nav button:disabled{opacity:.35; cursor:default}
+.dots{display:flex; gap:8px}
+.dots span{width:28px; height:4px; border-radius:2px; background:var(--rule)}
+.dots span.on{background:var(--thread)}
+
+/* ---------- Shared bits ---------- */
+.ico{width:40px; height:40px; color:var(--ink); flex:none}
+svg use{stroke:currentColor}
+.tag{display:inline-block; font-size:11.5px; font-weight:600; color:var(--thread); background:var(--thread-soft); border-radius:4px; padding:2px 7px; margin:2px 4px 2px 0; white-space:nowrap}
+.pill{display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; padding:3px 9px; border-radius:20px; border:1px solid var(--rule); margin:2px 4px 2px 0}
+.pill i{width:8px; height:8px; border-radius:50%; display:inline-block}
+.small{font-size:12.5px; color:var(--ink-2)}
+h3{font-size:16px; font-weight:700; margin:10px 0 6px; line-height:1.25}
+p{margin:0 0 6px}
+
+/* ---------- Station flow (the ochre thread) ---------- */
+.flow{display:grid; gap:0; position:relative}
+.flow.s5{grid-template-columns:repeat(5,1fr)}
+.station{position:relative; padding:0 14px 0 0}
+.station .marker{display:flex; align-items:center; gap:0; margin-bottom:12px}
+.station .num{
+  width:30px; height:30px; border-radius:50%; background:var(--thread); color:#fff; font-weight:700; font-size:14px;
+  display:grid; place-items:center; flex:none; position:relative; z-index:1;
+}
+.station .line{flex:1; height:3px; background:var(--thread); opacity:.55}
+.station:last-child .line{background:linear-gradient(90deg,var(--thread),transparent)}
+.station .body{padding-right:6px}
+
+/* ---------- Slide 1 specifics ---------- */
+.sectors{display:flex; flex-direction:column; gap:6px; margin-top:8px}
+.sec-row{display:flex; align-items:center; gap:10px; font-size:13px}
+.sec-row svg{width:26px; height:26px; flex:none}
+.sec-row b{font-size:18px; font-weight:800; min-width:24px; text-align:right}
+.qparts{display:flex; flex-direction:column; gap:6px; margin-top:8px}
+.qpart{display:flex; gap:8px; align-items:flex-start; font-size:13px}
+.qpart .k{width:22px; height:22px; border-radius:4px; background:var(--muted); font-weight:700; display:grid; place-items:center; font-size:12px; flex:none}
+.qpart.c .k{background:var(--thread); color:#fff}
+.likert{display:grid; grid-template-columns:auto repeat(5,18px); gap:3px; align-items:center; font-size:12px; margin-top:8px}
+.likert span.b{height:14px; border-radius:2px; background:var(--thread); }
+.strata{display:flex; flex-direction:column; gap:5px; margin-top:8px}
+.stratum{border-left:3px solid var(--thread); padding:3px 8px; font-size:13px; background:var(--thread-soft); border-radius:0 4px 4px 0}
+.stratum:nth-child(2){margin-left:10px; opacity:.92}
+.stratum:nth-child(3){margin-left:20px; opacity:.85}
+.checks{list-style:none; padding:0; margin:8px 0 0; display:flex; flex-direction:column; gap:7px}
+.checks li{display:flex; gap:8px; font-size:13px; align-items:flex-start}
+.checks svg{width:18px; height:18px; flex:none; margin-top:1px; color:var(--housing)}
+
+.funnel-band{margin-top:26px; border-top:1px solid var(--rule); padding-top:20px; display:grid; grid-template-columns:1.5fr 1fr; gap:28px; align-items:start}
+.funnel{display:flex; flex-direction:column; gap:6px}
+.fbar{display:flex; align-items:center; gap:12px}
+.fbar .bar{height:30px; background:var(--ink); border-radius:4px; display:flex; align-items:center; padding:0 10px; color:var(--paper); font-weight:700; font-size:15px; white-space:nowrap}
+.fbar .lab{font-size:13px; color:var(--ink-2); white-space:nowrap}
+.fbar.final .bar{background:var(--thread)}
+.countries{display:flex; flex-direction:column; gap:10px}
+.crow{display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:13px}
+.crow .sname{font-weight:700; min-width:76px}
+.cc{font-size:12px; font-weight:700; border:1px solid var(--rule); border-radius:4px; padding:1px 6px}
+.cc.off{color:var(--ink-2); text-decoration:line-through; opacity:.7}
+.note{font-size:12.5px; color:var(--ink-2); margin-top:4px}
+
+/* ---------- Slide 2 specifics ---------- */
+.phases{display:grid; grid-template-columns:2fr 3fr 1fr; gap:10px; margin-bottom:14px}
+.phase{font-size:12.5px; font-weight:700; color:var(--ink-2); border-top:3px solid var(--rule); padding-top:6px}
+.phase b{color:var(--ink)}
+.flow.s6{grid-template-columns:repeat(6,1fr)}
+.grid5{display:grid; grid-template-columns:repeat(5,14px); gap:2px; margin:8px 0 4px}
+.grid5 span{width:14px; height:14px; border-radius:2px; background:var(--muted)}
+.grid5 span.h{background:var(--thread)}
+.formula{font-size:13px; font-weight:700; margin:4px 0}
+.levels{display:flex; gap:3px; align-items:flex-end; height:36px; margin:8px 0 4px}
+.levels span{flex:1; border-radius:2px 2px 0 0; background:var(--thread)}
+.levels-lab{display:flex; justify-content:space-between; font-size:11px; color:var(--ink-2)}
+.dotsfield{display:grid; grid-template-columns:repeat(10,8px); gap:3px; margin:8px 0}
+.dotsfield span{width:8px; height:8px; border-radius:50%; background:var(--rule)}
+.dotsfield span.k{background:var(--thread)}
+.gates{display:flex; flex-direction:column; gap:5px; margin-top:6px}
+.gate{display:flex; gap:7px; align-items:flex-start; font-size:12.5px}
+.gate svg{width:16px; height:16px; flex:none; margin-top:1px; color:var(--thread)}
+.ctxlist{font-size:12.5px; margin:6px 0 0; padding-left:16px}
+.ctxlist li{margin-bottom:2px}
+
+.twin{margin-top:24px; display:grid; grid-template-columns:auto 1fr 1fr; gap:16px; align-items:stretch; border-top:1px solid var(--rule); padding-top:18px}
+.twin .twin-lab{font-weight:700; font-size:14px; max-width:16ch; align-self:center}
+.track{border:1px solid var(--rule); border-radius:10px; padding:12px 14px; display:flex; gap:12px; align-items:flex-start}
+.track.main{border-color:var(--thread); background:var(--thread-soft)}
+.track svg{width:34px; height:34px; flex:none}
+.track h4{margin:0 0 2px; font-size:14px}
+.track p{font-size:13px; color:var(--ink-2); margin:0}
+
+.output{margin-top:16px; display:flex; gap:16px; align-items:center; background:var(--ink); color:var(--paper); border-radius:10px; padding:14px 18px}
+.output svg{width:40px; height:40px; flex:none; color:var(--thread)}
+.output b{font-size:15px}
+.output p{margin:0; font-size:13.5px; opacity:.85}
+
+/* ---------- Slide 3 specifics ---------- */
+.findings{display:grid; grid-template-columns:repeat(3,1fr); gap:18px}
+.fcard{border:1px solid var(--rule); border-top:4px solid var(--c); border-radius:10px; padding:16px 18px 14px; display:flex; flex-direction:column}
+.fcard .fhead{display:flex; align-items:center; gap:10px}
+.fcard .fhead svg{width:34px; height:34px; color:var(--c)}
+.fcard .fhead h3{margin:0; font-size:17px}
+.fcard .fhead .small{display:block}
+.big{font-size:42px; font-weight:800; letter-spacing:-.02em; color:var(--c); line-height:1; margin:16px 0 4px}
+.big small{font-size:16px; font-weight:700; letter-spacing:0}
+.who{font-size:14px; font-weight:600; margin-bottom:12px}
+.also{list-style:none; padding:0; margin:auto 0 0; border-top:1px solid var(--rule); padding-top:10px; display:flex; flex-direction:column; gap:6px}
+.also li{font-size:13px; display:flex; gap:8px}
+.also li::before{content:""; width:6px; height:6px; border-radius:50%; background:var(--c); margin-top:7px; flex:none}
+.odds{display:flex; align-items:center; gap:6px; margin:6px 0 12px}
+.odds .p{width:14px; height:22px; border-radius:7px 7px 2px 2px; background:var(--rule)}
+.odds .p.on{background:var(--c)}
+.odds .lbl{font-size:11.5px; color:var(--ink-2); margin-left:4px}
+
+.across{margin-top:22px; display:grid; grid-template-columns:repeat(3,1fr); gap:18px; border-top:1px solid var(--rule); padding-top:18px}
+.across h3{margin:0 0 4px; font-size:15px}
+.across p{font-size:13px; color:var(--ink-2)}
+.across .aico{display:flex; gap:12px}
+.across svg{width:36px; height:36px; flex:none; color:var(--thread)}
+.caveat{margin-top:16px; font-size:12px; color:var(--ink-2); border-left:3px solid var(--rule); padding-left:10px}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 980px){
+  .tab .t span{display:none}
+  .flow.s5,.flow.s6{grid-template-columns:repeat(3,1fr); row-gap:22px}
+  .phases{display:none}
+  .funnel-band{grid-template-columns:1fr}
+  .findings,.across{grid-template-columns:1fr}
+  .twin{grid-template-columns:1fr}
+}
+@media (max-width: 620px){
+  .wrap{padding:18px 16px 28px}
+  .head h1{font-size:22px}
+  .tab{padding:7px 8px; gap:6px; border-radius:8px}
+  .tab .n{width:22px; height:22px; font-size:12px}
+  .tab .t b{font-size:12px; font-weight:700}
+  .arrow{width:14px}
+  .arrow svg{width:14px; height:14px}
+  .slide{padding:20px 16px 18px}
+  .flow.s5,.flow.s6{grid-template-columns:1fr; row-gap:0}
+  .station{padding:0 0 18px 42px}
+  .station .marker{position:absolute; left:0; top:0; bottom:0; flex-direction:column; margin:0}
+  .station .line{width:3px; height:auto; flex:1}
+  .station:last-child .line{background:linear-gradient(180deg,var(--thread),transparent)}
+  .station h3{margin-top:4px}
+  .fbar .bar{font-size:13px}
+  .big{font-size:36px}
+}

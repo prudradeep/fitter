@@ -34,6 +34,7 @@ const evidenceFileField = document.querySelector("#evidenceFileField");
 const secondaryReasonInput = document.querySelector("#secondaryReasonInput");
 const scoreInput = document.querySelector("#scoreInput");
 const scoreValue = document.querySelector("#scoreValue");
+let evaluationScoreSelected = false;
 const evaluationReasonInput = document.querySelector("#evaluationReasonInput");
 const evaluationEvidenceInput = document.querySelector("#evaluationEvidenceInput");
 const evaluationEvidenceFileInput = document.querySelector("#evaluationEvidenceFileInput");
@@ -153,13 +154,8 @@ const resetTargetPopulationButton = document.querySelector("#resetTargetPopulati
 const methodologyDialog = document.querySelector("#methodologyDialog");
 const closeMethodologyButton = document.querySelector("#closeMethodologyButton");
 const methodologyFrame = document.querySelector("#methodologyFrame");
-const surveyResultsDialog = document.querySelector("#surveyResultsDialog");
-const surveyResultsImage = document.querySelector("#surveyResultsImage");
-const surveyResultsViewport = document.querySelector("#surveyResultsViewport");
-const closeSurveyResultsButton = document.querySelector("#closeSurveyResultsButton");
-const surveyResultsZoomIn = document.querySelector("#surveyResultsZoomIn");
-const surveyResultsZoomOut = document.querySelector("#surveyResultsZoomOut");
-const surveyResultsZoomReset = document.querySelector("#surveyResultsZoomReset");
+const predictiveModelDialog = document.querySelector("#predictiveModelDialog");
+const closePredictiveModelButton = document.querySelector("#closePredictiveModelButton");
 const platformUsersDialog = document.querySelector("#platformUsersDialog");
 const platformUsersImage = document.querySelector("#platformUsersImage");
 const platformUsersViewport = document.querySelector("#platformUsersViewport");
@@ -273,7 +269,6 @@ let voiceAnalyzerProgress = 0;
 let currentTargetPopulationQuestion = null;
 let targetPopulationQuestions = [];
 let targetPopulationAnswers = [];
-let surveyResultsZoom = 1;
 let platformUsersZoom = 1;
 let autoConversationTimer = null;
 let autoConversationTurns = 0;
@@ -977,7 +972,9 @@ async function renderCountrySelectionMap() {
         map: {
           borderColor: "#7a8493",
           borderWidth: 0.45,
-          states: { hover: { color: "#6d22c7" } },
+          states: {
+            hover: { color: "#6d22c7", borderColor: "#6d22c7", borderWidth: 1.5 },
+          },
         },
       },
       series: [
@@ -1085,7 +1082,9 @@ async function renderRegionMap(country, region, { keepCards = false } = {}) {
         map: {
           borderColor: "#7a8493",
           borderWidth: 0.55,
-          states: { hover: { color: "#7428d2" } },
+          states: {
+            hover: { color: "#7428d2", borderColor: "#7428d2", borderWidth: 1.5 },
+          },
         },
       },
       series: [{ name: "Region", data, joinBy: "hc-key", nullColor: "#c7ccd3" }],
@@ -2181,7 +2180,7 @@ function setReasonEvidencePlaceholders(step, mode = "reason_evidence") {
 
   if (step === "socio_demographic_review") {
     primaryInputLabel.textContent = "Reason/Justification (optional)";
-    reasonInput.placeholder = "Why should these DGs be treated as severely affected?";
+    reasonInput.placeholder = "Why are these disadvantaged groups severely affected?";
     evidenceInput.placeholder = "https://example.org/demographic-evidence";
     return;
   }
@@ -2262,7 +2261,7 @@ chatLog?.addEventListener("click", (event) => {
     event.preventDefault();
     const evidenceUrl = evidenceButton.dataset.evidenceUrl || "";
     if (evidenceUrl) {
-      window.open(evidenceUrl, "_blank", "noopener,noreferrer");
+      openExternalUrl(evidenceUrl);
     } else {
       openHazardEvidenceDialog(
         evidenceButton.dataset.evidenceText || "Evidence details are unavailable.",
@@ -2280,7 +2279,7 @@ chatLog?.addEventListener("click", (event) => {
   const surveyResultsButton = event.target.closest("[data-open-survey-results], .survey-source-button");
   if (surveyResultsButton) {
     event.preventDefault();
-    openSurveyResultsDialog();
+    openPredictiveModelDialog();
     return;
   }
   const headingLabel = event.target.closest(".hazard-group-heading > span");
@@ -2290,9 +2289,9 @@ chatLog?.addEventListener("click", (event) => {
     openPlatformUsersDialog();
     return;
   }
-  if (headingLabelText === "from the survey") {
+  if (headingLabelText === "from the survey" || headingLabelText === "based on a predictive model") {
     event.preventDefault();
-    openSurveyResultsDialog();
+    openPredictiveModelDialog();
     return;
   }
   const methodologyButton = event.target.closest("[data-open-methodology]");
@@ -3197,6 +3196,13 @@ function setLoading(value) {
   });
 }
 
+function setEvaluationScoreSelected(selected) {
+  evaluationScoreSelected = selected;
+  scoreValue.textContent = selected ? scoreInput.value : "None";
+  scoreInput.classList.toggle("is-unset", !selected);
+  scoreInput.removeAttribute("aria-invalid");
+}
+
 function setInputMode(mode = "text", step = "", options = [], session = appState.currentSession) {
   const isNewHazardEntry = Boolean(
     step === "hazards"
@@ -3251,7 +3257,7 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
     }
   } else if (evaluationMode) {
     scoreInput.value = "5";
-    scoreValue.textContent = "5";
+    setEvaluationScoreSelected(false);
     evaluationReasonInput.value = "";
     evaluationEvidenceInput.value = "";
     scoreInput.focus();
@@ -4096,38 +4102,22 @@ function closeMethodologyDialog() {
   messageInput?.focus();
 }
 
-function syncSurveyResultsZoom() {
-  if (!surveyResultsImage) return;
-  surveyResultsImage.style.width = `${surveyResultsZoom * 100}%`;
-  surveyResultsImage.style.maxWidth = surveyResultsZoom > 1 ? "none" : "100%";
-}
-
-function setSurveyResultsZoom(value) {
-  surveyResultsZoom = Math.min(3, Math.max(0.5, Number(value) || 1));
-  syncSurveyResultsZoom();
-}
-
-function openSurveyResultsDialog() {
-  if (!surveyResultsDialog) return;
-  setSurveyResultsZoom(1);
-  if (surveyResultsViewport) {
-    surveyResultsViewport.scrollTop = 0;
-    surveyResultsViewport.scrollLeft = 0;
-  }
-  if (typeof surveyResultsDialog.showModal === "function") {
-    if (!surveyResultsDialog.open) surveyResultsDialog.showModal();
+function openPredictiveModelDialog() {
+  if (!predictiveModelDialog) return;
+  if (typeof predictiveModelDialog.showModal === "function") {
+    if (!predictiveModelDialog.open) predictiveModelDialog.showModal();
   } else {
-    surveyResultsDialog.removeAttribute("hidden");
+    predictiveModelDialog.removeAttribute("hidden");
   }
-  surveyResultsZoomIn?.focus();
+  closePredictiveModelButton?.focus();
 }
 
-function closeSurveyResultsDialog() {
-  if (!surveyResultsDialog) return;
-  if (typeof surveyResultsDialog.close === "function") {
-    surveyResultsDialog.close();
+function closePredictiveModelDialog() {
+  if (!predictiveModelDialog) return;
+  if (typeof predictiveModelDialog.close === "function") {
+    predictiveModelDialog.close();
   } else {
-    surveyResultsDialog.setAttribute("hidden", "");
+    predictiveModelDialog.setAttribute("hidden", "");
   }
   messageInput?.focus();
 }
@@ -4209,6 +4199,47 @@ function closeHazardEvidenceDialog() {
     hazardEvidenceDialog.setAttribute("hidden", "");
   }
   messageInput?.focus();
+}
+
+function openExternalUrl(externalUrl) {
+  let url;
+  try {
+    url = new URL(externalUrl, window.location.href);
+  } catch (error) {
+    console.warn("[external-link] Ignored invalid URL", error);
+    return;
+  }
+  if (!["http:", "https:"].includes(url.protocol)) {
+    console.info("[external-link] Ignored non-web URL", { protocol: url.protocol });
+    return;
+  }
+
+  const invoke = window.__TAURI__?.core?.invoke;
+  console.info("[external-link] openExternalUrl called", {
+    host: url.host,
+    protocol: url.protocol,
+    tauriInvokeAvailable: typeof invoke === "function",
+  });
+  if (typeof invoke === "function") {
+    invoke("open_external_url", { url: url.href })
+      .then(() => console.info("[external-link] Tauri open_external_url resolved", { host: url.host }))
+      .catch((error) => {
+        console.error("[external-link] Tauri open_external_url failed", { host: url.host, error });
+        window.open(url.href, "_blank", "noopener,noreferrer");
+      });
+    return;
+  }
+
+  const openUrl = window.__TAURI__?.opener?.openUrl;
+  if (typeof openUrl === "function") {
+    openUrl(url.href).catch((error) => {
+      console.error("[external-link] Tauri opener API failed", { host: url.host, error });
+      window.open(url.href, "_blank", "noopener,noreferrer");
+    });
+  } else {
+    console.info("[external-link] Requesting a new browser tab", { host: url.host });
+    window.open(url.href, "_blank", "noopener,noreferrer");
+  }
 }
 
 function showHazardMetricDataDialog() {
@@ -4535,7 +4566,8 @@ function saveCurrentInputState() {
     reason: reasonInput.value,
     secondaryReason: secondaryReasonInput.value,
     evidenceUrl: evidenceInput.value,
-    score: scoreInput.value,
+    score: evaluationScoreSelected ? scoreInput.value : null,
+    scoreSelected: evaluationScoreSelected,
     evaluationReason: evaluationReasonInput.value,
     evaluationEvidenceUrl: evaluationEvidenceInput.value,
   };
@@ -4562,7 +4594,7 @@ function applySavedInputState() {
     secondaryReasonInput.value = state.secondaryReason || "";
     evidenceInput.value = state.evidenceUrl || "";
     scoreInput.value = state.score || "5";
-    scoreValue.textContent = scoreInput.value;
+    setEvaluationScoreSelected(appState.inputMode === "evaluation_question" && state.scoreSelected === true);
     evaluationReasonInput.value = state.evaluationReason || "";
     evaluationEvidenceInput.value = state.evaluationEvidenceUrl || "";
   } catch (error) {
@@ -4668,7 +4700,7 @@ function currentInputExportValues() {
     secondary_reason: secondaryReasonInput?.value || "",
     evidence_url: evidenceInput?.value || "",
     evidence_files: selectedFileInfo(evidenceFileInput),
-    evaluation_score: scoreInput?.value || "",
+    evaluation_score: evaluationScoreSelected ? scoreInput?.value : null,
     evaluation_reason: evaluationReasonInput?.value || "",
     evaluation_evidence_url: evaluationEvidenceInput?.value || "",
     evaluation_evidence_files: selectedFileInfo(evaluationEvidenceFileInput),
@@ -6206,6 +6238,11 @@ chatForm.addEventListener("submit", (event) => {
   }
 
   if (appState.inputMode === "evaluation_question") {
+    if (!evaluationScoreSelected) {
+      scoreInput.setAttribute("aria-invalid", "true");
+      flashRequiredField(scoreInput);
+      return;
+    }
     const score = scoreInput.value.trim();
     const reason = evaluationReasonInput.value.trim();
     const evidenceUrl = evaluationEvidenceInput.value.trim();
@@ -6243,7 +6280,7 @@ chatForm.addEventListener("submit", (event) => {
 messageInput.addEventListener("input", updateOptionHighlight);
 textareaInput.addEventListener("input", updateOptionHighlight);
 scoreInput.addEventListener("input", () => {
-  scoreValue.textContent = scoreInput.value;
+  setEvaluationScoreSelected(true);
 });
 
 voiceAssistantToggle?.addEventListener("change", () => {
@@ -6321,6 +6358,28 @@ syncNowButton?.addEventListener("click", runManualSync);
 syncMyDataToggle?.addEventListener("change", updateSyncMyDataPreference);
 
 document.addEventListener("click", (event) => {
+  const externalLink = event.target.closest?.("a[href]");
+  if (externalLink && !event.defaultPrevented && !externalLink.hasAttribute("download")) {
+    let url;
+    try {
+      url = new URL(externalLink.href, window.location.href);
+    } catch (error) {
+      url = null;
+    }
+    if (
+      url
+      && url.origin !== window.location.origin
+      && ["http:", "https:"].includes(url.protocol)
+    ) {
+      console.info("[external-link] External anchor click", {
+        host: url.host,
+        protocol: url.protocol,
+        target: externalLink.target || "same-window",
+      });
+      event.preventDefault();
+      openExternalUrl(url.href);
+    }
+  }
   if (
     settingsDrawer?.hidden === false &&
     !settingsDrawer.contains(event.target) &&
@@ -6610,13 +6669,10 @@ closeMethodologyButton?.addEventListener("click", closeMethodologyDialog);
 methodologyDialog?.addEventListener("click", (event) => {
   if (event.target === methodologyDialog) closeMethodologyDialog();
 });
-closeSurveyResultsButton?.addEventListener("click", closeSurveyResultsDialog);
-surveyResultsDialog?.addEventListener("click", (event) => {
-  if (event.target === surveyResultsDialog) closeSurveyResultsDialog();
+closePredictiveModelButton?.addEventListener("click", closePredictiveModelDialog);
+predictiveModelDialog?.addEventListener("click", (event) => {
+  if (event.target === predictiveModelDialog) closePredictiveModelDialog();
 });
-surveyResultsZoomIn?.addEventListener("click", () => setSurveyResultsZoom(surveyResultsZoom + 0.25));
-surveyResultsZoomOut?.addEventListener("click", () => setSurveyResultsZoom(surveyResultsZoom - 0.25));
-surveyResultsZoomReset?.addEventListener("click", () => setSurveyResultsZoom(1));
 closePlatformUsersButton?.addEventListener("click", closePlatformUsersDialog);
 platformUsersDialog?.addEventListener("click", (event) => {
   if (event.target === platformUsersDialog) closePlatformUsersDialog();

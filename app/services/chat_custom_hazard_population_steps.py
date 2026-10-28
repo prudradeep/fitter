@@ -31,6 +31,8 @@ from app.services.chat_population_edits import (
     fallback_population_edits,
 )
 from app.services.chat_session import ChatSession
+from app.services.profile_category_matching import match_profile_data
+from app.services.custom_hazard_matching import split_group_entry
 from app.services.custom_hazard_validation import (
     build_custom_hazard_grounding_status,
     custom_hazard_validation_details,
@@ -885,23 +887,34 @@ class ChatCustomHazardPopulationStepsMixin:
         """Populate review reflections without replacing meaningful user content."""
         state = self._custom_hazard_state(session)
         enriched_groups: list[object] = []
+        seen_labels: set[str] = set()
         for item in state.get("affected_groups") or []:
             if not isinstance(item, dict):
                 enriched_groups.append(item)
                 continue
-            group = dict(item)
-            label = self._clean_affected_group_label(str(group.get("group") or ""))
-            reason = str(group.get("reason") or "").strip()
-            reflection = str(group.get("reflection") or "").strip()
-            if label and (
-                not reflection or self._is_affected_population_placeholder(reflection)
-            ):
-                group["reflection"] = await self._generate_affected_population_reflection(
-                    session,
-                    label,
-                    "" if self._is_affected_population_placeholder(reason) else reason,
-                )
-            enriched_groups.append(group)
+            parts = split_group_entry(item)
+            for part in parts:
+                group = dict(item) if len(parts) == 1 else {**item, **part, "reflection": ""}
+                label = self._clean_affected_group_label(str(group.get("group") or ""))
+                key = normalize(label)
+                if not label or key in seen_labels:
+                    continue
+                seen_labels.add(key)
+                if len(parts) > 1:
+                    original_label = str(item.get("group") or "").strip()
+                    group["reason"] = re.sub(
+                        re.escape(original_label), label,
+                        str(group.get("reason") or ""), flags=re.IGNORECASE,
+                    )
+                reason = str(group.get("reason") or "").strip()
+                reflection = str(group.get("reflection") or "").strip()
+                if not reflection or self._is_affected_population_placeholder(reflection):
+                    group["reflection"] = await self._generate_affected_population_reflection(
+                        session,
+                        label,
+                        "" if self._is_affected_population_placeholder(reason) else reason,
+                    )
+                enriched_groups.append(group)
         state["affected_groups"] = enriched_groups
 
     async def _generate_affected_population_reflection(
@@ -1037,51 +1050,46 @@ class ChatCustomHazardPopulationStepsMixin:
         compared_profiles: list[dict[str, str]] = []
         for profile in profiles:
             updated = dict(profile)
-            lookup_labels = [
-                str(label).strip()
-                for label in self._list_from_profile_or_metadata(
-                    profile,
-                    "population_lookup_labels",
-                )
-                if str(label).strip()
-            ]
-            if not lookup_labels:
-                lookup_labels = self._additional_profile_population_lookup_labels(profile)
-            population_values: list[dict[str, object]] = []
-            for label in lookup_labels:
+            category = match_profile_data(profile)
+            prevalence = None
+            if category is not None:
                 try:
                     prevalence = await self.eurostat.get_prevalence(
-                        label,
+                        category,
                         country_code=str(session.country or ""),
                         nuts_code=str(region.name),
                         sector=str(session.sector or ""),
                         hazard=hazard,
-                        confirmed_predictor_category=label,
+                        confirmed_predictor_category=category,
                     )
                 except Exception:
                     logger.exception(
-                        "Failed to fetch affected population for comparison region"
+                        "Failed to fetch population analysis for comparison region"
                     )
-                    continue
-                if prevalence is not None:
-                    population_values.append(
-                        {
-                            "population_pct": prevalence.get("population_pct"),
-                            "national_population_pct": prevalence.get(
-                                "national_population_pct"
-                            ),
-                        }
-                    )
-            percentages = (
-                self._population_context_percentages(population_values)
-                if population_values
-                else None
-            )
             updated["regional_population_pct"] = (
-                percentages[0] if percentages is not None else None
+                prevalence.get("population_pct") if prevalence is not None else None
             )
-            if updated.get("national_population_pct") is None and percentages is not None:
-                updated["national_population_pct"] = percentages[1]
+            updated["population_pct"] = updated["regional_population_pct"]
+            updated["national_population_pct"] = (
+                prevalence.get("national_population_pct") if prevalence is not None else None
+            )
+            updated["population_data_status"] = (
+                "available" if prevalence is not None else "unavailable"
+            )
+            updated["population_source"] = (
+                prevalence.get("source") if prevalence is not None else ""
+            )
+            if category is not None:
+                updated["proposed_eurostat_dataset"] = (
+                    prevalence.get("proposed_eurostat_dataset", "NA")
+                    if prevalence is not None
+                    else "NA"
+                )
+                updated["proposed_indicator_label"] = (
+                    prevalence.get("proposed_indicator_label", category)
+                    if prevalence is not None
+                    else category
+                )
             compared_profiles.append(updated)
         return compared_profiles
 
@@ -1300,7 +1308,34 @@ class ChatCustomHazardPopulationStepsMixin:
         action = normalize(exact_label or "")
         state = self._custom_hazard_state(session)
 
-        if action == normalize("Continue"):
+        revision_mode = str(state.get("summary_review_revision_mode") or "")
+        if revision_mode == "title" and not exact_label:
+            title = self._limit_custom_hazard_generated_title(message.strip())
+            if not title:
+                return self._custom_hazard_summary_review_response(
+                    session_id, session,
+                    error_reason="Enter a concise title for this hazard.",
+                )
+            state["summary_review_revision_mode"] = ""
+            session.generated_custom_hazard_title = title
+            state["generated_title"] = title
+            session.accepted_custom_hazard_summary = ""
+            state["generated_summary"] = ""
+            summary = await self._generate_custom_hazard_summary(
+                session, session.accepted_custom_hazard or "New hazard", title
+            )
+            session.accepted_custom_hazard_summary = summary
+            state["generated_summary"] = summary
+            state["summary_confirmed"] = False
+            return self._custom_hazard_summary_review_response(session_id, session)
+        if revision_mode == "title":
+            state["summary_review_revision_mode"] = ""
+
+        if revision_mode == "summary" and not exact_label:
+            state["summary_review_revision_mode"] = ""
+            action = ""
+
+        if action in {normalize("Confirm and save"), normalize("Continue")}:
             if not str(session.accepted_custom_hazard_summary or "").strip():
                 return self._custom_hazard_summary_review_response(
                     session_id,
@@ -1318,7 +1353,24 @@ class ChatCustomHazardPopulationStepsMixin:
             return self._custom_hazard_population_review_step(session_id, session)
 
         revision_request = message.strip()
-        if action == normalize("Regenerate summary"):
+        if action == normalize("Revise title"):
+            state["summary_review_revision_mode"] = "title"
+            return self._custom_hazard_summary_review_response(
+                session_id, session,
+                error_reason="Enter the revised hazard title in the text area, then submit it.",
+            )
+        if action == normalize("Revise summary"):
+            state["summary_review_revision_mode"] = "summary"
+            return self._custom_hazard_summary_review_response(
+                session_id, session,
+                error_reason="Enter summary revision instructions or the wording you prefer.",
+            )
+        if not revision_request:
+            return self._custom_hazard_summary_review_response(
+                session_id, session,
+                error_reason="Enter your revised summary or instructions, or choose Confirm and save.",
+            )
+        if action in {normalize("Regenerate summary"), normalize("Regenerate")}:
             revision_request = (
                 "Write a fresh alternative using different concise wording while preserving "
                 "all validated facts."

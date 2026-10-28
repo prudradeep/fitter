@@ -24,7 +24,7 @@
 
 - Structured provenance from AI-produced output to specific source document IDs or chunk IDs is not present in report output or contradiction verdicts; retrieval has document IDs, but they are reduced to title/score/content for contradiction checks. Looked at: [app/services/knowledge_base.py :: KnowledgeBaseService._search_results()] [app/services/evidence_contradiction_service.py :: _format_l1_matches()] [app/services/report_export.py :: _report_lines()].
 
-- Live Eurostat API middleware is not present in the executed population path; the service uses deterministic mock population responses and labels prevalence source `Mock Eurostat cache`. Looked at: [app/services/eurostat_service.py :: EurostatService._mock_profile_population()] [app/services/eurostat_service.py :: EurostatService.get_prevalence()].
+- Population analysis is fetched from the configured analysis API on a cache miss and cached for the configured expiry period. The API key must be supplied as `POPULATION_ANALYSIS_API_KEY`; the endpoint is configurable with `POPULATION_ANALYSIS_API_URL`. Looked at: [app/services/eurostat_service.py :: EurostatService.get_profile_population()] [app/services/eurostat_service.py :: EurostatService.get_prevalence()].
 
 ## 3. Code Contradicts The Claims Listed In The Task
 
@@ -34,7 +34,7 @@
 
 - Claim: report readiness requires mitigation created, clarified, self-evaluated, and STSI probing executed. Contradiction: PDF export only requires a current/latest mitigation measure; STSI skipped/missing still allows report generation. Looked at: [app/services/report_export.py :: _current_measure()] [app/services/report_export.py :: mitigation_report_pdf()] [app/services/chat_mitigation_creation_system_flow.py :: _handle_system_inquiry_intro()].
 
-- Claim: Eurostat data is fetched by a batch process on first run and refreshed every 3 months. Contradiction: cache expiry is 3 months, but the population path calls `_mock_profile_population()` on cache miss rather than a live Eurostat fetch or verified batch process. Looked at: [app/services/eurostat_service.py :: EurostatService.get_profile_population()] [app/services/eurostat_service.py :: EurostatService._store_profile_population()].
+- Claim: population data is fetched by a batch process. The implemented path fetches on demand when a cache miss occurs and reuses cached responses until expiry. Looked at: [app/services/eurostat_service.py :: EurostatService.get_profile_population()] [app/services/eurostat_service.py :: EurostatService._store_profile_population()].
 
 - Claim: final report includes incremental pairwise portfolio comparison. Contradiction: report code emits comparison cards and average-score summary; no pairwise matrix or incremental pairwise algorithm was found in report export. Looked at: [app/services/report_export.py :: _comparison_cards()] [app/services/report_export.py :: _comparison_summary()].
 

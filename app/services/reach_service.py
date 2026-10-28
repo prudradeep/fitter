@@ -84,9 +84,15 @@ class ReachService:
                     "profile_key": predictor_name,
                     "eurostat_population_cache_id": prevalence.get("eurostat_population_cache_id"),
                     "population_pct": round(float(prevalence["population_pct"]), 1),
-                    "national_population_pct": round(float(prevalence["national_population_pct"]), 1),
+                    "national_population_pct": (
+                        round(float(prevalence["national_population_pct"]), 1)
+                        if prevalence.get("national_population_pct") is not None
+                        else None
+                    ),
                     "source": prevalence["source"],
                     "dataset": prevalence["dataset"],
+                    "proposed_eurostat_dataset": prevalence.get("proposed_eurostat_dataset"),
+                    "proposed_indicator_label": prevalence.get("proposed_indicator_label"),
                     "geo": prevalence["geo"],
                     "weighted_effect": round(population_share * log_effect, 4),
                 }

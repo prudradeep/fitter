@@ -44,7 +44,7 @@ ALLOWED_TAGS = [
     "ul",
 ]
 ALLOWED_ATTRIBUTES = {
-    "a": ["href", "rel", "target", "title"],
+    "a": ["href", "rel", "target", "title", "class"],
     "article": ["class"],
     "button": [
         "class",
@@ -102,6 +102,10 @@ def render_message(template_name: str, **context: object) -> str:
                 '<a href="{{ policy.document_url }}">View document</a>{% endif %}'
                 '{% if policy.description %}',
             )
+        prompt = prompt.replace(
+            '<a href="{{ policy.document_url }}">View document</a>',
+            '<a class="policy-document-link" href="{{ policy.document_url }}">View document</a>',
+        )
     if (
         template_name == "reason_confirmation.md"
         and prompt
@@ -129,6 +133,7 @@ def render_message(template_name: str, **context: object) -> str:
 
 
 def markdown_to_html(content: str) -> str:
+    content = _separate_markdown_lists(content)
     html = markdown.markdown(
         content,
         extensions=["extra", "sane_lists", "nl2br"],
@@ -146,3 +151,27 @@ def markdown_to_html(content: str) -> str:
         r'<a href="\1" target="_blank" rel="noopener noreferrer"',
         cleaned,
     )
+
+
+def _separate_markdown_lists(content: str) -> str:
+    """Start Markdown list markers in their own block, including after prose."""
+    list_item = re.compile(r"^ {0,3}(?:[*+-]|\d+[.)])[ \t]+")
+    fence = re.compile(r"^ {0,3}(?:`{3,}|~{3,})")
+    lines = content.splitlines()
+    normalized: list[str] = []
+    in_fence = False
+    list_block_active = False
+
+    for line in lines:
+        if fence.match(line):
+            in_fence = not in_fence
+            list_block_active = False
+        if not line.strip():
+            list_block_active = False
+        elif not in_fence and list_item.match(line):
+            if normalized and normalized[-1].strip() and not list_block_active:
+                normalized.append("")
+            list_block_active = True
+        normalized.append(line)
+
+    return "\n".join(normalized)

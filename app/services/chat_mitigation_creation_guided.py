@@ -98,7 +98,7 @@ class ChatMitigationCreationGuidedMixin:
         if not groups:
             return ""
         lines = [f"- {group}" for group in groups]
-        return "## Disadvantage groups to consider for this mitigation measure\n\n" + "\n".join(lines)
+        return "## Disadvantaged groups to consider for this mitigation measure\n\n" + "\n".join(lines)
 
     async def _existing_policy_mechanisms_reference(self, session: ChatSession) -> str:
         """Ground policy-to-hazard mechanisms in D4.2 or knowledge passages."""
@@ -2632,7 +2632,7 @@ class ChatMitigationCreationGuidedMixin:
             f"- **Measure evidence:** {evidence} {'' if evidence_source else input_source('Measure evidence', evidence_value)}\n"
             f"- **Other policy effects reviewed:** {input_source('Policy effects review', effect_context)}\n{effect_summary or '  - No distinct grounded problem identified'}\n"
             f"- **Disadvantaged groups benefited:** {groups} {input_source('Selected groups', groups)}\n"
-            f"- **DG evidence:** {sum(bool(value) for value in dg_evidence.values())} of {len(dg_evidence)} group(s) supplied evidence {input_source('Group evidence', group_evidence)}\n"
+            f"- **Disadvantaged group evidence:** {sum(bool(value) for value in dg_evidence.values())} of {len(dg_evidence)} group(s) supplied evidence {input_source('Group evidence', group_evidence)}\n"
         )
 
     @staticmethod
@@ -3143,7 +3143,7 @@ class ChatMitigationCreationGuidedMixin:
             bot_message=markdown_to_html(
                 f"Do you have optional URL or document evidence that **{group}** will benefit from this measure?"
             ),
-            options=self._guided_options("Yes, add DG evidence", "No DG evidence"),
+            options=self._guided_options("Yes, add disadvantaged group evidence", "No disadvantaged group evidence"),
             session=session.summary(),
             error=False,
         )
@@ -3151,23 +3151,23 @@ class ChatMitigationCreationGuidedMixin:
     async def _handle_mitigation_dg_evidence_decision(self, session_id, session, message):
         action = normalize(
             exact_option_label(
-                message, self._guided_options("Yes, add DG evidence", "No DG evidence")
+                message, self._guided_options("Yes, add disadvantaged group evidence", "No disadvantaged group evidence")
             )
             or message
         )
         group = self._next_user_added_dg_without_evidence(session)
         if not group:
             return await self._continue_to_final_mitigation_summary(session_id, session)
-        if action == normalize("No DG evidence"):
+        if action in {normalize("No disadvantaged group evidence"), normalize("No DG evidence")}:
             (session.mitigation_dg_evidence or {})[group] = ""
             return await self._guided_dg_evidence_decision_step(session_id, session)
-        if action == normalize("Yes, add DG evidence"):
+        if action in {normalize("Yes, add disadvantaged group evidence"), normalize("Yes, add DG evidence")}:
             session.phase = "mitigation_dg_evidence_input"
             return ChatResponse(
                 session_id=session_id,
                 step="mitigation_dg_evidence_input",
                 bot_message=f"Provide a URL or supported document for **{group}**.",
-                options=self._guided_options("Skip DG evidence"),
+                options=self._guided_options("Skip disadvantaged group evidence"),
                 session=session.summary(),
                 input_mode="evidence_only",
                 error=False,
@@ -3178,7 +3178,7 @@ class ChatMitigationCreationGuidedMixin:
         group = self._next_user_added_dg_without_evidence(session)
         if not group:
             return await self._continue_to_final_mitigation_summary(session_id, session)
-        if normalize(message) == normalize("Skip DG evidence"):
+        if normalize(message) in {normalize("Skip disadvantaged group evidence"), normalize("Skip DG evidence")}:
             evidence_text = ""
         else:
             evidence_text = normalize_evidence_message(message)
@@ -3187,7 +3187,7 @@ class ChatMitigationCreationGuidedMixin:
                     session_id=session_id,
                     step="mitigation_dg_evidence_input",
                     bot_message="Please provide a readable URL or supported PDF, DOCX, MD, or TXT file, or skip this optional evidence.",
-                    options=self._guided_options("Skip DG evidence"),
+                    options=self._guided_options("Skip disadvantaged group evidence"),
                     session=session.summary(),
                     input_mode="evidence_only",
                     error=True,
@@ -3201,7 +3201,7 @@ class ChatMitigationCreationGuidedMixin:
                         relevance.get("reason")
                         or "The evidence does not show how this group benefits from the measure. Clarify the connection or provide different evidence."
                     ),
-                    options=self._guided_options("Skip DG evidence"),
+                    options=self._guided_options("Skip disadvantaged group evidence"),
                     session=session.summary(),
                     input_mode="evidence_only",
                     error=True,

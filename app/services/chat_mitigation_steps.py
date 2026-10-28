@@ -181,7 +181,10 @@ class ChatMitigationStepsMixin:
         for line in reference.splitlines():
             heading = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
             if heading:
-                in_section = heading.group(1).casefold() == "disadvantage groups to consider for this mitigation measure"
+                in_section = heading.group(1).casefold() in {
+                    "disadvantaged groups to consider for this mitigation measure",
+                    "disadvantage groups to consider for this mitigation measure",
+                }
                 continue
             if not in_section:
                 continue
@@ -2977,7 +2980,7 @@ class ChatMitigationStepsMixin:
             "You can use this measure, modify it, or write your own."
         )
         uncovered_section = (
-            "**I could not verify a concrete benefit pathway for the disadvantage groups "
+            "**I could not verify a concrete benefit pathway for the disadvantaged groups "
             "with the following configurations.**\n\n"
             + "\n".join(f"- {group}" for group in uncovered) + "\n\n"
             if uncovered else ""

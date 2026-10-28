@@ -1736,11 +1736,10 @@ class ChatHazardStepsMixin:
                 sector=session.sector,
                 selected_policy=session.selected_context_policy,
                 policies=self._policies_for_selected_context(session),
-                survey_count=survey_respondent_count(sector=session.sector or ""),
-                has_linked_hazards=bool(session.hazards or session.additional_hazards),
                 hazards=format_hazards(
                     session,
                     show_admin_details=bool(getattr(self, "is_admin", False)),
+                    survey_count=survey_respondent_count(sector=session.sector or ""),
                 ),
             ),
             options=POST_SECTOR_OPTIONS,
@@ -1809,7 +1808,7 @@ class ChatHazardStepsMixin:
         if action == normalize("Add a new Hazard"):
             return self._custom_hazard_input_step(session_id, session)
 
-        if action == normalize("Refresh hazards and DGs"):
+        if action in {normalize("Refresh hazards and disadvantaged groups"), normalize("Refresh hazards and DGs")}:
             await self._refresh_session_hazards(session_id, session)
             return await self._hazards_step(session_id, session)
 
@@ -1945,7 +1944,7 @@ class ChatHazardStepsMixin:
         if action == normalize("Add a new Hazard"):
             return self._custom_hazard_input_step(session_id, session)
 
-        if action == normalize("Refresh hazards and DGs"):
+        if action in {normalize("Refresh hazards and disadvantaged groups"), normalize("Refresh hazards and DGs")}:
             await self._refresh_session_hazards(session_id, session)
             return await self._hazards_step(session_id, session)
 
@@ -2070,12 +2069,12 @@ class ChatHazardStepsMixin:
             "regenerate hazards",
             "update hazards",
         }:
-            return "Refresh hazards and DGs"
+            return "Refresh hazards and disadvantaged groups"
         if "hazard" in normalized and any(
             token in normalized
             for token in ("refresh", "reload", "regenerate", "update")
         ):
-            return "Refresh hazards and DGs"
+            return "Refresh hazards and disadvantaged groups"
 
         ordinal_parser = getattr(self, "_ordinal_index_from_text", None)
         if ordinal_parser is None:
@@ -2171,7 +2170,7 @@ class ChatHazardStepsMixin:
         return {
             "start_mitigation_planning": "Start Mitigation Planning",
             "add_new_hazard": "Add a new Hazard",
-            "refresh_hazards": "Refresh hazards and DGs",
+            "refresh_hazards": "Refresh hazards and disadvantaged groups",
             "dive_deeper": "Dive deeper into statistical findings",
         }.get(action)
 
@@ -2393,8 +2392,8 @@ class ChatHazardStepsMixin:
             option_matcher = getattr(self, "_open_option_label_from_text", None)
             if option_matcher is not None:
                 exact_label = option_matcher(message, SOCIO_DEMOGRAPHIC_OPTIONS)
-        if exact_label is None and self._socio_demographic_label_from_open_text(message) == "Add more DGs":
-            exact_label = "Add more DGs"
+        if exact_label is None and self._socio_demographic_label_from_open_text(message) == "Add more disadvantaged groups":
+            exact_label = "Add more disadvantaged groups"
         if exact_label is None:
             open_selection_handler = getattr(self, "_open_selection_response_from_any_step", None)
             if open_selection_handler is not None:
@@ -2429,7 +2428,7 @@ class ChatHazardStepsMixin:
                 error=False,
             )
 
-        if action == normalize("Add more DGs"):
+        if action in {normalize("Add more disadvantaged groups"), normalize("Add more DGs")}:
             return self._start_mitigation_additional_dg_review(session_id, session)
 
         if action == normalize("Confirm & Continue to mitigation"):
@@ -2531,8 +2530,8 @@ class ChatHazardStepsMixin:
             token in normalized for token in ("change", "modify", "amend", "propose")
         ):
             return "Propose adaptations in the existing policy"
-        if normalized in {"add dgs", "add more dgs", "add demographic groups"}:
-            return "Add more DGs"
+        if normalized in {"add dgs", "add more dgs", "add demographic groups", "add more disadvantaged groups", "add disadvantaged groups"}:
+            return "Add more disadvantaged groups"
         if "dg" in normalized and "add" in normalized:
-            return "Add more DGs"
+            return "Add more disadvantaged groups"
         return None

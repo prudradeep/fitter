@@ -150,12 +150,25 @@ class ProfileAdminDetailsTests(unittest.TestCase):
 
         self.assertIn("hazard-group-heading--top", html)
         self.assertIn("hazard-group-heading--other", html)
+        self.assertIn("hazard-group-heading--predictive", html)
         self.assertIn("hazard-group-heading--co-created", html)
         self.assertIn("hazard-group-heading--additional", html)
-        self.assertEqual(html.count('class="hazard-group-divider" role="separator"'), 3)
-        self.assertIn("Most relevant for your region", html)
+        self.assertIn("Hazards based on the predictive model", html)
+        self.assertIn("Based on a predictive model", html)
+        self.assertIn("Top 3", html)
+        self.assertIn("Others", html)
+        self.assertLess(
+            html.index("hazard-group-heading--predictive"),
+            html.index("hazard-group-heading--top"),
+        )
+        self.assertLess(
+            html.index("hazard-group-heading--top"),
+            html.index("hazard-group-heading--other"),
+        )
+        self.assertIn("Hazards added by experts", html)
+        self.assertIn("Hazards created by the platform users", html)
         self.assertIn("By Platform users", html)
-        self.assertIn('class="additional-hazards-source-label"', html)
+        self.assertIn("Show methodologies", html)
         self.assertIn("hazard-group-intro--co-created", html)
         self.assertIn("created by platform users", html)
         self.assertIn("hazard-group-intro--additional", html)
@@ -179,7 +192,7 @@ class ProfileAdminDetailsTests(unittest.TestCase):
 
         html = format_hazards(session)
 
-        self.assertIn("Most relevant for your region", html)
+        self.assertIn("Hazards based on the predictive model", html)
         self.assertIn("By Platform users", html)
         self.assertLess(
             html.index("hazard-group-heading--additional"),
@@ -204,6 +217,7 @@ class ProfileAdminDetailsTests(unittest.TestCase):
 
         message = render_message(
             "hazards_overview.md",
+            selected_policy="Energy policy",
             sector="Transport",
             region="Calabria",
             hazards=format_hazards(session),
@@ -216,15 +230,33 @@ class ProfileAdminDetailsTests(unittest.TestCase):
         self.assertIn('data-hazard-name="More pollution exposure"', message)
 
     def test_hazard_overview_shows_sector_survey_respondent_count(self):
+        session = ChatSession(
+            region="Bavaria",
+            sector="Energy",
+            hazards=["Energy poverty"],
+            hazard_profiles={"Energy poverty": [PROFILE]},
+        )
         message = render_message(
             "hazards_overview.md",
+            selected_policy="Energy policy",
             sector="Energy",
             region="Bavaria",
-            survey_count=407,
-            hazards="",
+            hazards=format_hazards(session, survey_count=407),
         )
 
-        self.assertIn("Number of people responded in the survey: <strong>407</strong>.", message)
+        self.assertIn(
+            "The predictive model results are augmented with data for <strong>Bavaria</strong>",
+            message,
+        )
+        self.assertIn(
+            "Number of people responded in the survey for creating the predictive model: <strong>407</strong>.",
+            message,
+        )
+        self.assertLess(
+            message.index("hazard-category--predictive"),
+            message.index("The predictive model results"),
+        )
+        self.assertLess(message.index("The predictive model results"), message.index("Top 3"))
 
     def test_hazard_intro_note_styles_survive_message_sanitizing(self):
         session = ChatSession(
@@ -235,6 +267,7 @@ class ProfileAdminDetailsTests(unittest.TestCase):
 
         message = render_message(
             "hazards_overview.md",
+            selected_policy="Energy policy",
             sector="Transport",
             region="Calabria",
             hazards=format_hazards(session),
@@ -242,7 +275,6 @@ class ProfileAdminDetailsTests(unittest.TestCase):
 
         self.assertIn('class="hazard-group-intro hazard-group-intro--co-created"', message)
         self.assertIn('class="hazard-group-intro hazard-group-intro--additional"', message)
-        self.assertEqual(message.count('class="hazard-group-divider" role="separator"'), 3)
 
     def test_persisted_message_display_strips_admin_details_for_non_admin(self):
         service = ChatService.__new__(ChatService)

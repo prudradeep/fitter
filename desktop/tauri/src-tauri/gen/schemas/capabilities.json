@@ -1,1 +1,1 @@
-{}
+{"main-window":{"identifier":"main-window","description":"Allow the local desktop app to open policy links in the system browser.","remote":{"urls":["http://127.0.0.1:8000/*"]},"local":true,"windows":["main"],"permissions":["opener:allow-default-urls"]}}

@@ -4,6 +4,7 @@ from html import escape
 from app.services.chat_options import normalize_for_match
 from app.services.profile_indicator_mapping import proposed_indicator_details
 from app.services.system_hazard_profile_names import profile_name_for_variable
+from app.services.profile_category_matching import match_profile_data
 
 
 class ChatProfileRenderingMixin:
@@ -81,6 +82,13 @@ class ChatProfileRenderingMixin:
                 "population_lookup_labels",
             )
             proposed_dataset, proposed_indicator_label = proposed_indicator_details(profile, name)
+            matched_category = match_profile_data(profile)
+            if matched_category is not None:
+                proposed_dataset = proposed_dataset or "NA"
+            has_population_data = str(
+                profile.get("population_data_status") or ""
+            ).casefold() == "available"
+            category_matched = matched_category is not None and has_population_data
             rows.append(
                 {
                     "name": name,
@@ -92,9 +100,12 @@ class ChatProfileRenderingMixin:
                     "population_lookup_labels": population_lookup_labels,
                     "proposed_eurostat_dataset": proposed_dataset,
                     "proposed_indicator_label": proposed_indicator_label,
-                    "regional": profile.get("regional_population_pct")
-                    or profile.get("population_pct"),
-                    "national": profile.get("national_population_pct"),
+                    "regional": (
+                        profile.get("regional_population_pct")
+                        if profile.get("regional_population_pct") is not None
+                        else profile.get("population_pct")
+                    ) if category_matched else "NA",
+                    "national": profile.get("national_population_pct") if category_matched else "NA",
                     "is_macro": cls._profile_variable_type(variable_name, variable_type) == "macro",
                 }
             )
@@ -540,6 +551,8 @@ class ChatProfileRenderingMixin:
 
     @staticmethod
     def _format_profile_population(value: object) -> str:
+        if value is None or str(value or "").strip().casefold() == "na":
+            return "NA"
         try:
             return f"{float(value):.1f}%"
         except (TypeError, ValueError):

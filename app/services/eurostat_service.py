@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 
 from sqlalchemy import func, or_, select
+import httpx
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Country, EurostatPopulationCache, Region, Sector, SystemHazard
+from app.services.profile_category_matching import match_profile_category
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -48,14 +52,36 @@ class EurostatService:
         )
         if cached is not None:
             return cached
+        api_key = self.settings.population_analysis_api_key.get_secret_value().strip()
+        if not api_key:
+            raise RuntimeError("POPULATION_ANALYSIS_API_KEY is not configured.")
         request_body = {
             "country": country,
             "region": region,
             "sector": sector,
             "hazard": hazard,
             "confirmed_predictor_category": confirmed_predictor_category,
+            "run_mode": "full_analysis",
         }
-        response = self._mock_profile_population(request_body)
+        logger.info(
+            "Population analysis API request body: %s",
+            json.dumps(request_body, ensure_ascii=False, sort_keys=True),
+        )
+        async with httpx.AsyncClient(timeout=self.settings.eurostat_timeout_seconds) as client:
+            api_response = await client.post(
+                self.settings.population_analysis_api_url,
+                headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+                json=request_body,
+            )
+            logger.info(
+                "Population analysis API response body (status=%s): %s",
+                api_response.status_code,
+                api_response.text,
+            )
+            api_response.raise_for_status()
+            response = api_response.json()
+        if not isinstance(response, dict):
+            raise ValueError("Population analysis API returned a non-object JSON response.")
         self._store_profile_population(
             country=country,
             region=region,
@@ -77,7 +103,12 @@ class EurostatService:
         hazard: str | None = None,
         confirmed_predictor_category: str | None = None,
     ) -> dict[str, object] | None:
-        mapping = predictor_eurostat_mapping(predictor_name)
+        category = match_profile_category(confirmed_predictor_category)
+        if category is None:
+            category = match_profile_category(predictor_name)
+        if category is None:
+            return None
+        mapping = predictor_eurostat_mapping(category)
         if mapping is None:
             return None
         region = nuts_code or country_code
@@ -86,23 +117,40 @@ class EurostatService:
             region=region,
             sector=sector or "",
             hazard=hazard or "",
-            confirmed_predictor_category=confirmed_predictor_category or predictor_name,
+            confirmed_predictor_category=category,
         )
         cache_row = self._profile_population_cache_row(
             country=country_code,
             region=region,
             sector=sector or "",
             hazard=hazard or "",
-            profile=confirmed_predictor_category or predictor_name,
+            profile=category,
         )
         percentages = population_percentages(response)
+        if percentages["regional_pct"] is None:
+            return None
+        eurostat_data = _eurostat_response_data(response)
+        dataset_code = _first_text(
+            eurostat_data.get("dataset_code"),
+            response.get("dataset_code"),
+        )
+        indicator_label = _first_text(
+            eurostat_data.get("indicator_label"),
+            eurostat_data.get("proposed_indicator_label"),
+            eurostat_data.get("indicator_name"),
+            response.get("indicator_label"),
+            response.get("proposed_indicator_label"),
+            response.get("indicator_name"),
+        )
         return {
             "eurostat_population_cache_id": cache_row.id if cache_row is not None else None,
             "prevalence": percentages["regional_pct"] / 100,
             "population_pct": percentages["regional_pct"],
             "national_population_pct": percentages["national_pct"],
-            "source": "Mock Eurostat cache",
-            "dataset": mapping.dataset,
+            "source": "Population analysis API cache",
+            "dataset": dataset_code or "NA",
+            "proposed_eurostat_dataset": dataset_code or "NA",
+            "proposed_indicator_label": indicator_label or category,
             "geo": region,
             "bucket": mapping.bucket,
         }
@@ -260,52 +308,8 @@ class EurostatService:
         )
         return ids
 
-    @staticmethod
-    def _mock_profile_population(request_body: dict[str, str]) -> dict[str, object]:
-        country = request_body["country"]
-        region = request_body["region"]
-        profile = request_body["confirmed_predictor_category"]
-        seed = int(
-            hashlib.sha256(json.dumps(request_body, sort_keys=True).encode("utf-8")).hexdigest()[:8],
-            16,
-        )
-        regional_total = 300_000 + (seed % 2_400_000)
-        national_total = max(regional_total * 4, 4_000_000 + ((seed >> 4) % 78_000_000))
-        regional_pct = 8 + ((seed >> 8) % 38)
-        national_pct = 7 + ((seed >> 16) % 36)
-        regional_affected = round(regional_total * regional_pct / 100)
-        national_affected = round(national_total * national_pct / 100)
-        return {
-            "country": country,
-            "region": region,
-            "profile": profile,
-            "data_set": {
-                "eurostat": {
-                    "year": str(datetime.now(timezone.utc).year),
-                    "population": {
-                        "total": {
-                            "regional": str(regional_total),
-                            "national": str(national_total),
-                        },
-                        "affected": {
-                            "regional": str(regional_affected),
-                            "national": str(national_affected),
-                        },
-                    },
-                }
-            },
-            "Timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        }
-
-
-def population_percentages(response: dict[str, object]) -> dict[str, float]:
-    population = (
-        response.get("data_set", {})
-        .get("eurostat", {})
-        .get("population", {})
-        if isinstance(response.get("data_set"), dict)
-        else {}
-    )
+def population_percentages(response: dict[str, object]) -> dict[str, float | None]:
+    population = _eurostat_response_data(response).get("population", {})
     total = population.get("total", {}) if isinstance(population, dict) else {}
     affected = population.get("affected", {}) if isinstance(population, dict) else {}
     regional_pct = _safe_pct(affected.get("regional"), total.get("regional"))
@@ -313,13 +317,32 @@ def population_percentages(response: dict[str, object]) -> dict[str, float]:
     return {"regional_pct": regional_pct, "national_pct": national_pct}
 
 
+def _eurostat_response_data(response: dict[str, object]) -> dict[str, object]:
+    data_set = response.get("data_set")
+    if not isinstance(data_set, dict):
+        return {}
+    eurostat_data = data_set.get("eurostat")
+    return eurostat_data if isinstance(eurostat_data, dict) else {}
+
+
+def _first_text(*values: object) -> str:
+    for value in values:
+        text_value = str(value or "").strip()
+        if text_value:
+            return text_value
+    return ""
+
+
 @lru_cache(maxsize=512)
 def predictor_eurostat_mapping(predictor_name: str) -> EurostatMapping | None:
+    category = match_profile_category(predictor_name)
+    if category is None:
+        return None
     normalized = predictor_name.casefold().split("__", 1)[0].strip() or "profile"
     return EurostatMapping(
         predictor_prefix=normalized,
-        dataset="mock_profile_population",
-        dimensions={"profile": predictor_name},
+        dataset="population_analysis",
+        dimensions={"profile": category},
         bucket=1,
     )
 
@@ -344,13 +367,13 @@ def _parse_timestamp(value: str) -> datetime | None:
     return parsed
 
 
-def _safe_pct(numerator: object, denominator: object) -> float:
+def _safe_pct(numerator: object, denominator: object) -> float | None:
     try:
         top = float(numerator)
         bottom = float(denominator)
     except (TypeError, ValueError):
-        return 0.0
-    return (top / bottom * 100) if bottom else 0.0
+        return None
+    return (top / bottom * 100) if bottom else None
 
 
 def _leap_year(year: int) -> bool:

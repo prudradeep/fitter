@@ -1,13 +1,13 @@
-## Validate Socio-Demographic Profiles
+## Validate Disadvantaged Groups
 
 Selected hazard:
 
 - **{{ hazard }}**
 
-Socio-demographic profiles to validate:
+Disadvantaged groups to validate:
 
 {{ dgs }}
 
-Provide a reason or evidence to validate these affected population groups before saving them. Choose **Skip** to discard them without saving.
+To save these groups, provide at least one reason or one piece of evidence showing why they are severely affected by the selected hazard. Choose **Skip** to discard them without saving.
 
-Use the **Reason** field if you want to add justification. If you have evidence, add a web URL or attach a supported file: PDF, DOCX, MD, or TXT.
+Enter your explanation in the **Reason** field. For evidence, add a web URL or attach a PDF, DOCX, MD, or TXT file.

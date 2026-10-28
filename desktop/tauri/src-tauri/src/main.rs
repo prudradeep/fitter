@@ -1,16 +1,18 @@
 use std::{
     collections::HashMap,
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_opener::OpenerExt;
 
 #[derive(Debug, Deserialize)]
 struct DesktopConfig {
@@ -68,8 +70,57 @@ struct RuntimeState {
     diagnostics: Mutex<Option<RuntimeDiagnostics>>,
 }
 
+#[tauri::command]
+fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let parsed_url = url::Url::parse(&url).map_err(|error| error.to_string())?;
+    if !matches!(parsed_url.scheme(), "http" | "https") {
+        return Err("Only HTTP and HTTPS links can be opened externally.".to_string());
+    }
+
+    log_external_link_event("open_external_url invoked", &parsed_url);
+    match app.opener()
+        .open_url(parsed_url.as_str(), None::<&str>)
+    {
+        Ok(()) => {
+            log_external_link_event("open_external_url succeeded", &parsed_url);
+            Ok(())
+        }
+        Err(error) => {
+            log_external_link_event("open_external_url failed", &parsed_url);
+            Err(error.to_string())
+        }
+    }
+}
+
+fn log_external_link_event(event: &str, url: &url::Url) {
+    let Ok(directory) = log_dir() else {
+        return;
+    };
+    if fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join("external-links.log"))
+    else {
+        return;
+    };
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    let _ = writeln!(
+        file,
+        "{timestamp} {event}: {}://{}",
+        url.scheme(),
+        url.host_str().unwrap_or("unknown")
+    );
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -77,7 +128,7 @@ fn main() {
                 let _ = window.set_focus();
             }
         }))
-        .invoke_handler(tauri::generate_handler![runtime_status])
+        .invoke_handler(tauri::generate_handler![runtime_status, open_external_url])
         .manage(RuntimeState {
             children: Mutex::new(Vec::new()),
             diagnostics: Mutex::new(None),
@@ -112,10 +163,26 @@ fn main() {
 
             let url =
                 url::Url::parse("http://127.0.0.1:8000/").context("backend URL should be valid")?;
+            let external_open_app = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .title("Dr Transition")
                 .inner_size(1280.0, 820.0)
-                .min_inner_size(1024.0, 700.0)
+                .min_inner_size(1000.0, 780.0)
+                .on_new_window(move |url, _features| {
+                    if matches!(url.scheme(), "http" | "https") {
+                        log_external_link_event("WebView new-window request", &url);
+                        if let Err(error) = external_open_app
+                            .opener()
+                            .open_url(url.as_str(), None::<&str>)
+                        {
+                            eprintln!("Could not open external link: {error}");
+                            log_external_link_event("WebView new-window request failed", &url);
+                        } else {
+                            log_external_link_event("WebView new-window request succeeded", &url);
+                        }
+                    }
+                    tauri::webview::NewWindowResponse::Deny
+                })
                 .build()?;
 
             Ok(())

@@ -788,10 +788,12 @@
 
 .stage-country-tooltip-main > div {
   min-width: 0;
+  white-space: normal;
 }
 
 .stage-country-tooltip-main strong {
   display: block;
+  white-space: normal;
   color: #1f2937;
   font-size: 1.28rem;
   line-height: 1.05;

@@ -137,6 +137,8 @@ class Settings(BaseSettings):
     eurostat_base_url: str = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data"
     eurostat_timeout_seconds: int = 20
     eurostat_cache_expiry_months: int = 3
+    population_analysis_api_url: str = "https://api.ourprofitisthefuture.com/api/analyze"
+    population_analysis_api_key: SecretStr = Field(default_factory=lambda: SecretStr(""))
 
     cors_origins: str = "http://localhost:8000,http://127.0.0.1:8000"
     log_level: str = "INFO"

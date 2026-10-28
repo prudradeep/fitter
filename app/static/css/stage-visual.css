@@ -691,6 +691,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   vertical-align: middle;
   white-space: nowrap;
   cursor: help;
+  text-transform: uppercase;
 }
 
 .practical-considerations-visual {
@@ -893,6 +894,7 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   vertical-align: middle;
   white-space: nowrap;
   cursor: help;
+  text-transform: uppercase;
 }
 
 .stage-hazard-table tbody tr:hover {

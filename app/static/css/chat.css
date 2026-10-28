@@ -206,6 +206,14 @@
   word-break: break-word;
 }
 
+.bubble:has(.policy-selection-info) {
+  font-size: 1.05rem;
+}
+
+.bubble:has(.policy-selection-info) .policy-selection-info {
+  font-size: 1.12rem;
+}
+
 .message-row.bot .bubble {
   background: #ffffff;
   border: 1px solid var(--line);
@@ -367,6 +375,15 @@
 }
 
 /* Keep hazard sources visually identifiable across the full category listing. */
+.bubble .hazard-group-heading--predictive {
+  color: #6d28d9;
+}
+
+.bubble .hazard-group-heading--predictive > .survey-source-button {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
 .bubble .hazard-group-heading--top {
   color: #6d28d9;
 }
@@ -417,6 +434,13 @@
   outline-color: #93c5fd;
 }
 
+.bubble .hazard-group-heading--predictive > .survey-source-button:hover,
+.bubble .hazard-group-heading--predictive > .survey-source-button:focus-visible {
+  background: #ede9fe;
+  color: #5b21b6;
+  outline-color: #c4b5fd;
+}
+
 .bubble .hazard-group-heading--co-created > .platform-users-source-button:hover,
 .bubble .hazard-group-heading--co-created > .platform-users-source-button:focus-visible {
   background: #ccfbf1;
@@ -441,6 +465,11 @@
 .bubble .hazard-group-intro--co-created {
   background: #f0fdfa;
   color: #115e59;
+}
+
+.bubble .hazard-group-intro--predictive {
+  background: #f5f3ff;
+  color: #5b21b6;
 }
 
 .bubble .hazard-group-intro--additional {
@@ -694,6 +723,7 @@
   color: #111827;
   font-size: 0.9rem;
   line-height: 1.45;
+  text-transform: uppercase;
 }
 
 .bubble .hazard-category {
@@ -845,6 +875,10 @@
   font-weight: 850;
   line-height: 1;
   white-space: nowrap;
+}
+
+.bubble:has(.policy-selection-info) .hazard-evidence-label {
+  font-weight: 400;
 }
 
 .bubble button.hazard-evidence-label {
@@ -1439,7 +1473,7 @@
 
 .bubble a {
   color: #0f172a;
-  font-weight: 800;
+  font-size: 0.88rem;
   text-decoration: underline;
   text-underline-offset: 3px;
   overflow-wrap: anywhere;
@@ -2154,6 +2188,10 @@
 
 .range-row input[type="range"] {
   padding: 0;
+}
+
+.range-row input[type="range"].is-unset {
+  accent-color: #94a3b8;
 }
 
 .range-row strong {

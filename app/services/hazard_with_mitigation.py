@@ -739,7 +739,7 @@ def _disadvantage_group_section(
                     )
     if not groups:
         return ""
-    return "\n\n## Disadvantage groups to consider for this mitigation measure\n\n" + "\n".join(
+    return "\n\n## Disadvantaged groups to consider for this mitigation measure\n\n" + "\n".join(
         f"- {group}" for group in groups
     )
 

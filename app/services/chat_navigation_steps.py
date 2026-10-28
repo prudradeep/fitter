@@ -1087,7 +1087,7 @@ class ChatNavigationStepsMixin:
                 "Back to suggested disadvantaged groups"
             ),
             "mitigation_dg_evidence_decision": self._guided_options(
-                "Yes, add DG evidence", "No DG evidence"
+                "Yes, add disadvantaged group evidence", "No disadvantaged group evidence"
             ),
             "mitigation_final_summary_review": self._guided_options(
                 "Confirm final summary", "Modify final inputs"

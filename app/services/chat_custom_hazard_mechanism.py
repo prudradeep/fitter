@@ -677,4 +677,10 @@ class ChatCustomHazardMechanismMixin:
         state["next_action"] = CustomHazardAction.VALIDATE.value
         state["status"] = CustomHazardStatus.DRAFT.value
         transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
+        evidence = str(
+            state.get("evidence") or session.pending_hazard_evidence or ""
+        ).strip()
+        has_evidence = bool(evidence) and evidence.casefold() != "not provided"
+        if not has_evidence and not state.get("evidence_decision_asked"):
+            return await self._start_hazard_evidence_flow(session_id, session)
         return await self._run_custom_hazard_dimension_check(session_id, session)

@@ -650,17 +650,20 @@
             </div>
             <div id="evaluationFields" class="evaluation-fields" hidden>
               <label class="score-field">
-                <span>Score</span>
+                <span>Score <small>(required; move the slider to choose)</small></span>
                 <div class="range-row">
                   <input
                     id="scoreInput"
+                    class="is-unset"
                     type="range"
                     min="1"
                     max="10"
                     value="5"
                     aria-label="Evaluation score"
+                    aria-describedby="scoreValue"
+                    aria-required="true"
                   />
-                  <strong id="scoreValue">5</strong>
+                  <strong id="scoreValue" aria-live="polite">None</strong>
                 </div>
               </label>
               <label>
@@ -789,28 +792,22 @@
       </section>
     </dialog>
 
-    <dialog id="surveyResultsDialog" class="survey-results-dialog">
-      <section class="survey-results-panel" aria-label="Survey methodology results image">
+    <dialog id="predictiveModelDialog" class="predictive-model-dialog" aria-labelledby="predictiveModelTitle">
+      <section class="predictive-model-panel" aria-label="Predictive model methodology">
         <header class="survey-results-header">
           <div>
-            <h2>Survey Results</h2>
-            <p>Hazard identification and affected profile mapping overview.</p>
+            <h2 id="predictiveModelTitle">How hazards are predicted</h2>
           </div>
-          <div class="survey-results-tools" aria-label="Image zoom controls">
-            <button id="surveyResultsZoomOut" type="button" aria-label="Zoom out">-</button>
-            <button id="surveyResultsZoomReset" type="button">Reset</button>
-            <button id="surveyResultsZoomIn" type="button" aria-label="Zoom in">+</button>
-            <button id="closeSurveyResultsButton" type="button" aria-label="Close survey results">×</button>
+          <div class="survey-results-tools">
+            <button id="closePredictiveModelButton" type="button" aria-label="Close predictive model">×</button>
           </div>
         </header>
-        <div id="surveyResultsViewport" class="survey-results-viewport">
-          <img
-            id="surveyResultsImage"
-            class="survey-results-image"
-            src="{{ url_for('static', path='/mehotdologyResults.png') }}"
-            alt="Survey methodology results"
-          />
-        </div>
+        <iframe
+          id="predictiveModelFrame"
+          class="predictive-model-frame"
+          src="{{ url_for('static', path='/fitter-predictive-model.html') }}"
+          title="How hazards are predicted"
+        ></iframe>
       </section>
     </dialog>
 

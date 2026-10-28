@@ -31,6 +31,7 @@ from app.services.chat_options import (
 )
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.chat_session import ChatSession
+from app.services.profile_category_matching import match_profile_data
 from app.services.hazard_profile_parsing import (
     extract_socio_demographic_profiles,
     parse_hazard_profile_items,
@@ -805,7 +806,7 @@ class ChatHazardProfilesMixin:
             return profiles
         population_profiles = self._ranking_population_profiles(session, hazard)
         if not population_profiles:
-            return []
+            return [_mark_profile_population_unavailable(profile) for profile in profiles]
         cached_matches: dict[str, list[dict[str, object]]] = {}
         blocked_profiles: set[str] = set()
         profiles_needing_match: list[dict[str, str]] = []
@@ -861,6 +862,7 @@ class ChatHazardProfilesMixin:
             percentages = self._population_context_percentages(matches) if matches else None
             if percentages is None:
                 self._record_profile_population_match_failure(session, hazard, profile)
+                enriched.append(_mark_profile_population_unavailable(profile))
                 continue
             self._store_matched_profile_population_references(
                 session,
@@ -872,6 +874,21 @@ class ChatHazardProfilesMixin:
             updated["regional_population_pct"] = percentages[0]
             updated["national_population_pct"] = percentages[1]
             updated.pop("population_context", None)
+            updated["population_data_status"] = "available"
+            updated["proposed_eurostat_dataset"] = (
+                next(
+                    (str(match.get("proposed_eurostat_dataset") or "").strip() for match in matches
+                     if str(match.get("proposed_eurostat_dataset") or "").strip()),
+                    "NA",
+                )
+            )
+            updated["proposed_indicator_label"] = (
+                next(
+                    (str(match.get("proposed_indicator_label") or "").strip() for match in matches
+                     if str(match.get("proposed_indicator_label") or "").strip()),
+                    match_profile_data(profile) or "NA",
+                )
+            )
             enriched.append(updated)
         return enriched
 
@@ -889,6 +906,9 @@ class ChatHazardProfilesMixin:
         predictor = str(profile.get("variable_name") or profile.get("variable") or "").strip()
         if not predictor:
             return []
+        category = match_profile_data(profile)
+        if category is None:
+            return []
         country = self.db.get(Country, session.country_id) if session.country_id else None
         sector = self.db.get(Sector, session.sector_id) if session.sector_id else None
         region = self.db.get(Region, session.region_id) if session.region_id else None
@@ -901,7 +921,7 @@ class ChatHazardProfilesMixin:
                 nuts_code=str((region.name if region else country.name) or ""),
                 sector=str(sector.name),
                 hazard=hazard,
-                confirmed_predictor_category=predictor,
+                confirmed_predictor_category=category,
             )
         except Exception:
             logger.exception("Failed to fetch direct population context for system profile")
@@ -945,30 +965,29 @@ class ChatHazardProfilesMixin:
                 enriched.append(profile)
                 continue
             lookup_labels = self._additional_profile_population_lookup_labels(profile)
-            if not lookup_labels:
-                enriched.append(profile)
+            category = match_profile_data(profile)
+            if category is None:
+                enriched.append(_mark_profile_population_unavailable(profile))
                 continue
             population_profiles: list[dict[str, object]] = []
-            for label in lookup_labels:
-                try:
-                    prevalence = await self.eurostat.get_prevalence(
-                        label,
-                        country_code=country_name,
-                        nuts_code=region_name,
-                        sector=sector_name,
-                        hazard=hazard,
-                        confirmed_predictor_category=label,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to fetch Eurostat population for additional hazard profile"
-                    )
-                    continue
-                if prevalence is None:
-                    continue
+            try:
+                prevalence = await self.eurostat.get_prevalence(
+                    category,
+                    country_code=country_name,
+                    nuts_code=region_name,
+                    sector=sector_name,
+                    hazard=hazard,
+                    confirmed_predictor_category=category,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to fetch population analysis for additional hazard profile"
+                )
+                prevalence = None
+            if prevalence is not None:
                 population_profiles.append(
                     {
-                        "name": label,
+                        "name": category,
                         "eurostat_population_cache_id": prevalence.get(
                             "eurostat_population_cache_id"
                         ),
@@ -985,7 +1004,7 @@ class ChatHazardProfilesMixin:
                 else None
             )
             if percentages is None:
-                enriched.append(profile)
+                enriched.append(_mark_profile_population_unavailable(profile))
                 continue
             updated = dict(profile)
             updated["regional_population_pct"] = percentages[0]
@@ -993,6 +1012,13 @@ class ChatHazardProfilesMixin:
             updated["population_context"] = population_profiles
             updated["population_source"] = "Eurostat"
             updated["population_lookup_labels"] = lookup_labels
+            updated["population_data_status"] = "available"
+            updated["proposed_eurostat_dataset"] = prevalence.get(
+                "proposed_eurostat_dataset", "NA"
+            )
+            updated["proposed_indicator_label"] = prevalence.get(
+                "proposed_indicator_label", category
+            )
             enriched.append(updated)
         return enriched
 
@@ -1393,10 +1419,13 @@ class ChatHazardProfilesMixin:
                 if not isinstance(population_lookup_labels, list) or not population_lookup_labels:
                     population_lookup_labels = metadata.get("population_lookup_labels")
                 regional_population_pct = (
-                    item.get("regional_population_pct") or item.get("population_pct")
+                    item.get("regional_population_pct")
+                    if item.get("regional_population_pct") is not None
+                    else item.get("population_pct")
                 )
                 national_population_pct = item.get("national_population_pct")
                 population_source = item.get("population_source")
+                population_data_status = item.get("population_data_status")
             else:
                 name = str(item).strip()
                 explanation = ""
@@ -1412,6 +1441,7 @@ class ChatHazardProfilesMixin:
                 regional_population_pct = None
                 national_population_pct = None
                 population_source = None
+                population_data_status = None
             key = normalize(name)
             if not name or key in seen:
                 continue
@@ -1440,6 +1470,9 @@ class ChatHazardProfilesMixin:
                     "population_pct": regional_population_pct,
                     "national_population_pct": national_population_pct,
                     "population_source": str(population_source or ""),
+                    "population_data_status": str(population_data_status or ""),
+                    "proposed_eurostat_dataset": item.get("proposed_eurostat_dataset"),
+                    "proposed_indicator_label": item.get("proposed_indicator_label"),
                     "population_context": (
                         list(population_context)
                         if isinstance(population_context, list)
@@ -1818,3 +1851,13 @@ class ChatHazardProfilesMixin:
 
         cleaned = "\n".join(kept_lines).strip()
         return cleaned or markdown_text.strip()
+
+
+def _mark_profile_population_unavailable(profile: dict[str, object]) -> dict[str, object]:
+    updated = dict(profile)
+    updated["regional_population_pct"] = None
+    updated["population_pct"] = None
+    updated["national_population_pct"] = None
+    updated["population_context"] = []
+    updated["population_data_status"] = "unavailable"
+    return updated

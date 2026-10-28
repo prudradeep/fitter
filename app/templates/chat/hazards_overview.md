@@ -1,9 +1,6 @@
 ## {{ selected_policy }}
 {{ sector }}: {% if sector == "Energy" %}Transition towards renewable energy{% endif %}{% if sector == "Housing" %}Adaptation of housing to climate change{% endif %}{% if sector == "Transport" %}Shift to Sustainable Mobility{% endif %}
 
-{% if has_linked_hazards %}These hazards are explicitly linked to the selected policy in the reference data. The survey results are augmented with data for **{{ region }}** to show the effects of the hazards at regional level.{% endif %}
-{% if survey_count is defined %}Number of people responded in the survey: **{{ survey_count }}**.{% endif %}
-
 {{ hazards }}
 
 ---

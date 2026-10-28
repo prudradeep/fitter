@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from app.services.chat_session import ChatSession
 from app.services.profile_indicator_mapping import proposed_indicator_details
 from app.services.system_hazard_profile_names import profile_name_for_variable
+from app.services.profile_category_matching import match_profile_data
 
 logger = logging.getLogger("app.services.chat_hazard_creation")
 
@@ -158,7 +159,12 @@ def _evidence_http_url(evidence: str) -> str:
     return candidate if parsed.scheme in {"http", "https"} and parsed.netloc else ""
 
 
-def format_hazards(session: ChatSession, *, show_admin_details: bool = False) -> str:
+def format_hazards(
+    session: ChatSession,
+    *,
+    show_admin_details: bool = False,
+    survey_count: int | None = None,
+) -> str:
     survey_hazards = [
         hazard
         for hazard in (session.hazards or [])
@@ -182,14 +188,30 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
         )
     survey_source_button = (
         '<button class="survey-source-button" type="button" '
-        'data-open-survey-results="true">From the survey</button>'
+        'data-open-survey-results="true">Based on a predictive model</button>'
     )
+    predictive_summary = (
+        "The predictive model results are augmented with data for "
+        f"<strong>{escape(session.region or '')}</strong> "
+        "to show the effects of the hazards at regional level."
+    )
+    if survey_count is not None:
+        predictive_summary += (
+            " Number of people responded in the survey for creating the predictive model: "
+            f"<strong>{survey_count}</strong>."
+        )
     sections = []
     if survey_hazards:
         sections.extend([
+            '<details class="hazard-category hazard-category--predictive">',
+            '<summary class="hazard-group-heading hazard-group-heading--predictive">'
+            f"Hazards based on the predictive model {survey_source_button}</summary>",
+            '<div class="hazard-category-content">',
+            f'<p class="hazard-group-intro hazard-group-intro--predictive">'
+            f"{predictive_summary}</p>",
             '<details class="hazard-category">',
             '<summary class="hazard-group-heading hazard-group-heading--top">'
-            f"Most relevant for your region {survey_source_button}</summary>",
+            "Top 3</summary>",
             '<div class="hazard-category-content">',
             format_system_hazards(
                 session, survey_hazards[:3], show_admin_details=show_admin_details,
@@ -200,21 +222,22 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
         sections.extend([
             '<details class="hazard-category">',
             '<summary class="hazard-group-heading hazard-group-heading--other">'
-            f"Other hazards {survey_source_button}</summary>",
+            "Others</summary>",
             '<div class="hazard-category-content">',
             format_system_hazards(
                 session, survey_hazards[3:], show_admin_details=show_admin_details,
             ),
             "</div></details>",
         ])
+    if survey_hazards:
+        sections.append("</div></details>")
     if additional_content:
         sections.extend(
             [
                 '<details class="hazard-category">'
                 '<summary class="hazard-group-heading hazard-group-heading--additional '
                 'hazard-group-heading--with-info">'
-                "Additional hazards "
-                '<span class="additional-hazards-source-label">By experts</span>'
+                "Hazards added by experts "
                 f"{_additional_hazards_info_icon()}"
                 f"{_additional_hazards_methodology_cta()}"
                 "</summary>",
@@ -233,7 +256,7 @@ def format_hazards(session: ChatSession, *, show_admin_details: bool = False) ->
                 '<details class="hazard-category">'
                 '<summary class="hazard-group-heading hazard-group-heading--co-created '
                 'hazard-group-heading--with-info">'
-                "Co-Created hazards "
+                "Hazards created by the platform users "
                 f"{_platform_users_source_button()}"
                 f"{_custom_hazards_info_icon()}"
                 "</summary>",
@@ -441,9 +464,24 @@ def _append_hazard_profiles(
             population_lookup_labels = []
         if not name:
             continue
-        proposed_dataset, proposed_indicator_label = proposed_indicator_details(profile, name)
         population = population_by_profile.get(normalize_markdown_text(name).casefold(), {})
-        regional, national = _profile_population_values(profile, population, explanation)
+        matched_category = match_profile_data(profile)
+        proposed_dataset, proposed_indicator_label = proposed_indicator_details(profile, name)
+        if matched_category is not None:
+            proposed_dataset = (
+                proposed_dataset
+                or (population.get("proposed_eurostat_dataset") if isinstance(population, dict) else None)
+                or "NA"
+            )
+        profile_data = profile if isinstance(profile, dict) else {}
+        has_ranked_population = isinstance(population, dict) and population.get("population_pct") is not None
+        has_profile_population = str(
+            profile_data.get("population_data_status") or ""
+        ).casefold() == "available"
+        if matched_category is None or not (has_ranked_population or has_profile_population):
+            regional, national = "NA", "NA"
+        else:
+            regional, national = _profile_population_values(profile, population, explanation)
         explanation = _without_population_sentence(explanation)
         profile_items.append(
             {
@@ -798,6 +836,8 @@ def _average_population(values: object) -> float | None:
 
 
 def _format_population(value: object) -> str:
+    if value is None or str(value or "").strip().casefold() == "na":
+        return "NA"
     try:
         return f"{float(value):.1f}%"
     except (TypeError, ValueError):
@@ -829,19 +869,15 @@ def _profile_population_values(
 ) -> tuple[object, object]:
     profile_data = profile if isinstance(profile, dict) else {}
     population_data = population if isinstance(population, dict) else {}
-    regional = profile_data.get("regional_population_pct") or profile_data.get("population_pct")
-    national = profile_data.get("national_population_pct")
-    regional = regional if regional is not None else population_data.get("population_pct")
-    national = national if national is not None else population_data.get("national_population_pct")
-    if regional is not None and national is not None:
-        return regional, national
-    match = re.search(
-        r"(?i)(?:represents about|population share is)\s+([0-9]+(?:\.[0-9]+)?)%"
-        r"(?:\s+of the regional population, compared with|\s+regionally and)\s+"
-        r"([0-9]+(?:\.[0-9]+)?)%\s+nationally",
-        explanation,
-    )
-    return (match.group(1), match.group(2)) if match else (regional, national)
+    regional = population_data.get("population_pct")
+    if regional is None:
+        regional = profile_data.get("regional_population_pct")
+    if regional is None:
+        regional = profile_data.get("population_pct")
+    national = population_data.get("national_population_pct")
+    if national is None:
+        national = profile_data.get("national_population_pct")
+    return regional, national
 
 
 def _without_population_sentence(explanation: str) -> str:

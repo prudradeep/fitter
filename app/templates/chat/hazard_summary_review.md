@@ -6,8 +6,8 @@
 {% endif %}
 <div class="hazard-summary-review-header">
   <span class="hazard-summary-review-eyebrow">Final review</span>
-  <h2 class="hazard-summary-review-title">Review Summary</h2>
-  <p>Check the generated content before saving this custom hazard.</p>
+  <h2 class="hazard-summary-review-title">Review hazard title and summary</h2>
+  <p>Review the proposed title and summary. Confirm them or choose a revision option.</p>
 </div>
 
 <div class="hazard-summary-review-original">
@@ -16,12 +16,10 @@
 </div>
 
 <div class="hazard-summary-review-generated">
-{% if generated_title and generated_title != hazard %}
   <div class="hazard-summary-review-field">
     <span class="hazard-summary-review-label">Generated title</span>
     <h3 class="hazard-summary-review-generated-title">{{ generated_title }}</h3>
   </div>
-{% endif %}
   <div class="hazard-summary-review-field hazard-summary-review-summary">
     <span class="hazard-summary-review-label">Generated summary</span>
     <p>{{ summary }}</p>
@@ -31,8 +29,8 @@
 <div class="hazard-summary-review-action">
   <span class="hazard-summary-review-action-icon" aria-hidden="true">✓</span>
   <div>
-    <strong>Ready to save?</strong>
-    <p>Choose <strong>Continue</strong> to confirm and save. To make changes, enter revision instructions or additional context in the text area.</p>
+    <strong>Does this title and summary describe your hazard?</strong>
+    <p>Confirm and save, or choose a revision option and enter the change you want in the text area.</p>
   </div>
 </div>
 </article>
