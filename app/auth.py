@@ -169,6 +169,6 @@ def set_auth_cookie(response: Response, user: AppUser) -> None:
     )
 
 
-def clear_auth_cookie(response: RedirectResponse) -> None:
+def clear_auth_cookie(response: Response) -> None:
     response.delete_cookie(AUTH_COOKIE_NAME)
     response.delete_cookie(CSRF_COOKIE_NAME)

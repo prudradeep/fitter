@@ -4,6 +4,7 @@ import random
 from time import perf_counter
 
 from fastapi import Depends, FastAPI, Request, status
+from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -23,6 +24,7 @@ from app.observability import (
     new_request_id,
     set_request_id,
 )
+from app.openapi_documentation import enhance_main
 from app.resource_paths import resource_path
 from app.routes.api import router as api_router
 from app.routes.auth import router as auth_router
@@ -44,7 +46,7 @@ configure_logging(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.app_name, debug=settings.app_debug)
+app = FastAPI(title=settings.app_name, debug=settings.app_debug, docs_url=None, redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,6 +62,48 @@ templates = Jinja2Templates(directory=str(resource_path("app/templates")))
 app.include_router(auth_router)
 app.include_router(api_router)
 app.include_router(sync_router)
+
+
+def documented_openapi() -> dict:
+    if app.openapi_schema is None:
+        app.openapi_schema = enhance_main(
+            get_openapi(
+                title=app.title,
+                version=app.version,
+                openapi_version=app.openapi_version,
+                description=app.description,
+                routes=app.routes,
+            )
+        )
+    return app.openapi_schema
+
+
+app.openapi = documented_openapi
+
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_docs() -> HTMLResponse:
+    return HTMLResponse(
+        """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dr Transition API — Swagger UI</title>
+  <link rel="stylesheet" href="/static/vendor/swagger-ui/swagger-ui.css">
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script defer src="/static/vendor/swagger-ui/swagger-ui-bundle.js"></script>
+  <script defer src="/static/js/swagger-ui-init.js?v=3"></script>
+</body>
+</html>"""
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_redirect() -> RedirectResponse:
+    return RedirectResponse(url="docs")
 
 
 @app.middleware("http")

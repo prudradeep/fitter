@@ -1,0 +1,4775 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Dr Transition",
+    "version": "0.1.0",
+    "description": "Dr Transition application and sync API. See docs/API_USAGE_GUIDE.md for authentication, CSRF, deployment modes, examples, and endpoint behavior."
+  },
+  "paths": {
+    "/login": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login Page",
+        "operationId": "login_page_login_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login",
+        "operationId": "login_login_post",
+        "responses": {
+          "200": {
+            "description": "Authenticated JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "boolean",
+                      "const": false
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string",
+                          "format": "email"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email",
+                        "name",
+                        "role"
+                      ]
+                    },
+                    "csrf_token": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "detail",
+                    "user",
+                    "csrf_token"
+                  ]
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          },
+          "303": {
+            "description": "Browser form submission redirects to the app."
+          },
+          "400": {
+            "description": "Invalid or incomplete form.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "detail"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "detail"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password"
+                  }
+                },
+                "required": [
+                  "email",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "security": [],
+        "description": "Send form data with Accept: application/json for a JSON response and session/CSRF cookies. Browser form submissions receive a 303 redirect."
+      }
+    },
+    "/signup": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signup Page",
+        "operationId": "signup_page_signup_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      },
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signup",
+        "operationId": "signup_signup_post",
+        "responses": {
+          "200": {
+            "description": "Authenticated JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "boolean",
+                      "const": false
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string",
+                          "format": "email"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email",
+                        "name",
+                        "role"
+                      ]
+                    },
+                    "csrf_token": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "detail",
+                    "user",
+                    "csrf_token"
+                  ]
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          },
+          "303": {
+            "description": "Browser form submission redirects to the app."
+          },
+          "400": {
+            "description": "Invalid or incomplete form.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "detail"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "detail"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "designation": {
+                    "type": "string"
+                  },
+                  "organisation_type": {
+                    "type": "string"
+                  },
+                  "organisation_name": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "confirm_password": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email",
+                  "name",
+                  "designation",
+                  "organisation_type",
+                  "organisation_name",
+                  "password",
+                  "confirm_password"
+                ]
+              }
+            }
+          }
+        },
+        "security": [],
+        "description": "Send form data with Accept: application/json for a JSON response and session/CSRF cookies. Browser form submissions receive a 303 redirect."
+      }
+    },
+    "/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Logout",
+        "operationId": "logout_logout_post",
+        "responses": {
+          "200": {
+            "description": "Logged out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "boolean",
+                      "const": false
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "detail"
+                  ]
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "Browser form submission redirects to /login."
+          }
+        },
+        "security": [],
+        "description": "Send Accept: application/json for JSON confirmation. Browser form submissions redirect to /login. Cookie-authenticated requests still need CSRF protection."
+      }
+    },
+    "/api/knowledge/progress/{progress_id}": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Knowledge Ingestion Progress",
+        "operationId": "knowledge_ingestion_progress_api_knowledge_progress__progress_id__get",
+        "parameters": [
+          {
+            "name": "progress_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Progress Id"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Knowledge Ingestion Progress Api Knowledge Progress  Progress Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/chat": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Chat",
+        "operationId": "chat_api_chat_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  },
+                  "session_id": {
+                    "type": "string"
+                  },
+                  "validation_mode": {
+                    "type": "string"
+                  },
+                  "crowd_sourcing_enabled": {
+                    "type": "boolean"
+                  },
+                  "policy_reference_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "policy_reference_file": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "evidence_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "evidence_file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Send JSON for ordinary chat, or multipart/form-data to attach evidence and policy references. The multipart alternative is described in the API usage guide."
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/stats-deep-dive": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Stats Deep Dive",
+        "operationId": "stats_deep_dive_api_stats_deep_dive_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/auto-user-message": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Auto User Message",
+        "operationId": "auto_user_message_api_auto_user_message_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Auto User Message Api Auto User Message Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sessions": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Sessions",
+        "operationId": "sessions_api_sessions_get",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "title": "Response Sessions Api Sessions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/hazard-salience": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Hazard Salience",
+        "operationId": "hazard_salience_api_hazard_salience_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country"
+            }
+          },
+          {
+            "name": "sector",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sector"
+            }
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 180
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Region"
+            }
+          },
+          {
+            "name": "hazard",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 180
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hazard"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Hazard Salience Api Hazard Salience Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/hazard-effect-size": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Hazard Effect Size",
+        "operationId": "hazard_effect_size_api_hazard_effect_size_get",
+        "parameters": [
+          {
+            "name": "sector",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sector"
+            }
+          },
+          {
+            "name": "hazard",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 180
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hazard"
+            }
+          },
+          {
+            "name": "min_or",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "default": 1.0,
+              "title": "Min Or"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Hazard Effect Size Api Hazard Effect Size Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/hazards/ranked": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Ranked Hazards",
+        "operationId": "ranked_hazards_api_hazards_ranked_get",
+        "parameters": [
+          {
+            "name": "country_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Country Id"
+            }
+          },
+          {
+            "name": "region_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Region Id"
+            }
+          },
+          {
+            "name": "sector_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Sector Id"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Ranked Hazards Api Hazards Ranked Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/sessions/{session_key}": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Restore Session",
+        "operationId": "restore_session_api_sessions__session_key__get",
+        "parameters": [
+          {
+            "name": "session_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Key"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Restore Session Api Sessions  Session Key  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Rename Session",
+        "operationId": "rename_session_api_sessions__session_key__patch",
+        "parameters": [
+          {
+            "name": "session_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Key"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Rename Session Api Sessions  Session Key  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 220
+                  }
+                },
+                "required": [
+                  "title"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sessions/{session_key}/export": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Export Session",
+        "operationId": "export_session_api_sessions__session_key__export_get",
+        "parameters": [
+          {
+            "name": "session_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Key"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Export Session Api Sessions  Session Key  Export Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/sessions/{session_key}/report": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Export Mitigation Report",
+        "operationId": "export_mitigation_report_api_sessions__session_key__report_get",
+        "parameters": [
+          {
+            "name": "session_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Key"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 40,
+              "default": "current",
+              "title": "Scope"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/sessions/import": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Import Session",
+        "operationId": "import_session_api_sessions_import_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Import Session Api Sessions Import Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/profile/password": {
+      "patch": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Change Password",
+        "operationId": "change_password_api_profile_password_patch",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Change Password Api Profile Password Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "current_password": {
+                    "type": "string",
+                    "format": "password"
+                  },
+                  "new_password": {
+                    "type": "string",
+                    "format": "password"
+                  },
+                  "confirm_password": {
+                    "type": "string",
+                    "format": "password"
+                  }
+                },
+                "required": [
+                  "current_password",
+                  "new_password",
+                  "confirm_password"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/knowledge": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Knowledge Documents",
+        "operationId": "knowledge_documents_api_knowledge_get",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Knowledge Documents Api Knowledge Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/knowledge/upload": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Knowledge Upload",
+        "operationId": "knowledge_upload_api_knowledge_upload_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Knowledge Upload Api Knowledge Upload Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    }
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                },
+                "description": "Use files for multiple uploads or file for one upload; PDF, DOCX, MD, TXT."
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/knowledge/policies": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Knowledge Policies",
+        "description": "List policies available for an administrator to attach reference documents.\n\nRequires an administrator session; some operations also require sync client permissions.",
+        "operationId": "knowledge_policies_api_knowledge_policies_get",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Knowledge Policies Api Knowledge Policies Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/knowledge/policy-document": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Knowledge Policy Document Upload",
+        "description": "Ingest an admin-managed policy document and link it to one policy.\n\nRequires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled.",
+        "operationId": "knowledge_policy_document_upload_api_knowledge_policy_document_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Knowledge Policy Document Upload Api Knowledge Policy Document Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "policy_id": {
+                    "type": "string"
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                },
+                "required": [
+                  "policy_id"
+                ],
+                "description": "Supply exactly one of file or url."
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/knowledge/url": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Knowledge Url",
+        "operationId": "knowledge_url_api_knowledge_url_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Knowledge Url Api Knowledge Url Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "urls": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "description": "Supply url or urls."
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/knowledge/search": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Knowledge Search",
+        "operationId": "knowledge_search_api_knowledge_search_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Knowledge Search Api Knowledge Search Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "query"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sector-prompts/reindex": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Sector Prompts Reindex",
+        "operationId": "sector_prompts_reindex_api_sector_prompts_reindex_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sector Prompts Reindex Api Sector Prompts Reindex Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sector-prompts/search": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Sector Prompts Search",
+        "operationId": "sector_prompts_search_api_sector_prompts_search_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sector Prompts Search Api Sector Prompts Search Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sector": {
+                    "type": "string"
+                  },
+                  "query": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "query"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/settings/prompt-source": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Prompt Source Setting",
+        "operationId": "prompt_source_setting_api_settings_prompt_source_get",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Prompt Source Setting Api Settings Prompt Source Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions."
+      },
+      "patch": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Prompt Source Update",
+        "operationId": "prompt_source_update_api_settings_prompt_source_patch",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Prompt Source Update Api Settings Prompt Source Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prompt_source": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "db",
+                      "file"
+                    ]
+                  }
+                },
+                "required": [
+                  "prompt_source"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/prompts": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Prompts List",
+        "operationId": "prompts_list_api_prompts_get",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Prompts List Api Prompts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions."
+      },
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Prompt Create",
+        "operationId": "prompt_create_api_prompts_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Prompt Create Api Prompts Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prompt_key": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "prompt_key",
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/prompts/{prompt_id}": {
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Prompt Detail",
+        "operationId": "prompt_detail_api_prompts__prompt_id__get",
+        "parameters": [
+          {
+            "name": "prompt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Prompt Id"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Prompt Detail Api Prompts  Prompt Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions."
+      },
+      "patch": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Prompt Update",
+        "operationId": "prompt_update_api_prompts__prompt_id__patch",
+        "parameters": [
+          {
+            "name": "prompt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Prompt Id"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Prompt Update Api Prompts  Prompt Id  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/knowledge/{document_id}": {
+      "delete": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Knowledge Delete",
+        "operationId": "knowledge_delete_api_knowledge__document_id__delete",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Knowledge Delete Api Knowledge  Document Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/status": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Status",
+        "operationId": "sync_status_api_sync_status_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync Status Api Sync Status Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ],
+        "description": "Requires sync to be enabled and a registered client token."
+      }
+    },
+    "/api/sync/pull": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Pull",
+        "operationId": "sync_pull_api_sync_pull_post",
+        "parameters": [
+          {
+            "name": "request_user_data_sync",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Request User Data Sync"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync Pull Api Sync Pull Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ],
+        "description": "Requires sync to be enabled and a registered client token.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/push": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Push",
+        "operationId": "sync_push_api_sync_push_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "dr-transition-sync-v1"
+                    ]
+                  },
+                  "sync_protocol_version": {
+                    "type": "integer"
+                  },
+                  "client_schema_version": {
+                    "type": "integer"
+                  },
+                  "device_id": {
+                    "type": "string"
+                  },
+                  "exported_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "admin_knowledge_sync": {
+                    "type": "boolean"
+                  },
+                  "admin_user_email": {
+                    "type": "string"
+                  },
+                  "request_user_data_sync": {
+                    "type": "boolean"
+                  },
+                  "tables": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "rows"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "format",
+                  "tables"
+                ],
+                "description": "Sync bundle produced by /api/sync/pull or the client SyncService. Table row fields and metadata are version dependent."
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ],
+        "description": "Requires sync to be enabled and a registered client token.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/exchange": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Exchange",
+        "operationId": "sync_exchange_api_sync_exchange_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "dr-transition-sync-v1"
+                    ]
+                  },
+                  "sync_protocol_version": {
+                    "type": "integer"
+                  },
+                  "client_schema_version": {
+                    "type": "integer"
+                  },
+                  "device_id": {
+                    "type": "string"
+                  },
+                  "exported_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "admin_knowledge_sync": {
+                    "type": "boolean"
+                  },
+                  "admin_user_email": {
+                    "type": "string"
+                  },
+                  "request_user_data_sync": {
+                    "type": "boolean"
+                  },
+                  "tables": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "rows"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "format",
+                  "tables"
+                ],
+                "description": "Sync bundle produced by /api/sync/pull or the client SyncService. Table row fields and metadata are version dependent."
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ],
+        "description": "Requires sync to be enabled and a registered client token.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/run": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Run",
+        "operationId": "sync_run_api_sync_run_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync Run Api Sync Run Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ],
+        "description": "Requires sync to be enabled and a registered client token.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/llm/chat": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Llm Chat",
+        "description": "Handle authenticated client chat requests with server-side Bedrock credentials.\n\nRequires sync to be enabled and a registered client token.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled.",
+        "operationId": "sync_llm_chat_api_sync_llm_chat_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "type": "string"
+                  },
+                  "messages": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "assistant"
+                          ]
+                        },
+                        "content": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "content"
+                      ]
+                    }
+                  },
+                  "response_format": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "temperature": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "max_tokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8192
+                  }
+                },
+                "required": [
+                  "context",
+                  "messages"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ]
+      }
+    },
+    "/api/sync/llm/embedding": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Llm Embedding",
+        "description": "Embed client text with server-side Bedrock credentials.\n\nRequires sync to be enabled and a registered client token.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled.",
+        "operationId": "sync_llm_embedding_api_sync_llm_embedding_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 50000
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ]
+      }
+    },
+    "/api/sync/system-inquiry-telemetry": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync System Inquiry Telemetry Push",
+        "operationId": "sync_system_inquiry_telemetry_push_api_sync_system_inquiry_telemetry_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync System Inquiry Telemetry Push Api Sync System Inquiry Telemetry Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                },
+                "required": [
+                  "events"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ],
+        "description": "Requires sync to be enabled and a registered client token.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/client/system-inquiry-telemetry": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Client System Inquiry Telemetry",
+        "operationId": "sync_client_system_inquiry_telemetry_api_sync_client_system_inquiry_telemetry_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync Client System Inquiry Telemetry Api Sync Client System Inquiry Telemetry Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/prompts": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Prompt Create",
+        "operationId": "sync_prompt_create_api_sync_prompts_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync Prompt Create Api Sync Prompts Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prompt_key": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "prompt_key",
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ],
+        "description": "Requires sync to be enabled and a registered client token.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/prompts/{prompt_id}": {
+      "patch": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Prompt Update",
+        "operationId": "sync_prompt_update_api_sync_prompts__prompt_id__patch",
+        "parameters": [
+          {
+            "name": "prompt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Prompt Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Sync-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sync-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync Prompt Update Api Sync Prompts  Prompt Id  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "syncBearer": []
+          },
+          {
+            "syncHeader": []
+          }
+        ],
+        "description": "Requires sync to be enabled and a registered client token.\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/client/status": {
+      "get": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Client Status",
+        "operationId": "sync_client_status_api_sync_client_status_get",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync Client Status Api Sync Client Status Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/sync/client/user-data": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Client User Data",
+        "operationId": "sync_client_user_data_api_sync_client_user_data_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync Client User Data Api Sync Client User Data Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "413": {
+            "description": "Configured request or upload size limit exceeded."
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/api/sync/client/run": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Sync Client Run",
+        "operationId": "sync_client_run_api_sync_client_run_post",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Sync Client Run Api Sync Client Run Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "\n\nCookie-authenticated requests need the dr_transition_csrf cookie, matching X-CSRF-Token header, and an allowed Origin or Referer when CSRF protection is enabled."
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Index",
+        "operationId": "index__get",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/health/live": {
+      "get": {
+        "summary": "Health Live",
+        "operationId": "health_live_health_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Live Health Live Get"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "summary": "Health Ready",
+        "operationId": "health_ready_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Metrics",
+        "operationId": "metrics_metrics_get",
+        "parameters": [
+          {
+            "name": "dr_transition_auth",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dr Transition Auth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Metrics Metrics Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or sync token required/invalid."
+          },
+          "403": {
+            "description": "Administrator or feature permission required."
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "description": "Requires an administrator session; some operations also require sync client permissions."
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChatResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "step": {
+            "type": "string",
+            "title": "Step"
+          },
+          "bot_message": {
+            "type": "string",
+            "title": "Bot Message"
+          },
+          "voice_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice Summary"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/Option"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "other_options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Other Options"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionSummary"
+          },
+          "input_mode": {
+            "type": "string",
+            "title": "Input Mode",
+            "default": "text"
+          },
+          "input_values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Input Values"
+          },
+          "error": {
+            "type": "boolean",
+            "title": "Error",
+            "default": false
+          },
+          "validation_details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validation Details"
+          },
+          "custom_hazard": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Hazard"
+          },
+          "custom_hazard_grounding_status": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Custom Hazard Grounding Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "step",
+          "bot_message",
+          "session"
+        ],
+        "title": "ChatResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Option": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "Option"
+      },
+      "SessionSummary": {
+        "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "sector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector"
+          },
+          "selected_context_policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Context Policy"
+          },
+          "selected_context_policy_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Context Policy Summary"
+          },
+          "selected_context_policy_sources": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "items": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Context Policy Sources"
+          },
+          "selected_hazard": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Hazard"
+          },
+          "mitigation_proposal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitigation Proposal Type"
+          },
+          "mitigation_measure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitigation Measure"
+          },
+          "mitigation_revision_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitigation Revision Stage"
+          },
+          "benefited_profiles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Benefited Profiles"
+          },
+          "mitigation_review": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitigation Review"
+          },
+          "target_population_questions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Target Population Questions"
+          },
+          "target_population_answers": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Target Population Answers"
+          },
+          "additional_dg_answers": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Additional Dg Answers"
+          },
+          "new_policy_target_population": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "New Policy Target Population"
+          },
+          "new_policy_target_population_by_question": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "New Policy Target Population By Question"
+          },
+          "policy_adaptation_target_population_by_question": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Policy Adaptation Target Population By Question"
+          },
+          "hazard_count": {
+            "type": "integer",
+            "title": "Hazard Count",
+            "default": 0
+          },
+          "top_hazards": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Top Hazards"
+          },
+          "affected_profile_count": {
+            "type": "integer",
+            "title": "Affected Profile Count",
+            "default": 0
+          },
+          "affected_profiles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Affected Profiles"
+          },
+          "affected_profile_details": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Affected Profile Details"
+          },
+          "mitigation_measure_count": {
+            "type": "integer",
+            "title": "Mitigation Measure Count",
+            "default": 0
+          },
+          "practical_considerations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Practical Considerations"
+          },
+          "additional_hazards": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Additional Hazards"
+          },
+          "additional_hazard_population": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Additional Hazard Population"
+          },
+          "custom_hazards": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Custom Hazards"
+          },
+          "custom_hazard": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Hazard"
+          },
+          "validation_mode": {
+            "type": "string",
+            "title": "Validation Mode",
+            "default": "strict"
+          },
+          "crowd_sourcing_enabled": {
+            "type": "boolean",
+            "title": "Crowd Sourcing Enabled",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "SessionSummary"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "dr_transition_auth",
+        "description": "Session cookie set by POST /login."
+      },
+      "syncBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Server-issued sync client token."
+      },
+      "syncHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Sync-Token",
+        "description": "Alternative to Authorization: Bearer for sync clients."
+      }
+    }
+  }
+}

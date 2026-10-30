@@ -50,8 +50,17 @@ def csrf_origin_allowed(request: Request, settings: Settings) -> bool:
 
 
 def apply_security_headers(response: Response, request: Request, settings: Settings) -> None:
-    if settings.content_security_policy.strip():
-        _set_header_if_missing(response, "Content-Security-Policy", settings.content_security_policy)
+    policy = settings.content_security_policy.strip()
+    if policy and not _request_is_https(request):
+        # An HTTP-only local server cannot satisfy a browser-upgraded redirect.
+        policy = "; ".join(
+            directive.strip()
+            for directive in policy.split(";")
+            if directive.strip()
+            and directive.strip().split(None, 1)[0].casefold() != "upgrade-insecure-requests"
+        )
+    if policy:
+        _set_header_if_missing(response, "Content-Security-Policy", policy)
     _set_header_if_missing(response, "X-Content-Type-Options", "nosniff")
     if settings.referrer_policy.strip():
         _set_header_if_missing(response, "Referrer-Policy", settings.referrer_policy)
@@ -79,6 +88,8 @@ async def csrf_request_allowed(request: Request, settings: Settings) -> bool:
     if not settings.use_csrf_protection:
         return True
     if request.method.upper() not in UNSAFE_METHODS:
+        return True
+    if request.url.path in {"/login", "/signup"}:
         return True
     if AUTH_COOKIE_NAME not in request.cookies:
         return True

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -50,7 +50,7 @@ async def login_page(
     )
 
 
-@router.post("/login", response_class=HTMLResponse)
+@router.post("/login", response_class=JSONResponse)
 async def login(
     request: Request, db: Session = Depends(get_db)
 ) -> Response:
@@ -87,6 +87,8 @@ async def login(
         return _login_error(request, email, "Invalid email or password.", status.HTTP_400_BAD_REQUEST)
 
     reset_rate_limit(rate_limit_key, db)
+    if _json_requested(request):
+        return _auth_success_response(user, "Logged in.")
     response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
     set_auth_cookie(response, user)
     return response
@@ -114,7 +116,7 @@ async def signup_page(
     )
 
 
-@router.post("/signup", response_class=HTMLResponse)
+@router.post("/signup", response_class=JSONResponse)
 async def signup(
     request: Request, db: Session = Depends(get_db)
 ) -> Response:
@@ -198,13 +200,19 @@ async def signup(
         return _signup_error(request, values, "An account already exists for this email.")
 
     reset_rate_limit(rate_limit_key, db)
+    if _json_requested(request):
+        return _auth_success_response(user, "Account created.")
     response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
     set_auth_cookie(response, user)
     return response
 
 
-@router.post("/logout")
-async def logout() -> RedirectResponse:
+@router.post("/logout", response_class=JSONResponse)
+async def logout(request: Request) -> Response:
+    if _json_requested(request):
+        response = JSONResponse({"error": False, "detail": "Logged out."})
+        clear_auth_cookie(response)
+        return response
     response = RedirectResponse("/login", status_code=status.HTTP_303_SEE_OTHER)
     clear_auth_cookie(response)
     return response
@@ -216,7 +224,9 @@ def _signup_error(
     error: str,
     step: int = 1,
     status_code: int = status.HTTP_400_BAD_REQUEST,
-) -> HTMLResponse:
+) -> Response:
+    if _json_requested(request):
+        return JSONResponse({"error": True, "detail": error}, status_code=status_code)
     return _auth_template_response(
         request,
         "signup.html",
@@ -234,7 +244,9 @@ def _signup_error(
     )
 
 
-def _login_error(request: Request, email: str, error: str, status_code: int) -> HTMLResponse:
+def _login_error(request: Request, email: str, error: str, status_code: int) -> Response:
+    if _json_requested(request):
+        return JSONResponse({"error": True, "detail": error}, status_code=status_code)
     return _auth_template_response(
         request,
         "login.html",
@@ -283,6 +295,36 @@ def _auth_template_response(
     return response
 
 
+def _json_requested(request: Request) -> bool:
+    fetch_mode = request.headers.get("sec-fetch-mode", "").casefold()
+    if fetch_mode == "navigate":
+        return False
+    if fetch_mode in {"cors", "same-origin"}:
+        return True
+    return "application/json" in request.headers.get("accept", "").casefold()
+
+
+def _auth_success_response(user: AppUser, detail: str) -> JSONResponse:
+    csrf_token = create_csrf_token(settings) if settings.use_csrf_protection else None
+    response = JSONResponse({
+        "error": False,
+        "detail": detail,
+        "user": {"id": str(user.id), "email": user.email, "name": user.name, "role": user.role},
+        "csrf_token": csrf_token,
+    })
+    set_auth_cookie(response, user)
+    if csrf_token:
+        response.set_cookie(
+            CSRF_COOKIE_NAME,
+            csrf_token,
+            max_age=settings.auth_cookie_max_age_seconds,
+            httponly=False,
+            samesite="lax",
+            secure=settings.use_secure_auth_cookie,
+        )
+    return response
+
+
 def _login_rate_limit_key(request: Request, email: str) -> str:
     client = request.client.host if request.client else "unknown"
     return f"login:{client}:{email or 'unknown'}"
@@ -303,7 +345,7 @@ def _record_signup_failure(rate_limit_key: str, db: Session) -> int | None:
     )
 
 
-def _signup_lockout_error(request: Request, values: dict[str, str], retry_after: int) -> HTMLResponse:
+def _signup_lockout_error(request: Request, values: dict[str, str], retry_after: int) -> Response:
     return _signup_error(
         request,
         values,

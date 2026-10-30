@@ -1,5 +1,7 @@
 # Dr Transition
 
+API developers: see the [Swagger and API usage guide](docs/API_USAGE_GUIDE.md) for the OpenAPI documents, endpoint reference, authentication, and request examples.
+
 Dr Transition is a FastAPI application for guided Twin-Transition policy
 analysis. It supports two deployment shapes:
 

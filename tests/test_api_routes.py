@@ -151,6 +151,60 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         self.assertIn("dr_transition_auth", response.headers.get("set-cookie", ""))
 
+    def test_auth_login_json_response_for_api_client(self) -> None:
+        original_csrf_enabled = auth_routes.settings.csrf_protection_enabled
+        try:
+            auth_routes.settings.csrf_protection_enabled = True
+            response = self.client.post(
+                "/login",
+                data={"email": "admin@example.com", "password": "OldPassword!1"},
+                headers={"Accept": "application/json"},
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["user"]["email"], "admin@example.com")
+            self.assertFalse(response.json()["error"])
+            self.assertTrue(response.cookies.get("dr_transition_auth"))
+            self.assertTrue(response.cookies.get("dr_transition_csrf"))
+            self.assertEqual(response.json()["csrf_token"], response.cookies.get("dr_transition_csrf"))
+        finally:
+            auth_routes.settings.csrf_protection_enabled = original_csrf_enabled
+
+    def test_auth_login_fetch_returns_json_even_with_html_accept_header(self) -> None:
+        response = self.client.post(
+            "/login",
+            data={"email": "admin@example.com", "password": "OldPassword!1"},
+            headers={"Accept": "text/html", "Sec-Fetch-Mode": "cors"},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/json")
+        self.assertFalse(response.json()["error"])
+
+    def test_auth_login_browser_navigation_keeps_redirect(self) -> None:
+        response = self.client.post(
+            "/login",
+            data={"email": "admin@example.com", "password": "OldPassword!1"},
+            headers={"Accept": "text/html", "Sec-Fetch-Mode": "navigate"},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+
+    def test_auth_login_json_error_and_logout(self) -> None:
+        failure = self.client.post(
+            "/login",
+            data={"email": "admin@example.com", "password": "wrong"},
+            headers={"Accept": "application/json"},
+        )
+        self.assertEqual(failure.status_code, 400)
+        self.assertEqual(failure.json()["detail"], "Invalid email or password.")
+
+        logout = self.client.post(
+            "/logout", headers={"Accept": "application/json"}, follow_redirects=False
+        )
+        self.assertEqual(logout.status_code, 200)
+        self.assertEqual(logout.json(), {"error": False, "detail": "Logged out."})
+
     def test_sync_token_check_ensures_schema_before_lookup(self) -> None:
         original_enabled = sync_routes.settings.sync_enabled
         try:
@@ -254,6 +308,25 @@ class ApiRouteIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(created)
         self.assertEqual(created.role, "user")
         self.assertIn("dr_transition_auth", response.headers.get("set-cookie", ""))
+
+    def test_signup_json_response_for_api_client(self) -> None:
+        response = self.client.post(
+            "/signup",
+            data={
+                "email": "json-user@example.com",
+                "name": "JSON User",
+                "password": "StrongPassword!1",
+                "confirm_password": "StrongPassword!1",
+                "designation": "Policy Lead",
+                "organisation_type": "Public sector",
+                "organisation_name": "Transition Office",
+            },
+            headers={"Accept": "application/json"},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["error"])
+        self.assertEqual(response.json()["user"]["email"], "json-user@example.com")
 
     def test_password_change_updates_hash(self) -> None:
         original_version = int(self.user.session_version or 1)

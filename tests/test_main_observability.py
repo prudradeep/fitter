@@ -3,10 +3,40 @@ import unittest
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app.config import DEFAULT_PRODUCTION_CSP
 from app.main import app, settings
 
 
 class MainObservabilityTests(unittest.TestCase):
+    def test_swagger_ui_uses_local_assets_and_documented_schema(self) -> None:
+        original_policy = settings.content_security_policy
+        settings.content_security_policy = DEFAULT_PRODUCTION_CSP
+        client = TestClient(app)
+        try:
+            page = client.get("/docs")
+            script = client.get("/static/js/swagger-ui-init.js")
+            bundle = client.get("/static/vendor/swagger-ui/swagger-ui-bundle.js")
+            stylesheet = client.get("/static/vendor/swagger-ui/swagger-ui.css")
+            schema = client.get("/openapi.json")
+            redoc = client.get("/redoc", follow_redirects=False)
+        finally:
+            client.close()
+            settings.content_security_policy = original_policy
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('/static/vendor/swagger-ui/swagger-ui-bundle.js', page.text)
+        self.assertNotIn('cdn.jsdelivr.net', page.text)
+        self.assertNotIn('<script>', page.text)
+        self.assertNotIn('upgrade-insecure-requests', page.headers['Content-Security-Policy'])
+        self.assertEqual(script.status_code, 200)
+        self.assertEqual(bundle.status_code, 200)
+        self.assertEqual(stylesheet.status_code, 200)
+        self.assertIn('SwaggerUIBundle', bundle.text)
+        self.assertEqual(schema.status_code, 200)
+        self.assertIn('multipart/form-data', schema.json()['paths']['/api/chat']['post']['requestBody']['content'])
+        self.assertEqual(redoc.status_code, 307)
+        self.assertEqual(redoc.headers['location'], 'docs')
+
     def test_health_live_includes_request_id_header(self) -> None:
         client = TestClient(app)
         try:

@@ -11,6 +11,7 @@ from app.security import apply_security_headers, create_csrf_token, csrf_origin_
 def build_request(
     method: str,
     *,
+    path: str = "/api/chat",
     origin: str | None = None,
     cookie: str | None = None,
     csrf_header: str | None = None,
@@ -32,7 +33,7 @@ def build_request(
             "method": method,
             "scheme": "https",
             "server": ("example.com", 443),
-            "path": "/api/chat",
+            "path": path,
             "headers": headers,
         },
         receive=lambda: _receive_body(body),
@@ -46,6 +47,7 @@ async def _receive_body(body: bytes) -> dict[str, object]:
 class CsrfProtectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = Settings(
+            app_mode="server",
             app_env="production",
             app_debug=False,
             secret_key="strong-production-secret",
@@ -94,6 +96,12 @@ class CsrfProtectionTests(unittest.TestCase):
 
         self.assertFalse(asyncio.run(csrf_request_allowed(request, self.settings)))
 
+    def test_login_and_signup_allow_existing_session_cookie_without_csrf_token(self) -> None:
+        for path in ("/login", "/signup"):
+            with self.subTest(path=path):
+                request = build_request("POST", path=path, cookie="dr_transition_auth=value")
+                self.assertTrue(asyncio.run(csrf_request_allowed(request, self.settings)))
+
     def test_form_csrf_validation_replays_body_for_route_handler(self) -> None:
         token = create_csrf_token(self.settings)
         body = (
@@ -114,6 +122,7 @@ class CsrfProtectionTests(unittest.TestCase):
 class SecurityHeaderTests(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = Settings(
+            app_mode="server",
             app_env="production",
             app_debug=False,
             secret_key="strong-production-secret",
@@ -133,6 +142,7 @@ class SecurityHeaderTests(unittest.TestCase):
         self.assertEqual(response.headers["Referrer-Policy"], "strict-origin-when-cross-origin")
         self.assertIn("microphone=(self)", response.headers["Permissions-Policy"])
         self.assertIn("max-age=", response.headers["Strict-Transport-Security"])
+        self.assertIn("upgrade-insecure-requests", response.headers["Content-Security-Policy"])
 
     def test_hsts_is_only_added_for_https(self) -> None:
         request = Request(
@@ -150,6 +160,7 @@ class SecurityHeaderTests(unittest.TestCase):
         apply_security_headers(response, request, self.settings)
 
         self.assertNotIn("Strict-Transport-Security", response.headers)
+        self.assertNotIn("upgrade-insecure-requests", response.headers["Content-Security-Policy"])
 
 
 if __name__ == "__main__":
