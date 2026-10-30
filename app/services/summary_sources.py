@@ -2,12 +2,48 @@
 
 import json
 import re
+from collections import Counter
 from html import escape
 
 
 _WORD = re.compile(r"[\w]{4,}", re.UNICODE)
 _BULLET = re.compile(r"^\s*-\s+(?:\*\*(.+?):\*\*\s*)?(.*)$")
 _STOP = {"about", "after", "also", "from", "into", "more", "not", "only", "other", "policy", "that", "their", "them", "there", "these", "this", "those", "with", "would"}
+_GENERIC_LABELS = {
+    "benefit", "benefited group", "beneficiary", "mechanism", "objective",
+    "policy detail", "policy details", "intended benefits", "target actors beneficiaries",
+}
+_TRAILING_BASIS = re.compile(
+    r"\s*(?:\*\*)?(Inferred|Documented(?:\s*[-—]\s*(?:Strong|Moderate|Weak))?)(?:\*\*)?\s*$",
+    re.IGNORECASE,
+)
+_DANGLING_END = re.compile(r"\b(?:a|an|and|at|by|for|from|in|of|on|or|the|to|with)$", re.I)
+
+
+def _display_point(label: str, detail: str, rows: list[dict[str, str]]) -> tuple[str, str]:
+    """Remove embedded evidence text and finish a saved truncated point when possible."""
+    while _TRAILING_BASIS.search(detail):
+        detail = _TRAILING_BASIS.sub("", detail).strip()
+    if detail.endswith((".", "!", "?")) and not _DANGLING_END.search(detail[:-1]):
+        return label, detail
+    fragment = re.split(r"(?<=[.!?])\s+", detail)[-1]
+    for row in rows:
+        if row.get("field") != "Referenced excerpt" or not fragment:
+            continue
+        excerpt = re.sub(r"\s+", " ", str(row.get("value") or ""))
+        match = re.search(re.escape(fragment) + r"[^.!?]{0,300}[.!?]", excerpt, re.I)
+        if match:
+            return label, detail[:len(detail) - len(fragment)] + match.group(0)
+    prefix = detail[:len(detail) - len(fragment)].strip() if fragment else ""
+    if prefix.count("(") > prefix.count(")"):
+        opening = prefix.rfind("(")
+        sentence_end = max(prefix.rfind(mark, 0, opening) for mark in (". ", "! ", "? "))
+        prefix = prefix[:sentence_end + 1].strip() if sentence_end >= 0 else ""
+    if prefix:
+        return label, prefix
+    if detail and not _DANGLING_END.search(detail):
+        return label, detail.rstrip(" ,;:") + "."
+    return label, ""
 
 
 def claim_basis(claim: str, rows: list[dict[str, str]]) -> str:
@@ -49,10 +85,14 @@ def source_button(
     rows: list[dict[str, str]], *, basis: str | None = None, claim: str = "",
 ) -> str:
     """Use the chat's existing Provided evidence modal."""
-    payload = escape(json.dumps(rows, ensure_ascii=False), quote=True)
     basis = basis or claim_basis(claim, rows)
+    strength = re.search(r"\b(Strong|Moderate|Weak)\b", basis, re.I)
+    if strength and not any(row.get("field") == "Evidence strength" for row in rows):
+        rows = [*rows, {"field": "Evidence strength", "value": strength.group(1).title()}]
+    payload = escape(json.dumps(rows, ensure_ascii=False), quote=True)
+    displayed_basis = "[Documented]" if basis.casefold().startswith("documented") else "[Inferred]"
     return (
-        f'<span class="evidence-basis-label">{escape(basis)}</span> '
+        f'<span class="evidence-basis-label">{escape(displayed_basis)}</span> '
         '<button class="factsheet-source-tag hazard-evidence-label--provided" '
         f'type="button" data-source-table="{payload}" '
         'aria-label="Show source context">Source</button>'
@@ -172,6 +212,8 @@ def policy_summary_with_buttons(markdown: str, sources: dict[str, list[list[dict
             ):
                 continue
             counts.setdefault(section, 0)
+        labels = [(_BULLET.match(line).group(1) or "").strip() for line in block if _BULLET.match(line)]
+        label_counts = Counter(re.sub(r"[^a-z0-9]+", " ", label.casefold()).strip() for label in labels if label)
         for line in block:
             if line.startswith("### "):
                 output.append(line)
@@ -183,21 +225,30 @@ def policy_summary_with_buttons(markdown: str, sources: dict[str, list[list[dict
                 if _is_unidentified_summary_bullet(line):
                     continue
                 choices = (sources or {}).get(section, [])
+                rows = choices[index] if index < len(choices) else []
+                label, detail = _display_point((match.group(1) or "").strip(), match.group(2).strip(), rows)
+                if not detail:
+                    continue
+                label_key = re.sub(r"[^a-z0-9]+", " ", label.casefold()).strip()
+                if label_key in _GENERIC_LABELS or label_counts[label_key] > 1:
+                    label = ""
+                line = f"- **{label}:** {detail}" if label else f"- {detail}"
                 if index < len(choices):
-                    rows = choices[index]
                     if not any(
                         row.get("field") == "Source"
                         and row.get("value") == "Source passage unavailable"
                         for row in rows
                     ):
                         basis = claim_basis(
-                            " ".join(part for part in (match.group(1), match.group(2)) if part),
+                            " ".join(part for part in (label, detail) if part),
                             rows,
                         )
+                        if _TRAILING_BASIS.search(match.group(2)) and re.search(r"\bInferred\b", match.group(2), re.I):
+                            basis = "Inferred"
                         line += " " + source_button(rows, basis=basis)
                     else:
-                        line += ' <span class="evidence-basis-label">Inferred</span>'
+                        line += ' <span class="evidence-basis-label">[Inferred]</span>'
                 else:
-                    line += ' <span class="evidence-basis-label">Inferred</span>'
+                    line += ' <span class="evidence-basis-label">[Inferred]</span>'
             output.append(line)
     return "\n".join(output)

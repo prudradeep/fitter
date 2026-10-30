@@ -738,8 +738,11 @@ class ChatHazardStepsMixin:
             "from the source. Do not infer objectives from mechanisms or expected benefits. "
             "Under mechanisms, capture how the policy works for later analysis of hazards, "
             "disadvantaged groups, and mitigation measures. "
-            "Each array must contain short, distinct bullet points with a concise label and a "
-            "complete explanatory sentence in the text field. Use 2-4 bullets per section when "
+            "Each array must contain short, distinct bullet points with a concise, specific label "
+            "and a complete explanatory sentence in the text field. Use an empty label if no "
+            "specific heading is supported. Never repeat generic labels such as Benefit, "
+            "Benefited Group, or Mechanism across bullets. Do not include evidence labels in "
+            "the label or text field. Use 2-4 bullets per section when "
             "the source supports them. For example, label a legal provision 'Legal Basis', "
             "a participation rule 'Participation Rights', and an outcome 'Regional Value Creation'. "
             "Under benefited_groups, identify people or population groups defined by residence, "
@@ -795,11 +798,36 @@ class ChatHazardStepsMixin:
         )
         d42 = self._policy_summary_reference(session)
         d42_objectives = str((d42.fields if d42 else {}).get("Original Policy Objective") or "").strip()
-        def use_d42_objectives(summary: str) -> str:
+        async def use_d42_objectives(summary: str) -> str:
             if not d42_objectives:
                 return summary
             objectives = _split_inline_bullets(d42_objectives) or [d42_objectives]
-            bullets = "\n".join(f"- {objective}" for objective in objectives)
+            completed_objectives = []
+            for objective in objectives:
+                objective = re.sub(
+                    r"\s*(?:\*\*)?(?:Inferred|Documented(?:\s*[-—]\s*(?:Strong|Moderate|Weak))?)(?:\*\*)?\s*$",
+                    "", objective, flags=re.IGNORECASE,
+                ).strip()
+                if not is_complete_mechanism_sentence(objective):
+                    sentences = re.split(r"(?<=[.!?])\s+", objective)
+                    fragment = sentences[-1].strip()
+                    complete_prefix = " ".join(sentences[:-1]).strip()
+                    source_match = re.search(
+                        re.escape(fragment) + r"[^.!?]{0,300}[.!?]",
+                        source_text, re.IGNORECASE,
+                    ) if fragment else None
+                    if source_match:
+                        objective = " ".join((complete_prefix, source_match.group(0))).strip()
+                    else:
+                        completed, basis = await _complete_policy_mechanism(
+                            fragment, source_text or d42_objectives,
+                        )
+                        objective = " ".join((complete_prefix, completed)).strip()
+                        if basis == "Inferred" and completed:
+                            objective += " **Inferred**"
+                if objective:
+                    completed_objectives.append(objective)
+            bullets = "\n".join(f"- {objective}" for objective in completed_objectives)
             return re.sub(
                 r"(?ms)^### Policy Objectives\s*\n.*?(?=^### |\Z)",
                 "### Policy Objectives\n\n" + bullets + "\n\n",
@@ -852,16 +880,17 @@ class ChatHazardStepsMixin:
                     items = parsed.get(key)
                     if not isinstance(items, list) or not items:
                         continue
-                    items = [
-                        item for item in items
-                        if isinstance(item, dict) and not is_section_title_label(item)
-                    ]
+                    items = [item for item in items if isinstance(item, dict)]
+                    for item in items:
+                        if is_section_title_label(item):
+                            item["label"] = ""
                     if not items:
                         continue
                     if not all(
                         isinstance(item, dict)
-                        and isinstance(item.get("label"), str) and item["label"].strip()
-                        and isinstance(item.get("text"), str) and item["text"].strip()
+                        and isinstance(item.get("label"), str)
+                        and isinstance(item.get("text"), str)
+                        and (key == "mechanisms" or is_complete_mechanism_sentence(item["text"]))
                         and not re.search(
                             r"(?:[(:,;]|\b(?:and|or))\s*$",
                             item["text"].strip(), re.IGNORECASE,
@@ -941,14 +970,15 @@ class ChatHazardStepsMixin:
                     items = parsed.get(key)
                     if not isinstance(items, list):
                         continue
-                    items = [
-                        item for item in items
-                        if isinstance(item, dict) and not is_section_title_label(item)
-                    ]
+                    items = [item for item in items if isinstance(item, dict)]
+                    for item in items:
+                        if is_section_title_label(item):
+                            item["label"] = ""
                     if not items or not all(
                         isinstance(item, dict)
-                        and isinstance(item.get("label"), str) and item["label"].strip()
-                        and isinstance(item.get("text"), str) and item["text"].strip()
+                        and isinstance(item.get("label"), str)
+                        and isinstance(item.get("text"), str)
+                        and (key == "mechanisms" or is_complete_mechanism_sentence(item["text"]))
                         and not re.search(
                             r"(?:[(:,;]|\b(?:and|or))\s*$",
                             item["text"].strip(), re.IGNORECASE,
@@ -1009,7 +1039,7 @@ class ChatHazardStepsMixin:
                     for label, text in bullets
                 )
             )
-        return use_d42_objectives("\n\n".join(sections))
+        return await use_d42_objectives("\n\n".join(sections))
 
     async def _handle_context_policy_reference(
         self, session_id: str, session: ChatSession, message: str

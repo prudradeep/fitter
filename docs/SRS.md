@@ -150,7 +150,7 @@ Content quality is treated as a product requirement. A saved hazard, affected gr
 1. After the hazard is valid enough to proceed, the tool identifies affected population groups.
 2. For system hazards, affected groups come from seeded hazard-profile mappings where available.
 3. For custom hazards, affected groups are extracted from the hazard text, reason, and validation context.
-4. The tool shows the hazard to be co-created and the identified affected groups.
+4. The tool shows the identified affected groups for review.
 5. The user can confirm the groups or type changes.
 6. The user can add, remove, or edit affected groups.
 7. Generic groups such as "people" or "general population" require clarification when a more specific targetable group is needed.

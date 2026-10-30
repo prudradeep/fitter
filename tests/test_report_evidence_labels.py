@@ -15,3 +15,16 @@ def test_export_keeps_policy_point_basis():
 def test_export_labels_generated_measure_summary():
     lines = _measure_summary_lines("### Expected effects\n- Households may pay less for energy.")
     assert any("Households may pay less for energy. [Inferred]" in line for line in lines)
+
+
+def test_export_uses_short_documented_label():
+    lines = _policy_summary_lines(
+        "### Mechanisms\n- **Grant:** Households receive grants. **Documented**",
+        {"mechanisms": [[
+            {"field": "Basis", "value": "Documented"},
+            {"field": "Source", "value": "Policy document"},
+            {"field": "Referenced excerpt", "value": "Households receive grants."},
+        ]]},
+    )
+    assert any("[Documented]" in line for line in lines)
+    assert not any("Documented —" in line or "Documented -" in line for line in lines)

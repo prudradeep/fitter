@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from html import escape
 
 from app.llm import ask_llm_chat
 from app.schemas import ChatResponse, Option
@@ -444,9 +445,9 @@ class ChatCustomHazardGroundingMixin:
         item = (state.get("dimension_scores") or {}).get(dimension) or {}
         sectoral = dimension == "sectoral_objective_fit"
         title = "Sectoral Objective Fit" if sectoral else "Policy Objective Fit"
-        objective = (
-            policy_objective_for_sector(session.sector or "")
-            if sectoral else str(session.selected_context_policy or "Selected policy")
+        objective_line = (
+            f"**Objective:** {policy_objective_for_sector(session.sector or '')}\n\n"
+            if sectoral else ""
         )
         score = int(item.get("score") or 0)
         assessment = str(item.get("reason") or "The objective fit is supported.").strip()
@@ -458,7 +459,7 @@ class ChatCustomHazardGroundingMixin:
             bot_message=markdown_to_html(
                 f"## {title}\n\n**Supported** (score: {score}/10)\n\n"
                 f"{assessment}\n\n"
-                f"**Objective:** {objective}\n\n"
+                + objective_line
                 + "Do you confirm this fit assessment?"
             ),
             options=[
@@ -1321,6 +1322,13 @@ class ChatCustomHazardGroundingMixin:
             } and score >= dimension_floor:
                 continue
             question = str(item.get("clarification_question") or "").strip() or prompt
+            if key == "policy_objective_fit":
+                question = re.split(
+                    r"\s*#{1,6}\s+(?:Policy details|Policy Objectives|Mechanisms|Intended benefits)\b",
+                    question, maxsplit=1, flags=re.IGNORECASE,
+                )[0].strip() or prompt
+                if "?" in question:
+                    question = question.split("?", 1)[0].strip() + "?"
             reason = str(item.get("reason") or "").strip()
             if not reason:
                 reason = "The required details were not found in the submitted information."
@@ -1347,14 +1355,23 @@ class ChatCustomHazardGroundingMixin:
         *,
         rejected: bool,
     ) -> str:
+        def question_panel(question: str) -> str:
+            return (
+                '<div class="custom-hazard-clarification-question">\n'
+                '<span class="custom-hazard-clarification-prompt">Question to answer</span>\n'
+                f'<p>{escape(question)}</p>\n'
+                '</div>'
+            )
+
         validation_reason = str(state.get("validation_reason") or "").strip()
         if rejected:
-            message = (
+            status = (
                 "This custom hazard was not accepted because the required details "
                 "were not found or were not sufficiently specific."
             )
         else:
-            message = "Additional information is required before this custom hazard can be validated."
+            status = "Additional information is required before this custom hazard can be validated."
+        message = f'<p class="workflow-status">{escape(status)}</p>'
         if validation_reason and not any(
             reason == validation_reason for _, _, reason in missing_details
         ):
@@ -1362,14 +1379,19 @@ class ChatCustomHazardGroundingMixin:
         if missing_details:
             message += "\n\nPlease provide the following details:\n\n"
             message += "\n\n".join(
-                f"**{label}**\nReason: {reason}\nPlease provide: {question}"
+                f"**{label}**\n\nReason: {reason}\n\n{question_panel(question)}"
                 for label, question, reason in missing_details
             )
         else:
-            message += (
-                "\n\nPlease clarify the hazard, its transition-policy link."
+            message += "\n\n" + question_panel(
+                questions[0] if questions else
+                "Can you describe the hazard and explain how it is linked to the selected transition policy?"
             )
-        return message + "\n\nPlease answer the questions above in one response."
+        return message + (
+            "\n\nPlease answer the highlighted questions in one response."
+            if len(missing_details) > 1 else
+            "\n\nPlease answer the highlighted question in one response."
+        )
 
     def _custom_hazard_repeated_clarification_error_response(
         self,

@@ -464,8 +464,12 @@ def _measure_summary_lines(summary: str) -> list[str]:
 
 
 def _report_inference(value: str) -> str:
-    if re.search(r"\b(?:Documented|Inferred)\b", value, re.I):
-        return value
+    match = re.search(
+        r"\s*\[?(Documented|Inferred)(?:\s*[-—]\s*(?:Strong|Moderate|Weak))?\]?\s*$",
+        value, re.I,
+    )
+    if match:
+        return f"{value[:match.start()].rstrip()} [{match.group(1).title()}]"
     return f"{value} [Inferred]" if value.strip() else value
 
 
@@ -526,6 +530,10 @@ def _policy_summary_lines(
         for entry in body.splitlines():
             entry = _clean(entry)
             entry = re.sub(r"[*_`]+", "", entry).strip(" -")
+            entry = re.sub(
+                r"\s*\[?(?:Documented|Inferred)(?:\s*[-—]\s*(?:Strong|Moderate|Weak))?\]?\s*$",
+                "", entry, flags=re.I,
+            ).strip()
             if not entry or re.search(r"(?i)not identified:\s*not stated in the supplied text", entry):
                 continue
             section_sources = source_map.get(heading.casefold(), [])
@@ -535,7 +543,8 @@ def _policy_summary_lines(
                 else []
             )
             basis = claim_basis(entry, rows) if isinstance(rows, list) else "Inferred"
-            entries.append(f"- {entry} [{basis}]")
+            label = "[Documented]" if basis.casefold().startswith("documented") else "[Inferred]"
+            entries.append(f"- {entry} {label}")
         if entries:
             if heading:
                 output.append(f"POLICY_SUBSECTION::{heading}")

@@ -38,7 +38,8 @@ def _mechanism_basis_with_source(provenance: str, source: str) -> str:
     basis = "Documented — Moderate" if provenance == "documented" else "Inferred"
     if source:
         return source_button([{"field": "Source", "value": source}], basis=basis)
-    return f"**{basis}**"
+    label = "[Documented]" if provenance == "documented" else "[Inferred]"
+    return f'<span class="evidence-basis-label">{label}</span>'
 
 
 class ChatCustomHazardMechanismMixin:

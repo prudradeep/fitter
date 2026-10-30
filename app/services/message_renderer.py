@@ -89,7 +89,19 @@ def get_message_environment() -> Environment:
 
 def render_message(template_name: str, **context: object) -> str:
     prompt = load_prompt_from_db(f"chat/{template_name}")
+    if template_name in {
+        "hazard_added.md", "hazard_summary_review.md", "target_population_question.md",
+    } and prompt:
+        prompt = prompt.replace("Hazard to be co-created", "Hazard to be created")
     if template_name == "policy_selection.md" and prompt:
+        prompt = prompt.replace(
+            'If you are not able to find the policy linked to your context from the above list click on "Add a new policy" to add the policy document for your region (The policy added will be visible to the other users of the system analysing the same geographical context).',
+            '<div class="policy-selection-note">\n'
+            '<strong>Don\'t see your policy?</strong>\n'
+            '<p>Select <strong>Add a new policy</strong> below to provide its document. '
+            'The policy will be visible to others working in the same region.</p>\n'
+            '</div>',
+        )
         prompt = prompt.replace(
             '<li><strong class="add-policy-list-label">Add a new policy</strong> '
             '<small>Provide a document for review</small></li>',

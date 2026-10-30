@@ -207,11 +207,32 @@
 }
 
 .bubble:has(.policy-selection-info) {
-  font-size: 1.05rem;
+  font-size: 0.96rem;
 }
 
 .bubble:has(.policy-selection-info) .policy-selection-info {
-  font-size: 1.12rem;
+  font-size: 1.08rem;
+}
+
+.bubble .policy-selection-note {
+  margin-top: 16px;
+  border-left: 3px solid #d1a149;
+  border-radius: 0 8px 8px 0;
+  background: #fffbeb;
+  padding: 10px 14px;
+  color: #334155;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.bubble .policy-selection-note > strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #78350f;
+}
+
+.bubble .policy-selection-note p {
+  margin: 0;
 }
 
 .message-row.bot .bubble {
@@ -919,6 +940,33 @@
   font-size: 0.68rem;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.bubble .custom-hazard-clarification-question {
+  margin: 12px 0 16px;
+  border: 1px solid #bfdbfe;
+  border-left: 4px solid #2563eb;
+  border-radius: 10px;
+  background: #eff6ff;
+  padding: 12px 16px;
+}
+
+.bubble .custom-hazard-clarification-prompt {
+  display: block;
+  margin-bottom: 5px;
+  color: #1d4ed8;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.bubble .custom-hazard-clarification-question p {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.04rem;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .bubble .hazard-evidence-label--not-provided {

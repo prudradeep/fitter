@@ -11,7 +11,7 @@
 </div>
 
 <div class="hazard-summary-review-original">
-  <span class="hazard-summary-review-label">Hazard to be co-created</span>
+  <span class="hazard-summary-review-label">Hazard to be created</span>
   <p><strong>{{ hazard }}</strong></p>
 </div>
 

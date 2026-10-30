@@ -13,6 +13,11 @@ _PROMPT_START = re.compile(
     re.I,
 )
 _LABEL = re.compile(r"\b(?:Documented|Inferred)\b", re.I)
+_BASIS_SPAN = re.compile(
+    r'(<span\s+class="evidence-basis-label">)\s*(?:\[)?(Documented|Inferred)'
+    r'(?:\s*[-—]\s*(?:Strong|Moderate|Weak))?(?:\])?\s*(</span>)',
+    re.I,
+)
 _CLAIM_VERB = re.compile(
     r"\b(?:is|are|was|were|has|have|may|can|will|face|faces|affect|affects|"
     r"increase|increases|reduce|reduces|depend|depends|receive|receives|"
@@ -28,8 +33,15 @@ def label_generated_claims(message: str) -> str:
     Source-backed renderers add their own verified label. This fallback never
     upgrades a claim merely because a source button is present.
     """
+    message = _BASIS_SPAN.sub(
+        lambda match: f"{match.group(1)}[{match.group(2).title()}]{match.group(3)}",
+        message,
+    )
+
     def label(match: re.Match[str]) -> str:
         opening, tag, body, closing = match.groups()
+        if "workflow-status" in opening:
+            return match.group(0)
         if "evidence-basis-label" in body or _LABEL.search(body):
             return match.group(0)
         if "<li" in body.casefold() or "<ul" in body.casefold() or "<ol" in body.casefold():
@@ -40,6 +52,6 @@ def label_generated_claims(message: str) -> str:
             return match.group(0)
         if not _CLAIM_VERB.search(plain):
             return match.group(0)
-        return f'{opening}{body} <span class="evidence-basis-label">Inferred</span>{closing}'
+        return f'{opening}{body} <span class="evidence-basis-label">[Inferred]</span>{closing}'
 
     return _BLOCK.sub(label, message)

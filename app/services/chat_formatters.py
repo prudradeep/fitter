@@ -188,7 +188,7 @@ def format_hazards(
         )
     survey_source_button = (
         '<button class="survey-source-button" type="button" '
-        'data-open-survey-results="true">Based on a predictive model</button>'
+        'data-open-survey-results="true">Predictive model</button>'
     )
     predictive_summary = (
         "The predictive model results are augmented with data for "

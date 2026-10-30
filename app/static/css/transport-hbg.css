@@ -24,14 +24,14 @@ body { color: #07144f; }
   .hero h1 { letter-spacing: -1px; }
   .hero .under { margin: 10px 0 14px; }
   .hero p { width: 245px; font-size: 18px; max-width: 100%; line-height: 1.35; }
-  .theme { height: 226px; }
+  .theme { min-height: 226px; height: auto; }
   .theme .bubble svg { width: 57px; height: 57px; }
-  .theme h3 { font-size: 12px; }
-  .theme p { font-size: 10.3px; line-height: 1.33; }
+  .theme h3 { font-size: 15px; }
+  .theme p { font-size: 12.5px; line-height: 1.33; }
 }
 
 @media (max-width: 380px) {
-  .theme { height: 218px; }
-  .theme h3 { font-size: 11.2px; }
-  .theme p { font-size: 9.5px; }
+  .theme { min-height: 218px; height: auto; }
+  .theme h3 { font-size: 13px; }
+  .theme p { font-size: 11.5px; }
 }

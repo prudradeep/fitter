@@ -59,7 +59,9 @@ def test_verified_source_strength_is_preserved_in_cta():
         {"field": "Evidence strength", "value": "Weak"},
         {"field": "Source", "value": "Regional survey"},
     ])
-    assert "Documented — Weak" in button
+    assert ">[Documented]</span>" in button
+    assert "Evidence strength" in button
+    assert "Weak" in button
     assert "Source</button>" in button
 
 
@@ -120,3 +122,32 @@ def test_saved_policy_summary_uses_renamed_heading_and_preserves_source():
     assert "### Target actors/beneficiaries" in display
     assert "### Target Socio demographic groups" not in display
     assert "data-source-table=" in display
+
+
+def test_policy_summary_uses_bracketed_basis_and_omits_repeated_generic_labels():
+    summary = (
+        "### Intended benefits\n\n"
+        "- **Benefit:** Residents receive charging discounts.\n"
+        "- **Benefit:** Drivers can use public charging points.\n\n"
+        "### Mechanisms\n\n"
+        "- **Mechanism:** Operators install charging points. Inferred **Inferred**"
+    )
+    rendered = policy_summary_with_buttons(summary, None)
+
+    assert "**Benefit:**" not in rendered
+    assert "**Mechanism:**" not in rendered
+    assert rendered.count("[Inferred]") == 3
+    assert "Inferred**" not in rendered
+
+
+def test_saved_policy_summary_finishes_sentence_from_source_excerpt():
+    summary = "### Policy Objectives\n\n- Funding is limited. Funds are exhausted by Documented - Strong"
+    sources = {"policy objectives": [[
+        {"field": "Referenced excerpt", "value": "Funding is limited. Funds are exhausted by region."},
+    ]]}
+
+    rendered = policy_summary_with_buttons(summary, sources)
+
+    assert "Funds are exhausted by region." in rendered
+    assert "Funds are exhausted by Documented" not in rendered
+    assert "[Documented" in rendered

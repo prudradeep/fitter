@@ -236,6 +236,7 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
             '<span>Policy document: Available</span>'
             '{% if policy.description %}<small>{{ policy.description }}</small>{% endif %}</li>'
             '{% endfor %}'
+            '\nIf you are not able to find the policy linked to your context from the above list click on "Add a new policy" to add the policy document for your region (The policy added will be visible to the other users of the system analysing the same geographical context).'
         )
         with patch("app.services.message_renderer.load_prompt_from_db", return_value=saved_template):
             html = render_message(
@@ -248,6 +249,9 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
             )
 
         self.assertIn('href="https://example.org/policy.pdf"', html)
+        self.assertIn('class="policy-selection-note"', html)
+        self.assertIn("Don't see your policy?", html)
+        self.assertNotIn("If you are not able", html)
 
     def test_untyped_policy_keeps_country_sector_hazards(self) -> None:
         self.service.db = MagicMock()

@@ -113,7 +113,8 @@ class CustomHazardObjectiveFlowTests(unittest.TestCase):
         )
         self.assertIn("<h2>Policy Objective Fit</h2>", response.bot_message)
         self.assertIn("<strong>Supported</strong> (score: 7/10)", response.bot_message)
-        self.assertIn("<strong>Objective:</strong> Electric mobility policy", response.bot_message)
+        self.assertNotIn("<strong>Objective:</strong>", response.bot_message)
+        self.assertNotIn("Electric mobility policy", response.bot_message)
         self.assertNotIn("Selected policy summary", response.bot_message)
         self.assertNotIn("Target actors/beneficiaries", response.bot_message)
 

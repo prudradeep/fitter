@@ -8,4 +8,7 @@ Policies on the platform for **{{ sector }}** sector in **{{ region }}**, **{{ c
 {% endfor %}
 </ol>
 
-If you are not able to find the policy linked to your context from the above list click on "Add a new policy" to add the policy document for your region (The policy added will be visible to the other users of the system analysing the same geographical context).
+<div class="policy-selection-note">
+<strong>Don't see your policy?</strong>
+<p>Select <strong>Add a new policy</strong> below to provide its document. The policy will be visible to others working in the same region.</p>
+</div>

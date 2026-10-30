@@ -325,23 +325,15 @@ class ChatCustomHazardPopulationStepsMixin:
                 "hazard",
             ),
         )
-        if generated_title and "Generated title" not in message:
-            generated_line = (
-                "<p><strong>Generated title:</strong> "
-                f"{html.escape(generated_title)}</p>"
-            )
-            updated_message = re.sub(
-                r"(Hazard to be co-created:</p>\s*<ul>.*?</ul>)",
-                rf"\1{generated_line}",
-                message,
-                count=1,
-                flags=re.DOTALL,
-            )
-            message = (
-                updated_message
-                if updated_message != message
-                else f"{message}{generated_line}"
-            )
+        # Older saved templates can still contain these introductory fields.
+        message = re.sub(
+            r"<p>\s*Hazard to be co-created:\s*</p>\s*<ul>.*?</ul>\s*",
+            "", message, count=1, flags=re.IGNORECASE | re.DOTALL,
+        )
+        message = re.sub(
+            r"<p>\s*<strong>Generated title:</strong>.*?</p>\s*",
+            "", message, count=1, flags=re.IGNORECASE | re.DOTALL,
+        )
         if isinstance(session.custom_hazard, dict):
             return self._custom_hazard_response(
                 session_id=session_id,
@@ -875,7 +867,7 @@ class ChatCustomHazardPopulationStepsMixin:
                         )
                     )
                 else:
-                    lines.append("  - Inferred")
+                    lines.append('  - <span class="evidence-basis-label">[Inferred]</span>')
         return "\n".join(lines) or "- No affected population groups identified yet."
 
     async def _ensure_affected_population_provenance(self, session: ChatSession) -> None:

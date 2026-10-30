@@ -1406,7 +1406,6 @@ def _heuristic_dimension_validation(
     objective_terms = _sector_policy_objective_terms(selected_sector)
     sectoral_score = SCORE_STRONG if _contains_any_term(lower, objective_terms) else SCORE_WEAK
     selected_policy = str(state.get("selected_policy") or "").strip()
-    selected_policy_summary = str(state.get("selected_policy_summary") or "").strip()
     policy_objective_score = SCORE_WEAK
 
     groups = _extract_affected_groups(combined)
@@ -1467,7 +1466,7 @@ def _heuristic_dimension_validation(
             "policy_objective_fit": _score_payload(
                 policy_objective_score,
                 f"The selected policy objective requires review: {selected_policy or 'selected policy'}. ",
-                f"Which objective or target-actor mechanism in the selected policy causes or worsens this hazard? {selected_policy_summary[:180]}",
+                "Which objective or target-actor mechanism in the selected policy causes or worsens this hazard?",
             ),
             "mechanism_fit": mechanism_fit,
             "hazard_definition_fit": _score_payload(

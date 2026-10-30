@@ -1,6 +1,6 @@
 You have successfully co-created a hazard.
 
-Hazard to be co-created:
+Hazard to be created:
 
 - **{{ original_hazard or hazard }}**
 

@@ -96,7 +96,7 @@ class RequestedCustomHazardFlowTests(unittest.TestCase):
             ))
         service._custom_hazard_mechanism_confirmation_step("flow-test", session)
         message = service._custom_hazard_response.call_args.kwargs["bot_message"]
-        self.assertIn("Documented", message)
+        self.assertIn("[Documented]", message)
         self.assertIn("Electric mobility policy", message)
         self.assertIn("Charging infrastructure is required", message)
 
@@ -154,7 +154,7 @@ class RequestedCustomHazardFlowTests(unittest.TestCase):
             "name": "Rural drivers", "reflection": "They face higher travel costs.",
             "basis": "documented", "source_label": "user-report.pdf",
         }])
-        self.assertIn("Documented", message)
+        self.assertIn("[Documented]", message)
         self.assertIn("user-report.pdf", message)
 
     def test_generated_group_can_be_confirmed_after_review(self) -> None:

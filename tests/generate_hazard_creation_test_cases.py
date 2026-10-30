@@ -255,7 +255,7 @@ FULL_FLOW_SCENARIOS = [
         "expected_action": "VALIDATE_WITHOUT_EVIDENCE",
         "expected_step": "custom_hazard_group_review",
         "expected_input_mode": "",
-        "expected_message_contains": "Hazard to be co-created",
+        "expected_message_contains": "Review Affected Population Groups",
         "notes": "Open-chat no-evidence replies should proceed to validation without being blocked by input-quality checks.",
     },
     {
@@ -280,7 +280,7 @@ FULL_FLOW_SCENARIOS = [
         "expected_action": "VALIDATE_WITH_URL_EVIDENCE",
         "expected_step": "custom_hazard_group_review",
         "expected_input_mode": "",
-        "expected_message_contains": "Hazard to be co-created",
+        "expected_message_contains": "Review Affected Population Groups",
         "notes": "A URL embedded in open-chat evidence-decision text should be normalized as evidence and validated.",
     },
     {
@@ -293,7 +293,7 @@ FULL_FLOW_SCENARIOS = [
         "expected_action": "VALIDATE_WITHOUT_EVIDENCE",
         "expected_step": "custom_hazard_group_review",
         "expected_input_mode": "",
-        "expected_message_contains": "Hazard to be co-created",
+        "expected_message_contains": "Review Affected Population Groups",
         "notes": "Choosing Skip at evidence input should validate the staged hazard without evidence.",
     },
     {
@@ -342,7 +342,7 @@ FULL_FLOW_SCENARIOS = [
         "expected_action": "RESOLVE_CONTEXT_CLARIFICATION",
         "expected_step": "custom_hazard_group_review",
         "expected_input_mode": "",
-        "expected_message_contains": "Hazard to be co-created",
+        "expected_message_contains": "Review Affected Population Groups",
         "notes": "A useful answer to the context-review question should continue validation instead of restarting title clarification.",
     },
     {
@@ -363,7 +363,7 @@ FULL_FLOW_SCENARIOS = [
         "affected_group_action": "Continue with custom hazard",
         "expected_action": "CONTINUE_AFTER_DUPLICATE_OVERRIDE",
         "expected_step": "custom_hazard_group_review",
-        "expected_message_contains": "Hazard to be co-created",
+        "expected_message_contains": "Review Affected Population Groups",
         "notes": "Choosing to continue with a custom hazard should set duplicate_override_confirmed and move forward.",
     },
     {
@@ -385,7 +385,7 @@ FULL_FLOW_SCENARIOS = [
         "grounding_answer": "This is a transport-sector hazard because low-emission zone rules restrict access by older cars, and low-income commuters in Bavaria lack affordable EVs or replacement public transport.",
         "expected_action": "RESOLVE_GROUNDING_CLARIFICATION",
         "expected_step": "custom_hazard_group_review",
-        "expected_message_contains": "Hazard to be co-created",
+        "expected_message_contains": "Review Affected Population Groups",
         "notes": "Grounding answers should be combined with the original reason/evidence and then route to group review when resolved.",
     },
     {
@@ -443,7 +443,7 @@ FULL_FLOW_SCENARIOS = [
         "affected_group_action": "Remove group: students without cars",
         "expected_action": "REMOVE_USER_ADDED_GROUP",
         "expected_step": "custom_hazard_group_review",
-        "expected_message_contains": "Hazard to be co-created",
+        "expected_message_contains": "Review Affected Population Groups",
         "notes": "User-added groups can be removed during review.",
     },
     {

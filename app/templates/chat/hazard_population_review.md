@@ -4,14 +4,6 @@
 {% endif %}
 ## Review Affected Population Groups
 
-Hazard to be co-created:
-
-- **{{ hazard }}**
-
-{% if generated_title %}
-**Generated title:** {{ generated_title }}
-
-{% endif %}
 {% if visibility_notice %}
 > {{ visibility_notice }}
 

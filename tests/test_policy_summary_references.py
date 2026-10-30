@@ -178,6 +178,24 @@ def test_d42_objective_bullets_are_separate_and_each_keeps_its_source():
         db.close()
 
 
+def test_incomplete_d42_objective_is_completed_as_inferred():
+    db, _ = _db_with_d42("Funding is limited. Funds are exhausted by")
+    try:
+        service = SummaryService(db)
+        session = ChatSession(country="Italy", sector="Transport", selected_context_policy=POLICY)
+        completion = json.dumps({
+            "sentence": "The available funding may run out.",
+            "supporting_quote": "",
+        })
+        with patch("app.services.chat_hazard_steps.ask_llm_chat", AsyncMock(return_value=completion)):
+            summary = asyncio.run(service._summarize_context_policy(session, "Funding is limited.", POLICY))
+
+        assert "Funding is limited. The available funding may run out. **Inferred**" in summary
+        assert "Funds are exhausted by\n" not in summary
+    finally:
+        db.close()
+
+
 def test_saved_inline_objective_bullets_render_as_aligned_items():
     saved = "### Policy Objectives\n\n- • First objective. • Second objective."
     source = [{"field": "Document", "value": "FITTER D4.2 FINAL.pdf"}]

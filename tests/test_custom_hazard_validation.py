@@ -1642,7 +1642,7 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         response = _run(service._custom_hazard_added_step("session-1", session))
 
-        self.assertIn("Hazard to be co-created", response.bot_message)
+        self.assertIn("Hazard to be created", response.bot_message)
         self.assertIn(original_name, response.bot_message)
         self.assertIn("Generated title", response.bot_message)
         self.assertIn(generated_name, response.bot_message)
@@ -3805,9 +3805,9 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         response = service._custom_hazard_population_review_step("session-1", session)
 
-        self.assertIn("Hazard to be co-created:", response.bot_message)
-        self.assertIn("Generated title", response.bot_message)
-        self.assertIn("Regional coal transition employment shock", response.bot_message)
+        self.assertNotIn("Hazard to be co-created:", response.bot_message)
+        self.assertNotIn("Generated title", response.bot_message)
+        self.assertNotIn("Regional coal transition employment shock", response.bot_message)
         self.assertNotIn("New hazard:", response.bot_message)
         self.assertIn(
             "Once saved, this hazard will be visible to other platform users",
@@ -3836,7 +3836,7 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         response = service._custom_hazard_population_review_step("session-1", session)
 
-        self.assertIn("AI reflection", response.bot_message)
+        self.assertIn("[Inferred]", response.bot_message)
         self.assertIn("Plant closures can reduce wages", response.bot_message)
         self.assertIn("essential travel harder", response.bot_message)
         self.assertIn("groups and reflections look right", response.bot_message)
@@ -3950,7 +3950,7 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertIn("capital access gaps", reflection)
         self.assertNotIn("hazard-title validation", reflection)
 
-    def test_generated_title_is_injected_when_db_template_is_stale(self):
+    def test_population_review_omits_hazard_and_title_from_stale_db_template(self):
         service = ChatService.__new__(ChatService)
         session = ChatSession(
             accepted_custom_hazard="Original hazard wording",
@@ -3964,6 +3964,7 @@ class CustomHazardValidationTests(unittest.TestCase):
             "<h2>Review Affected Population Groups</h2>"
             "<p>Hazard to be co-created:</p>"
             "<ul><li><strong>Original hazard wording</strong></li></ul>"
+            "<p><strong>Generated title:</strong> Generated concise hazard title</p>"
             "<p>Affected population groups identified:</p>"
         )
 
@@ -3976,12 +3977,11 @@ class CustomHazardValidationTests(unittest.TestCase):
                 session,
             )
 
-        original_position = response.bot_message.index("Original hazard wording")
-        title_position = response.bot_message.index("Generated title")
-        groups_position = response.bot_message.index("Affected population groups")
-        self.assertLess(original_position, title_position)
-        self.assertLess(title_position, groups_position)
-        self.assertIn("Generated concise hazard title", response.bot_message)
+        self.assertIn("Affected population groups identified:", response.bot_message)
+        self.assertNotIn("Hazard to be co-created", response.bot_message)
+        self.assertNotIn("Original hazard wording", response.bot_message)
+        self.assertNotIn("Generated title", response.bot_message)
+        self.assertNotIn("Generated concise hazard title", response.bot_message)
 
     def test_custom_hazard_added_shows_strict_crowd_sourcing_notice(self):
         service = ChatService.__new__(ChatService)

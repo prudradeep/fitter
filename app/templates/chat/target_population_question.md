@@ -9,7 +9,7 @@
 {% endif %}
 
 {% if not mitigation_proposal %}
-Hazard to be co-created:
+Hazard to be created:
 
 - **{{ hazard }}**
 {% endif %}
