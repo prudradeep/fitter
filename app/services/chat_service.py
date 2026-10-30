@@ -84,6 +84,7 @@ from app.services.hazard_ranking_service import HazardRankingService
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 from app.services.voice_summary import generate_voice_summary
+from app.services.generated_claim_labels import label_generated_claims
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,7 @@ class ChatService(
                 "user",
                 self._chat_message_display_content(clean_message),
             )
+        response.bot_message = label_generated_claims(response.bot_message)
         await self._attach_voice_summary(response)
         self._finalize_chat_response(current_session_id, session, response)
         return response
@@ -288,6 +290,7 @@ class ChatService(
         )
         self._attach_persisted_session_counts(current_session_id, session, response)
         response.other_options = []
+        response.bot_message = label_generated_claims(response.bot_message)
         await self._attach_voice_summary(response)
         return response
 
@@ -798,6 +801,7 @@ class ChatService(
             clarify_title=self._handle_custom_hazard_title_clarification,
             clarify_hazard=self._handle_custom_hazard_clarification,
             check_dimensions=self._run_custom_hazard_dimension_check,
+            confirm_objective=self._handle_custom_hazard_objective_confirmation,
             confirm_mechanism=self._handle_custom_hazard_mechanism_confirmation,
             capture_mechanism=self._handle_custom_hazard_mechanism_input,
             confirm_policy_details=self._handle_custom_hazard_policy_details_confirmation,

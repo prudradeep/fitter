@@ -159,7 +159,8 @@ def _report_lines(
     sector = _session_label(db, session_data, "sector", Sector)
     sector_objective = _sectoral_objective(sector)
     policy_summary_lines = _policy_summary_lines(
-        str(session_data.get("selected_context_policy_summary") or "")
+        str(session_data.get("selected_context_policy_summary") or ""),
+        session_data.get("selected_context_policy_sources"),
     )
     hazard_details = _hazard_details(db, session_data, measures)
     lines = [
@@ -199,7 +200,7 @@ def _report_lines(
                 "PLAN_COMBINED_EULER::" + json.dumps(_combined_target_groups(measures), ensure_ascii=False),
             ]
         )
-    lines.extend(["", "Conclusions and Recommendations", _conclusion(measures)])
+    lines.extend(["", "Conclusions and Recommendations", _report_inference(_conclusion(measures))])
     return lines
 
 
@@ -447,7 +448,7 @@ def _measure_summary_lines(summary: str) -> list[str]:
             label = _clean(re.sub(r"[*_`]+", "", field_match.group(1)))
             value = _clean(re.sub(r"[*_`]+", "", field_match.group(2)))
             if value and _has_report_content(value):
-                lines.extend([f"MEASURE_FIELD::{label}", value])
+                lines.extend([f"MEASURE_FIELD::{label}", _report_inference(value)])
             continue
         label_match = re.match(r"^[-*]?\s*(.+?):\s*$", line)
         if label_match:
@@ -458,8 +459,14 @@ def _measure_summary_lines(summary: str) -> list[str]:
         line = _clean(re.sub(r"[*_`]+", "", line))
         line = re.sub(r"^[-*]\s+", "", line)
         if _has_report_content(line):
-            lines.append(f"- {line}")
+            lines.append(f"- {_report_inference(line)}")
     return lines
+
+
+def _report_inference(value: str) -> str:
+    if re.search(r"\b(?:Documented|Inferred)\b", value, re.I):
+        return value
+    return f"{value} [Inferred]" if value.strip() else value
 
 
 def _flatten_report_value(value: object) -> str:
@@ -489,9 +496,14 @@ def _session_label(db: Session, data: dict[str, object], key: str, model) -> str
     return _clean(str(getattr(row, "name", "") or "Not available"))
 
 
-def _policy_summary_lines(summary: str) -> list[str]:
+def _policy_summary_lines(
+    summary: str, sources: object = None,
+) -> list[str]:
     if not summary.strip():
         return []
+    from app.services.summary_sources import claim_basis
+
+    source_map = sources if isinstance(sources, dict) else {}
     normalized = re.sub(r"\s*(###\s+)", r"\n\1", summary.strip())
     chunks = re.split(r"(?m)^###\s+", normalized)
     output: list[str] = []
@@ -516,7 +528,14 @@ def _policy_summary_lines(summary: str) -> list[str]:
             entry = re.sub(r"[*_`]+", "", entry).strip(" -")
             if not entry or re.search(r"(?i)not identified:\s*not stated in the supplied text", entry):
                 continue
-            entries.append(f"- {entry}")
+            section_sources = source_map.get(heading.casefold(), [])
+            rows = (
+                section_sources[len(entries)]
+                if isinstance(section_sources, list) and len(entries) < len(section_sources)
+                else []
+            )
+            basis = claim_basis(entry, rows) if isinstance(rows, list) else "Inferred"
+            entries.append(f"- {entry} [{basis}]")
         if entries:
             if heading:
                 output.append(f"POLICY_SUBSECTION::{heading}")
@@ -544,7 +563,7 @@ def _hazard_details(
         for label, key in (("Summary", "summary"), ("Reason", "reason"), ("Evidence", "evidence")):
             value = _clean(str(custom_payload.get(key) or ""))
             if value:
-                details.append(f"- {label}: {value}")
+                details.append(f"- {label}: {_report_inference(value) if key == 'summary' else value}")
 
     for model, attr in (
         (CustomHazard, "custom_hazard_id"),
@@ -559,7 +578,7 @@ def _hazard_details(
         for label, field in (("Summary", "summary"), ("Reason", "reason"), ("Evidence", "evidence")):
             value = _clean(str(getattr(row, field, None) or ""))
             if value and not any(item.casefold().startswith(f"- {label.casefold()}:") for item in details):
-                details.append(f"- {label}: {value}")
+                details.append(f"- {label}: {_report_inference(value) if field == 'summary' else value}")
         break
     return details
 
@@ -577,7 +596,7 @@ def _measure_creation_lines(index: int, measure: UserMitigationMeasure) -> list[
     payload = _json_object(measure.system_inquiry_json)
     summary = str(payload.get("summary") or "").strip()
     if summary:
-        lines.append(f"  Systems inquiry: {summary}")
+        lines.append(f"  Systems inquiry: {_report_inference(summary)}")
     return lines
 
 

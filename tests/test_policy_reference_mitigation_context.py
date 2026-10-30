@@ -601,8 +601,8 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
 
         visible_summary = _policy_summary_for_display(summary)
         self.assertIn("### Policy Objectives", visible_summary)
-        self.assertNotIn("### Mechanisms", visible_summary)
-        self.assertNotIn("Grants support rooftop installations.", visible_summary)
+        self.assertIn("### Mechanisms", visible_summary)
+        self.assertIn("Grants support rooftop installations.", visible_summary)
         self.assertIn("### Mechanisms", summary)
 
     def test_policy_summary_retries_incomplete_response(self) -> None:

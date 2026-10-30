@@ -909,6 +909,18 @@
   font-weight: 750;
 }
 
+.bubble .evidence-basis-label {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .bubble .hazard-evidence-label--not-provided {
   border-color: #fde68a;
   background: #fffbeb;

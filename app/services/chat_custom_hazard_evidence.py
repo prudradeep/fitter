@@ -2,7 +2,7 @@ import html
 import logging
 import re
 
-from app.schemas import ChatResponse
+from app.schemas import ChatResponse, Option
 from app.services.chat_hazard_duplicates import hazard_duplicate_payloads
 from app.services.chat_options import (
     CUSTOM_HAZARD_EVIDENCE_REFLECTION_OPTIONS,
@@ -420,11 +420,7 @@ class ChatCustomHazardEvidenceMixin:
         exact_label = exact_option_label(message, HAZARD_EVIDENCE_DECISION_OPTIONS)
         open_action = open_evidence_decision_action(message)
         if open_action == "evidence":
-            return await self._validate_staged_custom_hazard(
-                session_id,
-                session,
-                normalize_evidence_message(message),
-            )
+            return await self._capture_hazard_evidence(session_id, session, message)
         if exact_label is None:
             fuzzy_label = match_option_label(message, HAZARD_EVIDENCE_DECISION_OPTIONS)
             if fuzzy_label is not None:
@@ -456,12 +452,15 @@ class ChatCustomHazardEvidenceMixin:
             "or TXT. If you do not have it ready, choose **Skip** and continue."
         )
         if isinstance(session.custom_hazard, dict):
+            options = HAZARD_EVIDENCE_RETRY_OPTIONS if retry else HAZARD_EVIDENCE_INPUT_OPTIONS
+            if retry and session.custom_hazard.get("user_mechanism_evidence_pending"):
+                options = [*options, Option(id=4, label="Revise mechanism")]
             return self._custom_hazard_response(
                 session_id=session_id,
                 session=session,
                 step="custom_hazard_evidence",
                 bot_message=bot_message,
-                options=(HAZARD_EVIDENCE_RETRY_OPTIONS if retry else HAZARD_EVIDENCE_INPUT_OPTIONS),
+                options=options,
                 input_mode="evidence_only",
                 error=error,
             )
@@ -479,7 +478,7 @@ class ChatCustomHazardEvidenceMixin:
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
         exact_label = exact_option_label(
-            message, [*HAZARD_EVIDENCE_INPUT_OPTIONS, *HAZARD_EVIDENCE_RETRY_OPTIONS]
+            message, [*HAZARD_EVIDENCE_INPUT_OPTIONS, *HAZARD_EVIDENCE_RETRY_OPTIONS, Option(id=4, label="Revise mechanism")]
         )
         if normalize(exact_label or message) == normalize("Go back to list of hazards"):
             return self._hazard_evidence_decision_step(session_id, session)
@@ -487,6 +486,16 @@ class ChatCustomHazardEvidenceMixin:
             return await self._validate_staged_custom_hazard(session_id, session, "")
         if normalize(exact_label or message) == normalize("Provide evidence again"):
             return self._hazard_evidence_input_step(session_id, session)
+        if normalize(exact_label or message) == normalize("Revise mechanism"):
+            state = self._custom_hazard_state(session)
+            if state.get("user_mechanism_evidence_pending"):
+                state["user_mechanism_evidence_pending"] = False
+                state["user_mechanism_evidence_checked"] = False
+                state["user_mechanism_evidence_supplied"] = False
+                return self._custom_hazard_mechanism_input_step(
+                    session_id, session,
+                    detail="Revise the mechanism; you can then provide evidence for the revised linkage.",
+                )
         if normalize(exact_label or message) in {
             normalize("Clarify relevance"),
             normalize("Clarify the relevance"),
@@ -576,12 +585,18 @@ class ChatCustomHazardEvidenceMixin:
         reason = str(session.pending_hazard_reason or "").strip()
         if isinstance(session.custom_hazard, dict):
             state = self._custom_hazard_state(session)
-            state["reason"] = reason
+            state["reason"] = reason or str(state.get("reason") or "")
             state["evidence"] = evidence
             session.pending_hazard_evidence = evidence
             if not evidence:
                 state["evidence_relevance_checked"] = True
                 state["evidence_relevant"] = False
+                if state.pop("user_mechanism_evidence_pending", False):
+                    state["user_mechanism_evidence_checked"] = True
+                    state["user_mechanism_evidence_supplied"] = False
+                    return await self._handle_custom_hazard_mechanism_input(
+                        session_id, session, str(state.get("selected_mechanism") or "")
+                    )
                 return await self._route_custom_hazard_next_action(
                     session_id,
                     session,
@@ -664,6 +679,10 @@ class ChatCustomHazardEvidenceMixin:
                 },
             }
             state["show_evidence_linkages"] = True
+            if state.pop("user_mechanism_evidence_pending", False):
+                state["user_mechanism_evidence_checked"] = True
+                state["user_mechanism_evidence_supplied"] = True
+                return await self._validate_user_mechanism_evidence(session_id, session)
             return await self._route_custom_hazard_next_action(session_id, session)
         if not reason:
             return self._hazard_reason_step(
@@ -787,6 +806,7 @@ class ChatCustomHazardEvidenceMixin:
             if session.phase == "custom_hazard_duplicate_confirmation":
                 state = self._custom_hazard_state(session)
                 state["duplicate_override_confirmed"] = True
+                state["duplicate_override_hazard_text"] = hazard
             return await self._start_custom_hazard_grounding_check(session_id, session, hazard)
 
         if action in {normalize("Explore suggested hazard"), normalize("Use existing hazard")}:

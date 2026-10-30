@@ -10,10 +10,49 @@ _BULLET = re.compile(r"^\s*-\s+(?:\*\*(.+?):\*\*\s*)?(.*)$")
 _STOP = {"about", "after", "also", "from", "into", "more", "not", "only", "other", "policy", "that", "their", "them", "there", "these", "this", "those", "with", "would"}
 
 
-def source_button(rows: list[dict[str, str]]) -> str:
+def claim_basis(claim: str, rows: list[dict[str, str]]) -> str:
+    """Give a conservative label to a claim and its actual supporting excerpt."""
+    explicit = next(
+        (str(row.get("value") or "").strip() for row in rows
+         if row.get("field") == "Basis"),
+        "",
+    )
+    has_source = any(
+        row.get("field") in {"Document", "Source", "Referenced excerpt"}
+        and str(row.get("value") or "").strip()
+        and str(row.get("value") or "").strip() != "Source passage unavailable"
+        for row in rows
+    )
+    if explicit.startswith("Documented") and has_source:
+        strength = next(
+            (str(row.get("value") or "").strip().title() for row in rows
+             if row.get("field") == "Evidence strength"),
+            "",
+        )
+        if strength in {"Strong", "Moderate", "Weak"}:
+            return f"Documented — {strength}"
+        return explicit if "—" in explicit else "Documented — Moderate"
+    excerpts = [
+        str(row.get("value") or "").strip()
+        for row in rows if row.get("field") == "Referenced excerpt"
+    ]
+    normalized_claim = re.sub(r"\s+", " ", claim).strip(" .:;\n").casefold()
+    if normalized_claim and any(
+        normalized_claim in re.sub(r"\s+", " ", excerpt).casefold()
+        for excerpt in excerpts
+    ):
+        return "Documented — Strong"
+    return "Inferred"
+
+
+def source_button(
+    rows: list[dict[str, str]], *, basis: str | None = None, claim: str = "",
+) -> str:
     """Use the chat's existing Provided evidence modal."""
     payload = escape(json.dumps(rows, ensure_ascii=False), quote=True)
+    basis = basis or claim_basis(claim, rows)
     return (
+        f'<span class="evidence-basis-label">{escape(basis)}</span> '
         '<button class="factsheet-source-tag hazard-evidence-label--provided" '
         f'type="button" data-source-table="{payload}" '
         'aria-label="Show source context">Source</button>'
@@ -102,6 +141,9 @@ def policy_point_sources(markdown: str, chunks: list[dict[str, object]], clarifi
                 {"field": "Source", "value": "Source passage unavailable"},
                 {"field": "Summary point", "value": detail or label},
             ]
+        if section == "mechanisms":
+            basis = "Documented" if "**Documented**" in detail else "Inferred"
+            rows.insert(0, {"field": "Basis", "value": basis})
         sources.setdefault(section, []).append(rows)
     return sources
 
@@ -142,6 +184,20 @@ def policy_summary_with_buttons(markdown: str, sources: dict[str, list[list[dict
                     continue
                 choices = (sources or {}).get(section, [])
                 if index < len(choices):
-                    line += " " + source_button(choices[index])
+                    rows = choices[index]
+                    if not any(
+                        row.get("field") == "Source"
+                        and row.get("value") == "Source passage unavailable"
+                        for row in rows
+                    ):
+                        basis = claim_basis(
+                            " ".join(part for part in (match.group(1), match.group(2)) if part),
+                            rows,
+                        )
+                        line += " " + source_button(rows, basis=basis)
+                    else:
+                        line += ' <span class="evidence-basis-label">Inferred</span>'
+                else:
+                    line += ' <span class="evidence-basis-label">Inferred</span>'
             output.append(line)
     return "\n".join(output)

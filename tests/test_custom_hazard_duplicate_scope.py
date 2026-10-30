@@ -85,6 +85,30 @@ class CustomHazardDuplicateScopeTests(unittest.TestCase):
 
         self.assertEqual(names, ["Heating cost shock", "Regional job loss"])
 
+    def test_custom_duplicate_lookup_does_not_reuse_stale_session_names(self) -> None:
+        service = ChatService.__new__(ChatService)
+        service.db = _RecordingDb()
+        session = ChatSession(
+            country_id=1, region_id=2, sector_id=3,
+            custom_hazards=["Hazard saved in a previous region"],
+        )
+
+        self.assertEqual(service._same_scope_custom_hazard_names_for_duplicate_check(session), [])
+
+    def test_shared_hazard_id_lookup_does_not_filter_by_policy(self) -> None:
+        service = ChatService.__new__(ChatService)
+        service.user_id = "user-1"
+        service.db = SimpleNamespace(scalar=MagicMock(return_value="shared-hazard"))
+        session = ChatSession(
+            country_id="country-1", region_id="region-1", sector_id="sector-1",
+            selected_context_policy_id="policy-2",
+        )
+
+        self.assertEqual(service._custom_hazard_id_for_context(session, "Charging cost burden"), "shared-hazard")
+        query = str(service.db.scalar.call_args.args[0])
+        self.assertIn("custom_hazards.region_scope_key", query)
+        self.assertNotIn("custom_hazards.policy_id", query)
+
     def test_additional_duplicate_lookup_filters_by_country_and_sector(self) -> None:
         service = ChatService.__new__(ChatService)
         service.db = _RecordingDb()

@@ -57,6 +57,15 @@ class ChatCustomHazardGroundingMixin:
         if not isinstance(session.custom_hazard, dict):
             session.custom_hazard = default_custom_hazard_state()
         dimensions = session.custom_hazard.get("dimension_scores")
+        if (
+            isinstance(dimensions, dict)
+            and "sectoral_objective_fit" not in dimensions
+            and "policy_objective_fit" in dimensions
+            and "sectoral_objective_confirmed" not in session.custom_hazard
+        ):
+            # Older sessions used this key for the generic sector objective.
+            dimensions["sectoral_objective_fit"] = dimensions.pop("policy_objective_fit")
+            session.custom_hazard["policy_objective_confirmed"] = False
         if isinstance(dimensions, dict) and "twin_transition_policy_fit" in dimensions:
             legacy = dimensions.pop("twin_transition_policy_fit")
             dimensions.setdefault("mechanism_fit", legacy)
@@ -215,6 +224,8 @@ class ChatCustomHazardGroundingMixin:
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
+        state["selected_policy"] = str(session.selected_context_policy or "")
+        state["selected_policy_summary"] = str(session.selected_context_policy_summary or "")
         hazard = str(
             state.get("resolved_hazard_text") or state.get("raw_text") or session.pending_hazard or ""
         ).strip()
@@ -309,6 +320,11 @@ class ChatCustomHazardGroundingMixin:
         )
         state["policy_reference_available"] = bool(policy_reference_context.strip())
         while True:
+            pending_objective = self._pending_custom_hazard_objective_confirmation(session)
+            if pending_objective:
+                return self._custom_hazard_objective_confirmation_step(
+                    session_id, session, pending_objective
+                )
             if (
                 self._custom_hazard_dimension_is_supported(
                     session,
@@ -361,6 +377,11 @@ class ChatCustomHazardGroundingMixin:
             )
             self._store_custom_hazard_validation_result(session, hazard, result)
             state = self._custom_hazard_state(session)
+            pending_objective = self._pending_custom_hazard_objective_confirmation(session)
+            if pending_objective:
+                return self._custom_hazard_objective_confirmation_step(
+                    session_id, session, pending_objective
+                )
 
             if active_dimensions is None:
                 break
@@ -401,6 +422,88 @@ class ChatCustomHazardGroundingMixin:
             ):
                 return stage
         return None
+
+    def _pending_custom_hazard_objective_confirmation(
+        self, session: ChatSession
+    ) -> str | None:
+        state = self._custom_hazard_state(session)
+        for dimension, flag in (
+            ("sectoral_objective_fit", "sectoral_objective_confirmed"),
+            ("policy_objective_fit", "policy_objective_confirmed"),
+        ):
+            if not self._custom_hazard_dimension_is_supported(session, dimension):
+                return None
+            if not state.get(flag):
+                return dimension
+        return None
+
+    def _custom_hazard_objective_confirmation_step(
+        self, session_id: str, session: ChatSession, dimension: str
+    ) -> ChatResponse:
+        state = self._custom_hazard_state(session)
+        item = (state.get("dimension_scores") or {}).get(dimension) or {}
+        sectoral = dimension == "sectoral_objective_fit"
+        title = "Sectoral Objective Fit" if sectoral else "Policy Objective Fit"
+        objective = (
+            policy_objective_for_sector(session.sector or "")
+            if sectoral else str(session.selected_context_policy or "Selected policy")
+        )
+        score = int(item.get("score") or 0)
+        assessment = str(item.get("reason") or "The objective fit is supported.").strip()
+        transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_OBJECTIVE_CONFIRMATION)
+        state["objective_confirmation_dimension"] = dimension
+        return self._custom_hazard_response(
+            session_id=session_id, session=session,
+            step="custom_hazard_objective_confirmation",
+            bot_message=markdown_to_html(
+                f"## {title}\n\n**Supported** (score: {score}/10)\n\n"
+                f"{assessment}\n\n"
+                f"**Objective:** {objective}\n\n"
+                + "Do you confirm this fit assessment?"
+            ),
+            options=[
+                Option(id=1, label="Yes, confirm fit"),
+                Option(id=2, label="No, clarify fit"),
+                Option(id=0, label="Go back to list of hazards"),
+            ],
+        )
+
+    async def _handle_custom_hazard_objective_confirmation(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        state = self._custom_hazard_state(session)
+        dimension = str(state.get("objective_confirmation_dimension") or "")
+        if dimension not in {"sectoral_objective_fit", "policy_objective_fit"}:
+            transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
+            return await self._run_custom_hazard_dimension_check(session_id, session)
+        flag = "sectoral_objective_confirmed" if dimension == "sectoral_objective_fit" else "policy_objective_confirmed"
+        action = normalize(message)
+        if action == normalize("Go back to list of hazards"):
+            self._discard_temporary_policy_references(session)
+            session.custom_hazard = None
+            transition_custom_hazard(session, ChatPhase.HAZARDS)
+            return await self._hazards_step(session_id, session)
+        if action in {normalize("Yes, confirm fit"), normalize("Yes")}:
+            state[flag] = True
+            state["objective_confirmation_dimension"] = ""
+            transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
+            return await self._run_custom_hazard_dimension_check(session_id, session)
+        if action in {normalize("No, clarify fit"), normalize("No")}:
+            state[flag] = False
+            state["objective_confirmation_dimension"] = ""
+            item = (state.get("dimension_scores") or {}).get(dimension)
+            if isinstance(item, dict):
+                item["score"] = 0
+                item["needs_clarification"] = True
+                item["clarification_question"] = (
+                    "How does this hazard arise from the sectoral objective?"
+                    if dimension == "sectoral_objective_fit"
+                    else "Which selected policy objective or target-actor mechanism causes or worsens this hazard?"
+                )
+            state["active_validation_dimension"] = dimension
+            state["active_validation_dimensions"] = [dimension]
+            return self._custom_hazard_clarification_step(session_id, session)
+        return self._custom_hazard_objective_confirmation_step(session_id, session, dimension)
 
     def _same_scope_custom_hazard_names_for_duplicate_check(
         self, session: ChatSession
@@ -546,6 +649,8 @@ class ChatCustomHazardGroundingMixin:
         scores.append(state["overall_score"])
         state["scores"] = scores[-4:]
         state["dimension_scores"] = result.get("dimension_scores") or {}
+        if isinstance(result.get("context_fit"), dict):
+            state["context_fit"] = result["context_fit"]
         state["linkage_analysis"] = result.get("linkage_analysis") or {}
         # Evidence validation is a second pass over the same hazard. Some LLM
         # responses omit affected groups when focusing on the supplied URL;
@@ -573,10 +678,23 @@ class ChatCustomHazardGroundingMixin:
         self, session_id: str, session: ChatSession
     ) -> ChatResponse:
         state = self._custom_hazard_state(session)
+        pending_objective = self._pending_custom_hazard_objective_confirmation(session)
+        if pending_objective:
+            return self._custom_hazard_objective_confirmation_step(
+                session_id, session, pending_objective
+            )
         action = CustomHazardAction.coerce(
             state.get("next_action"),
             CustomHazardAction.ASK_CLARIFICATION,
         )
+        if (
+            action == CustomHazardAction.ASK_DUPLICATE_CONFIRMATION
+            and state.get("duplicate_override_confirmed")
+        ):
+            # A completed grounding pass can leave the previous duplicate action
+            # in state. The user's confirmation has already resolved that step.
+            action = CustomHazardAction.ASK_CLARIFICATION
+            state["next_action"] = action.value
         hazard = str(
             state.get("resolved_hazard_text")
             or session.pending_hazard
@@ -652,6 +770,7 @@ class ChatCustomHazardGroundingMixin:
             )
             await self._ensure_custom_hazard_generated_title(session, hazard)
             await self._ensure_affected_population_reflections(session)
+            await self._ensure_affected_population_provenance(session)
             return self._custom_hazard_population_review_step(session_id, session)
         if (
             action == CustomHazardAction.ASK_CLARIFICATION
@@ -677,6 +796,7 @@ class ChatCustomHazardGroundingMixin:
             )
             await self._ensure_custom_hazard_generated_title(session, hazard)
             await self._ensure_affected_population_reflections(session)
+            await self._ensure_affected_population_provenance(session)
             return self._custom_hazard_population_review_step(session_id, session)
         if action == CustomHazardAction.VALIDATE:
             if state.get("affected_groups") and not bool(state.get("affected_groups_reviewed")):
@@ -690,6 +810,7 @@ class ChatCustomHazardGroundingMixin:
                 )
                 await self._ensure_custom_hazard_generated_title(session, hazard)
                 await self._ensure_affected_population_reflections(session)
+                await self._ensure_affected_population_provenance(session)
                 return self._custom_hazard_population_review_step(session_id, session)
             return await self._finalize_custom_hazard_from_grounding(session_id, session)
         if action == CustomHazardAction.REJECT:
@@ -1129,6 +1250,9 @@ class ChatCustomHazardGroundingMixin:
         )
         dimension_floor = custom_hazard_dimension_floor(state.get("validation_mode"))
         prompts = {
+            "sectoral_objective_fit": (
+                f"How could pursuing the sectoral objective '{policy_objective}' cause or worsen this hazard?"
+            ),
             "hazard_definition_fit": (
                 "What specific negative harm or risk occurs, and who is affected?"
             ),
@@ -1136,24 +1260,26 @@ class ChatCustomHazardGroundingMixin:
                 "Which specific process, intervention, rule, technology, or market change causes or worsens the harm?"
             ),
             "policy_objective_fit": (
-                f"How could pursuing the policy objective '{policy_objective}' cause or worsen this hazard?"
+                "Which objective or target-actor mechanism in the selected policy causes or worsens this hazard?"
             ),
             "affected_groups_fit": (
                 "Which specific population groups are affected, and what impact do they experience?"
             ),
         }
         labels = {
+            "sectoral_objective_fit": "Sectoral Objective Fit",
             "hazard_definition_fit": "Hazard definition",
             "mechanism_fit": "Mechanism Fit",
-            "policy_objective_fit": "Sectoral Objective Fit",
+            "policy_objective_fit": "Policy Objective Fit",
             "affected_groups_fit": "Affected population groups",
         }
         core_dimensions = (
+            "sectoral_objective_fit",
             "policy_objective_fit",
             "mechanism_fit",
             "hazard_definition_fit",
         )
-        objective_item = dimensions.get("policy_objective_fit")
+        objective_item = dimensions.get("sectoral_objective_fit")
         objective_supported = (
             isinstance(objective_item, dict)
             and int(objective_item.get("score") or 0) >= dimension_floor
@@ -1176,7 +1302,7 @@ class ChatCustomHazardGroundingMixin:
         elif active_dimension in prompts:
             dimensions_to_check = (active_dimension,)
         elif not objective_supported:
-            dimensions_to_check = ("policy_objective_fit",)
+            dimensions_to_check = ("sectoral_objective_fit",)
         elif core_supported:
             dimensions_to_check = (*core_dimensions, "affected_groups_fit")
         else:
@@ -1425,6 +1551,7 @@ class ChatCustomHazardGroundingMixin:
             else {}
         )
         core_dimensions = (
+            "sectoral_objective_fit",
             "policy_objective_fit",
             "mechanism_fit",
             "hazard_definition_fit",
@@ -1464,6 +1591,7 @@ class ChatCustomHazardGroundingMixin:
         return all(
             self._custom_hazard_dimension_is_supported(session, dimension)
             for dimension in (
+                "sectoral_objective_fit",
                 "policy_objective_fit",
                 "mechanism_fit",
                 "hazard_definition_fit",

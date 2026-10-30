@@ -378,7 +378,7 @@ def inferred_adaptations_reference(
                 f"selected hazard: {selected_hazard or 'Not specified'}"
             )}] if selected_policy or selected_hazard else []),
         ]
-        return f"- {value} {source_button(rows)}"
+        return f"- {value} {source_button(rows, claim=value)}"
 
     def values(ids: list[int], field: str) -> list[str]:
         result: list[str] = []

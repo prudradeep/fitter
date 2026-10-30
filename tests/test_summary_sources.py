@@ -7,7 +7,7 @@ from app.services.chat_mitigation_creation_guided import ChatMitigationCreationG
 from app.services.chat_hazard_steps import ChatHazardStepsMixin
 from app.services.chat_session import ChatSession
 from app.services.message_renderer import markdown_to_html
-from app.services.summary_sources import policy_point_sources, policy_summary_with_buttons
+from app.services.summary_sources import claim_basis, policy_point_sources, policy_summary_with_buttons, source_button
 
 
 def test_policy_points_keep_distinct_document_context_in_chat():
@@ -34,6 +34,33 @@ def test_policy_points_keep_distinct_document_context_in_chat():
     assert "retrofit grants" in first[-1]["value"]
     assert second[0] == {"field": "Document", "value": "Power policy.pdf"}
     assert {"field": "Page", "value": "8"} in second
+
+
+def test_related_passage_is_labelled_inferred_even_with_source_cta():
+    summary = "### Challenges\n\n- **Monthly subsidy gap:** Households receive no monthly grant."
+    chunks = [{"title": "Policy.pdf", "content": "The programme supports vulnerable households."}]
+    rendered = markdown_to_html(policy_summary_with_buttons(
+        summary, policy_point_sources(summary, chunks)
+    ))
+    assert "Inferred" in rendered
+    assert "Source</button>" in rendered
+    assert "Documented" not in rendered
+
+
+def test_verbatim_claim_has_strong_documented_label():
+    assert claim_basis("Households receive a monthly grant.", [
+        {"field": "Referenced excerpt", "value": "Households receive a monthly grant."}
+    ]) == "Documented — Strong"
+
+
+def test_verified_source_strength_is_preserved_in_cta():
+    button = source_button([
+        {"field": "Basis", "value": "Documented"},
+        {"field": "Evidence strength", "value": "Weak"},
+        {"field": "Source", "value": "Regional survey"},
+    ])
+    assert "Documented — Weak" in button
+    assert "Source</button>" in button
 
 
 def test_mitigation_summary_shows_source_context_for_inputs_and_policy_effects():

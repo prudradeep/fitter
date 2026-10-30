@@ -73,7 +73,7 @@ class ChatMitigationCreationGuidedMixin:
                             continue
                         seen.add(key)
                         lines.append(
-                            f"- {point} {source_button([*rows, {'field': 'Referenced excerpt', 'value': point}])}"
+                            f"- {point} {source_button([*rows, {'field': 'Referenced excerpt', 'value': point}], claim=point)}"
                         )
                 if lines:
                     sections.append(f"## {heading}\n\n" + "\n".join(lines))
@@ -217,7 +217,7 @@ class ChatMitigationCreationGuidedMixin:
                 {"field": "Referenced excerpt", "value": str(source["content"])},
                 {"field": "Context used", "value": f"{mechanism}: {linkage}"},
             ]
-            lines.append(f"- **{mechanism}:** {linkage} {source_button(rows)}")
+            lines.append(f"- **{mechanism}:** {linkage} {source_button(rows, claim=linkage)}")
         return heading + "\n\n" + (
             "\n".join(lines) if lines else "No grounded mechanism is available."
         )
@@ -312,7 +312,7 @@ class ChatMitigationCreationGuidedMixin:
                 {"field": "Referenced excerpt", "value": passage["content"][:1800]},
                 {"field": "Context used", "value": challenge},
             ]
-            challenge_lines.append(f"- {challenge} {source_button(source_rows)}")
+            challenge_lines.append(f"- {challenge} {source_button(source_rows, claim=challenge)}")
         challenge_section = "## Challenges to be addressed\n\n" + (
             "\n".join(challenge_lines) if challenge_lines else
             "No supported challenge was found in the linked policy document."
@@ -336,7 +336,7 @@ class ChatMitigationCreationGuidedMixin:
                 {"field": "Referenced excerpt", "value": passage["content"][:1800]},
                 {"field": "Context used", "value": "Suggested adaptation based on this policy passage"},
             ]
-            lines.append(f"- {proposal} {source_button(source_rows)}")
+            lines.append(f"- {proposal} {source_button(source_rows, claim=proposal)}")
         adaptations_section = (
             "## Proposed adaptations for the policy\n\n" + "\n".join(lines)
             if lines else

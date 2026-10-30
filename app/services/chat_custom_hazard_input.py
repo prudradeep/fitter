@@ -371,6 +371,7 @@ class ChatCustomHazardInputMixin:
             or "New hazard"
         ).strip()
         groups = state.get("confirmed_affected_groups") or state.get("affected_groups") or []
+        group_support = state.get("affected_group_support") or {}
         profiles = []
         for group in groups:
             if not isinstance(group, dict):
@@ -386,6 +387,8 @@ class ChatCustomHazardInputMixin:
                     "explanation": str(group.get("reason") or "Affected group identified during custom hazard grounding.").strip(),
                     "statistical_basis": str(group.get("source_text") or "Custom hazard grounding review.").strip(),
                     "source": str(group.get("source") or "custom_hazard_grounding").strip(),
+                    "evidence_basis": str(group_support.get(normalize_for_match(name), {}).get("basis") or "inferred"),
+                    "evidence_source": str(group_support.get(normalize_for_match(name), {}).get("source") or "User explanation"),
                 }
             )
         if session.hazard_profiles is None:
@@ -866,12 +869,17 @@ class ChatCustomHazardInputMixin:
                     policy.get("policy_details") or ""
                 ).strip()
                 state["mechanism_source"] = "policy"
+                state["mechanism_provenance"] = "documented"
+                state["mechanism_source_title"] = str(state.get("pending_policy_reference") or "Policy reference")[:180]
                 self._promote_pending_custom_hazard_policy_reference(session, state)
                 state["policy_summary_notice"] = (
                     "## Supporting policy accepted\n\n"
                     "Your clarification establishes how the policy supports the mechanism.\n\n"
                     f"**Policy summary:** {state.get('supporting_policy_summary') or policy.get('reason')}\n\n"
                     f"**Relevant policy details:** {state.get('supporting_policy_details') or state.get('supporting_policy_summary')}"
+                )
+                state["ai_reflection"] = await self._custom_hazard_ai_reflection(
+                    session, hazard, str(policy.get("causal_linkage") or "")
                 )
                 return self._custom_hazard_causal_linkage_step(
                     session_id, session, policy
@@ -892,6 +900,10 @@ class ChatCustomHazardInputMixin:
                         "Policy reference was skipped; mechanism fit will continue without "
                         "a user-provided policy document."
                     )
+                    if str(state.get("selected_mechanism") or "").strip():
+                        return await self._infer_custom_hazard_mechanism_linkage(
+                            session_id, session
+                        )
                     transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_DIMENSION_CHECK)
                     return await self._run_custom_hazard_dimension_check(session_id, session)
                 if (
@@ -1181,7 +1193,13 @@ class ChatCustomHazardInputMixin:
         *,
         clarification: str | None = None,
     ) -> ChatResponse:
-        existing_hazard = self._match_hazard(hazard, session)
+        existing_hazard = next(
+            (
+                name for name in self._duplicate_hazard_names_for_check(session)
+                if normalize_for_match(name) == normalize_for_match(hazard)
+            ),
+            None,
+        )
         if existing_hazard is not None:
             return self._hazard_duplicate_suggestion_step(
                 session_id,

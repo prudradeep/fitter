@@ -23,6 +23,7 @@ from app.services.chat_options import (
     SOCIO_DEMOGRAPHIC_OPTIONS,
     exact_option_label,
     normalize,
+    normalize_for_match,
     option_list,
 )
 from app.services.chat_parsers import is_llm_unavailable_response
@@ -44,6 +45,7 @@ from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
+from app.services.summary_sources import source_button
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +294,12 @@ class ChatCustomHazardPopulationStepsMixin:
                         group.get("reflection") or group.get("reason") or ""
                     ).strip(),
                     "source": str(group.get("source") or "custom_hazard_grounding").strip(),
+                    "basis": str((state.get("affected_group_support") or {}).get(
+                        normalize_for_match(str(group.get("group") or "")), {}
+                    ).get("basis") or "inferred"),
+                    "source_label": str((state.get("affected_group_support") or {}).get(
+                        normalize_for_match(str(group.get("group") or "")), {}
+                    ).get("source") or "Hazard description or user explanation"),
                 }
                 for group in groups
                 if isinstance(group, dict)
@@ -448,6 +456,17 @@ class ChatCustomHazardPopulationStepsMixin:
                 normalize("Looks good"),
                 normalize("Done"),
             }:
+                unsupported = next(
+                    (group for group in state.get("affected_groups") or []
+                     if isinstance(group, dict)
+                     and group.get("needs_review")
+                     and group.get("evidence_error")), None
+                )
+                if unsupported:
+                    return self._custom_hazard_population_review_step(
+                        session_id, session,
+                        error_reason=str(unsupported.get("evidence_error") or "Please clarify how this group is affected."),
+                    )
                 if not list(state.get("affected_groups") or []):
                     state["confirmed_affected_groups"] = []
                     return self._custom_hazard_population_review_step(
@@ -841,7 +860,42 @@ class ChatCustomHazardPopulationStepsMixin:
                 lines.append(f"- **{name}:** {reflection}")
             else:
                 lines.append(f"- **{name}**")
+            if profile.get("basis"):
+                basis = str(profile["basis"]).strip().casefold()
+                display_basis = (
+                    "Documented — Moderate" if basis == "documented"
+                    else "Inferred"
+                )
+                source_label = str(profile.get("source_label") or "").strip()
+                if basis == "documented" and source_label:
+                    lines.append(
+                        "  - " + source_button(
+                            [{"field": "Source", "value": source_label}],
+                            basis=display_basis,
+                        )
+                    )
+                else:
+                    lines.append("  - Inferred")
         return "\n".join(lines) or "- No affected population groups identified yet."
+
+    async def _ensure_affected_population_provenance(self, session: ChatSession) -> None:
+        state = self._custom_hazard_state(session)
+        support = state.setdefault("affected_group_support", {})
+        for group in state.get("affected_groups") or []:
+            if not isinstance(group, dict):
+                continue
+            label = str(group.get("group") or "").strip()
+            key = normalize_for_match(label)
+            if not label or key in support:
+                continue
+            reason = str(group.get("reason") or group.get("reflection") or "").strip()
+            result = await self._custom_affected_group_evidence_support(session, label, reason)
+            if not result.get("valid"):
+                group["needs_review"] = True
+                group["evidence_error"] = str(result.get("reason") or "Clarify the evidence for this group.")
+            else:
+                group["needs_review"] = False
+                group.pop("evidence_error", None)
 
     @staticmethod
     def _is_affected_population_placeholder(value: str) -> bool:

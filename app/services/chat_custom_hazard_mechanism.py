@@ -26,11 +26,19 @@ from app.services.custom_hazard_validation import (
 )
 from app.services.enums import ChatPhase, CustomHazardAction, CustomHazardStatus
 from app.services.message_renderer import markdown_to_html
+from app.services.summary_sources import source_button
 from app.services.knowledge_base import (
     MAIN_KB_SCOPE,
     VALIDATED_EVIDENCE_SCOPE,
     KnowledgeBaseService,
 )
+
+
+def _mechanism_basis_with_source(provenance: str, source: str) -> str:
+    basis = "Documented — Moderate" if provenance == "documented" else "Inferred"
+    if source:
+        return source_button([{"field": "Source", "value": source}], basis=basis)
+    return f"**{basis}**"
 
 
 class ChatCustomHazardMechanismMixin:
@@ -109,8 +117,9 @@ class ChatCustomHazardMechanismMixin:
         mechanisms = await suggest_custom_hazard_mechanisms(
             hazard,
             session.sector or "",
-            policy_objective_for_sector(session.sector or ""),
+            session.selected_context_policy or policy_objective_for_sector(session.sector or ""),
             evidence=evidence,
+            policy_summary=session.selected_context_policy_summary or "",
         )
         state["suggested_mechanisms"] = mechanisms
         if not mechanisms:
@@ -126,11 +135,65 @@ class ChatCustomHazardMechanismMixin:
             )
         state["selected_mechanism"] = mechanisms[0]
         state["mechanism_source"] = "ai_suggestion"
+        state["mechanism_provenance"] = "inferred"
+        state["mechanism_source_title"] = ""
+        state["proposed_mechanism_source_detail"] = ""
+        await self._preview_custom_hazard_mechanism_source(session, hazard, mechanisms[0])
         transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_MECHANISM_CONFIRMATION)
         evidence_notice = str(state.pop("evidence_relationship_notice", "") or "").strip()
         return self._custom_hazard_mechanism_confirmation_step(
             session_id, session, evidence_notice=evidence_notice
         )
+
+    async def _preview_custom_hazard_mechanism_source(
+        self, session, hazard: str, mechanism: str
+    ) -> None:
+        """Show a source only after its text supports the proposed mechanism."""
+        state = self._custom_hazard_state(session)
+        query = f"{hazard} {mechanism} {session.sector or ''} {session.country or ''}"
+        policy_context = str(state.get("policy_reference_context") or "").strip()
+        if not policy_context and session.selected_context_policy_id:
+            policy_context = self._context_policy_document_context(
+                session, self._stored_context_policy_document_ids(session)
+            )
+        if policy_context:
+            policy = await summarize_custom_hazard_supporting_policy(
+                hazard, mechanism, policy_context
+            )
+            if policy.get("supported") and policy.get("causal_linkage"):
+                state["mechanism_provenance"] = "documented"
+                state["mechanism_source_title"] = str(
+                    state.get("policy_reference") or session.selected_context_policy or "Policy reference"
+                )[:180]
+                state["proposed_mechanism_source_detail"] = str(
+                    policy.get("policy_details") or policy.get("summary") or ""
+                )[:500]
+                return
+        if getattr(self, "db", None) is None:
+            return
+        for scope in (MAIN_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE):
+            try:
+                service = KnowledgeBaseService(
+                    self.db, None, scope=scope,
+                    country_id=session.country_id if scope == VALIDATED_EVIDENCE_SCOPE else None,
+                    region_id=session.region_id if scope == VALIDATED_EVIDENCE_SCOPE else None,
+                    sector_id=session.sector_id if scope == VALIDATED_EVIDENCE_SCOPE else None,
+                )
+                results = await service.search(query, limit=6)
+                grounded = await self.grounding_models.ground_results(query, results)
+                for item in grounded[:3]:
+                    policy = await summarize_custom_hazard_supporting_policy(
+                        hazard, mechanism, self._format_knowledge_results([item])
+                    )
+                    if policy.get("supported") and policy.get("causal_linkage"):
+                        state["mechanism_provenance"] = "documented"
+                        state["mechanism_source_title"] = str(item.get("title") or "Knowledge source")[:180]
+                        state["proposed_mechanism_source_detail"] = str(
+                            policy.get("policy_details") or policy.get("summary") or ""
+                        )[:500]
+                        return
+            except Exception:
+                continue
 
     def _custom_hazard_mechanism_confirmation_step(
         self, session_id: str, session, *, evidence_notice: str = ""
@@ -145,7 +208,7 @@ class ChatCustomHazardMechanismMixin:
         )
         objective_score = objective.get("score") if isinstance(objective, dict) else None
         objective_prefix = (
-            "## Sectoral Objective Fit\n\n"
+            "## Policy Objective Fit\n\n"
             "**Supported**"
             + (f" (score: {objective_score}/10)" if objective_score is not None else "")
             + f"\n\n{objective_reason or 'The hazard is compatible with the selected policy objective.'}\n\n"
@@ -159,7 +222,13 @@ class ChatCustomHazardMechanismMixin:
                 + objective_prefix
                 + "## Proposed mechanism\n\n"
                 f"{state.get('selected_mechanism') or 'No mechanism has been identified.'}\n\n"
-                "Does this mechanism accurately describe how the hazard is caused or worsened?"
+                + _mechanism_basis_with_source(
+                    str(state.get("mechanism_provenance") or "inferred"),
+                    str(state.get("mechanism_source_title") or ""),
+                )
+                + "\n\n"
+                + (f"**Supporting details:** {state.get('proposed_mechanism_source_detail')}\n\n" if state.get('proposed_mechanism_source_detail') else "")
+                + "Does this mechanism accurately describe how the hazard is caused or worsened?"
             ),
             options=CUSTOM_HAZARD_MECHANISM_CONFIRMATION_OPTIONS,
         )
@@ -167,22 +236,27 @@ class ChatCustomHazardMechanismMixin:
     async def _custom_hazard_ai_reflection(
         self, session, hazard: str, reason: str
     ) -> str:
-        """Summarize user-provided policy/hazard information without adding facts."""
+        """Reflect on the verified linkage within the selected policy and place."""
         objective = policy_objective_for_sector(session.sector or "")
         response = await ask_llm_chat(
             context=(
-                "You are a careful policy facilitator. Summarize only the information "
-                "provided by the user and stated policy objective. Do not invent facts, "
-                "evidence, statistics, laws, or affected groups. Write one concise reflective paragraph."
+                "You are a careful policy facilitator. Explain the causal relationship "
+                "between the selected policy, confirmed mechanism, and hazard in the "
+                "selected country, region, and sector. Use only the supplied verified "
+                "linkage and context. Do not invent facts, evidence, statistics, laws, "
+                "or affected groups. Write one concise reflective paragraph."
             ),
             messages=[{
                 "role": "user",
                 "content": (
                     f"Selected policy objective: {objective}\n"
-                    f"User hazard: {hazard}\n"
-                    f"User explanation: {reason or 'No separate explanation provided.'}\n\n"
-                    "Reflect on how the user's description frames a possible adverse consequence "
-                    "of the objective."
+                    f"Selected policy: {session.selected_context_policy or objective}\n"
+                    f"Country: {session.country or 'Not selected'}\n"
+                    f"Region: {session.region or 'National scope'}\n"
+                    f"Sector: {session.sector or 'Not selected'}\n"
+                    f"Confirmed mechanism: {self._custom_hazard_state(session).get('selected_mechanism') or ''}\n"
+                    f"Hazard: {hazard}\n"
+                    f"Verified linkage: {reason or 'Not provided'}"
                 ),
             }],
             temperature=0.0,
@@ -191,9 +265,10 @@ class ChatCustomHazardMechanismMixin:
         if response.strip() and not is_llm_unavailable_response(response):
             return response.strip()
         return (
-            f"You described **{hazard}** as a possible adverse consequence of pursuing "
-            f"the objective **{objective}**. "
-            f"{reason or 'Please confirm or refine the causal explanation in the next step.'}"
+            f"For {session.region or 'the national scope'}, {session.country or 'the selected country'} "
+            f"in {session.sector or 'the selected sector'}, the selected policy "
+            f"{session.selected_context_policy or objective} may contribute to {hazard} "
+            f"through the confirmed mechanism. {reason}"
         )
 
     async def _handle_custom_hazard_mechanism_confirmation(
@@ -211,6 +286,8 @@ class ChatCustomHazardMechanismMixin:
         }:
             state["selected_mechanism"] = ""
             state["mechanism_source"] = ""
+            state["mechanism_source_title"] = ""
+            state["proposed_mechanism_source_detail"] = ""
             state["mechanism_confirmed"] = False
             state["mechanism_input_exit_target"] = "sectoral_objective_fit"
             return self._custom_hazard_mechanism_input_step(session_id, session)
@@ -237,6 +314,9 @@ class ChatCustomHazardMechanismMixin:
         if policy_context:
             policy = await summarize_custom_hazard_supporting_policy(hazard, mechanism, policy_context)
             if policy.get("supported") and policy.get("causal_linkage"):
+                state["ai_reflection"] = await self._custom_hazard_ai_reflection(
+                    session, hazard, str(policy["causal_linkage"])
+                )
                 return self._accept_mechanism_policy_source(
                     session_id, session, policy, "policy_reference", [], policy_context
                 )
@@ -251,7 +331,7 @@ class ChatCustomHazardMechanismMixin:
                 ),
                 6,
             ),
-        ]
+        ] if getattr(self, "db", None) is not None else []
         for source_name, service, limit in source_queries:
             try:
                 results = await service.search(query, limit=limit)
@@ -263,6 +343,9 @@ class ChatCustomHazardMechanismMixin:
             context = self._format_knowledge_results(grounded)
             policy = await summarize_custom_hazard_supporting_policy(hazard, mechanism, context)
             if policy.get("supported") and policy.get("causal_linkage"):
+                state["ai_reflection"] = await self._custom_hazard_ai_reflection(
+                    session, hazard, str(policy["causal_linkage"])
+                )
                 return self._accept_mechanism_policy_source(
                     session_id, session, policy, source_name, grounded, context
                 )
@@ -296,6 +379,11 @@ class ChatCustomHazardMechanismMixin:
         ]
         state["pending_policy_linkage"] = policy
         state["mechanism_source"] = source
+        state["mechanism_provenance"] = "documented"
+        state["mechanism_source_title"] = (
+            str(grounded[0].get("title") or "").strip()
+            if grounded else str(session.selected_context_policy or "Policy reference").strip()
+        )
         # The policy source has already been checked. Do not ask users to
         # confirm it again; proceed directly to the causal-linkage review.
         return self._custom_hazard_causal_linkage_step(session_id, session, policy)
@@ -364,6 +452,11 @@ class ChatCustomHazardMechanismMixin:
                 detail="The policy linkage is no longer available. Please provide the policy again.",
             )
         state["policy_reference_available"] = True
+        state["ai_reflection"] = await self._custom_hazard_ai_reflection(
+            session,
+            str(state.get("resolved_hazard_text") or state.get("raw_text") or ""),
+            str(linkage.get("causal_linkage") or ""),
+        )
         return self._custom_hazard_causal_linkage_step(session_id, session, linkage)
 
     def _custom_hazard_mechanism_input_step(
@@ -467,8 +560,19 @@ class ChatCustomHazardMechanismMixin:
         knowledge_context = str(state.get("mechanism_knowledge_context") or "").strip()
         state["selected_mechanism"] = mechanism
         state["mechanism_source"] = "user"
+        state["mechanism_provenance"] = "inferred"
+        state["mechanism_source_title"] = ""
+        state["proposed_mechanism_source_detail"] = ""
+        state["ai_reflection"] = ""
         state["mechanism_confirmed"] = False
         state["causal_linkage_confirmed"] = False
+        # A source supplied for this mechanism takes precedence over every KB
+        # source. Ask for it before attempting any other source lookup.
+        if not state.get("user_mechanism_evidence_checked"):
+            state["user_mechanism_evidence_pending"] = True
+            return self._hazard_evidence_decision_step(session_id, session)
+        if state.get("user_mechanism_evidence_supplied"):
+            return await self._validate_user_mechanism_evidence(session_id, session)
         if state.get("policy_reference_available"):
             return await self._validate_current_custom_hazard_mechanism_source(
                 session_id, session
@@ -479,12 +583,105 @@ class ChatCustomHazardMechanismMixin:
             )
             if linkage.get("supported") and linkage.get("causal_linkage"):
                 state["mechanism_source"] = "knowledge_base"
+                state["ai_reflection"] = await self._custom_hazard_ai_reflection(
+                    session, hazard, str(linkage["causal_linkage"])
+                )
                 return self._custom_hazard_causal_linkage_step(session_id, session, linkage)
         return self._custom_hazard_policy_reference_step(
             session_id,
             session,
             detail="A policy source is needed to validate the mechanism you provided.",
         )
+
+    async def _validate_user_mechanism_evidence(self, session_id: str, session) -> ChatResponse:
+        """Evaluate a user mechanism against the user's source, without KB fallback."""
+        state = self._custom_hazard_state(session)
+        hazard = str(state.get("resolved_hazard_text") or state.get("raw_text") or "").strip()
+        mechanism = str(state.get("selected_mechanism") or "").strip()
+        evidence = str(state.get("evidence") or "").strip()
+        context = await self._user_evidence_context_for_contradiction_check(
+            session,
+            evidence,
+            full_text=True,
+            query=f"{hazard} {mechanism}",
+        )
+        if not context.strip():
+            state["user_mechanism_evidence_pending"] = True
+            state["user_mechanism_evidence_checked"] = False
+            state["user_mechanism_evidence_supplied"] = False
+            return self._hazard_evidence_input_step(
+                session_id, session, error=True,
+                message="The supplied evidence could not be read. Provide it again or choose Skip.",
+                retry=True,
+            )
+        linkage = await validate_custom_hazard_mechanism_linkage(
+            hazard, mechanism, context, "user-supplied evidence"
+        )
+        if not linkage.get("supported") or not linkage.get("causal_linkage"):
+            state["user_mechanism_evidence_pending"] = True
+            state["user_mechanism_evidence_checked"] = False
+            state["user_mechanism_evidence_supplied"] = False
+            return self._hazard_evidence_input_step(
+                session_id, session, error=True, retry=True,
+                message=str(linkage.get("reason") or "The supplied evidence does not support this mechanism. Clarify the evidence, provide another source, or revise the mechanism."),
+            )
+        state["mechanism_source"] = "user_evidence"
+        state["mechanism_provenance"] = "documented"
+        state["mechanism_source_title"] = str(evidence.splitlines()[0])[:180]
+        state["mechanism_knowledge_context"] = context
+        state["ai_reflection"] = await self._custom_hazard_ai_reflection(
+            session, hazard, str(linkage["causal_linkage"])
+        )
+        return self._custom_hazard_causal_linkage_step(session_id, session, linkage)
+
+    async def _infer_custom_hazard_mechanism_linkage(
+        self, session_id: str, session
+    ) -> ChatResponse:
+        """Offer a clearly labelled inference when optional sources are skipped."""
+        state = self._custom_hazard_state(session)
+        hazard = str(state.get("resolved_hazard_text") or state.get("raw_text") or "").strip()
+        mechanism = str(state.get("selected_mechanism") or "").strip()
+        objective = policy_objective_for_sector(session.sector or "")
+        payload = {
+            "selected_policy": session.selected_context_policy or objective,
+            "policy_objective": objective,
+            "country": session.country or "",
+            "region": session.region or "",
+            "sector": session.sector or "",
+            "mechanism": mechanism,
+            "hazard": hazard,
+        }
+        try:
+            response = await ask_llm_chat(
+                context=(
+                    "Assess whether the proposed mechanism could plausibly link the selected "
+                    "policy objective to the hazard in this context without relying on a "
+                    "documented source. Return only JSON with boolean plausible, concise "
+                    "causal_linkage, and reason. Label the chain as a possibility; do not "
+                    "invent policy provisions or evidence findings."
+                ),
+                messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                temperature=0.0, max_tokens=350,
+            )
+        except Exception:
+            response = ""
+        parsed = parse_json_object(response) if not is_llm_unavailable_response(response) else None
+        if not isinstance(parsed, dict) or parsed.get("plausible") is not True or not str(parsed.get("causal_linkage") or "").strip():
+            return self._custom_hazard_mechanism_input_step(
+                session_id, session,
+                detail=str((parsed or {}).get("reason") or "The mechanism-to-hazard link is not clear enough. Please explain how the mechanism causes or worsens this hazard."),
+            )
+        linkage = {
+            "supported": True,
+            "causal_linkage": str(parsed["causal_linkage"]).strip(),
+        }
+        state["mechanism_source"] = "inference"
+        state["mechanism_provenance"] = "inferred"
+        state["mechanism_source_title"] = ""
+        state["ai_reflection"] = await self._custom_hazard_ai_reflection(
+            session, hazard, linkage["causal_linkage"]
+        )
+        return self._custom_hazard_causal_linkage_step(session_id, session, linkage)
 
     async def _validate_current_custom_hazard_mechanism_source(
         self, session_id: str, session
@@ -531,12 +728,17 @@ class ChatCustomHazardMechanismMixin:
         state["policy_reference_context"] = policy_context
         state["policy_reference_relevance_pending"] = False
         state["mechanism_source"] = "policy"
+        state["mechanism_provenance"] = "documented"
+        state["mechanism_source_title"] = str(state.get("policy_reference") or "Policy reference")[:180]
         self._promote_pending_custom_hazard_policy_reference(session, state)
         state["policy_summary_notice"] = (
             "## Supporting policy accepted\n\n"
             "The policy is relevant to the confirmed mechanism.\n\n"
             f"**Policy summary:** {state.get('supporting_policy_summary') or policy.get('reason')}\n\n"
             f"**Relevant policy details:** {state.get('supporting_policy_details') or state.get('supporting_policy_summary')}"
+        )
+        state["ai_reflection"] = await self._custom_hazard_ai_reflection(
+            session, hazard, str(policy["causal_linkage"])
         )
         return self._custom_hazard_causal_linkage_step(session_id, session, policy)
 
@@ -608,6 +810,14 @@ class ChatCustomHazardMechanismMixin:
         transition_custom_hazard(session, ChatPhase.CUSTOM_HAZARD_CAUSAL_LINKAGE_CONFIRMATION)
         policy_notice = str(state.pop("policy_summary_notice", "") or "").strip()
         policy_prefix = f"{policy_notice}\n\n" if policy_notice else ""
+        place = ", ".join(part for part in (session.region, session.country) if part)
+        policy = str(session.selected_context_policy or policy_objective_for_sector(session.sector or ""))
+        source = str(state.get("mechanism_source_title") or "").strip()
+        reflection = str(state.get("ai_reflection") or "").strip() or (
+            f"In {place or 'the selected location'}, the selected {session.sector or 'sector'} "
+            f"policy may contribute to this hazard through {state.get('selected_mechanism')}. "
+            f"The supporting linkage is: {causal_linkage}"
+        )
         return self._custom_hazard_response(
             session_id=session_id,
             session=session,
@@ -616,7 +826,13 @@ class ChatCustomHazardMechanismMixin:
                 policy_prefix
                 + "## Possible factors contributing to the hazard\n\n"
                 f"**Mechanism:** {state.get('selected_mechanism')}\n\n"
-                f"{self._short_linkage_bullets(causal_linkage)}\n\n"
+                + _mechanism_basis_with_source(
+                    str(state.get("mechanism_provenance") or "inferred"), source,
+                )
+                + "\n\n"
+                + f"**Policy and context:** {policy}; {session.sector or 'selected sector'}; {place or 'selected location'}\n\n"
+                + f"**AI reflection:** {reflection}\n\n"
+                + f"**Supporting causal linkage:** {self._short_linkage_bullets(causal_linkage)}\n\n"
                 "Is the described mechanism appropriately connected to the hazard?"
             ),
             options=CUSTOM_HAZARD_CAUSAL_LINKAGE_OPTIONS,
@@ -665,7 +881,11 @@ class ChatCustomHazardMechanismMixin:
         dimensions = state.setdefault("dimension_scores", {})
         dimensions["mechanism_fit"] = {
             "score": max(8, custom_hazard_dimension_floor(state.get("validation_mode"))),
-            "reason": "The user confirmed a source-supported causal mechanism and linkage.",
+            "reason": (
+                "The user confirmed a documented causal mechanism and linkage."
+                if state.get("mechanism_provenance") == "documented"
+                else "The user confirmed a plausible inferred causal mechanism and linkage."
+            ),
             "causal_linkage": state.get("mechanism_causal_linkage") or "",
             "confidence": "high",
             "needs_clarification": False,
@@ -682,5 +902,5 @@ class ChatCustomHazardMechanismMixin:
         ).strip()
         has_evidence = bool(evidence) and evidence.casefold() != "not provided"
         if not has_evidence and not state.get("evidence_decision_asked"):
-            return await self._start_hazard_evidence_flow(session_id, session)
+            state["evidence_decision_asked"] = True
         return await self._run_custom_hazard_dimension_check(session_id, session)

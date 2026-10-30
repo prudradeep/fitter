@@ -56,7 +56,9 @@ def same_scope_custom_hazard_names(
     session: ChatSession,
     user_id: str | None,
 ) -> list[str]:
-    names: list[object] = [*(session.custom_hazards or [])]
+    # Session names are a fallback only; the database query enforces exact
+    # region scope when a selected region changes during a conversation.
+    names: list[object] = [*(session.custom_hazards or [])] if db is None else []
     current_draft_keys = _current_draft_hazard_keys(session)
     names = [
         name

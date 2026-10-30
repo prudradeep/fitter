@@ -60,7 +60,7 @@ class CustomHazardDimension(AppStrEnum):
     # Compatibility alias for persisted code paths while old sessions are migrated.
     TWIN_TRANSITION_POLICY_FIT = "mechanism_fit"
     POLICY_OBJECTIVE_FIT = "policy_objective_fit"
-    SELECTED_SECTOR_FIT = "selected_sector_fit"
+    SECTORAL_OBJECTIVE_FIT = "sectoral_objective_fit"
     COUNTRY_REGION_FIT = "country_region_fit"
     AFFECTED_GROUPS_FIT = "affected_groups_fit"
 
@@ -157,6 +157,7 @@ class ChatPhase(AppStrEnum):
     CUSTOM_HAZARD_TITLE_CLARIFICATION = "custom_hazard_title_clarification"
     CUSTOM_HAZARD_VALIDATION = "custom_hazard_validation"
     CUSTOM_HAZARD_DIMENSION_CHECK = "custom_hazard_dimension_check"
+    CUSTOM_HAZARD_OBJECTIVE_CONFIRMATION = "custom_hazard_objective_confirmation"
     CUSTOM_HAZARD_MECHANISM_CONFIRMATION = "custom_hazard_mechanism_confirmation"
     CUSTOM_HAZARD_MECHANISM_INPUT = "custom_hazard_mechanism_input"
     CUSTOM_HAZARD_POLICY_DETAILS_CONFIRMATION = "custom_hazard_policy_details_confirmation"

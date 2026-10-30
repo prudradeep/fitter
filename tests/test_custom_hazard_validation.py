@@ -703,6 +703,8 @@ class CustomHazardValidationTests(unittest.TestCase):
             suggested_duplicate_hazard="Existing regional employment shock",
             custom_hazard={
                 "raw_text": "Regional employment shock",
+                "next_action": "ask_duplicate_confirmation",
+                "causal_linkage_confirmed": True,
                 "affected_groups": [
                     {"group": "Coal workers", "reason": "Job losses."}
                 ],
@@ -721,6 +723,10 @@ class CustomHazardValidationTests(unittest.TestCase):
         self.assertEqual(response.input_mode, "textarea")
         self.assertEqual(session.phase, "custom_hazard_clarification")
         self.assertTrue(session.custom_hazard["duplicate_override_confirmed"])
+        self.assertEqual(
+            session.custom_hazard["duplicate_override_hazard_text"],
+            "Regional employment shock",
+        )
         self.assertEqual(session.pending_hazard, "Regional employment shock")
 
     def test_hazard_clarification_reason_asks_evidence_decision(self):
@@ -2476,6 +2482,59 @@ class CustomHazardValidationTests(unittest.TestCase):
 
         self.assertTrue(result["duplicate_candidates"])
         self.assertNotEqual(result["next_action"], "ask_duplicate_confirmation")
+
+    def test_duplicate_override_uses_confirmed_title_after_title_normalization(self):
+        original_text = "Gender inequality due to climate policies affecting rural women"
+        confirmed_title = "Reinforcement of gender inequality through androcentric climate policies"
+        state = {
+            "raw_text": original_text,
+            "resolved_hazard_text": confirmed_title,
+            "duplicate_override_confirmed": True,
+            "duplicate_override_hazard_text": confirmed_title,
+        }
+        with patch.object(validator, "ask_llm_chat", _unavailable):
+            result = _run(
+                validator.validate_custom_hazard_dimensions(
+                    f"{confirmed_title}\nReason: Rural women face unequal policy impacts.",
+                    "Transport",
+                    "Germany",
+                    "Saxony",
+                    [confirmed_title],
+                    state,
+                )
+            )
+
+        self.assertTrue(result["duplicate_candidates"])
+        self.assertNotEqual(result["next_action"], "ask_duplicate_confirmation")
+
+        edited_state = validator._reset_duplicate_override_if_hazard_changed(
+            state, "A different hazard title\nReason: Different impact."
+        )
+        self.assertFalse(edited_state["duplicate_override_confirmed"])
+
+    def test_confirmed_duplicate_does_not_reuse_stale_duplicate_action(self):
+        service = ChatService.__new__(ChatService)
+        session = ChatSession(
+            sector="Transport",
+            country="Germany",
+            region="Saxony",
+            phase="custom_hazard_dimension_check",
+            pending_hazard="Reinforcement of gender inequality through climate policies",
+            custom_hazard={
+                "raw_text": "Gender inequality due to climate policies affecting rural women",
+                "resolved_hazard_text": "Reinforcement of gender inequality through climate policies",
+                "duplicate_override_confirmed": True,
+                "duplicate_override_hazard_text": "Reinforcement of gender inequality through climate policies",
+                "next_action": "ask_duplicate_confirmation",
+                "causal_linkage_confirmed": True,
+                "duplicate_candidates": [{"existing_hazard": "Longer or more complex journeys"}],
+            },
+        )
+
+        response = _run(service._route_custom_hazard_next_action("session-1", session))
+
+        self.assertNotEqual(response.step, "custom_hazard_duplicate_confirmation")
+        self.assertEqual(session.custom_hazard["next_action"], "ask_clarification")
 
     def test_score_ten_overrides_llm_needs_clarification_flag(self):
         llm_payload = {

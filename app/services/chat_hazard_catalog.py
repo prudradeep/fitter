@@ -105,18 +105,12 @@ class ChatHazardCatalogMixin:
     def _saved_custom_hazards_for_context(self, session: ChatSession) -> list[str]:
         if session.country_id is None or session.sector_id is None:
             return []
-        policy_filter = (
-            CustomHazard.policy_id == session.selected_context_policy_id
-            if session.selected_context_policy_id
-            else CustomHazard.policy_id.is_(None)
-        )
         candidate_rows = self.db.scalars(
             select(CustomHazard)
             .where(
                 CustomHazard.country_id == session.country_id,
                 CustomHazard.sector_id == session.sector_id,
                 CustomHazard.region_scope_key == (session.region_id or ""),
-                policy_filter,
             )
             .order_by(CustomHazard.name)
         ).all()
@@ -1065,18 +1059,12 @@ class ChatHazardCatalogMixin:
         if normalize(hazard) == normalize(session.accepted_custom_hazard or ""):
             if session.accepted_custom_hazard_id is not None:
                 return session.accepted_custom_hazard_id
-        policy_filter = (
-            CustomHazard.policy_id == session.selected_context_policy_id
-            if session.selected_context_policy_id
-            else CustomHazard.policy_id.is_(None)
-        )
         try:
             hazard_id = self.db.scalar(
                 select(CustomHazard.id).where(
                     CustomHazard.country_id == session.country_id,
                     CustomHazard.sector_id == session.sector_id,
                     CustomHazard.region_scope_key == (session.region_id or ""),
-                    policy_filter,
                     CustomHazard.name_key == self._custom_hazard_name_key(hazard),
                     or_(
                         CustomHazard.created_by_user_id == self.user_id,
@@ -1109,9 +1097,6 @@ class ChatHazardCatalogMixin:
                     CustomHazard.country_id == session.country_id,
                     CustomHazard.sector_id == session.sector_id,
                     CustomHazard.region_scope_key == (session.region_id or ""),
-                    CustomHazard.policy_id == session.selected_context_policy_id
-                    if session.selected_context_policy_id
-                    else CustomHazard.policy_id.is_(None),
                     CustomHazard.name_key == name_key,
                     or_(
                         CustomHazard.created_by_user_id == self.user_id,
@@ -1138,7 +1123,8 @@ class ChatHazardCatalogMixin:
             hazard.name = name.strip()
             hazard.region_id = session.region_id
             hazard.region_scope_key = session.region_id or ""
-            hazard.policy_id = session.selected_context_policy_id
+            if getattr(hazard, "policy_id", None) is None:
+                hazard.policy_id = session.selected_context_policy_id
             if reason is not None:
                 hazard.reason = reason.strip() or None
             if evidence is not None:

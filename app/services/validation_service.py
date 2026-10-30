@@ -51,7 +51,7 @@ from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.enums import ChatPhase
 from app.services.evidence_contradiction_service import EvidenceContradictionService
 from app.services.gibberish_detector import check_gibberish
-from app.services.knowledge_base import VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
+from app.services.knowledge_base import MAIN_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE, KnowledgeBaseService
 from app.services.mitigation_text_rules import (
     local_mitigation_clarification_error,
     local_mitigation_field_error,
@@ -374,9 +374,99 @@ class ChatValidationServiceMixin:
         )
         if local_error:
             return {"valid": False, "reason": local_error}
-        return await self._validate_custom_affected_group_link(
+        review = await self._validate_custom_affected_group_link(
             session, group, reason
         )
+        if review is not None and not review.get("valid"):
+            return review
+        if isinstance(session.custom_hazard, dict):
+            support = await self._custom_affected_group_evidence_support(
+                session, group, reason
+            )
+            if not support["valid"]:
+                return support
+        return review
+
+    async def _custom_affected_group_evidence_support(
+        self, session: ChatSession, group: str, reason: str
+    ) -> dict[str, str | bool]:
+        """Check the specific group impact against user evidence and existing evidence."""
+        state = self._custom_hazard_state(session)
+        hazard = self._custom_hazard_user_description(session)
+        evidence = str(state.get("evidence") or "").strip()
+        user_evidence = bool(evidence) and evidence.casefold() != "not provided" and not evidence.startswith("Knowledge-base evidence")
+        query = f"{hazard} {group} {reason}"
+        user_context = ""
+        user_source = ""
+        if user_evidence:
+            user_context = await self._user_evidence_context_for_contradiction_check(
+                session, evidence, full_text=True, query=query
+            )
+            user_source = str(evidence.splitlines()[0])[:180]
+        kb_candidates: list[tuple[str, str]] = []
+        kb_source = ""
+        if getattr(self, "db", None) is not None:
+            for scope in (MAIN_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE):
+                try:
+                    service = KnowledgeBaseService(
+                        self.db, None, scope=scope,
+                        country_id=session.country_id if scope == VALIDATED_EVIDENCE_SCOPE else None,
+                        region_id=session.region_id if scope == VALIDATED_EVIDENCE_SCOPE else None,
+                        sector_id=session.sector_id if scope == VALIDATED_EVIDENCE_SCOPE else None,
+                    )
+                    results = await service.search(query, limit=6)
+                    grounded = await self.grounding_models.ground_results(query, results)
+                    for item in grounded[:2]:
+                        kb_candidates.append((
+                            self._format_knowledge_results([item]),
+                            str(item.get("title") or "Knowledge base")[:180],
+                        ))
+                except Exception:
+                    logger.exception("Affected-group evidence lookup failed")
+        async def check_source(context: str) -> tuple[bool, str]:
+            if not context.strip():
+                return False, "No readable source content was available."
+            prompt = (
+                "Check whether the source text materially supports the exact claim that the "
+                "specified group experiences the specified disadvantage from this hazard. "
+                "Topic similarity and the user's assertion are insufficient. Return JSON only: "
+                '{"supported": boolean, "finding": "specific supporting finding or empty", '
+                '"reason": "brief explanation"}. Do not invent a finding.'
+            )
+            payload = {
+                "hazard": hazard, "group": group, "proposed_impact": reason,
+                "source_text": context[:18000],
+            }
+            try:
+                response = await ask_llm_chat(
+                    context=prompt,
+                    messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                    temperature=0.0, max_tokens=300,
+                )
+            except Exception:
+                response = ""
+            parsed = parse_json_object(response) if not is_llm_unavailable_response(response) else None
+            if isinstance(parsed, dict) and parsed.get("supported") is True and str(parsed.get("finding") or "").strip():
+                return True, str(parsed["finding"]).strip()
+            return False, str((parsed or {}).get("reason") or "The source does not establish how this group is affected.")
+
+        kb_supported = False
+        for kb_context, candidate_source in kb_candidates:
+            kb_supported, _ = await check_source(kb_context)
+            if kb_supported:
+                kb_source = candidate_source
+                break
+        if user_evidence:
+            user_supported, user_reason = await check_source(user_context)
+            if not user_supported:
+                return {"valid": False, "reason": user_reason}
+        else:
+            user_supported = False
+        basis = "documented" if user_supported or kb_supported else "inferred"
+        source = user_source if user_supported else kb_source if kb_supported else "User explanation"
+        support_map = state.setdefault("affected_group_support", {})
+        support_map[normalize_for_match(group)] = {"basis": basis, "source": source}
+        return {"valid": True, "reason": "Affected-group impact checked."}
 
     async def _validate_custom_affected_group_link(
         self,
@@ -482,9 +572,10 @@ class ChatValidationServiceMixin:
     @staticmethod
     def _custom_hazard_rejection_dimension(reason: str) -> str:
         lowered = reason.casefold()
+        if "sectoral objective" in lowered or "sector objective" in lowered:
+            return "sectoral_objective_fit"
         objective_terms = (
             "policy objective",
-            "sector objective",
             "transition towards renewable energy",
             "adaptation of housing to climate change",
             "transition to electric vehicles",
@@ -507,13 +598,13 @@ class ChatValidationServiceMixin:
         if "selected sector" in lowered or any(
             term in lowered for term in ("wrong sector", "sector mismatch", "unrelated to the selected sector")
         ):
-            return "selected_sector_fit"
+            return "sectoral_objective_fit"
         if any(term in lowered for term in ("country", "region", "regional", "local")):
             return "country_region_fit"
         if any(term in lowered for term in ("affected", "population", "group", "people")):
             return "affected_groups_fit"
         if any(term in lowered for term in ("sector", "housing", "transport", "energy")):
-            return "selected_sector_fit"
+            return "sectoral_objective_fit"
         return "mechanism_fit"
 
     async def _validate_custom_hazard(
@@ -630,7 +721,7 @@ class ChatValidationServiceMixin:
             dict,
         ) and self._custom_hazard_dimension_is_supported(
             session,
-            "selected_sector_fit",
+            "sectoral_objective_fit",
         ):
             sector_mismatch_reason = None
         if sector_mismatch_reason:
@@ -640,7 +731,7 @@ class ChatValidationServiceMixin:
                     session,
                     hazard=session.pending_hazard or "New hazard",
                     reason=sector_mismatch_reason,
-                    dimension="selected_sector_fit",
+                    dimension="sectoral_objective_fit",
                     evidence=evidence or "",
                 )
             return ChatResponse(
@@ -1033,7 +1124,10 @@ class ChatValidationServiceMixin:
                 "background narrative, policy commentary, evidence discussion, and proposed "
                 "solutions. Do not copy the full input merely because it is valid. Preserve "
                 "the user's meaning, invent no facts, and keep normalized_hazard under 100 "
-                "characters where that does not lose essential meaning.\n"
+                "characters where that does not lose essential meaning. Judge whether it "
+                "is a meaningful hazard title here; sectoral-objective, selected-policy, "
+                "and geographic fit are checked in later stages. Do not reject or clarify "
+                "solely for a sector, policy, or place mismatch.\n"
             )
         messages = [
             {

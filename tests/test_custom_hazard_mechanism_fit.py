@@ -14,7 +14,7 @@ from app.services.enums import ChatPhase
 async def _json_response(*args, **kwargs):
     return json.dumps(
         {
-            "mechanisms": ["Charging mandates increase infrastructure costs passed to users"],
+            "mechanisms": ["Charging mandates increase infrastructure costs passed to users."],
             "relevant": True,
             "supported": True,
             "clear": True,
