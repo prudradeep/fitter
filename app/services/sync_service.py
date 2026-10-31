@@ -75,13 +75,13 @@ APP_USER_ENCRYPTED_COLUMNS = (
 )
 USER_DATA_SYNC_ENABLED_SCOPE = "client_user_data_sync:enabled"
 USER_DATA_SYNC_ENABLED_AT_SCOPE = "client_user_data_sync:enabled_at"
-KNOWLEDGE_SCOPES = ("main", "validated_evidence", "sector_prompt", "policy_document")
+KNOWLEDGE_SCOPES = ("main", "validated_evidence", "sector_prompt", "policy_document", "original_policy")
 EXCLUDED_KNOWLEDGE_SCOPES = {"temporary", "policy_reference"}
 # Crowd sourced policy documents are included by the linked-policy filter in _table_rows.
 CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"validated_evidence"}
-ADMIN_CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt", "policy_document"}
+ADMIN_CLIENT_EXPORT_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt", "policy_document", "original_policy"}
 SERVER_ACCEPTED_INBOUND_KNOWLEDGE_SCOPES = {"validated_evidence"}
-SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt", "policy_document"}
+SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES = {"main", "validated_evidence", "sector_prompt", "policy_document", "original_policy"}
 SYNC_CLIENT_COLUMNS = (
     "id",
     "client_name",
@@ -995,6 +995,16 @@ class SyncService:
             query = query.where(
                 table.c.document_id.in_(document_ids)
             )
+        elif table.name == "original_policy_knowledge_documents":
+            document_table = Base.metadata.tables["knowledge_documents"]
+            document_ids = (
+                self._client_exportable_knowledge_document_ids()
+                if self._is_client_mode() and not include_admin_knowledge
+                else select(document_table.c.id).where(
+                    document_table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge))
+                )
+            )
+            query = query.where(table.c.knowledge_document_id.in_(document_ids))
         # The opt-in cutoff applies to user-owned activity/data, but not to
         # app_users themselves. Existing accounts must be discoverable by the
         # server when user-data sync is enabled, regardless of when they were
@@ -1264,6 +1274,7 @@ class SyncService:
         if bool(client.get("can_sync_main_kb")):
             scopes.add("main")
             scopes.add("policy_document")
+            scopes.add("original_policy")
         if bool(client.get("can_sync_sector_prompts")):
             scopes.add("sector_prompt")
         return scopes & SERVER_ACCEPTED_ADMIN_INBOUND_KNOWLEDGE_SCOPES

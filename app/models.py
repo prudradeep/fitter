@@ -491,6 +491,53 @@ class PolicyHazardLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class OriginalPolicy(Base):
+    __tablename__ = "original_policies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    country_id: Mapped[str] = mapped_column(String(36), ForeignKey("countries.id", ondelete="CASCADE"), nullable=False, index=True)
+    policy_name: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    objective: Mapped[str | None] = mapped_column(Text)
+    policy_document: Mapped[str | None] = mapped_column(Text)
+    excel_row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class OriginalPolicySector(Base):
+    __tablename__ = "original_policy_sectors"
+    __table_args__ = (UniqueConstraint("original_policy_id", "sector_id", name="uq_original_policy_sector"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    original_policy_id: Mapped[str] = mapped_column(String(36), ForeignKey("original_policies.id", ondelete="CASCADE"), nullable=False, index=True)
+    sector_id: Mapped[str] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class OriginalPolicyCode(Base):
+    __tablename__ = "original_policy_codes"
+    __table_args__ = (UniqueConstraint("original_policy_id", "code", name="uq_original_policy_code"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    original_policy_id: Mapped[str] = mapped_column(String(36), ForeignKey("original_policies.id", ondelete="CASCADE"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(80), nullable=False)
+    excel_row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class OriginalPolicySystemHazard(Base):
+    __tablename__ = "original_policy_system_hazard"
+    __table_args__ = (
+        UniqueConstraint("original_policy_code_id", "system_hazard_id", "relationship", name="uq_original_policy_code_hazard_relationship"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    original_policy_code_id: Mapped[str] = mapped_column(String(36), ForeignKey("original_policy_codes.id", ondelete="CASCADE"), nullable=False, index=True)
+    system_hazard_id: Mapped[str] = mapped_column(String(36), ForeignKey("system_hazards.id", ondelete="CASCADE"), nullable=False, index=True)
+    relationship: Mapped[str] = mapped_column(String(40), nullable=False)
+    excel_row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class MitigationMeasurePolicy(Base):
     __tablename__ = "mitigation_measure_policies"
     __table_args__ = (
@@ -639,6 +686,18 @@ class KnowledgeDocument(Base):
     country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True)
     region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     sector_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class OriginalPolicyKnowledgeDocument(Base):
+    __tablename__ = "original_policy_knowledge_documents"
+    __table_args__ = (
+        UniqueConstraint("original_policy_id", "knowledge_document_id", name="uq_original_policy_knowledge_document"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    original_policy_id: Mapped[str] = mapped_column(String(36), ForeignKey("original_policies.id", ondelete="CASCADE"), nullable=False, index=True)
+    knowledge_document_id: Mapped[str] = mapped_column(String(36), ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

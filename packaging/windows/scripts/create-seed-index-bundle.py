@@ -17,7 +17,10 @@ from pathlib import Path
 import faiss
 import numpy as np
 
-SCOPES = {"main": "main", "sector_prompt": "sector_prompts", "policy_document": "policy_reference"}
+SCOPES = {
+    "main": "main", "sector_prompt": "sector_prompts",
+    "policy_document": "policy_reference", "original_policy": "original_policy",
+}
 OFFLINE_REFERENCE_TABLES = {
     "additional_hazard_profile_target_populations", "additional_hazard_profiles",
     "additional_hazards", "countries", "country_sectors", "eurostat_population_cache",
@@ -25,7 +28,10 @@ OFFLINE_REFERENCE_TABLES = {
     "knowledge_chunks", "knowledge_documents", "mitigation_measure_examples",
     "mitigation_measure_policies", "mitigation_measure_policy_additional_hazards",
     "mitigation_measure_policy_system_hazards", "mitigation_measure_target_groups",
-    "policies", "policy_hazard_links", "question_options", "regions",
+    "policies", "policy_hazard_links", "original_policies", "original_policy_codes",
+    "original_policy_system_hazard", "original_policy_sectors",
+    "original_policy_knowledge_documents",
+    "question_options", "regions",
     "schema_migrations", "sectors", "system_hazard_socio_demographic_population_matches",
     "system_hazard_socio_demographic_target_populations", "system_hazard_socio_demographics",
     "system_hazards",
@@ -56,6 +62,14 @@ def _write_offline_database(source: sqlite3.Connection, target: Path, scopes: se
                 included_scopes,
             )
             if clean.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'original_policy_knowledge_documents'"
+            ).fetchone():
+                clean.execute(
+                    "DELETE FROM original_policy_knowledge_documents "
+                    "WHERE knowledge_document_id NOT IN (SELECT id FROM knowledge_documents)"
+                )
+            if clean.execute(
                 "SELECT 1 FROM policies WHERE source = 'user' OR created_by_user_id IS NOT NULL LIMIT 1"
             ).fetchone():
                 raise ValueError("Offline source contains a user-created policy")
@@ -79,6 +93,17 @@ def _write_offline_database(source: sqlite3.Connection, target: Path, scopes: se
                     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
                 )
             ]
+            if {"system_hazard_socio_demographic_population_matches", "eurostat_population_cache"} <= set(table_names):
+                # Population matches are derived cache links. A source can retain
+                # a match after its expiring Eurostat cache row has been removed.
+                clean.execute(
+                    "DELETE FROM system_hazard_socio_demographic_population_matches "
+                    "WHERE eurostat_population_cache_id IS NOT NULL "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM eurostat_population_cache "
+                    "WHERE id = system_hazard_socio_demographic_population_matches.eurostat_population_cache_id"
+                    ")"
+                )
             for name in table_names:
                 if name not in OFFLINE_REFERENCE_TABLES:
                     clean.execute(f"DELETE FROM {_quote_identifier(name)}")
@@ -139,6 +164,15 @@ def export_bundle(
     source_files = []
     with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         db.row_factory = sqlite3.Row
+        mapping_exists = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'original_policy_knowledge_documents'"
+        ).fetchone() is not None
+        original_link_sql = (
+            "EXISTS (SELECT 1 FROM original_policy_knowledge_documents opd "
+            "WHERE opd.knowledge_document_id = d.id)"
+            if mapping_exists else "0"
+        )
         for scope in scopes:
             if scope not in SCOPES:
                 raise ValueError(f"Unsupported scope: {scope}")
@@ -147,9 +181,10 @@ def export_bundle(
             if not index_file.is_file():
                 raise ValueError(f"Missing FAISS file for {scope}: {index_file}")
             documents = db.execute(
-                """SELECT d.id, d.source_type, d.source_uri, d.user_id, d.session_key,
+                f"""SELECT d.id, d.source_type, d.source_uri, d.user_id, d.session_key,
                           d.custom_hazard_id, d.policy_id, d.faiss_indexed, d.sync_id,
-                          d.sync_deleted_at, p.source AS policy_source
+                          d.sync_deleted_at, p.source AS policy_source,
+                          {original_link_sql} AS original_policy_linked
                    FROM knowledge_documents d
                    LEFT JOIN policies p ON p.id = d.policy_id
                    WHERE d.scope = ?""",
@@ -175,10 +210,16 @@ def export_bundle(
                 if scope == "sector_prompt" and not uri.startswith("sector-prompt://"):
                     raise ValueError(f"Sector prompt has an unexpected source: {uri}")
                 if scope == "policy_document" and (
-                    not uri.startswith(("http://", "https://")) or not row["policy_id"]
-                    or row["policy_source"] in (None, "user")
+                    not uri.casefold().startswith(("http://", "https://"))
+                    or not row["policy_id"]
+                    or (row["policy_id"] and row["policy_source"] in (None, "user"))
                 ):
                     raise ValueError(f"Policy document has an unexpected source or policy: {uri}")
+                if scope == "original_policy" and (
+                    not uri.casefold().startswith(("http://", "https://", "kb/additional/policy documents/"))
+                    or not row["original_policy_linked"] or row["policy_id"]
+                ):
+                    raise ValueError(f"Original policy document has an unexpected source or policy: {uri}")
             if any(row["user_id"] or (not offline and not row["sync_id"]) or row["sync_deleted_at"]
                    or not row["faiss_indexed"] for row in chunks):
                 raise ValueError(f"{scope} contains private, unsynced, deleted, or unindexed chunks")

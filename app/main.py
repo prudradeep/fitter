@@ -33,7 +33,6 @@ from app.security import apply_security_headers, create_csrf_token, csrf_request
 from app.seed_data import seed_main_kb_from_files
 from app.services.coverage import get_coverage_map_rows, get_coverage_rows
 from app.services.prompt_store import enable_prompt_db_reads_if_rows, seed_prompts_from_files
-from app.services.policy_knowledge_seed import migrate_policy_documents_from_main, seed_policy_documents_from_urls
 from app.services.seed_index_bundle import install_seed_indexes
 from app.services.sync_permissions import sync_client_permission_enabled
 from app.services.sync_service import SyncService
@@ -213,13 +212,6 @@ def _should_seed_prompts_from_files() -> bool:
     )
 
 
-def _should_seed_policy_documents() -> bool:
-    """Return whether startup may import policy documents on a client."""
-    if not settings.is_client_mode:
-        return True
-    return bool(settings.client_startup_seed_kb_policy_documents)
-
-
 @app.on_event("startup")
 async def startup() -> None:
     bundle_status = install_seed_indexes(settings)
@@ -231,8 +223,6 @@ async def startup() -> None:
     else:
         logger.info("Database auto-migration is disabled; checking installer schema health only")
         repair_partial_installer_schema()
-    with SessionLocal() as db:
-        migrate_policy_documents_from_main(db)
     try:
         if _should_seed_prompts_from_files():
             seeded_prompts = seed_prompts_from_files()
@@ -251,27 +241,20 @@ async def startup() -> None:
     app.state.policy_knowledge_seed_started = False
     if not _client_sync_configured():
         _start_policy_knowledge_seed_task()
-    elif not _should_seed_policy_documents():
-        logger.info("Client startup policy document seeding is disabled; Main KB seeding remains enabled")
     app.state.client_sync_task = asyncio.create_task(_client_sync_loop_after_startup())
 
 
 async def _seed_policy_knowledge_after_startup() -> None:
-    """Keep startup responsive while bundled and policy knowledge is indexed."""
+    """Keep startup responsive while bundled Main KB knowledge is indexed."""
     try:
-        if _should_seed_policy_documents():
-            policy_result = await seed_policy_documents_from_urls()
-            logger.info("Policy knowledge startup import completed result=%s", policy_result)
-        else:
-            logger.info("Client startup policy document seeding is disabled")
         file_result = await seed_main_kb_from_files()
         logger.info("Bundled knowledge startup import completed result=%s", file_result)
     except Exception:
-        logger.exception("Policy knowledge startup import failed")
+        logger.exception("Bundled Main KB startup import failed")
 
 
 def _start_policy_knowledge_seed_task() -> None:
-    """Start the one-time policy-first knowledge import after prerequisites exist."""
+    """Start the one-time bundled Main KB import after prerequisites exist."""
     if getattr(app.state, "policy_knowledge_seed_started", False):
         return
     app.state.policy_knowledge_seed_started = True

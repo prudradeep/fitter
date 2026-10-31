@@ -108,6 +108,8 @@ async def seed_main_kb_from_files(*, overwrite: bool = False) -> dict[str, objec
         for extension in ("*.pdf", "*.docx")
         for path in KB_ROOT.rglob(extension)
         if path.is_file()
+        and tuple(part.casefold() for part in path.relative_to(KB_ROOT).parts[:2])
+        != ("additional", "policy documents")
     )
     ingested: list[dict[str, object]] = []
     skipped: list[str] = []

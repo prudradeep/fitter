@@ -55,6 +55,7 @@ MAIN_KB_SCOPE = "main"
 TEMPORARY_KB_SCOPE = "temporary"
 POLICY_REFERENCE_SCOPE = "policy_reference"
 POLICY_DOCUMENT_SCOPE = "policy_document"
+ORIGINAL_POLICY_SCOPE = "original_policy"
 VALIDATED_EVIDENCE_SCOPE = "validated_evidence"
 SECTOR_PROMPT_SCOPE = "sector_prompt"
 QUARANTINED_SCOPE = "quarantined"
@@ -861,7 +862,7 @@ class KnowledgeBaseService:
     def _document_access_filters(self) -> list[object]:
         if self.scope == MAIN_KB_SCOPE:
             return [KnowledgeDocument.user_id.is_(None)]
-        if self.scope == POLICY_DOCUMENT_SCOPE:
+        if self.scope in {POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE}:
             return [KnowledgeDocument.user_id.is_(None)]
         if self.scope == SECTOR_PROMPT_SCOPE:
             return [KnowledgeDocument.user_id.is_(None)]
@@ -1316,6 +1317,8 @@ class KnowledgeBaseService:
             return main_path.with_name(
                 f"{main_path.stem}.policy_reference{main_path.suffix}"
             )
+        if self.scope == ORIGINAL_POLICY_SCOPE:
+            return main_path.with_name(f"{main_path.stem}.original_policy{main_path.suffix}")
         if self.scope == SECTOR_PROMPT_SCOPE:
             return main_path.with_name(f"{main_path.stem}.sector_prompts{main_path.suffix}")
         if self.scope == VALIDATED_EVIDENCE_SCOPE:

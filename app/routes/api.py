@@ -50,6 +50,7 @@ from app.services.ingestion_progress import (
 from app.services.knowledge_base import (
     MAIN_KB_SCOPE,
     POLICY_DOCUMENT_SCOPE,
+    ORIGINAL_POLICY_SCOPE,
     TEMPORARY_KB_SCOPE,
     KnowledgeBaseService,
 )
@@ -1050,6 +1051,7 @@ async def knowledge_documents(
     documents = [
         *KnowledgeBaseService(db, None, scope=MAIN_KB_SCOPE).list_documents(),
         *KnowledgeBaseService(db, None, scope=POLICY_DOCUMENT_SCOPE).list_documents(),
+        *KnowledgeBaseService(db, None, scope=ORIGINAL_POLICY_SCOPE).list_documents(),
     ]
     return {"documents": documents}
 
@@ -1542,7 +1544,7 @@ async def knowledge_delete(
     if not await _can_manage_main_knowledge(db, current_user):
         raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
     document = db.get(KnowledgeDocument, document_id)
-    scope = document.scope if document and document.scope in {MAIN_KB_SCOPE, POLICY_DOCUMENT_SCOPE} else MAIN_KB_SCOPE
+    scope = document.scope if document and document.scope in {MAIN_KB_SCOPE, POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE} else MAIN_KB_SCOPE
     service = KnowledgeBaseService(db, None, scope=scope)
     try:
         deleted = await service.delete_document(document_id)

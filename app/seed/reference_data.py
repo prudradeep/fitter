@@ -25,6 +25,7 @@ HAZARDS_XLSX_PATH = PROJECT_ROOT / "hazards.xlsx"
 ADDITIONAL_HAZARDS_CSV_PATH = PROJECT_ROOT / "additionalHazards.csv"
 ADDITIONAL_HAZARD_PROFILES_CSV_PATH = PROJECT_ROOT / "additionalHazardProfiles.csv"
 POLICIES_XLSX_PATH = PROJECT_ROOT / "kb" / "additional" / "Policies.xlsx"
+ORIGINAL_POLICIES_XLSX_PATH = PROJECT_ROOT / "kb" / "additional" / "original_policies.xlsx"
 HAZARD_WITH_MITIGATION_DIRECTORY = (
     PROJECT_ROOT / "kb" / "additional" / "hazards with mitigation"
 )
@@ -235,6 +236,43 @@ def _read_policies_xlsx_rows() -> list[dict[str, object]]:
         and _xlsx_cell(row, headers["sector"])
         and _xlsx_cell(row, headers["policy"])
     ]
+
+
+def _read_original_policies_xlsx_rows() -> tuple[list[tuple[str, str]], list[dict[str, object]]]:
+    if not ORIGINAL_POLICIES_XLSX_PATH.exists():
+        return [], []
+    sheets = _read_xlsx_all_sheet_rows(ORIGINAL_POLICIES_XLSX_PATH)
+    rows = sheets.get("Combined Policies", [])
+    if not rows or len(rows[0]) < 37:
+        raise ValueError("original_policies.xlsx is missing the Combined Policies sheet or hazard headings")
+    headers = rows[0]
+    if [_xlsx_cell(headers, i) for i in (4, 8, 9, 10)] != [
+        "Code", "Original policy (one row per policy)",
+        "Objective of the original policy", "Policy document (link)",
+    ]:
+        raise ValueError("original_policies.xlsx has unexpected policy headings")
+    hazards: list[tuple[str, str]] = []
+    for column in range(11, 37):
+        heading = _xlsx_cell(headers, column)
+        if " | " not in heading:
+            raise ValueError(f"Invalid original policy hazard heading in column {column + 1}")
+        hazards.append(tuple(part.strip() for part in heading.split(" | ", 1)))
+    policies = [
+        {
+            "country": _xlsx_cell(row, 0),
+            "sector": _xlsx_cell(row, 1),
+            "code": _xlsx_cell(row, 4),
+            "policy_name": _xlsx_cell(row, 8),
+            "objective": _xlsx_cell(row, 9),
+            "policy_document": _xlsx_cell(row, 10),
+            "relationships": [_xlsx_cell(row, i) for i in range(11, 37)],
+            "excel_row_number": row_number,
+        }
+        for row_number, row in enumerate(rows[1:], start=2)
+        if _xlsx_cell(row, 0) and _xlsx_cell(row, 1)
+        and _xlsx_cell(row, 4) and _xlsx_cell(row, 8)
+    ]
+    return hazards, policies
 
 
 def _hazards_xlsx_sector_name(value: str) -> str:
@@ -1168,6 +1206,142 @@ def _seed_mm_target_group_xlsx(connection) -> None:
     _seed_sectoral_challenge_policy_additional_hazards(connection)
 
 
+def _seed_original_policies_xlsx(connection) -> None:
+    hazard_headings, rows = _read_original_policies_xlsx_rows()
+    if not rows:
+        return
+    hazard_ids = {
+        (str(row["sector"]).casefold(), str(row["hazard"]).casefold()): str(row["id"])
+        for row in connection.execute(text("""
+            SELECT system_hazards.id, sectors.name AS sector, system_hazards.name AS hazard
+            FROM system_hazards JOIN sectors ON sectors.id = system_hazards.sector_id
+        """)).mappings()
+    }
+    missing = [heading for heading in hazard_headings if (heading[0].casefold(), heading[1].casefold()) not in hazard_ids]
+    if missing:
+        raise ValueError(f"Original policy hazards are missing from system_hazards: {missing}")
+    country_ids = {
+        str(row["name"]).casefold(): str(row["id"])
+        for row in connection.execute(text("SELECT id, name FROM countries")).mappings()
+    }
+    sector_ids = {
+        str(row["name"]).casefold(): str(row["id"])
+        for row in connection.execute(text("SELECT id, name FROM sectors")).mappings()
+    }
+    missing_scopes = {
+        (str(row["country"]), str(row["sector"]))
+        for row in rows
+        if str(row["country"]).casefold() not in country_ids
+        or str(row["sector"]).casefold() not in sector_ids
+    }
+    if missing_scopes:
+        raise ValueError(f"Original policy countries or sectors are missing: {sorted(missing_scopes)}")
+    policies_by_name = {
+        str(row["policy_name"]).casefold(): (str(row["id"]), row["country_id"])
+        for row in connection.execute(text("SELECT id, policy_name, country_id FROM original_policies")).mappings()
+    }
+    existing_sectors = {
+        (str(row["original_policy_id"]), str(row["sector_id"]))
+        for row in connection.execute(text("SELECT original_policy_id, sector_id FROM original_policy_sectors")).mappings()
+    }
+    codes_by_policy_code = {
+        (str(row["original_policy_id"]), str(row["code"]).casefold()): str(row["id"])
+        for row in connection.execute(text("SELECT id, original_policy_id, code FROM original_policy_codes")).mappings()
+    }
+    existing_links = {
+        (str(row["original_policy_code_id"]), str(row["system_hazard_id"]), str(row["relationship"]))
+        for row in connection.execute(text("""
+            SELECT original_policy_code_id, system_hazard_id, relationship
+            FROM original_policy_system_hazard
+        """)).mappings()
+    }
+    inserted_policies = inserted_sectors = inserted_codes = inserted_links = 0
+    ignored_relationships = {"No link", "Not provided", "Not applicable"}
+    for row in rows:
+        policy_name = str(row["policy_name"])
+        policy_key = policy_name.casefold()
+        country_id = country_ids[str(row["country"]).casefold()]
+        sector_id = sector_ids[str(row["sector"]).casefold()]
+        existing_policy = policies_by_name.get(policy_key)
+        if existing_policy is None:
+            policy_id = str(uuid.uuid4())
+            connection.execute(text("""
+                INSERT INTO original_policies
+                    (id, country_id, policy_name, objective, policy_document, excel_row_number)
+                VALUES (:id, :country_id, :policy_name, :objective, :policy_document, :excel_row_number)
+            """), {
+                "id": policy_id,
+                "country_id": country_id,
+                "policy_name": policy_name,
+                "objective": row["objective"] or None,
+                "policy_document": row["policy_document"] or None,
+                "excel_row_number": row["excel_row_number"],
+            })
+            policies_by_name[policy_key] = (policy_id, country_id)
+            inserted_policies += 1
+        else:
+            policy_id, saved_country_id = existing_policy
+            if saved_country_id is None:
+                connection.execute(text("""
+                    UPDATE original_policies SET country_id = :country_id WHERE id = :id
+                """), {"country_id": country_id, "id": policy_id})
+                policies_by_name[policy_key] = (policy_id, country_id)
+            elif str(saved_country_id) != country_id:
+                raise ValueError(f"Original policy name maps to multiple countries: {policy_name}")
+        sector_key = (policy_id, sector_id)
+        if sector_key not in existing_sectors:
+            connection.execute(text("""
+                INSERT INTO original_policy_sectors (id, original_policy_id, sector_id)
+                VALUES (:id, :original_policy_id, :sector_id)
+            """), {
+                "id": str(uuid.uuid4()),
+                "original_policy_id": policy_id,
+                "sector_id": sector_id,
+            })
+            existing_sectors.add(sector_key)
+            inserted_sectors += 1
+        code_key = (policy_id, str(row["code"]).casefold())
+        code_id = codes_by_policy_code.get(code_key)
+        if code_id is None:
+            code_id = str(uuid.uuid4())
+            connection.execute(text("""
+                INSERT INTO original_policy_codes
+                    (id, original_policy_id, code, excel_row_number)
+                VALUES (:id, :original_policy_id, :code, :excel_row_number)
+            """), {
+                "id": code_id,
+                "original_policy_id": policy_id,
+                "code": row["code"],
+                "excel_row_number": row["excel_row_number"],
+            })
+            codes_by_policy_code[code_key] = code_id
+            inserted_codes += 1
+        for heading, relationship in zip(hazard_headings, row["relationships"]):
+            if not relationship or relationship in ignored_relationships:
+                continue
+            hazard_id = hazard_ids[(heading[0].casefold(), heading[1].casefold())]
+            link_key = (code_id, hazard_id, str(relationship))
+            if link_key in existing_links:
+                continue
+            connection.execute(text("""
+                INSERT INTO original_policy_system_hazard
+                    (id, original_policy_code_id, system_hazard_id, relationship, excel_row_number)
+                VALUES (:id, :original_policy_code_id, :system_hazard_id, :relationship, :excel_row_number)
+            """), {
+                "id": str(uuid.uuid4()),
+                "original_policy_code_id": code_id,
+                "system_hazard_id": hazard_id,
+                "relationship": relationship,
+                "excel_row_number": row["excel_row_number"],
+            })
+            existing_links.add(link_key)
+            inserted_links += 1
+    logger.info(
+        "Loaded %s original policies, %s sector mappings, %s code mappings, and %s policy-system-hazard links",
+        inserted_policies, inserted_sectors, inserted_codes, inserted_links,
+    )
+
+
 def _seed_policies_xlsx(connection) -> None:
     rows = _read_policies_xlsx_rows()
     if not rows:
@@ -1671,5 +1845,6 @@ def ensure_mitigation_measure_examples() -> None:
         _seed_mm_target_group_xlsx(connection)
         _seed_hazards_xlsx_policy_system_hazards(connection)
         _seed_policies_xlsx(connection)
+        _seed_original_policies_xlsx(connection)
 
 

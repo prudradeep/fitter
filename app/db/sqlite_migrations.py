@@ -469,6 +469,183 @@ def _020_unique_policy_titles(connection: Connection) -> None:
     """))
 
 
+def _021_original_policies(connection: Connection) -> None:
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS original_policies (
+            id VARCHAR(36) PRIMARY KEY,
+            country_id VARCHAR(36) NOT NULL REFERENCES countries(id) ON DELETE CASCADE,
+            policy_name VARCHAR(512) NOT NULL UNIQUE,
+            objective TEXT,
+            policy_document TEXT,
+            excel_row_number INTEGER NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    _create_index(connection, "original_policies", "ix_original_policies_country", "country_id")
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS original_policy_sectors (
+            id VARCHAR(36) PRIMARY KEY,
+            original_policy_id VARCHAR(36) NOT NULL REFERENCES original_policies(id) ON DELETE CASCADE,
+            sector_id VARCHAR(36) NOT NULL REFERENCES sectors(id) ON DELETE CASCADE,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_original_policy_sector UNIQUE (original_policy_id, sector_id)
+        )
+    """))
+    _create_index(connection, "original_policy_sectors", "ix_original_policy_sectors_policy", "original_policy_id")
+    _create_index(connection, "original_policy_sectors", "ix_original_policy_sectors_sector", "sector_id")
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS original_policy_codes (
+            id VARCHAR(36) PRIMARY KEY,
+            original_policy_id VARCHAR(36) NOT NULL REFERENCES original_policies(id) ON DELETE CASCADE,
+            code VARCHAR(80) NOT NULL,
+            excel_row_number INTEGER NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_original_policy_code UNIQUE (original_policy_id, code)
+        )
+    """))
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS original_policy_system_hazard (
+            id VARCHAR(36) PRIMARY KEY,
+            original_policy_code_id VARCHAR(36) NOT NULL REFERENCES original_policy_codes(id) ON DELETE CASCADE,
+            system_hazard_id VARCHAR(36) NOT NULL REFERENCES system_hazards(id) ON DELETE CASCADE,
+            relationship VARCHAR(40) NOT NULL,
+            excel_row_number INTEGER NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_original_policy_code_hazard_relationship
+                UNIQUE (original_policy_code_id, system_hazard_id, relationship)
+        )
+    """))
+    _create_index(connection, "original_policy_codes", "ix_original_policy_codes_policy", "original_policy_id")
+    _create_index(connection, "original_policy_system_hazard", "ix_original_policy_system_hazard_code", "original_policy_code_id")
+    _create_index(connection, "original_policy_system_hazard", "ix_original_policy_system_hazard_hazard", "system_hazard_id")
+
+
+def _022_unique_original_policy_names(connection: Connection) -> None:
+    """Move source codes into their own table without losing hazard links."""
+    if "original_policy_code_id" in _columns(connection, "original_policy_system_hazard"):
+        return
+    policies = connection.execute(text("""
+        SELECT id, code, policy_name, objective, policy_document, excel_row_number, created_at
+        FROM original_policies
+        ORDER BY excel_row_number, id
+    """)).mappings().all()
+    links = connection.execute(text("""
+        SELECT id, original_policy_id, system_hazard_id, relationship, excel_row_number, created_at
+        FROM original_policy_system_hazard
+    """)).mappings().all()
+    canonical = {}
+    for policy in policies:
+        canonical.setdefault(str(policy["policy_name"]), policy)
+    connection.execute(text("DROP TABLE IF EXISTS original_policy_links_backup"))
+    connection.execute(text("DROP TABLE IF EXISTS original_policy_system_hazard_new"))
+    connection.execute(text("DROP TABLE IF EXISTS original_policy_codes_new"))
+    connection.execute(text("DROP TABLE IF EXISTS original_policies_new"))
+    connection.execute(text("""
+        CREATE TABLE original_policies_new (
+            id VARCHAR(36) PRIMARY KEY,
+            policy_name VARCHAR(512) NOT NULL UNIQUE,
+            objective TEXT,
+            policy_document TEXT,
+            excel_row_number INTEGER NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    if canonical:
+        connection.execute(text("""
+            INSERT INTO original_policies_new
+                (id, policy_name, objective, policy_document, excel_row_number, created_at)
+            VALUES (:id, :policy_name, :objective, :policy_document, :excel_row_number, :created_at)
+        """), [dict(policy) for policy in canonical.values()])
+    connection.execute(text("""
+        CREATE TABLE original_policy_codes_new (
+            id VARCHAR(36) PRIMARY KEY,
+            original_policy_id VARCHAR(36) NOT NULL REFERENCES original_policies_new(id) ON DELETE CASCADE,
+            code VARCHAR(80) NOT NULL,
+            excel_row_number INTEGER NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_original_policy_code UNIQUE (original_policy_id, code)
+        )
+    """))
+    if policies:
+        connection.execute(text("""
+            INSERT INTO original_policy_codes_new
+                (id, original_policy_id, code, excel_row_number, created_at)
+            VALUES (:id, :original_policy_id, :code, :excel_row_number, :created_at)
+        """), [{
+            "id": policy["id"],
+            "original_policy_id": canonical[str(policy["policy_name"])]["id"],
+            "code": policy["code"],
+            "excel_row_number": policy["excel_row_number"],
+            "created_at": policy["created_at"],
+        } for policy in policies])
+    connection.execute(text("""
+        CREATE TABLE original_policy_system_hazard_new (
+            id VARCHAR(36) PRIMARY KEY,
+            original_policy_code_id VARCHAR(36) NOT NULL REFERENCES original_policy_codes_new(id) ON DELETE CASCADE,
+            system_hazard_id VARCHAR(36) NOT NULL REFERENCES system_hazards(id) ON DELETE CASCADE,
+            relationship VARCHAR(40) NOT NULL,
+            excel_row_number INTEGER NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_original_policy_code_hazard_relationship
+                UNIQUE (original_policy_code_id, system_hazard_id, relationship)
+        )
+    """))
+    if links:
+        connection.execute(text("""
+            INSERT INTO original_policy_system_hazard_new
+                (id, original_policy_code_id, system_hazard_id, relationship, excel_row_number, created_at)
+            VALUES (:id, :original_policy_code_id, :system_hazard_id, :relationship, :excel_row_number, :created_at)
+        """), [{
+            "id": link["id"],
+            "original_policy_code_id": link["original_policy_id"],
+            "system_hazard_id": link["system_hazard_id"],
+            "relationship": link["relationship"],
+            "excel_row_number": link["excel_row_number"],
+            "created_at": link["created_at"],
+        } for link in links])
+    connection.execute(text("DROP TABLE original_policy_system_hazard"))
+    connection.execute(text("DROP TABLE original_policies"))
+    connection.execute(text("ALTER TABLE original_policies_new RENAME TO original_policies"))
+    connection.execute(text("ALTER TABLE original_policy_codes_new RENAME TO original_policy_codes"))
+    connection.execute(text("ALTER TABLE original_policy_system_hazard_new RENAME TO original_policy_system_hazard"))
+    _create_index(connection, "original_policy_codes", "ix_original_policy_codes_policy", "original_policy_id")
+    _create_index(connection, "original_policy_system_hazard", "ix_original_policy_system_hazard_code", "original_policy_code_id")
+    _create_index(connection, "original_policy_system_hazard", "ix_original_policy_system_hazard_hazard", "system_hazard_id")
+
+
+def _023_original_policy_country_sectors(connection: Connection) -> None:
+    _add_column(
+        connection, "original_policies", "country_id",
+        "country_id VARCHAR(36) NULL REFERENCES countries(id) ON DELETE CASCADE",
+    )
+    _create_index(connection, "original_policies", "ix_original_policies_country", "country_id")
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS original_policy_sectors (
+            id VARCHAR(36) PRIMARY KEY,
+            original_policy_id VARCHAR(36) NOT NULL REFERENCES original_policies(id) ON DELETE CASCADE,
+            sector_id VARCHAR(36) NOT NULL REFERENCES sectors(id) ON DELETE CASCADE,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_original_policy_sector UNIQUE (original_policy_id, sector_id)
+        )
+    """))
+    _create_index(connection, "original_policy_sectors", "ix_original_policy_sectors_policy", "original_policy_id")
+    _create_index(connection, "original_policy_sectors", "ix_original_policy_sectors_sector", "sector_id")
+
+
+def _024_original_policy_knowledge_documents(connection: Connection) -> None:
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS original_policy_knowledge_documents (
+            id VARCHAR(36) PRIMARY KEY,
+            original_policy_id VARCHAR(36) NOT NULL REFERENCES original_policies(id) ON DELETE CASCADE,
+            knowledge_document_id VARCHAR(36) NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_original_policy_knowledge_document UNIQUE (original_policy_id, knowledge_document_id)
+        )
+    """))
+    _create_index(connection, "original_policy_knowledge_documents", "ix_original_policy_knowledge_policy", "original_policy_id")
+    _create_index(connection, "original_policy_knowledge_documents", "ix_original_policy_knowledge_document", "knowledge_document_id")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -490,6 +667,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("018_crowd_sourced_policies", _018_crowd_sourced_policies),
     ("019_policy_hazard_links", _019_policy_hazard_links),
     ("020_unique_policy_titles", _020_unique_policy_titles),
+    ("021_original_policies", _021_original_policies),
+    ("022_unique_original_policy_names", _022_unique_original_policy_names),
+    ("023_original_policy_country_sectors", _023_original_policy_country_sectors),
+    ("024_original_policy_knowledge_documents", _024_original_policy_knowledge_documents),
 )
 
 

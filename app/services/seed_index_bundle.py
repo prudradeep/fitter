@@ -21,7 +21,10 @@ from sqlalchemy.engine import make_url
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
-SCOPES = {"main": "main", "sector_prompt": "sector_prompts", "policy_document": "policy_reference"}
+SCOPES = {
+    "main": "main", "sector_prompt": "sector_prompts",
+    "policy_document": "policy_reference", "original_policy": "original_policy",
+}
 
 
 def _index_metadata_path(index_path: Path) -> Path:

@@ -197,6 +197,42 @@ def test_offline_bundle_excludes_private_knowledge_scopes(tmp_path: Path) -> Non
     assert b"private-temporary-document" not in seed_path.read_bytes()
 
 
+def test_offline_bundle_removes_stale_population_cache_matches(tmp_path: Path) -> None:
+    database = tmp_path / "source.db"
+    _source_database(database, synced=False)
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            CREATE TABLE eurostat_population_cache (id TEXT PRIMARY KEY);
+            CREATE TABLE system_hazard_socio_demographic_population_matches (
+                id TEXT PRIMARY KEY,
+                eurostat_population_cache_id TEXT REFERENCES eurostat_population_cache(id)
+            );
+            INSERT INTO eurostat_population_cache VALUES ('existing-cache');
+            INSERT INTO system_hazard_socio_demographic_population_matches
+                VALUES ('valid-match', 'existing-cache');
+            INSERT INTO system_hazard_socio_demographic_population_matches
+                VALUES ('stale-match', 'expired-cache');
+            """
+        )
+    _source_index(tmp_path / "knowledge.main.faiss")
+
+    EXPORTER.export_bundle(
+        database, tmp_path / "knowledge.faiss", tmp_path / "bundle",
+        "nomic-embed-text", "", ["main"], offline=True,
+    )
+
+    with sqlite3.connect(tmp_path / "bundle" / "seed.db") as clean:
+        assert clean.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert clean.execute(
+            "SELECT id FROM system_hazard_socio_demographic_population_matches"
+        ).fetchall() == [("valid-match",)]
+    with sqlite3.connect(database) as source:
+        assert source.execute(
+            "SELECT COUNT(*) FROM system_hazard_socio_demographic_population_matches"
+        ).fetchone()[0] == 2
+
+
 def test_offline_export_rejects_user_policy(tmp_path: Path) -> None:
     database = tmp_path / "source.db"
     _source_database(database, synced=False)
@@ -257,3 +293,45 @@ def test_offline_export_includes_locally_seeded_policy_vectors(tmp_path: Path) -
         assert clean.execute(
             "SELECT COUNT(*) FROM knowledge_documents WHERE scope = 'policy_reference'"
         ).fetchone()[0] == 0
+
+
+def test_offline_export_keeps_original_policy_file_links_only_with_policy_scope(tmp_path: Path) -> None:
+    database = tmp_path / "source.db"
+    _source_database(database, synced=False)
+    with sqlite3.connect(database) as db:
+        db.executescript("""
+            CREATE TABLE original_policies (id TEXT PRIMARY KEY, policy_name TEXT);
+            CREATE TABLE original_policy_knowledge_documents (
+                id TEXT PRIMARY KEY, original_policy_id TEXT, knowledge_document_id TEXT
+            );
+            INSERT INTO original_policies VALUES ('original-1', 'Original policy');
+            INSERT INTO original_policy_knowledge_documents
+                VALUES ('link-1', 'original-1', 'original-document-1');
+        """)
+        db.execute(
+            "INSERT INTO knowledge_documents VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, 1, NULL, NULL)",
+            ("original-document-1", "original_policy", "original_policy_file",
+             "kb/additional/policy documents/Germany/Bayern_Beteiligungsgesetz.pdf"),
+        )
+        db.execute(
+            "INSERT INTO knowledge_chunks VALUES (?, ?, NULL, 1, NULL, NULL)",
+            ("original-chunk-1", "original-document-1"),
+        )
+    index_base = tmp_path / "knowledge.faiss"
+    _source_index(tmp_path / "knowledge.main.faiss")
+    _source_index(tmp_path / "knowledge.original_policy.faiss", chunk_id="original-chunk-1")
+
+    EXPORTER.export_bundle(
+        database, index_base, tmp_path / "all", "nomic-embed-text", "",
+        ["main", "original_policy"], offline=True,
+    )
+    assert (tmp_path / "all" / "knowledge.original_policy.faiss").is_file()
+    with sqlite3.connect(tmp_path / "all" / "seed.db") as clean:
+        assert clean.execute("SELECT COUNT(*) FROM original_policy_knowledge_documents").fetchone()[0] == 1
+
+    EXPORTER.export_bundle(
+        database, index_base, tmp_path / "main-only", "nomic-embed-text", "",
+        ["main"], offline=True,
+    )
+    with sqlite3.connect(tmp_path / "main-only" / "seed.db") as clean:
+        assert clean.execute("SELECT COUNT(*) FROM original_policy_knowledge_documents").fetchone()[0] == 0

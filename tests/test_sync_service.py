@@ -21,6 +21,8 @@ from app.models import (
     EvaluationQuestion,
     KnowledgeChunk,
     KnowledgeDocument,
+    OriginalPolicy,
+    OriginalPolicyKnowledgeDocument,
     Prompt,
     QuestionOption,
     Sector,
@@ -83,6 +85,34 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(bundle["format"], "dr-transition-sync-v1")
         self.assertEqual(bundle["sync_protocol_version"], 1)
         self.assertEqual(bundle["client_schema_version"], 1)
+
+    def test_original_policy_document_mapping_exports_only_after_indexing(self) -> None:
+        country = Country(name="Germany")
+        self.db.add(country)
+        self.db.flush()
+        policy = OriginalPolicy(
+            country_id=country.id, policy_name="Original policy", excel_row_number=2,
+        )
+        document = KnowledgeDocument(
+            title="Original policy", source_type="original_policy_file",
+            source_uri="kb/additional/policy documents/Germany/policy.pdf",
+            scope="policy_pending",
+        )
+        self.db.add_all([policy, document])
+        self.db.flush()
+        self.db.add(OriginalPolicyKnowledgeDocument(
+            original_policy_id=policy.id, knowledge_document_id=document.id,
+        ))
+        self.db.commit()
+
+        service = SyncService(self.db, device_id="device-a")
+        pending_bundle = service.export_bundle(include_admin_knowledge=True)
+        self.assertEqual(self._rows(pending_bundle, "original_policy_knowledge_documents"), [])
+
+        document.scope = "original_policy"
+        self.db.commit()
+        indexed_bundle = service.export_bundle(include_admin_knowledge=True)
+        self.assertEqual(len(self._rows(indexed_bundle, "original_policy_knowledge_documents")), 1)
 
     def test_outbound_sync_uses_configured_row_batches(self) -> None:
         service = SyncService(self.db, device_id="device-a")
@@ -1132,7 +1162,7 @@ class SyncServiceTests(unittest.TestCase):
         original_mode = sync_routes.settings.sync_mode
         sync_routes.settings.sync_mode = "client"
         try:
-            for scope in ("main", "validated_evidence", "sector_prompt", "policy_document", "temporary", "policy_reference"):
+            for scope in ("main", "validated_evidence", "sector_prompt", "policy_document", "original_policy", "temporary", "policy_reference"):
                 document = KnowledgeDocument(
                     user_id=None,
                     title=f"{scope} KB",
@@ -1168,7 +1198,7 @@ class SyncServiceTests(unittest.TestCase):
         original_mode = sync_routes.settings.sync_mode
         sync_routes.settings.sync_mode = "client"
         try:
-            for scope in ("main", "validated_evidence", "sector_prompt", "policy_document", "temporary", "policy_reference"):
+            for scope in ("main", "validated_evidence", "sector_prompt", "policy_document", "original_policy", "temporary", "policy_reference"):
                 document = KnowledgeDocument(
                     user_id=None,
                     title=f"{scope} KB",
@@ -1202,8 +1232,8 @@ class SyncServiceTests(unittest.TestCase):
         chunk_sources = {row["source_uri"] for row in self._rows(bundle, "knowledge_chunks")}
         self.assertTrue(bundle["admin_knowledge_sync"])
         self.assertEqual(bundle["admin_user_email"], "admin@example.com")
-        self.assertEqual(document_scopes, {"main", "validated_evidence", "sector_prompt", "policy_document"})
-        self.assertEqual(chunk_sources, {"main.txt", "validated_evidence.txt", "sector_prompt.txt", "policy_document.txt"})
+        self.assertEqual(document_scopes, {"main", "validated_evidence", "sector_prompt", "policy_document", "original_policy"})
+        self.assertEqual(chunk_sources, {"main.txt", "validated_evidence.txt", "sector_prompt.txt", "policy_document.txt", "original_policy.txt"})
 
     def test_server_rejects_inbound_main_and_sector_knowledge(self) -> None:
         original_mode = sync_routes.settings.sync_mode
@@ -1495,12 +1525,12 @@ class SyncServiceTests(unittest.TestCase):
             self.assertIn("user_sessions", allowed.json()["tables"])
             self.assertEqual(
                 allowed.json()["server_to_client_knowledge_scopes"],
-                ["main", "validated_evidence", "sector_prompt", "policy_document"],
+                ["main", "validated_evidence", "sector_prompt", "policy_document", "original_policy"],
             )
             self.assertEqual(allowed.json()["client_to_server_knowledge_scopes"], ["validated_evidence", "policy_document"])
             self.assertEqual(
                 allowed.json()["admin_client_to_server_knowledge_scopes"],
-                ["main", "validated_evidence", "sector_prompt", "policy_document"],
+                ["main", "validated_evidence", "sector_prompt", "policy_document", "original_policy"],
             )
             self.assertEqual(
                 allowed.json()["excluded_knowledge_scopes"],

@@ -9,7 +9,6 @@ import json
 import sqlite3
 import sys
 import time
-import uuid
 from collections import defaultdict
 from contextlib import closing
 from pathlib import Path
@@ -18,12 +17,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-SOURCE_SCOPES = ("main", "sector_prompt", "policy_document")
+SOURCE_SCOPES = ("main", "sector_prompt", "policy_document", "original_policy")
 INSERT_BATCH_SIZE = 500
 SCOPE_SUFFIXES = {
     "main": "main",
     "sector_prompt": "sector_prompts",
     "policy_document": "policy_reference",
+    "original_policy": "original_policy",
 }
 
 
@@ -269,8 +269,11 @@ def _source_policies(connection: sqlite3.Connection) -> dict[str, sqlite3.Row]:
 def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) -> dict[str, int]:
     from sqlalchemy import select
 
-    from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, Region, Sector
-    from app.services.knowledge_base import POLICY_DOCUMENT_SCOPE
+    from app.models import (
+        Country, KnowledgeChunk, KnowledgeDocument, OriginalPolicy,
+        OriginalPolicyKnowledgeDocument, Policy, Region, Sector,
+    )
+    from app.services.knowledge_base import ORIGINAL_POLICY_SCOPE, POLICY_DOCUMENT_SCOPE
 
     source_tables = {
         str(row[0])
@@ -298,11 +301,22 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
                user_id, session_key, custom_hazard_id, policy_id,
                country_id, region_id, sector_id
         FROM knowledge_documents
-        WHERE scope IN (?, ?, ?)
+        WHERE scope IN (?, ?, ?, ?)
         ORDER BY scope, source_uri, id
         """,
         SOURCE_SCOPES,
     ).fetchall()
+    source_original_links: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    if {"original_policy_knowledge_documents", "original_policies"} <= source_tables:
+        for row in source.execute("""
+            SELECT link.knowledge_document_id, policy.policy_name, country.name AS country_name
+            FROM original_policy_knowledge_documents AS link
+            JOIN original_policies AS policy ON policy.id = link.original_policy_id
+            JOIN countries AS country ON country.id = policy.country_id
+        """):
+            source_original_links[str(row["knowledge_document_id"])].append(
+                (str(row["policy_name"]), str(row["country_name"]))
+            )
 
     result = {
         "imported_documents": 0,
@@ -326,6 +340,12 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
         }
         target_policy_keys: dict[tuple[object, ...], list[Policy]] = defaultdict(list)
         target_policy_content_keys: dict[tuple[object, ...], list[Policy]] = defaultdict(list)
+        target_original_policies = {
+            (_normalize(policy.policy_name), _normalize(country.name)): policy.id
+            for policy, country in db.execute(
+                select(OriginalPolicy, Country).join(Country, Country.id == OriginalPolicy.country_id)
+            ).all()
+        }
         for policy in db.scalars(select(Policy)).all():
             key = _policy_key(
                 policy.excel_row_number,
@@ -412,8 +432,16 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
 
         source_policy_id = source_doc["policy_id"]
         target_policy = map_policy(source_policy_id, context=context)
-        if source_doc["scope"] == POLICY_DOCUMENT_SCOPE and target_policy is None:
+        original_policy_ids = [
+            target_original_policies.get((_normalize(name), _normalize(country)))
+            for name, country in source_original_links.get(source_doc_id, [])
+        ]
+        if any(policy_id is None for policy_id in original_policy_ids):
+            raise ValueError(f"Seed matching original policies before importing {context}")
+        if source_doc["scope"] == POLICY_DOCUMENT_SCOPE and target_policy is None and not original_policy_ids:
             raise ValueError(f"Policy KB document has no policy reference: {context}")
+        if source_doc["scope"] == ORIGINAL_POLICY_SCOPE and (target_policy is not None or not original_policy_ids):
+            raise ValueError(f"Original policy KB document has no original policy reference: {context}")
 
         target_country_id = map_country(source_doc["country_id"], context=context)
         target_sector_id = map_sector(source_doc["sector_id"], context=context)
@@ -480,6 +508,19 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
                 source_chunk_ids = {str(chunk["id"]) for chunk, *_ in prepared_chunks}
                 if existing_chunk_ids != source_chunk_ids:
                     raise ValueError(f"Existing {context} has different chunk IDs from the bundle")
+                if not dry_run:
+                    existing_original_ids = set(db.scalars(
+                        select(OriginalPolicyKnowledgeDocument.original_policy_id).where(
+                            OriginalPolicyKnowledgeDocument.knowledge_document_id == source_doc_id
+                        )
+                    ).all())
+                    for original_policy_id in original_policy_ids:
+                        if original_policy_id not in existing_original_ids:
+                            db.add(OriginalPolicyKnowledgeDocument(
+                                original_policy_id=original_policy_id,
+                                knowledge_document_id=source_doc_id,
+                            ))
+                    db.commit()
                 result["skipped_existing"] += 1
                 continue
 
@@ -504,6 +545,12 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
                 )
                 db.add(document)
                 db.flush()
+                db.add_all(
+                    OriginalPolicyKnowledgeDocument(
+                        original_policy_id=original_policy_id,
+                        knowledge_document_id=document.id,
+                    ) for original_policy_id in original_policy_ids
+                )
                 imported_chunks = 0
                 for offset in range(0, len(prepared_chunks), INSERT_BATCH_SIZE):
                     batch = prepared_chunks[offset : offset + INSERT_BATCH_SIZE]
@@ -540,13 +587,14 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
 async def _index_scopes(session_factory, *, rebuild: bool = False) -> int:
     from app.services.knowledge_base import (
         MAIN_KB_SCOPE,
+        ORIGINAL_POLICY_SCOPE,
         POLICY_DOCUMENT_SCOPE,
         SECTOR_PROMPT_SCOPE,
         KnowledgeBaseService,
     )
 
     failures = 0
-    for scope in (MAIN_KB_SCOPE, SECTOR_PROMPT_SCOPE, POLICY_DOCUMENT_SCOPE):
+    for scope in (MAIN_KB_SCOPE, SECTOR_PROMPT_SCOPE, POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE):
         with session_factory() as db:
             service = KnowledgeBaseService(db, None, scope=scope)
             started_at = time.monotonic()
