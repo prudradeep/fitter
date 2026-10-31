@@ -367,6 +367,21 @@ class ChatService(
                 current_session_id, session, clean_message
             )
 
+        # Population steps accept short button labels and concise group names.
+        # Their handlers validate both before the general message-quality gate.
+        if session.phase == "new_policy_target_population_add":
+            return await self._handle_new_policy_target_population_add(
+                current_session_id, session, clean_message
+            )
+        if session.phase == "new_policy_target_population_review":
+            return await self._handle_new_policy_target_population_review(
+                current_session_id, session, clean_message
+            )
+        if session.phase == "mitigation_dg_review":
+            return await self._handle_mitigation_dg_review(
+                current_session_id, session, clean_message
+            )
+
         if session.phase in {"policy_hazard_confirmation", "policy_hazard_details"}:
             return await self._new_policy_summary_review_step(current_session_id, session)
 
@@ -916,6 +931,8 @@ class ChatService(
         if session.phase.startswith("mitigation_") or session.phase in {
             "complete",
             "new_policy_confirmation",
+            "new_policy_target_population_add",
+            "new_policy_target_population_review",
             "new_policy_validation_clarification",
             "new_policy_validation_evidence",
             "new_policy_target_population_question",
@@ -2269,6 +2286,12 @@ class ChatService(
                 option.label
                 for option in self._mitigation_target_population_review_options()
             ]
+        if session.phase == "new_policy_target_population_review":
+            return ["Confirm target populations"]
+        if session.phase == "new_policy_target_population_add":
+            return ["Skip adding groups"]
+        if session.phase == "mitigation_dg_review":
+            return ["Confirm target groups"]
         if session.phase == "mitigation_review":
             return [option.label for option in MITIGATION_REVIEW_OPTIONS]
         if session.phase == "implementation_readiness_assessment":

@@ -2602,6 +2602,15 @@ function overlappingAffectedPopulationLabels(affected, mitigation) {
   return overlap;
 }
 
+function syncMitigationVennPointVisibility(point) {
+  const method = point.visible === false ? "hide" : "show";
+  point.graphic?.[method]();
+  point.dataLabel?.[method]();
+  if (Array.isArray(point.dataLabels)) {
+    point.dataLabels.forEach((label) => label?.[method]());
+  }
+}
+
 function initializeHighcharts(root = document) {
   if (!root?.querySelectorAll) return;
   const metricTiles = Array.from(root.querySelectorAll(".metric-tile:not([data-bar-ready])"));
@@ -2644,21 +2653,46 @@ function initializeHighcharts(root = document) {
           style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" },
         },
         credits: { enabled: false },
-        legend: { enabled: false },
+        legend: { enabled: true },
         xAxis: { visible: false },
         yAxis: { visible: false },
         series: [],
       });
       return;
     }
-    Highcharts.chart(element, {
-      chart: { type: "venn", height: 390, backgroundColor: "transparent" },
+    const chart = Highcharts.chart(element, {
+      chart: {
+        type: "venn",
+        height: 440,
+        backgroundColor: "transparent",
+        events: {
+          render() {
+            this.series[0]?.points?.forEach(syncMitigationVennPointVisibility);
+          },
+        },
+      },
       title: {
         text: "Affected and target populations(Hover on chart to see details)",
         style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" },
       },
       credits: { enabled: false },
-      legend: { enabled: false },
+      legend: {
+        enabled: true,
+        align: "center",
+        verticalAlign: "bottom",
+        layout: "horizontal",
+        itemStyle: { color: "#334155", fontSize: "11px", fontWeight: "600" },
+        events: {
+          itemClick(event) {
+            const point = event.legendItem;
+            if (point?.series?.type !== "venn") return;
+            event.preventDefault();
+            point.visible = point.options.visible = point.visible === false;
+            syncMitigationVennPointVisibility(point);
+            point.series.chart.legend.colorizeItem(point, point.visible);
+          },
+        },
+      },
       tooltip: {
         useHTML: true,
         formatter() {
@@ -2671,12 +2705,15 @@ function initializeHighcharts(root = document) {
       },
       plotOptions: {
         venn: {
+          showInLegend: true,
+          legendType: "point",
           borderColor: "#ffffff",
           borderWidth: 2,
           opacity: 0.72,
           dataLabels: {
             enabled: true,
             formatter() {
+              if (this.point.sets?.length > 1) return null;
               return `${this.point.custom?.shortTitle || this.point.name}<br/>${this.point.value}`;
             },
             style: { color: "#0f172a", fontSize: "11px", fontWeight: "700", textOutline: "3px #ffffff" },
@@ -2706,10 +2743,21 @@ function initializeHighcharts(root = document) {
             name: "Shared target populations",
             color: "#4f46e5",
             custom: { members: overlapDisplay, shortTitle: "Shared" },
+            dataLabels: { enabled: false },
           },
         ],
       }],
     });
+    Highcharts.addEvent(chart.legend, "afterGetAllItems", (event) => {
+      for (let index = event.allItems.length - 1; index >= 0; index -= 1) {
+        const item = event.allItems[index];
+        if (item.series?.type === "venn" && item.sets?.length > 1) {
+          event.allItems.splice(index, 1);
+        }
+      }
+    });
+    chart.isDirtyLegend = true;
+    chart.redraw();
   });
 
   root.querySelectorAll(".js-evaluation-radar-chart:not([data-chart-ready])").forEach((element) => {

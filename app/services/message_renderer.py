@@ -107,17 +107,37 @@ def render_message(template_name: str, **context: object) -> str:
             '<small>Provide a document for review</small></li>',
             "",
         )
-        if "policy.document_url" not in prompt:
-            prompt = prompt.replace(
-                '</span>{% if policy.description %}',
-                '</span>{% if policy.document_url %} '
-                '<a href="{{ policy.document_url }}">View document</a>{% endif %}'
-                '{% if policy.description %}',
-            )
-        prompt = prompt.replace(
-            '<a href="{{ policy.document_url }}">View document</a>',
-            '<a class="policy-document-link" href="{{ policy.document_url }}">View document</a>',
+        prompt = re.sub(
+            r'<span\b[^>]*>Policy document: (?:'
+            r'{% if policy\.document_available %}Available{% else %}Not available{% endif %}'
+            r'|Available|Not available)</span>',
+            '<span class="policy-document-status '
+            '{% if policy.document_available %}policy-document-status--available'
+            '{% else %}policy-document-status--unavailable{% endif %}">'
+            '{% if policy.document_available %}Document available'
+            '{% else %}Document unavailable{% endif %}</span>',
+            prompt,
         )
+        # Saved templates may still contain the old separate document link.
+        prompt = re.sub(
+            r'{% if policy\.document_url %}\s*'
+            r'<a\b[^>]*href="{{ policy\.document_url }}"[^>]*>View document</a>'
+            r'{% endif %}',
+            "",
+            prompt,
+        )
+        prompt = re.sub(
+            r'<a\b[^>]*href="{{ policy\.document_url }}"[^>]*>View document</a>',
+            "",
+            prompt,
+        )
+        if '>{{ policy.title }}</a>' not in prompt:
+            prompt = prompt.replace(
+                '{{ policy.title }}',
+                '{% if policy.document_url %}'
+                '<a href="{{ policy.document_url }}" class="policy-document-link">'
+                '{{ policy.title }}</a>{% else %}{{ policy.title }}{% endif %}',
+            )
     if (
         template_name == "reason_confirmation.md"
         and prompt

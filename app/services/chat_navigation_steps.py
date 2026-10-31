@@ -1049,6 +1049,16 @@ class ChatNavigationStepsMixin:
                 error=error,
             )
 
+        if session.phase == "new_policy_target_population_add":
+            return self._new_policy_target_population_review_step(
+                session_id, session, error_reason=message if error else ""
+            )
+
+        if session.phase == "new_policy_target_population_review":
+            return self._new_policy_target_population_review_step(
+                session_id, session, error_reason=message if error else ""
+            )
+
         if session.phase == "mitigation_mechanism_selection":
             options = self._mitigation_mechanism_selection_options(session)
             return ChatResponse(
@@ -1079,7 +1089,7 @@ class ChatNavigationStepsMixin:
                 "Confirm summary", "Modify summary inputs"
             ),
             "mitigation_dg_review": self._guided_options(
-                "Confirm disadvantaged groups",
+                "Confirm target groups",
                 "Add disadvantaged group",
                 "Remove disadvantaged group",
             ),
@@ -1087,7 +1097,7 @@ class ChatNavigationStepsMixin:
                 "Back to suggested disadvantaged groups"
             ),
             "mitigation_dg_evidence_decision": self._guided_options(
-                "Yes, add disadvantaged group evidence", "No disadvantaged group evidence"
+                "Yes, target group evidence", "No, target group evidence"
             ),
             "mitigation_final_summary_review": self._guided_options(
                 "Confirm final summary", "Modify final inputs"

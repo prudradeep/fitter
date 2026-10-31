@@ -87,6 +87,8 @@ class ChatPhase(AppStrEnum):
     NEW_POLICY_CONFIRMATION = "new_policy_confirmation"
     NEW_POLICY_VALIDATION_CLARIFICATION = "new_policy_validation_clarification"
     NEW_POLICY_VALIDATION_EVIDENCE = "new_policy_validation_evidence"
+    NEW_POLICY_TARGET_POPULATION_ADD = "new_policy_target_population_add"
+    NEW_POLICY_TARGET_POPULATION_REVIEW = "new_policy_target_population_review"
     NEW_POLICY_TARGET_POPULATION_QUESTION = "new_policy_target_population_question"
     NEW_POLICY_TARGET_GROUP_PATHWAY_INPUT = "new_policy_target_group_pathway_input"
     NEW_POLICY_TARGET_GROUP_PATHWAY_EVIDENCE = "new_policy_target_group_pathway_evidence"

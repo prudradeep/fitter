@@ -647,6 +647,17 @@ class ChatSessionStore:
             ChatPhase.POLICY_SUMMARY_CLARIFICATION.value,
         }:
             values["phase"] = str(values["current_step"])
+        # Restore the target-group review for sessions saved while this phase
+        # was missing from ChatPhase and normalized to the generic wizard.
+        if (
+            values["phase"] == ChatPhase.WIZARD.value
+            and values.get("mitigation_proposal_type") == "new_policy"
+            and isinstance(values.get("new_policy_target_population"), list)
+            and values.get("pending_mitigation_measure") == values.get("new_policy_description")
+            and not values.get("mitigation_record_id")
+            and values.get("current_step") in {"complete", "new_policy_target_population_review"}
+        ):
+            values["phase"] = ChatPhase.NEW_POLICY_TARGET_POPULATION_REVIEW.value
         # Restore proposal confirmation if an older server discarded its
         # unregistered phase and persisted the generic fallback step.
         if (

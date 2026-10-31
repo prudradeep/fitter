@@ -1774,15 +1774,86 @@ class ChatMitigationStepsMixin:
             return self._new_policy_confirmation_step(session_id, session, error=True)
 
         session.new_policy_entry_stage = None
-        session.new_policy_target_population = []
+        proposal_groups = await self._match_mitigation_target_population_answer(
+            session.new_policy_description or ""
+        )
+        hazard_groups = self._mitigation_target_population_labels(session)
+        suggested = self._merge_target_population_labels(proposal_groups, hazard_groups)
+        session.new_policy_target_population = list(suggested)
+        session.mitigation_target_population = list(suggested)
+        session.pending_mitigation_measure = session.new_policy_description
+        session.pending_mitigation_reason = session.new_policy_description
         session.new_policy_target_population_by_question = {}
-        questions = self._target_population_questions()
-        if not questions:
+        session.mitigation_dg_benefit_explanations = None
+        return self._new_policy_target_population_review_step(session_id, session)
+
+    def _new_policy_target_population_add_step(
+        self, session_id: str, session: ChatSession, *, error_reason: str = ""
+    ) -> ChatResponse:
+        session.phase = "new_policy_target_population_add"
+        return ChatResponse(
+            session_id=session_id,
+            step="new_policy_target_population_add",
+            bot_message=render_message(
+                "new_policy_target_population_add.md", error_reason=error_reason
+            ),
+            options=[Option(id=1, label="Skip adding groups")],
+            session=session.summary(),
+            input_mode="textarea",
+            error=bool(error_reason),
+        )
+
+    async def _handle_new_policy_target_population_add(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        if exact_option_label(message, [Option(id=1, label="Skip adding groups")]):
+            return self._new_policy_target_population_review_step(session_id, session)
+        if not message.strip():
+            return self._new_policy_target_population_add_step(
+                session_id, session, error_reason="Name a group or choose Skip adding groups."
+            )
+        entry = message.strip()
+        if not re.match(r"^add\b", entry, re.I):
+            entry = f"Add {entry}"
+        error = await self._apply_mitigation_beneficiary_edits(session, entry)
+        if error:
+            return self._new_policy_target_population_add_step(
+                session_id, session, error_reason=error
+            )
+        session.new_policy_target_population = list(session.mitigation_target_population or [])
+        return self._new_policy_target_population_review_step(session_id, session)
+
+    def _new_policy_target_population_review_step(
+        self, session_id: str, session: ChatSession, *, error_reason: str = ""
+    ) -> ChatResponse:
+        session.phase = "new_policy_target_population_review"
+        groups = self._group_target_population_labels(session.new_policy_target_population or [])
+        lines = "\n".join(f"- **{group}**" for group in groups)
+        return ChatResponse(
+            session_id=session_id,
+            step="new_policy_target_population_review",
+            bot_message=render_message(
+                "new_policy_target_population_review.md",
+                groups=lines or "- No target population group identified yet.",
+                error_reason=error_reason,
+            ),
+            options=[Option(id=1, label="Confirm target populations")],
+            session=session.summary(),
+            input_mode="textarea",
+            error=bool(error_reason),
+        )
+
+    async def _handle_new_policy_target_population_review(
+        self, session_id: str, session: ChatSession, message: str
+    ) -> ChatResponse:
+        if exact_option_label(message, [Option(id=1, label="Confirm target populations")]):
             return await self._finish_new_policy_target_population(session_id, session)
-        session.target_population_questions = questions
-        session.target_population_index = 0
-        session.phase = "new_policy_target_population_question"
-        return self._new_policy_target_population_question_step(session_id, session)
+        error = await self._apply_mitigation_beneficiary_edits(session, message)
+        if not error:
+            session.new_policy_target_population = list(session.mitigation_target_population or [])
+        return self._new_policy_target_population_review_step(
+            session_id, session, error_reason=error
+        )
 
     def _new_policy_target_population_question_step(
         self, session_id: str, session: ChatSession, *, error_reason: str = ""
@@ -1917,17 +1988,12 @@ class ChatMitigationStepsMixin:
             if session.selected_mitigation_mechanism else []
         )
         session.mitigation_mechanism_reflection = None
-        session.new_policy_target_group_pathways = {}
-        session.new_policy_target_pathway_groups = self._group_target_population_labels(
-            session.new_policy_target_population or []
+        session.new_policy_target_group_pathways = dict(
+            session.mitigation_dg_benefit_explanations or {}
         )
+        session.new_policy_target_pathway_groups = None
         session.new_policy_target_pathway_index = 0
         session.new_policy_target_pathway_pending = None
-        session.new_policy_target_pathway_evidence = {}
-        session.new_policy_target_pathway_skipped = []
-        session.new_policy_target_pathway_unverified = []
-        if session.new_policy_target_pathway_groups:
-            return self._new_policy_target_group_pathway_prompt(session_id, session)
         session.phase = "mitigation_measure"
         return await self._mitigation_mechanism_reflection_step(session_id, session)
 
@@ -2957,7 +3023,7 @@ class ChatMitigationStepsMixin:
             if normalize_for_match(group) not in pathway_group_keys
         )
         group_section = (
-            "**Suggested disadvantaged groups benefited:**\n\n"
+            "**Suggested target groups:**\n\n"
             + "\n".join(group_rows) + "\n\n"
             if any(pathways.get(group) for group in groups) else ""
         )

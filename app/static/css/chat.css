@@ -902,6 +902,33 @@
   font-weight: 400;
 }
 
+.bubble .policy-document-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.bubble .policy-document-status::before {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.bubble .policy-document-status--available { color: #16a34a; }
+.bubble .policy-document-status--available::before { content: "✓"; }
+.bubble .policy-document-status--unavailable { color: #6b7280; }
+.bubble .policy-document-status--unavailable::before { content: "!"; }
+
 .bubble button.hazard-evidence-label {
   cursor: pointer;
   font-family: inherit;

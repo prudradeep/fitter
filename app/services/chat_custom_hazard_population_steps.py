@@ -784,7 +784,8 @@ class ChatCustomHazardPopulationStepsMixin:
         return self._custom_hazard_population_review_step(session_id, session)
 
     async def _extract_affected_population_edits(
-        self, session: ChatSession, message: str, *, hazard: str | None = None
+        self, session: ChatSession, message: str, *, hazard: str | None = None,
+        current_groups: list[str] | None = None,
     ) -> dict[str, list[str]]:
         explicit_edits = self._fallback_population_edits(message)
         if explicit_edits.get("add") or explicit_edits.get("remove"):
@@ -792,18 +793,18 @@ class ChatCustomHazardPopulationStepsMixin:
 
         selected_hazard = hazard or session.accepted_custom_hazard or "New hazard"
         pending_profiles = session.pending_affected_population_profiles
-        current = [
-            str(profile.get("name") or profile.get("profile") or "").strip()
-            for profile in pending_profiles
-            if str(profile.get("name") or profile.get("profile") or "").strip()
-        ] if pending_profiles is not None else [
-            str(profile.get("name") or profile.get("profile") or "").strip()
-            for profile in self._stored_hazard_profiles(
-                session,
-                selected_hazard,
+        if current_groups is not None:
+            current = list(current_groups)
+        else:
+            profiles = (
+                pending_profiles if pending_profiles is not None
+                else self._stored_hazard_profiles(session, selected_hazard)
             )
-            if str(profile.get("name") or profile.get("profile") or "").strip()
-        ]
+            current = [
+                str(profile.get("name") or profile.get("profile") or "").strip()
+                for profile in profiles
+                if str(profile.get("name") or profile.get("profile") or "").strip()
+            ]
         context = load_nested_prompt_file("llm/affected_population_edits.txt")
         response = await ask_llm_chat(
             context=context,

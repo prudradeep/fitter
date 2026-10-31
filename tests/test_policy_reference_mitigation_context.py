@@ -222,18 +222,22 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         session = ChatSession(country_id="country-1", sector_id="sector-1")
         response = self.service._policy_step("session-1", session)
 
-        self.assertEqual(response.bot_message.count("Policy document: Available"), 3)
-        self.assertEqual(response.bot_message.count("View document"), 1)
+        self.assertEqual(response.bot_message.count("Document available"), 3)
+        self.assertEqual(response.bot_message.count("policy-document-status--available"), 3)
+        self.assertNotIn("View document", response.bot_message)
         self.assertIn(
-            'href="https://example.org/policy.pdf?lang=en&amp;version=2"',
+            'href="https://example.org/policy.pdf?lang=en&amp;version=2" target="_blank" rel="noopener noreferrer" class="policy-document-link">A URL policy</a>',
             response.bot_message,
         )
-        self.assertIn('target="_blank" rel="noopener noreferrer"', response.bot_message)
+        self.assertIn("B Uploaded policy", response.bot_message)
+        self.assertNotIn(">B Uploaded policy</a>", response.bot_message)
+        self.assertNotIn(">C Invalid source</a>", response.bot_message)
 
     def test_saved_policy_selection_template_shows_document_link(self) -> None:
         saved_template = (
             '{% for policy in policies %}<li><strong>{{ policy.title }}</strong> '
             '<span>Policy document: Available</span>'
+            '{% if policy.document_url %} <a href="{{ policy.document_url }}">View document</a>{% endif %}'
             '{% if policy.description %}<small>{{ policy.description }}</small>{% endif %}</li>'
             '{% endfor %}'
             '\nIf you are not able to find the policy linked to your context from the above list click on "Add a new policy" to add the policy document for your region (The policy added will be visible to the other users of the system analysing the same geographical context).'
@@ -244,11 +248,20 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
                 policies=[{
                     "title": "Example policy",
                     "description": "",
+                    "document_available": True,
                     "document_url": "https://example.org/policy.pdf",
+                }, {
+                    "title": "Policy without document",
+                    "description": "",
+                    "document_available": False,
+                    "document_url": None,
                 }],
             )
 
-        self.assertIn('href="https://example.org/policy.pdf"', html)
+        self.assertIn('href="https://example.org/policy.pdf" target="_blank" rel="noopener noreferrer" class="policy-document-link">Example policy</a>', html)
+        self.assertNotIn("View document", html)
+        self.assertIn('class="policy-document-status policy-document-status--available">Document available</span>', html)
+        self.assertIn('class="policy-document-status policy-document-status--unavailable">Document unavailable</span>', html)
         self.assertIn('class="policy-selection-note"', html)
         self.assertIn("Don't see your policy?", html)
         self.assertNotIn("If you are not able", html)
