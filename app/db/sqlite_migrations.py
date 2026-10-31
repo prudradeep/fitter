@@ -646,6 +646,37 @@ def _024_original_policy_knowledge_documents(connection: Connection) -> None:
     _create_index(connection, "original_policy_knowledge_documents", "ix_original_policy_knowledge_document", "knowledge_document_id")
 
 
+def _025_original_policy_mitigation_relations(connection: Connection) -> None:
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS original_policy_mitigation_policy_relations (
+            id VARCHAR(36) PRIMARY KEY,
+            original_policy_id VARCHAR(36) NOT NULL REFERENCES original_policies(id) ON DELETE CASCADE,
+            mitigation_measure_policy_id VARCHAR(36) NOT NULL REFERENCES mitigation_measure_policies(id) ON DELETE CASCADE,
+            source_mitigation_title TEXT NOT NULL,
+            excel_row_number INTEGER NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_original_policy_mitigation_policy
+                UNIQUE (original_policy_id, mitigation_measure_policy_id)
+        )
+    """))
+    _create_index(connection, "original_policy_mitigation_policy_relations", "ix_original_policy_mitigation_original", "original_policy_id")
+    _create_index(connection, "original_policy_mitigation_policy_relations", "ix_original_policy_mitigation_mitigation", "mitigation_measure_policy_id")
+
+
+def _026_original_policy_picker_links(connection: Connection) -> None:
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS policy_original_sources (
+            id VARCHAR(36) PRIMARY KEY,
+            policy_id VARCHAR(36) NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+            original_policy_id VARCHAR(36) NOT NULL REFERENCES original_policies(id) ON DELETE CASCADE,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_policy_original_source_policy UNIQUE (policy_id)
+        )
+    """))
+    _create_index(connection, "policy_original_sources", "ix_policy_original_sources_policy", "policy_id")
+    _create_index(connection, "policy_original_sources", "ix_policy_original_sources_original", "original_policy_id")
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -671,6 +702,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("022_unique_original_policy_names", _022_unique_original_policy_names),
     ("023_original_policy_country_sectors", _023_original_policy_country_sectors),
     ("024_original_policy_knowledge_documents", _024_original_policy_knowledge_documents),
+    ("025_original_policy_mitigation_relations", _025_original_policy_mitigation_relations),
+    ("026_original_policy_picker_links", _026_original_policy_picker_links),
 )
 
 

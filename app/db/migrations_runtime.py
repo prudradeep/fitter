@@ -1626,10 +1626,19 @@ def run_runtime_migrations(
     objects. Production deploys should use this versioned path only.
     """
     if engine.dialect.name == "sqlite":
-        # create_all() creates tables for a fresh client, while the explicit
-        # SQLite migration runner upgrades databases from previous releases.
-        Base.metadata.create_all(bind=engine)
-        applied = apply_sqlite_migrations()
+        # Legacy original-policy tables must be rebuilt by migration 022 before
+        # create_all() can create the replacement tables from current metadata.
+        inspector = inspect(engine)
+        legacy_original_policies = (
+            "original_policies" in inspector.get_table_names()
+            and "code" in {column["name"] for column in inspector.get_columns("original_policies")}
+        )
+        if legacy_original_policies:
+            applied = apply_sqlite_migrations()
+            Base.metadata.create_all(bind=engine)
+        else:
+            Base.metadata.create_all(bind=engine)
+            applied = apply_sqlite_migrations()
 
         # OfflineAdmin uses the same canonical seed_data.py orchestration as
         # the MySQL server. The SQLite branch must therefore honor the same

@@ -81,7 +81,7 @@ from app.services.knowledge_base import KnowledgeBaseService
 from app.services.eurostat_service import EurostatService
 from app.services.grounding_models import GroundingModelService
 from app.services.hazard_ranking_service import HazardRankingService
-from app.services.message_renderer import markdown_to_html, render_message
+from app.services.message_renderer import mark_workflow_copy, markdown_to_html, render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
 from app.services.voice_summary import generate_voice_summary
 from app.services.generated_claim_labels import label_generated_claims
@@ -1521,7 +1521,9 @@ class ChatService(
         )
         if is_llm_unavailable_response(response) or not response.strip():
             return fallback
-        return markdown_to_html(self._normalize_sector_wording(response.strip()))
+        return mark_workflow_copy(markdown_to_html(
+            self._normalize_sector_wording(response.strip())
+        ))
 
     @staticmethod
     def _normalize_sector_wording(message: str) -> str:

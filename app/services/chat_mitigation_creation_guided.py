@@ -13,12 +13,20 @@ from app.services.hazard_with_mitigation import (
     country_factsheet_inspiration_fields,
     country_factsheet_reference,
     country_existing_policy_adaptation_sources,
+    country_related_mitigation_factsheets,
     inferred_adaptations_reference,
 )
 from app.services.document_language import document_language_guidance
 from app.services.summary_sources import source_button
 from app.services.policy_summary_references import d42_policy_reference
-from app.models import KnowledgeChunk, KnowledgeDocument, Policy
+from app.models import (
+    KnowledgeChunk,
+    KnowledgeDocument,
+    MitigationMeasurePolicy,
+    OriginalPolicyMitigationPolicyRelation,
+    Policy,
+    PolicyOriginalSource,
+)
 from app.services.knowledge_base import (
     MAIN_KB_SCOPE,
     TEMPORARY_KB_SCOPE,
@@ -37,6 +45,12 @@ class ChatMitigationCreationGuidedMixin:
         if not hasattr(self, "db") or not session.selected_context_policy:
             return ""
         policy = self.db.get(Policy, session.selected_context_policy_id) if session.selected_context_policy_id else None
+        if policy and policy.source == "original_policy" and policy.policy_type == "Original policy":
+            factsheet_reference = self._original_policy_mitigation_factsheets(session, policy)
+            if factsheet_reference:
+                return "\n\n".join((
+                    factsheet_reference, self._adaptation_profiles_section(session),
+                )).strip()
         if policy and policy.source == "user":
             inferred = await self._inferred_existing_policy_adaptations(
                 session, mechanism_reference=mechanism_reference
@@ -90,6 +104,117 @@ class ChatMitigationCreationGuidedMixin:
             return "\n\n".join([*sections, self._adaptation_profiles_section(session)]).strip()
         document_reference = await self._policy_document_adaptation_reference(session)
         return "\n\n".join((document_reference, self._adaptation_profiles_section(session))).strip()
+
+    def _original_policy_mitigation_factsheets(
+        self, session: ChatSession, policy: Policy,
+    ) -> str:
+        """Display related factsheet proposals as concepts the adoption flow can use."""
+        records = self._original_policy_mitigation_factsheet_records(session, policy)
+        sections: list[str] = []
+        for record in records:
+            title = str(record["_related_mitigation_title"])
+            factsheet_type = str(record["_factsheet_type"])
+            sections.append(
+                f"### Related mitigation policy: {escape(title)} "
+                f"({escape(factsheet_type)} factsheet idea)"
+            )
+            for heading, field in (
+                ("Challenges to be addressed", "Prioritised challenge addressed"),
+                ("Proposed adaptations for the policy", "Proposed adaptations"),
+                ("Stakeholders to involve", "Participatory dimension & stakeholders"),
+            ):
+                points = self._related_factsheet_points(record.get(field, ""))
+                if not points:
+                    continue
+                lines: list[str] = []
+                for point in points:
+                    source_rows = [
+                        {"field": "Document", "value": record["_source_document"]},
+                        {"field": "Source", "value": record["_source_uri"]},
+                        {"field": "Related mitigation policy", "value": title},
+                        {"field": "Factsheet section", "value": factsheet_type},
+                        {"field": "Factsheet field", "value": (
+                            record["_proposal_field"] if field == "Proposed adaptations" else field
+                        )},
+                        {"field": "Referenced excerpt", "value": point},
+                    ]
+                    payload = escape(json.dumps(source_rows, ensure_ascii=False), quote=True)
+                    source = (
+                        '<button class="factsheet-source-tag hazard-evidence-label--provided" '
+                        f'type="button" data-source-table="{payload}" '
+                        'aria-label="Show the referenced factsheet data">Source</button>'
+                    )
+                    lines.append(f"- {point} {source}")
+                sections.append(f"## {heading}\n\n" + "\n".join(lines))
+        return "\n\n".join(sections)
+
+    @staticmethod
+    def _related_factsheet_points(value: str) -> list[str]:
+        return [
+            point.strip(" -*\u0007")
+            for point in re.split(r"\s*[\u0007•]\s*", value)
+            if point.strip(" -*\u0007")
+        ]
+
+    def _original_policy_mitigation_factsheet_records(
+        self, session: ChatSession, policy: Policy,
+    ) -> list[dict[str, str]]:
+        titles = self.db.scalars(
+            select(MitigationMeasurePolicy.policy_title)
+            .join(OriginalPolicyMitigationPolicyRelation,
+                  OriginalPolicyMitigationPolicyRelation.mitigation_measure_policy_id
+                  == MitigationMeasurePolicy.id)
+            .join(PolicyOriginalSource,
+                  PolicyOriginalSource.original_policy_id
+                  == OriginalPolicyMitigationPolicyRelation.original_policy_id)
+            .where(
+                PolicyOriginalSource.policy_id == policy.id,
+                MitigationMeasurePolicy.country_id == session.country_id,
+                MitigationMeasurePolicy.sector_id == session.sector_id,
+            )
+            .order_by(OriginalPolicyMitigationPolicyRelation.excel_row_number)
+        ).all()
+        seen: set[str] = set()
+        distinct_titles: list[str] = []
+        for raw_title in titles:
+            title = str(raw_title or "").strip()
+            key = normalize_for_match(title)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            distinct_titles.append(title)
+        return country_related_mitigation_factsheets(
+            self.db, country=session.country, sector=session.sector,
+            policy_titles=distinct_titles,
+        )
+
+    def _original_policy_mitigation_factsheet_sources(
+        self, session: ChatSession,
+    ) -> list[dict[str, str]]:
+        policy = self.db.get(Policy, session.selected_context_policy_id) if session.selected_context_policy_id else None
+        if not policy or policy.source != "original_policy" or policy.policy_type != "Original policy":
+            return []
+        sources: list[dict[str, str]] = []
+        for record in self._original_policy_mitigation_factsheet_records(session, policy):
+            title = str(record["_related_mitigation_title"])
+            fields = (
+                ("Proposed adaptations", "Factsheet proposal (not an existing policy duty)"),
+                ("Prioritised challenge addressed", "Factsheet challenge"),
+                ("Limitations or gaps", "Factsheet gap"),
+                ("Target population", "Factsheet target population"),
+            )
+            content = "\n".join([
+                f"Related mitigation policy: {title}",
+                f"Factsheet section: {record['_factsheet_type']}",
+                *(f"{label}: {record[field]}" for field, label in fields if record.get(field)),
+            ])
+            sources.append({
+                "kind": "related_factsheet_proposal",
+                "title": record["_source_document"],
+                "source_uri": record["_source_uri"],
+                "content": content,
+            })
+        return sources
 
     @staticmethod
     def _adaptation_profiles_section(session: ChatSession) -> str:

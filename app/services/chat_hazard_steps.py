@@ -15,8 +15,14 @@ from app.models import (
     MitigationMeasurePolicy,
     MitigationMeasurePolicyAdditionalHazard,
     MitigationMeasurePolicySystemHazard,
+    OriginalPolicy,
+    OriginalPolicyCode,
+    OriginalPolicyKnowledgeDocument,
+    OriginalPolicyMitigationPolicyRelation,
+    OriginalPolicySystemHazard,
     Policy,
     PolicyHazardLink,
+    PolicyOriginalSource,
     Sector,
     SystemHazard,
 )
@@ -47,7 +53,7 @@ from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.document_language import document_language_guidance
 from app.services.enums import ChatPhase
 from app.services.hazard_salience import survey_respondent_count
-from app.services.knowledge_base import POLICY_DOCUMENT_SCOPE, TEMPORARY_KB_SCOPE
+from app.services.knowledge_base import ORIGINAL_POLICY_SCOPE, POLICY_DOCUMENT_SCOPE, TEMPORARY_KB_SCOPE
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.mechanism_sentence import (
     clean_mechanism_sentence,
@@ -423,8 +429,30 @@ class ChatHazardStepsMixin:
         ).all()
         policy_document_ids = {str(doc.policy_id) for doc in policy_documents if doc.policy_id}
         policy_document_urls: dict[str, str] = {}
-        for document in policy_documents:
-            if not document.policy_id or not document.source_uri:
+        original_policy_ids = set(self.db.scalars(
+            select(PolicyOriginalSource.policy_id).where(
+                PolicyOriginalSource.policy_id.in_([policy_id for policy_id, _ in policies]),
+            )
+        ).all())
+        original_documents = self.db.execute(
+            select(PolicyOriginalSource.policy_id, KnowledgeDocument)
+            .select_from(PolicyOriginalSource)
+            .join(OriginalPolicyKnowledgeDocument,
+                  OriginalPolicyKnowledgeDocument.original_policy_id == PolicyOriginalSource.original_policy_id)
+            .join(KnowledgeDocument,
+                  KnowledgeDocument.id == OriginalPolicyKnowledgeDocument.knowledge_document_id)
+            .where(
+                PolicyOriginalSource.policy_id.in_([policy_id for policy_id, _ in policies]),
+                KnowledgeDocument.scope.in_(("policy_pending", ORIGINAL_POLICY_SCOPE)),
+            )
+        ).all()
+        for policy_id, _ in original_documents:
+            policy_document_ids.add(str(policy_id))
+        for policy_id, document in [
+            *((str(doc.policy_id), doc) for doc in policy_documents if doc.policy_id),
+            *((str(policy_id), doc) for policy_id, doc in original_documents),
+        ]:
+            if not document.source_uri:
                 continue
             url = str(document.source_uri).strip()
             try:
@@ -433,7 +461,7 @@ class ChatHazardStepsMixin:
                     continue
             except ValueError:
                 continue
-            policy_document_urls.setdefault(str(document.policy_id), escape(url, quote=True))
+            policy_document_urls.setdefault(policy_id, escape(url, quote=True))
         return ChatResponse(
             session_id=session_id,
             step="policy",
@@ -445,7 +473,7 @@ class ChatHazardStepsMixin:
                 policies=[
                     {
                         "title": title,
-                        "description": "",
+                        "description": "Original policy" if policy_id in original_policy_ids else "",
                         "document_available": policy_id in policy_document_ids,
                         "document_url": policy_document_urls.get(policy_id),
                     }
@@ -620,7 +648,7 @@ class ChatHazardStepsMixin:
     def _stored_context_policy_document_ids(self, session: ChatSession) -> list[str]:
         if not session.selected_context_policy_id:
             return []
-        return list(self.db.scalars(
+        document_ids = list(self.db.scalars(
             select(KnowledgeDocument.id).where(
                 or_(
                     and_(
@@ -641,6 +669,20 @@ class ChatHazardStepsMixin:
                 )
             )
         ).all())
+        original_id = self.db.scalar(select(PolicyOriginalSource.original_policy_id).where(
+            PolicyOriginalSource.policy_id == session.selected_context_policy_id,
+        ))
+        if original_id:
+            document_ids.extend(self.db.scalars(
+                select(KnowledgeDocument.id)
+                .join(OriginalPolicyKnowledgeDocument,
+                      OriginalPolicyKnowledgeDocument.knowledge_document_id == KnowledgeDocument.id)
+                .where(
+                    OriginalPolicyKnowledgeDocument.original_policy_id == original_id,
+                    KnowledgeDocument.scope.in_(("policy_pending", ORIGINAL_POLICY_SCOPE)),
+                )
+            ).all())
+        return list(dict.fromkeys(document_ids))
 
     async def _context_policy_details_step(
         self, session_id: str, session: ChatSession, document_ids: list[str] | None = None,
@@ -1628,6 +1670,9 @@ class ChatHazardStepsMixin:
             self._set_all_system_hazards_for_selected_sector(session)
             session.additional_hazards = []
             return
+        if policy_type == normalize_for_match("Original policy"):
+            self._set_original_policy_hazards(session, policy)
+            return
         if policy_type != normalize_for_match("Adjustment to existing policy"):
             return
 
@@ -1693,6 +1738,75 @@ class ChatHazardStepsMixin:
         )
         session.hazard_profiles = policy_profiles
         session.additional_hazards = [hazard.name for hazard in mapped_additional_hazards]
+
+    def _set_original_policy_hazards(self, session: ChatSession, policy: Policy) -> None:
+        """List hazards linked to the selected original policy and its mitigation policies."""
+        original_policy_id = self.db.scalar(
+            select(OriginalPolicy.id)
+            .join(PolicyOriginalSource,
+                  PolicyOriginalSource.original_policy_id == OriginalPolicy.id)
+            .where(
+                PolicyOriginalSource.policy_id == policy.id,
+                OriginalPolicy.country_id == session.country_id,
+            )
+        )
+        if original_policy_id is None:
+            session.hazards = []
+            session.additional_hazards = []
+            return
+
+        mapped_system_hazards = self.db.scalars(
+            select(SystemHazard)
+            .join(OriginalPolicySystemHazard,
+                  OriginalPolicySystemHazard.system_hazard_id == SystemHazard.id)
+            .join(OriginalPolicyCode,
+                  OriginalPolicyCode.id == OriginalPolicySystemHazard.original_policy_code_id)
+            .where(
+                OriginalPolicyCode.original_policy_id == original_policy_id,
+                SystemHazard.sector_id == session.sector_id,
+            )
+            .distinct()
+            .order_by(SystemHazard.name)
+        ).all()
+        mapped_additional_hazards = self.db.scalars(
+            select(AdditionalHazard)
+            .join(MitigationMeasurePolicyAdditionalHazard,
+                  MitigationMeasurePolicyAdditionalHazard.additional_hazard_id == AdditionalHazard.id)
+            .join(OriginalPolicyMitigationPolicyRelation,
+                  OriginalPolicyMitigationPolicyRelation.mitigation_measure_policy_id
+                  == MitigationMeasurePolicyAdditionalHazard.mitigation_measure_policy_id)
+            .where(
+                OriginalPolicyMitigationPolicyRelation.original_policy_id == original_policy_id,
+                AdditionalHazard.country_id == session.country_id,
+                AdditionalHazard.sector_id == session.sector_id,
+            )
+            .distinct()
+            .order_by(AdditionalHazard.name)
+        ).all()
+
+        # Loading the country/sector additional catalogue also hydrates its profiles.
+        self._additional_hazards_for_context(session)
+        existing_profiles = {
+            normalize(str(name)): profiles
+            for name, profiles in (session.hazard_profiles or {}).items()
+        }
+        catalog_profiles = {
+            normalize(str(item.get("hazard") or "")): list(item.get("profiles") or [])
+            for item in self._stored_hazard_items_for_context(session.session_key, session)
+        }
+        session.hazards = [hazard.name for hazard in mapped_system_hazards]
+        session.additional_hazards = [hazard.name for hazard in mapped_additional_hazards]
+        session.hazard_profiles = {
+            name: existing_profiles.get(normalize(name))
+            or catalog_profiles.get(normalize(name), [])
+            for name in [
+                *session.hazards,
+                *session.additional_hazards,
+                *(session.custom_hazards or []),
+            ]
+            if existing_profiles.get(normalize(name))
+            or catalog_profiles.get(normalize(name))
+        }
 
     def _set_all_system_hazards_for_selected_sector(self, session: ChatSession) -> None:
         """Restore the sector catalogue for survey case-study policies."""

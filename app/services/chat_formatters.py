@@ -207,7 +207,7 @@ def format_hazards(
             '<summary class="hazard-group-heading hazard-group-heading--predictive">'
             f"Hazards based on the predictive model {survey_source_button}</summary>",
             '<div class="hazard-category-content">',
-            f'<p class="hazard-group-intro hazard-group-intro--predictive">'
+            f'<p class="hazard-group-intro hazard-group-intro--predictive source-backed-context">'
             f"{predictive_summary}</p>",
             '<details class="hazard-category">',
             '<summary class="hazard-group-heading hazard-group-heading--top">'
@@ -242,7 +242,7 @@ def format_hazards(
                 f"{_additional_hazards_methodology_cta()}"
                 "</summary>",
                 '<div class="hazard-category-content">',
-                '<p class="hazard-group-intro hazard-group-intro--additional">'
+                '<p class="hazard-group-intro hazard-group-intro--additional source-backed-context">'
                 "These hazards were identified by policy and subject-matter experts "
                 "during the open labs under WP4."
                 "</p>",
@@ -261,7 +261,7 @@ def format_hazards(
                 f"{_custom_hazards_info_icon()}"
                 "</summary>",
                 '<div class="hazard-category-content">',
-                '<p class="hazard-group-intro hazard-group-intro--co-created">'
+                '<p class="hazard-group-intro hazard-group-intro--co-created source-backed-context">'
                 "These hazards were created by platform users for this specific region and sector."
                 "</p>",
                 custom_content,

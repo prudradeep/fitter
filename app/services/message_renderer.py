@@ -9,6 +9,28 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 from app.services.prompt_store import load_prompt_from_db
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "chat"
+WORKFLOW_COPY_TEMPLATES = {
+    "add_hazard.md",
+    "already_complete.md",
+    "complete.md",
+    "country_selected.md",
+    "dg_reason_evidence.md",
+    "dg_validation_unavailable.md",
+    "dgs_added.md",
+    "hazard_added.md",
+    "hazard_reason_evidence.md",
+    "hazard_validation_unavailable.md",
+    "mitigation_intro.md",
+    "mitigation_measure_reason.md",
+    "mitigation_next.md",
+    "national_scope.md",
+    "new_policy_target_population_add.md",
+    "policy_selection.md",
+    "region_selected.md",
+    "socio_demographic_next.md",
+    "system_inquiry_complete.md",
+    "system_inquiry_intro.md",
+}
 
 ALLOWED_TAGS = [
     "a",
@@ -161,7 +183,28 @@ def render_message(template_name: str, **context: object) -> str:
         if prompt is not None
         else get_message_environment().get_template(template_name)
     )
-    return markdown_to_html(template.render(**context).strip())
+    rendered = markdown_to_html(template.render(**context).strip())
+    if template_name in WORKFLOW_COPY_TEMPLATES:
+        rendered = mark_workflow_copy(rendered)
+    return rendered
+
+
+def mark_workflow_copy(content: str) -> str:
+    """Mark fixed instructions, including their database-saved template versions."""
+    def mark(match: re.Match[str]) -> str:
+        tag, attributes = match.groups()
+        class_match = re.search(r'\bclass="([^"]*)"', attributes)
+        if class_match:
+            attributes = (
+                attributes[:class_match.start(1)]
+                + class_match.group(1) + " workflow-copy"
+                + attributes[class_match.end(1):]
+            )
+        else:
+            attributes += ' class="workflow-copy"'
+        return f"<{tag}{attributes}>"
+
+    return re.sub(r"<(p|li)([^>]*)>", mark, content, flags=re.I)
 
 
 def markdown_to_html(content: str) -> str:

@@ -380,6 +380,7 @@ python .\scripts\original_policy_knowledge.py cleanup --database .\data\dta_c.db
 
 
 python .\packaging\windows\scripts\create-seed-index-bundle.py --offline --database .\data\dta_c.db --index-base .\data\knowledge.faiss --embedding-model nomic-embed-text --output .\build\seed-indexes
+
 .\packaging\windows\scripts\build-release.ps1 -OfflineAdmin -NoVersionBump -PrepackageDependencies -SeedIndexBundlePath .\build\seed-indexes
 ----------------------------------------------------------------------------------------------------
 
@@ -676,3 +677,6 @@ Knowledge Base
 Hazard duplicacy check only applicable in the same region
 Remove dimension sector fit
 Add dimension Policy objective fit
+
+
+Does we need to show Survey policy case study with the original policies?

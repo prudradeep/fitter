@@ -12,13 +12,21 @@ from sqlalchemy.pool import StaticPool
 from app.db.session import Base
 from app.models import (
     AdditionalHazard,
+    AdditionalHazardProfile,
     CustomHazardPolicyReference,
     KnowledgeChunk,
     KnowledgeDocument,
     MitigationMeasurePolicy,
     MitigationMeasurePolicyAdditionalHazard,
     MitigationMeasurePolicySystemHazard,
+    OriginalPolicy,
+    OriginalPolicyCode,
+    OriginalPolicyKnowledgeDocument,
+    OriginalPolicyMitigationPolicyRelation,
+    OriginalPolicySector,
+    OriginalPolicySystemHazard,
     Policy,
+    PolicyOriginalSource,
     SystemHazard,
 )
 from app.services.chat_service import ChatService
@@ -233,6 +241,57 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         self.assertNotIn(">B Uploaded policy</a>", response.bot_message)
         self.assertNotIn(">C Invalid source</a>", response.bot_message)
 
+    def test_original_policy_is_selectable_with_its_prepared_document(self) -> None:
+        original = OriginalPolicy(
+            country_id="country-1", policy_name="Original energy act",
+            policy_document="https://example.org/original.pdf", excel_row_number=2,
+        )
+        picker_policy = Policy(
+            country_id="country-1", sector_id="sector-1",
+            policy=original.policy_name, policy_type="Original policy", source="original_policy",
+        )
+        other_sector = Policy(
+            country_id="country-1", sector_id="sector-2",
+            policy="Other sector act", policy_type="Original policy", source="original_policy",
+        )
+        self.db.add_all([original, picker_policy, other_sector])
+        self.db.flush()
+        document = KnowledgeDocument(
+            title="Original energy act", source_type="original_policy_url",
+            source_uri="https://example.org/original.pdf", scope="policy_pending",
+        )
+        self.db.add_all([
+            OriginalPolicySector(original_policy_id=original.id, sector_id="sector-1"),
+            PolicyOriginalSource(policy_id=picker_policy.id, original_policy_id=original.id),
+            document,
+        ])
+        self.db.flush()
+        self.db.add_all([
+            OriginalPolicyKnowledgeDocument(
+                original_policy_id=original.id, knowledge_document_id=document.id,
+            ),
+            KnowledgeChunk(
+                document_id=document.id, chunk_index=0, content="Original act text",
+                source_type="original_policy_url",
+                source_uri="https://example.org/original.pdf",
+            ),
+        ])
+        self.db.commit()
+
+        session = ChatSession(country_id="country-1", sector_id="sector-1")
+        response = self.service._policy_step("session-1", session)
+        self.assertEqual([option.label for option in response.options],
+                         ["Add a new policy", "Original energy act"])
+        self.assertIn("Original policy", response.bot_message)
+        self.assertIn("Document available", response.bot_message)
+        self.assertIn('href="https://example.org/original.pdf"', response.bot_message)
+        self.assertNotIn("Other sector act", response.bot_message)
+
+        self.service._context_policy_details_step = AsyncMock(return_value="selected")
+        self.assertEqual(asyncio.run(self.service._select_context_policy("session-1", session, "1")), "selected")
+        self.assertEqual(session.selected_context_policy_id, picker_policy.id)
+        self.assertEqual(self.service._stored_context_policy_document_ids(session), [document.id])
+
     def test_saved_policy_selection_template_shows_document_link(self) -> None:
         saved_template = (
             '{% for policy in policies %}<li><strong>{{ policy.title }}</strong> '
@@ -283,6 +342,100 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
         self.assertEqual(
             session.hazard_profiles["Previously loaded hazard"],
             [{"name": "Older people"}],
+        )
+
+    def test_original_policy_uses_its_system_and_related_additional_hazards(self) -> None:
+        original = OriginalPolicy(
+            id="original-1", country_id="country-1",
+            policy_name="Original energy act", excel_row_number=2,
+        )
+        policy = Policy(
+            country_id="country-1", sector_id="sector-1", policy=original.policy_name,
+            policy_type="Original policy", source="original_policy",
+        )
+        code_one = OriginalPolicyCode(
+            original_policy_id=original.id, code="ENERGY_A", excel_row_number=2,
+        )
+        code_two = OriginalPolicyCode(
+            original_policy_id=original.id, code="ENERGY_B", excel_row_number=3,
+        )
+        mitigation_one = MitigationMeasurePolicy(
+            policy_code="ENERGY_A", policy_title="Mitigation one",
+            country_id="country-1", sector_id="sector-1",
+        )
+        mitigation_two = MitigationMeasurePolicy(
+            policy_code="ENERGY_B", policy_title="Mitigation two",
+            country_id="country-1", sector_id="sector-1",
+        )
+        system = SystemHazard(sector_id="sector-1", name="Power cuts")
+        other_sector_system = SystemHazard(sector_id="sector-2", name="Other sector risk")
+        additional = AdditionalHazard(
+            country_id="country-1", sector_id="sector-1", name="Energy poverty",
+        )
+        other_country_additional = AdditionalHazard(
+            country_id="country-2", sector_id="sector-1", name="Other country risk",
+        )
+        self.db.add_all([
+            original, policy, code_one, code_two,
+            mitigation_one, mitigation_two, system, other_sector_system,
+            additional, other_country_additional,
+        ])
+        self.db.flush()
+        self.db.add_all([
+            PolicyOriginalSource(policy_id=policy.id, original_policy_id=original.id),
+            OriginalPolicySystemHazard(
+                original_policy_code_id=code_one.id, system_hazard_id=system.id,
+                relationship="Direct", excel_row_number=2,
+            ),
+            OriginalPolicySystemHazard(
+                original_policy_code_id=code_two.id, system_hazard_id=system.id,
+                relationship="Indirect", excel_row_number=3,
+            ),
+            OriginalPolicySystemHazard(
+                original_policy_code_id=code_one.id,
+                system_hazard_id=other_sector_system.id,
+                relationship="Direct", excel_row_number=2,
+            ),
+            OriginalPolicyMitigationPolicyRelation(
+                original_policy_id=original.id, mitigation_measure_policy_id=mitigation_one.id,
+                source_mitigation_title="Mitigation one", excel_row_number=2,
+            ),
+            OriginalPolicyMitigationPolicyRelation(
+                original_policy_id=original.id, mitigation_measure_policy_id=mitigation_two.id,
+                source_mitigation_title="Mitigation two", excel_row_number=3,
+            ),
+            MitigationMeasurePolicyAdditionalHazard(
+                mitigation_measure_policy_id=mitigation_one.id,
+                additional_hazard_id=additional.id,
+            ),
+            MitigationMeasurePolicyAdditionalHazard(
+                mitigation_measure_policy_id=mitigation_two.id,
+                additional_hazard_id=additional.id,
+            ),
+            MitigationMeasurePolicyAdditionalHazard(
+                mitigation_measure_policy_id=mitigation_one.id,
+                additional_hazard_id=other_country_additional.id,
+            ),
+            AdditionalHazardProfile(
+                additional_hazard_id=additional.id, profile="Low-income households",
+            ),
+        ])
+        self.db.commit()
+        session = ChatSession(
+            selected_context_policy_id=policy.id, country_id="country-1",
+            sector_id="sector-1", hazards=["Unrelated system risk"],
+            additional_hazards=["Unrelated additional risk"],
+            hazard_profiles={"Power cuts": [{"name": "Older people"}]},
+        )
+
+        self.service._limit_hazards_to_selected_policy(session)
+
+        self.assertEqual(session.hazards, ["Power cuts"])
+        self.assertEqual(session.additional_hazards, ["Energy poverty"])
+        self.assertEqual(session.hazard_profiles["Power cuts"], [{"name": "Older people"}])
+        self.assertEqual(
+            session.hazard_profiles["Energy poverty"][0]["name"],
+            "Low-income households",
         )
 
     def test_adjustment_policy_limits_hazards_to_mitigation_mappings(self) -> None:

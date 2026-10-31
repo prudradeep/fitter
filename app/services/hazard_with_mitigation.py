@@ -356,6 +356,66 @@ def country_existing_policy_adaptation_sources(
     return False, candidates
 
 
+def country_related_mitigation_factsheets(
+    db: Session, *, country: str | None, sector: str | None,
+    policy_titles: list[str],
+) -> list[dict[str, str]]:
+    """Match related titles in existing-policy and new-proposal factsheet sections."""
+    text = _country_factsheet_text(db, country)
+    if not text:
+        return []
+    existing_blocks = _factsheet_blocks(
+        text, EXISTING_POLICY_FACTSHEET, "Title of the policy (existing)",
+    )
+    new_blocks = _factsheet_blocks(
+        text, NEW_POLICY_FACTSHEET, "Title of the policy (new proposal)",
+    )
+    sector_key = normalize_for_match(sector or "")
+    new_candidates: list[tuple[str, str]] = []
+    for block in new_blocks:
+        fields = _new_policy_fields(block)
+        focus = normalize_for_match(fields.get("Sectoral focus", ""))
+        if sector_key and focus and focus != sector_key:
+            continue
+        new_candidates.append((fields.get("Title of the policy (new proposal)", ""), block))
+    document = _country_factsheet_document(db, country)
+    records: list[dict[str, str]] = []
+    seen_blocks: set[str] = set()
+    for title in policy_titles:
+        matched = _selected_existing_policy_blocks(existing_blocks, title, sector)
+        block = matched[0] if matched else unique_policy_title_match(new_candidates, title)
+        if not block or block in seen_blocks:
+            continue
+        if matched:
+            fields = _existing_policy_fields(block)
+            proposal = fields.get("Proposed adaptations", "")
+            proposal_field = "Proposed adaptations"
+            factsheet_type = "Existing-policy adaptation"
+            gap = fields.get("Limitations or gaps", "")
+        else:
+            fields = _new_policy_fields(block)
+            proposal = fields.get("Policy description", "")
+            proposal_field = "Policy description"
+            factsheet_type = "New-policy proposal"
+            gap = fields.get("Potential risks/barriers", "")
+        if not proposal:
+            continue
+        seen_blocks.add(block)
+        records.append({
+            "Proposed adaptations": proposal,
+            "Prioritised challenge addressed": fields.get("Prioritised challenge addressed", ""),
+            "Limitations or gaps": gap,
+            "Participatory dimension & stakeholders": fields.get("Participatory dimension & stakeholders", ""),
+            "Target population": fields.get("Target population", ""),
+            "_related_mitigation_title": title,
+            "_proposal_field": proposal_field,
+            "_factsheet_type": factsheet_type,
+            "_source_document": document.get("title", "Policy adaptation factsheet"),
+            "_source_uri": document.get("source_uri", ""),
+        })
+    return records
+
+
 def inferred_adaptations_reference(
     sources: list[dict[str, str]], *, adaptation_ids: list[int],
     challenge_ids: list[int], stakeholder_ids: list[int],

@@ -2386,12 +2386,25 @@ class ChatMitigationStepsMixin:
             except Exception:
                 logger.exception("Could not load selected-policy mitigation sources")
                 available = []
-            sources = [
-                *[source for source in available if source.get("kind") == "D4.2"][:5],
-                *[source for source in available if source.get("kind") == "D4.2_proposal"][:2],
-                *[source for source in available if source.get("kind") == "policy_document"][:5],
-                *[source for source in available if source.get("kind") == "knowledge_base"][:4],
+            related_factsheets = [
+                source for source in available
+                if source.get("kind") == "related_factsheet_proposal"
             ]
+            if related_factsheets:
+                sources = [
+                    *[source for source in available if source.get("kind") == "policy_document"][:4],
+                    *related_factsheets,
+                    *[source for source in available if source.get("kind") == "D4.2"][:5],
+                    *[source for source in available if source.get("kind") == "D4.2_proposal"][:2],
+                    *[source for source in available if source.get("kind") == "knowledge_base"][:4],
+                ]
+            else:
+                sources = [
+                    *[source for source in available if source.get("kind") == "D4.2"][:5],
+                    *[source for source in available if source.get("kind") == "D4.2_proposal"][:2],
+                    *[source for source in available if source.get("kind") == "policy_document"][:5],
+                    *[source for source in available if source.get("kind") == "knowledge_base"][:4],
+                ]
             retriever = getattr(self, "_shared_knowledge_results", None)
             if retriever:
                 seen = {
@@ -2448,6 +2461,31 @@ class ChatMitigationStepsMixin:
                 if evidence_context:
                     sources.append({"kind": "user_evidence", "title": f"User evidence: {group}",
                                     "content": evidence_context[:1400]})
+        has_related_factsheets = any(
+            source.get("kind") == "related_factsheet_proposal" for source in sources
+        )
+        source_guidance = (
+            "Use the supplied selected-policy document passages, matched D4.2 "
+            "sections 6-11 fields, related mitigation-policy factsheet proposals, "
+            "and knowledge-base excerpts to identify relevant group barriers. D4.2 "
+            "adjustments and related factsheet proposals are ideas, not existing "
+            "policy duties. "
+            if has_related_factsheets else
+            "Use the supplied selected-policy document passages, matched D4.2 "
+            "sections 6-11 factsheet fields, and knowledge-base excerpts to identify "
+            "relevant group barriers. D4.2 proposed adjustments are ideas, not existing "
+            "policy duties. "
+        )
+        group_source_guidance = (
+            "Use the supplied selected-policy document, matched D4.2 sections "
+            "6-11 fields, related mitigation-policy factsheet proposals, and "
+            "knowledge-base excerpts to assess each barrier. D4.2 adjustments "
+            "and related factsheet proposals are suggestions, not current legal duties. "
+            if has_related_factsheets else
+            "Use the supplied selected-policy document, matched D4.2 sections "
+            "6-11 factsheet, and knowledge-base excerpts to assess each barrier. "
+            "D4.2 proposed adjustments are suggestions, not current legal duties. "
+        )
         response = await ask_llm_chat(
             context=(
                 "Create one concrete, actionable mitigation measure for the selected "
@@ -2466,10 +2504,8 @@ class ChatMitigationStepsMixin:
                 "Describe the selected policy briefly. Write the mitigation explanation "
                 "as one concise paragraph of about 50-100 words, with no heading, list, "
                 "citation, filename, or internal reasoning. "
-                "Use the supplied selected-policy document passages, matched D4.2 "
-                "sections 6-11 factsheet fields, and knowledge-base excerpts to identify "
-                "relevant group barriers. D4.2 proposed adjustments are ideas, not existing "
-                "policy duties. Cite source IDs for group-specific barrier claims when "
+                f"{source_guidance}"
+                "Cite source IDs for group-specific barrier claims when "
                 "available. The measure must address the selected hazard, but it need not "
                 "benefit every considered group. Include a group pathway only when the "
                 "measure contains a concrete action that addresses that group's barrier. "
@@ -2639,9 +2675,7 @@ class ChatMitigationStepsMixin:
                         "the group; the measure must contain an action that addresses this "
                         "group's barrier. Use the policy context only to understand the "
                         "hazard and group, not to invent an action missing from the measure. "
-                        "Use the supplied selected-policy document, matched D4.2 sections "
-                        "6-11 factsheet, and knowledge-base excerpts to assess each barrier. "
-                        "D4.2 proposed adjustments are suggestions, not current legal duties. "
+                        f"{group_source_guidance}"
                         "When sources are supplied, covered true requires at least one "
                         "source ID that materially supports the group's barrier. Independently "
                         "judge whether the measure introduces an upfront fee, mandatory "
@@ -2840,7 +2874,9 @@ class ChatMitigationStepsMixin:
         usable = [
             {"id": index, **source}
             for index, source in enumerate(sources, 1)
-            if source.get("kind") in {"D4.2", "D4.2_proposal", "policy_document"}
+            if source.get("kind") in {
+                "D4.2", "D4.2_proposal", "policy_document", "related_factsheet_proposal",
+            }
             and str(source.get("content") or "").strip()
         ]
         if not usable:
@@ -2849,6 +2885,14 @@ class ChatMitigationStepsMixin:
         d42 = [row for row in usable if row.get("kind") == "D4.2"]
         if not d42:
             d42 = [row for row in usable if row.get("kind") == "D4.2_proposal"]
+        related_proposals = [
+            row for row in usable if row.get("kind") == "related_factsheet_proposal"
+        ]
+        related_proposal_guidance = (
+            " Related mitigation-policy factsheets are proposed ideas; they may support a "
+            "cited gap or proposal, but not an existing duty of the selected policy."
+            if related_proposals else ""
+        )
         extract = await ask_llm_chat(
             context=(
                 "Analyze the supplied evidence for the proposed adaptation. Select relevant original "
@@ -2859,12 +2903,14 @@ class ChatMitigationStepsMixin:
                 "provision. Return JSON only with adaptation_provisions, new_provisions, causes, "
                 "cause_adaptations, mechanisms. Each cited item must include exact source_ids and "
                 "quoted source_text. Do not treat D4.2 proposed adjustments as existing law."
+                f"{related_proposal_guidance}"
             ),
             messages=[{"role": "user", "content": json.dumps({
                 "hazard": session.selected_hazard or session.accepted_custom_hazard,
                 "adaptations": [measure],
                 "policy_candidates": policy_candidates,
                 "d42_passages": d42,
+                **({"related_factsheet_proposals": related_proposals} if related_proposals else {}),
             }, ensure_ascii=False)}],
             temperature=0.0, max_tokens=1600, response_format="json",
         )
@@ -4532,6 +4578,9 @@ class ChatMitigationStepsMixin:
             prior_gap = str(prior_answers[0] or "").strip() if prior_answers else ""
             prior_adjustment = str(prior_answers[1] or "").strip() if len(prior_answers) > 1 else ""
         if hasattr(self, "db"):
+            factsheet_provider = getattr(self, "_original_policy_mitigation_factsheet_sources", None)
+            if factsheet_provider is not None:
+                sources.extend(factsheet_provider(session))
             reference = d42_policy_reference(
                 self.db, country=session.country, sector=session.sector,
                 selected_policy=session.selected_context_policy,
@@ -4788,7 +4837,6 @@ class ChatMitigationStepsMixin:
                 }
             session.policy_adaptation_clarification_history = clarification_history
         sources = await self._policy_adaptation_sources(session, answer)
-        policy_title = session.selected_context_policy or session.selected_mitigation_policy or "the selected policy"
         policy_sources = [
             {**source, "id": i} for i, source in enumerate(sources, 1)
             if source.get("kind") in {"D4.2", "policy_document"}

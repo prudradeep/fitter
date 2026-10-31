@@ -1,0 +1,11 @@
+{
+  "client_database": "data/dta_c.db",
+  "server_database": "MySQL dta",
+  "policy_type": "Adjustment to existing policy",
+  "index": "data/knowledge.policy_reference.faiss",
+  "counts": {
+    "server_policies.jsonl": 36,
+    "server_knowledge_documents.jsonl": 28,
+    "server_knowledge_chunks.jsonl": 15115
+  }
+}

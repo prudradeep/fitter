@@ -140,6 +140,29 @@ def test_policy_summary_uses_bracketed_basis_and_omits_repeated_generic_labels()
     assert "Inferred**" not in rendered
 
 
+def test_policy_summary_hides_unidentified_sections_and_bullets():
+    summary = (
+        "### Policy details\n\n"
+        "- The licensing rule applies to wind projects.\n\n"
+        "### Intended benefits\n\n"
+        "- **Not identified:** Not separately stated in the available policy material.\n\n"
+        "### Target actors/beneficiaries\n\n"
+        "- **Not identified:** Not identified in the available policy material.\n\n"
+        "### Mechanisms\n\n"
+        "- **Not identified:** Not stated in the supplied text.\n"
+        "- Municipalities may decide the payment amount."
+    )
+
+    rendered = policy_summary_with_buttons(summary, None)
+
+    assert "### Policy details" in rendered
+    assert "### Mechanisms" in rendered
+    assert "Municipalities may decide the payment amount" in rendered
+    assert "### Intended benefits" not in rendered
+    assert "### Target actors/beneficiaries" not in rendered
+    assert "Not identified" not in rendered
+
+
 def test_saved_policy_summary_finishes_sentence_from_source_excerpt():
     summary = "### Policy Objectives\n\n- Funding is limited. Funds are exhausted by Documented - Strong"
     sources = {"policy objectives": [[

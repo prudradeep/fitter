@@ -40,7 +40,9 @@ def label_generated_claims(message: str) -> str:
 
     def label(match: re.Match[str]) -> str:
         opening, tag, body, closing = match.groups()
-        if "workflow-status" in opening:
+        if any(marker in opening for marker in (
+            "workflow-status", "workflow-copy", "source-backed-context",
+        )):
             return match.group(0)
         if "evidence-basis-label" in body or _LABEL.search(body):
             return match.group(0)

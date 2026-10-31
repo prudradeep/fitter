@@ -9,7 +9,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
-from app.models import KnowledgeChunk, KnowledgeDocument, Policy
+from app.models import (
+    KnowledgeChunk,
+    KnowledgeDocument,
+    MitigationMeasurePolicy,
+    OriginalPolicy,
+    OriginalPolicyMitigationPolicyRelation,
+    Policy,
+    PolicyOriginalSource,
+)
 from app.services.hazard_with_mitigation import (
     _new_policy_source_table,
     country_existing_policy_adaptation_sources,
@@ -99,6 +107,179 @@ class HazardWithMitigationFactsheetTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
+
+    def test_original_policy_uses_all_related_mitigation_titles_for_factsheets(self) -> None:
+        original = OriginalPolicy(
+            id="original-1", country_id="test-country",
+            policy_name="Original housing act", excel_row_number=2,
+        )
+        selected = Policy(
+            country_id="test-country", sector_id="test-sector",
+            policy=original.policy_name, policy_type="Original policy",
+            source="original_policy",
+        )
+        first = MitigationMeasurePolicy(
+            policy_code="HEAT_A", policy_title="Clean Heat Act",
+            country_id="test-country", sector_id="test-sector",
+        )
+        second = MitigationMeasurePolicy(
+            policy_code="HEAT_B", policy_title="Tenant Shield Act",
+            country_id="test-country", sector_id="test-sector",
+        )
+        third = MitigationMeasurePolicy(
+            policy_code="HEAT_C", policy_title="Community retrofit service",
+            country_id="test-country", sector_id="test-sector",
+        )
+        self.db.add_all([original, selected, first, second, third])
+        self.db.flush()
+        self.db.add_all([
+            PolicyOriginalSource(
+                policy_id=selected.id, original_policy_id=original.id,
+            ),
+            OriginalPolicyMitigationPolicyRelation(
+                original_policy_id=original.id, mitigation_measure_policy_id=first.id,
+                source_mitigation_title=first.policy_title, excel_row_number=2,
+            ),
+            OriginalPolicyMitigationPolicyRelation(
+                original_policy_id=original.id, mitigation_measure_policy_id=second.id,
+                source_mitigation_title=second.policy_title, excel_row_number=3,
+            ),
+            OriginalPolicyMitigationPolicyRelation(
+                original_policy_id=original.id, mitigation_measure_policy_id=third.id,
+                source_mitigation_title=third.policy_title, excel_row_number=4,
+            ),
+        ])
+        self.db.commit()
+        factsheets = FACTSHEET_TEXT.replace(
+            "POLICY FACTSHEETS FOR NEW POLICY PROPOSALS",
+            "Title of the policy (existing)\nTenant Shield Act\n"
+            "Sectoral focus\nHousing\nProposed adaptations\n"
+            "Protect tenants during heating upgrades.\n"
+            "POLICY FACTSHEETS FOR NEW POLICY PROPOSALS",
+        )
+        service = ChatMitigationCreationGuidedMixin()
+        service.db = self.db
+        service._policy_document_adaptation_reference = AsyncMock(
+            side_effect=AssertionError("A matching factsheet should take priority")
+        )
+        session = ChatSession(
+            selected_context_policy_id=selected.id,
+            selected_context_policy=selected.policy,
+            selected_hazard="Unaffordable heating",
+            country_id="test-country", sector_id="test-sector",
+            country="Germany", sector="Housing",
+        )
+
+        with patch("app.services.hazard_with_mitigation._country_factsheet_text",
+                   return_value=factsheets):
+            reference = asyncio.run(service._existing_policy_adaptation_reference(session))
+
+        self.assertIn("Related mitigation policy: Clean Heat Act", reference)
+        self.assertIn("Add targeted grants for low-income tenants.", reference)
+        self.assertIn("Related mitigation policy: Tenant Shield Act", reference)
+        self.assertIn("Protect tenants during heating upgrades.", reference)
+        self.assertIn("Related mitigation policy: Community retrofit service", reference)
+        self.assertIn("New-policy proposal factsheet idea", reference)
+        self.assertIn("Fund local retrofit advice and tenant protections.", reference)
+        self.assertEqual(reference.count('aria-label="Show the referenced factsheet data"'), 5)
+        concepts = ChatService._existing_policy_adaptation_concepts(reference)
+        self.assertEqual(concepts["approach"], [
+            "Add targeted grants for low-income tenants.",
+            "Protect tenants during heating upgrades.",
+            "Fund local retrofit advice and tenant protections.",
+        ])
+        chat_service = ChatService.__new__(ChatService)
+        chat_service.db = self.db
+        chat_service._stored_context_policy_document_ids = lambda current: []
+        chat_service._shared_knowledge_results = AsyncMock(return_value=[])
+        with patch("app.services.hazard_with_mitigation._country_factsheet_text",
+                   return_value=factsheets), patch(
+                       "app.services.chat_mitigation_steps.d42_policy_reference",
+                       return_value=None,
+                   ):
+            sources = asyncio.run(chat_service._policy_adaptation_sources(session, ""))
+        related_sources = [
+            source for source in sources
+            if source["kind"] == "related_factsheet_proposal"
+        ]
+        self.assertEqual(len(related_sources), 3)
+        self.assertIn("Factsheet proposal (not an existing policy duty): Add targeted grants", related_sources[0]["content"])
+
+    def test_original_policy_without_matching_factsheet_uses_document_fallback(self) -> None:
+        original = OriginalPolicy(
+            id="original-2", country_id="test-country",
+            policy_name="Original housing policy", excel_row_number=4,
+        )
+        selected = Policy(
+            country_id="test-country", sector_id="test-sector",
+            policy=original.policy_name, policy_type="Original policy",
+            source="original_policy",
+        )
+        mitigation = MitigationMeasurePolicy(
+            policy_code="HEAT_C", policy_title="Unlisted mitigation title",
+            country_id="test-country", sector_id="test-sector",
+        )
+        self.db.add_all([original, selected, mitigation])
+        self.db.flush()
+        self.db.add_all([
+            PolicyOriginalSource(
+                policy_id=selected.id, original_policy_id=original.id,
+            ),
+            OriginalPolicyMitigationPolicyRelation(
+                original_policy_id=original.id,
+                mitigation_measure_policy_id=mitigation.id,
+                source_mitigation_title=mitigation.policy_title,
+                excel_row_number=4,
+            ),
+        ])
+        self.db.commit()
+        service = ChatMitigationCreationGuidedMixin()
+        service.db = self.db
+        service._policy_document_adaptation_reference = AsyncMock(
+            return_value="Linked original policy document",
+        )
+        session = ChatSession(
+            selected_context_policy_id=selected.id,
+            selected_context_policy=selected.policy,
+            country_id="test-country", sector_id="test-sector",
+            country="Germany", sector="Housing",
+        )
+
+        with patch("app.services.chat_mitigation_creation_guided.d42_policy_reference",
+                   return_value=None):
+            reference = asyncio.run(service._existing_policy_adaptation_reference(session))
+
+        self.assertEqual(reference, "Linked original policy document")
+        service._policy_document_adaptation_reference.assert_awaited_once_with(session)
+
+    def test_case_study_keeps_its_existing_adaptation_lookup(self) -> None:
+        selected = Policy(
+            country_id="test-country", sector_id="test-sector",
+            policy="Survey housing case", policy_type="Survey policy case study",
+            source="xlsx",
+        )
+        self.db.add(selected)
+        self.db.commit()
+        service = ChatMitigationCreationGuidedMixin()
+        service.db = self.db
+        service._policy_document_adaptation_reference = AsyncMock(
+            return_value="Case study document adaptations",
+        )
+        session = ChatSession(
+            selected_context_policy_id=selected.id,
+            selected_context_policy=selected.policy,
+            country="Germany", sector="Housing",
+        )
+
+        with patch("app.services.chat_mitigation_creation_guided.d42_policy_reference",
+                   return_value=None), patch.object(
+                       service, "_original_policy_mitigation_factsheets",
+                       side_effect=AssertionError("Case studies must keep their current path"),
+                   ):
+            reference = asyncio.run(service._existing_policy_adaptation_reference(session))
+
+        self.assertEqual(reference, "Case study document adaptations")
+
 
     def test_selected_policy_objectives_come_from_matching_factsheet(self) -> None:
         objectives = country_factsheet_policy_objectives(

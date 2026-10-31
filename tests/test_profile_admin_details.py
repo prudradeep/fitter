@@ -4,6 +4,7 @@ from app.services.chat_formatters import format_hazards
 from app.services.chat_persistence import ChatPersistenceMixin
 from app.services.chat_service import ChatService
 from app.services.chat_session import ChatSession
+from app.services.generated_claim_labels import label_generated_claims
 from app.services.message_renderer import render_message
 
 
@@ -257,6 +258,8 @@ class ProfileAdminDetailsTests(unittest.TestCase):
             message.index("The predictive model results"),
         )
         self.assertLess(message.index("The predictive model results"), message.index("Top 3"))
+        labelled = label_generated_claims(message)
+        self.assertIn('predictive model: <strong>407</strong>.</p>', labelled)
 
     def test_hazard_intro_note_styles_survive_message_sanitizing(self):
         session = ChatSession(
@@ -273,8 +276,16 @@ class ProfileAdminDetailsTests(unittest.TestCase):
             hazards=format_hazards(session),
         )
 
-        self.assertIn('class="hazard-group-intro hazard-group-intro--co-created"', message)
-        self.assertIn('class="hazard-group-intro hazard-group-intro--additional"', message)
+        self.assertIn(
+            'class="hazard-group-intro hazard-group-intro--co-created source-backed-context"',
+            message,
+        )
+        self.assertIn(
+            'class="hazard-group-intro hazard-group-intro--additional source-backed-context"',
+            message,
+        )
+        labelled = label_generated_claims(message)
+        self.assertIn("identified by policy and subject-matter experts during the open labs under WP4.</p>", labelled)
 
     def test_persisted_message_display_strips_admin_details_for_non_admin(self):
         service = ChatService.__new__(ChatService)

@@ -262,6 +262,7 @@ def _read_original_policies_xlsx_rows() -> tuple[list[tuple[str, str]], list[dic
             "country": _xlsx_cell(row, 0),
             "sector": _xlsx_cell(row, 1),
             "code": _xlsx_cell(row, 4),
+            "mitigation_policy_title": _xlsx_cell(row, 5),
             "policy_name": _xlsx_cell(row, 8),
             "objective": _xlsx_cell(row, 9),
             "policy_document": _xlsx_cell(row, 10),
@@ -270,7 +271,7 @@ def _read_original_policies_xlsx_rows() -> tuple[list[tuple[str, str]], list[dic
         }
         for row_number, row in enumerate(rows[1:], start=2)
         if _xlsx_cell(row, 0) and _xlsx_cell(row, 1)
-        and _xlsx_cell(row, 4) and _xlsx_cell(row, 8)
+        and _xlsx_cell(row, 4) and _xlsx_cell(row, 5) and _xlsx_cell(row, 8)
     ]
     return hazards, policies
 
@@ -1248,6 +1249,20 @@ def _seed_original_policies_xlsx(connection) -> None:
         (str(row["original_policy_id"]), str(row["code"]).casefold()): str(row["id"])
         for row in connection.execute(text("SELECT id, original_policy_id, code FROM original_policy_codes")).mappings()
     }
+    mitigation_policy_ids = {
+        (str(row["policy_code"]).casefold(), str(row["sector_id"]), str(row["country_id"])): str(row["id"])
+        for row in connection.execute(text("""
+            SELECT id, policy_code, sector_id, country_id
+            FROM mitigation_measure_policies WHERE source = 'xlsx'
+        """)).mappings()
+    }
+    existing_policy_relations = {
+        (str(row["original_policy_id"]), str(row["mitigation_measure_policy_id"]))
+        for row in connection.execute(text("""
+            SELECT original_policy_id, mitigation_measure_policy_id
+            FROM original_policy_mitigation_policy_relations
+        """)).mappings()
+    }
     existing_links = {
         (str(row["original_policy_code_id"]), str(row["system_hazard_id"]), str(row["relationship"]))
         for row in connection.execute(text("""
@@ -1255,7 +1270,7 @@ def _seed_original_policies_xlsx(connection) -> None:
             FROM original_policy_system_hazard
         """)).mappings()
     }
-    inserted_policies = inserted_sectors = inserted_codes = inserted_links = 0
+    inserted_policies = inserted_sectors = inserted_codes = inserted_links = inserted_relations = 0
     ignored_relationships = {"No link", "Not provided", "Not applicable"}
     for row in rows:
         policy_name = str(row["policy_name"])
@@ -1316,6 +1331,30 @@ def _seed_original_policies_xlsx(connection) -> None:
             })
             codes_by_policy_code[code_key] = code_id
             inserted_codes += 1
+        mitigation_key = (str(row["code"]).casefold(), sector_id, country_id)
+        mitigation_policy_id = mitigation_policy_ids.get(mitigation_key)
+        if mitigation_policy_id is None:
+            raise ValueError(
+                f"No mitigation measure policy for original policy row {row['excel_row_number']}: "
+                f"{row['country']} / {row['sector']} / {row['code']}"
+            )
+        relation_key = (policy_id, mitigation_policy_id)
+        if relation_key not in existing_policy_relations:
+            connection.execute(text("""
+                INSERT INTO original_policy_mitigation_policy_relations
+                    (id, original_policy_id, mitigation_measure_policy_id,
+                     source_mitigation_title, excel_row_number)
+                VALUES (:id, :original_policy_id, :mitigation_measure_policy_id,
+                        :source_mitigation_title, :excel_row_number)
+            """), {
+                "id": str(uuid.uuid4()),
+                "original_policy_id": policy_id,
+                "mitigation_measure_policy_id": mitigation_policy_id,
+                "source_mitigation_title": row["mitigation_policy_title"],
+                "excel_row_number": row["excel_row_number"],
+            })
+            existing_policy_relations.add(relation_key)
+            inserted_relations += 1
         for heading, relationship in zip(hazard_headings, row["relationships"]):
             if not relationship or relationship in ignored_relationships:
                 continue
@@ -1337,9 +1376,77 @@ def _seed_original_policies_xlsx(connection) -> None:
             existing_links.add(link_key)
             inserted_links += 1
     logger.info(
-        "Loaded %s original policies, %s sector mappings, %s code mappings, and %s policy-system-hazard links",
-        inserted_policies, inserted_sectors, inserted_codes, inserted_links,
+        "Loaded %s original policies, %s sector mappings, %s code mappings, %s mitigation-policy relations, and %s policy-system-hazard links",
+        inserted_policies, inserted_sectors, inserted_codes, inserted_relations, inserted_links,
     )
+
+
+def _seed_original_policy_picker_rows(connection) -> None:
+    """Expose each original policy in the existing country/sector policy picker."""
+    originals = connection.execute(text("""
+        SELECT original_policies.id AS original_policy_id,
+               original_policies.country_id, original_policies.policy_name,
+               original_policies.excel_row_number, original_policy_sectors.sector_id
+        FROM original_policies
+        JOIN original_policy_sectors
+          ON original_policy_sectors.original_policy_id = original_policies.id
+        ORDER BY original_policies.excel_row_number, original_policies.id
+    """)).mappings().all()
+    if not originals:
+        return
+    picker_rows = {
+        (str(row["country_id"]), str(row["sector_id"]),
+         str(row["policy"]).split("\n", 1)[0].strip().casefold()): str(row["id"])
+        for row in connection.execute(text("""
+            SELECT id, country_id, sector_id, policy FROM policies
+        """)).mappings()
+    }
+    linked = {
+        str(row["policy_id"]): str(row["original_policy_id"])
+        for row in connection.execute(text("""
+            SELECT policy_id, original_policy_id FROM policy_original_sources
+        """)).mappings()
+    }
+    inserted = linked_count = 0
+    for original in originals:
+        key = (
+            str(original["country_id"]), str(original["sector_id"]),
+            str(original["policy_name"]).split("\n", 1)[0].strip().casefold(),
+        )
+        picker_id = picker_rows.get(key)
+        if picker_id is None:
+            picker_id = str(uuid.uuid4())
+            connection.execute(text("""
+                INSERT INTO policies
+                    (id, country_id, sector_id, policy, policy_type, source, excel_row_number)
+                VALUES
+                    (:id, :country_id, :sector_id, :policy, 'Original policy',
+                     'original_policy', :excel_row_number)
+            """), {
+                "id": picker_id,
+                "country_id": original["country_id"],
+                "sector_id": original["sector_id"],
+                "policy": original["policy_name"],
+                "excel_row_number": original["excel_row_number"],
+            })
+            picker_rows[key] = picker_id
+            inserted += 1
+        original_id = str(original["original_policy_id"])
+        linked_original_id = linked.get(picker_id)
+        if linked_original_id is not None and linked_original_id != original_id:
+            raise ValueError(f"Policy picker row {picker_id} links to multiple original policies")
+        if linked_original_id is None:
+            connection.execute(text("""
+                INSERT INTO policy_original_sources (id, policy_id, original_policy_id)
+                VALUES (:id, :policy_id, :original_policy_id)
+            """), {
+                "id": str(uuid.uuid4()),
+                "policy_id": picker_id,
+                "original_policy_id": original_id,
+            })
+            linked[picker_id] = original_id
+            linked_count += 1
+    logger.info("Loaded %s original policy picker rows and %s source links", inserted, linked_count)
 
 
 def _seed_policies_xlsx(connection) -> None:
@@ -1377,6 +1484,9 @@ def _seed_policies_xlsx(connection) -> None:
         ).mappings()
     }
     for row in rows:
+        if str(row.get("policy_type") or "").strip().casefold() == "adjustment to existing policy":
+            skipped += 1
+            continue
         country_id = country_by_name.get(_normalize_mitigation_example_key(str(row["country"] or "")))
         sector_id = sector_by_name.get(_normalize_mitigation_example_key(str(row["sector"] or "")))
         if country_id is None or sector_id is None:
@@ -1846,5 +1956,6 @@ def ensure_mitigation_measure_examples() -> None:
         _seed_hazards_xlsx_policy_system_hazards(connection)
         _seed_policies_xlsx(connection)
         _seed_original_policies_xlsx(connection)
+        _seed_original_policy_picker_rows(connection)
 
 

@@ -503,6 +503,20 @@ class OriginalPolicy(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class PolicyOriginalSource(Base):
+    __tablename__ = "policy_original_sources"
+    __table_args__ = (UniqueConstraint("policy_id", name="uq_policy_original_source_policy"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    policy_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("policies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    original_policy_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("original_policies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class OriginalPolicySector(Base):
     __tablename__ = "original_policy_sectors"
     __table_args__ = (UniqueConstraint("original_policy_id", "sector_id", name="uq_original_policy_sector"),)
@@ -520,6 +534,27 @@ class OriginalPolicyCode(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     original_policy_id: Mapped[str] = mapped_column(String(36), ForeignKey("original_policies.id", ondelete="CASCADE"), nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(80), nullable=False)
+    excel_row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class OriginalPolicyMitigationPolicyRelation(Base):
+    __tablename__ = "original_policy_mitigation_policy_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "original_policy_id", "mitigation_measure_policy_id",
+            name="uq_original_policy_mitigation_policy",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    original_policy_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("original_policies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    mitigation_measure_policy_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("mitigation_measure_policies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_mitigation_title: Mapped[str] = mapped_column(Text, nullable=False)
     excel_row_number: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 

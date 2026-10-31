@@ -111,13 +111,13 @@ def _is_unidentified_summary_bullet(line: str) -> bool:
     def normalized(value: str) -> str:
         return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
 
-    return (
-        normalized(label) == "not identified"
-        and normalized(detail) in {
-            "not stated in the supplied text",
-            "not stated in supplied text",
-        }
-    )
+    return normalized(label) == "not identified" or normalized(detail) in {
+        "not identified",
+        "not stated in the supplied text",
+        "not stated in supplied text",
+        "not separately stated in the available policy material",
+        "not identified in the available policy material",
+    }
 
 
 def summary_points(markdown: str):

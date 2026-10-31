@@ -19,7 +19,7 @@ class ChatProfileRenderingMixin:
         lines = [
             f"### Socio-demographic profiles most affected by {hazard}",
             "",
-            "As displayed, the twin transition policy proposal under analysis, unintentionally, is creating the selected hazard and affecting some population profiles (disadvantaged groups) as shown below:.",
+            "The table below lists socio-demographic profiles associated with the selected hazard.",
         ]
         summary = str(hazard_summary or "").strip()
         if summary:
@@ -33,7 +33,7 @@ class ChatProfileRenderingMixin:
                 ]
             )
         if not profiles and not user_profiles:
-            lines.append("- No clearly supported socio-demographic profiles were returned for this hazard.")
+            lines.append("- No clearly supported socio-demographic profiles for this hazard.")
             return "\n".join(lines)
         rows = self._hazard_profile_table_rows(profiles)
         user_rows = self._hazard_profile_table_rows(

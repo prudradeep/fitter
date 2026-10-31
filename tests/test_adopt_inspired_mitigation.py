@@ -778,6 +778,71 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
                          session.inspired_mitigation_considered_groups)
         engine._policy_adaptation_sources.assert_awaited_once()
 
+    def test_related_original_policy_factsheet_is_available_to_draft_and_review(self):
+        engine = _InspiredMeasureEngine()
+        engine._policy_adaptation_sources = AsyncMock(return_value=[
+            {"kind": "policy_document", "title": "Original policy",
+             "content": "The current policy describes household supply terms."},
+            {"kind": "related_factsheet_proposal", "title": "Germany factsheet",
+             "content": "Related mitigation policy: Clean Heat Act\n"
+                        "Factsheet proposal (not an existing policy duty): Add targeted grants."},
+        ])
+        engine._analyze_mitigation_evidence = AsyncMock(
+            return_value={"rewrites": [], "mappings": [], "sources": []},
+        )
+        session = self._session()
+        session.mitigation_proposal_type = "existing_policy"
+        session.new_policy_inspiration = {
+            "challenge": [], "approach": ["Add targeted grants."],
+            "policy_mechanisms": [],
+        }
+        response_payload = {
+            "measure": "Add targeted grants for eligible households.",
+            "reason": "Grants lower household costs.",
+            "policy_about": "The policy governs household supply terms.",
+            "causal_analysis": {
+                "status": "clear", "policy_action": "Add grants",
+                "mechanism_changed": "Reduce household charges",
+                "direct_effect": "Lower bills", "hazard_reduction": "Less cost pressure",
+                "explanation": "The grants lower bills.",
+                "evidence_support": "partially_supported",
+            },
+        }
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat",
+                   new=AsyncMock(return_value=json.dumps(response_payload))) as ask_llm:
+            response = asyncio.run(engine._adopt_inspired_mitigation_response(
+                "session-1", session,
+            ))
+
+        self.assertIn("Add targeted grants", response.bot_message)
+        generation_input = json.loads(ask_llm.await_args.kwargs["messages"][0]["content"])
+        self.assertEqual(generation_input["important_concepts"]["approach"], ["Add targeted grants."])
+        self.assertEqual(
+            [source["kind"] for source in generation_input["sources"]],
+            ["policy_document", "related_factsheet_proposal"],
+        )
+        reviewed_sources = engine._analyze_mitigation_evidence.await_args.args[2]
+        self.assertEqual(reviewed_sources[1]["kind"], "related_factsheet_proposal")
+
+    def test_related_factsheet_proposal_is_available_to_evidence_analysis(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        sources = [{
+            "kind": "related_factsheet_proposal", "title": "Germany factsheet",
+            "content": "Factsheet proposal (not an existing policy duty): Add targeted grants.",
+        }]
+        with patch("app.services.chat_mitigation_steps.ask_llm_chat",
+                   new=AsyncMock(return_value='{"mechanisms":[]}')) as ask_llm:
+            asyncio.run(engine._analyze_mitigation_evidence(
+                session, "Add targeted grants.", sources,
+            ))
+        evidence_input = json.loads(ask_llm.await_args.kwargs["messages"][0]["content"])
+        self.assertEqual(
+            evidence_input["related_factsheet_proposals"][0]["content"],
+            sources[0]["content"],
+        )
+        self.assertEqual(evidence_input["policy_candidates"], [])
+
     def test_source_grounded_generation_stops_after_bounded_revisions(self):
         engine = _InspiredMeasureEngine()
         engine._policy_adaptation_sources = AsyncMock(return_value=[
