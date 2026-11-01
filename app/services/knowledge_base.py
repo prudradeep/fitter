@@ -17,7 +17,10 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, Sector
+from app.models import (
+    Country, KnowledgeChunk, KnowledgeDocument, KnowledgeDocumentUsage,
+    KnowledgeSource, KnowledgeSourceChunk, KnowledgeSourceVersion, Policy, Sector,
+)
 from app.services.bedrock_provider import (
     BedrockProviderError,
     embedding as bedrock_embedding,
@@ -98,6 +101,77 @@ def normalize_source_url(url: str) -> str:
     if path != "/":
         path = path.rstrip("/") or "/"
     return urlunparse((scheme, netloc, path, parsed.params, parsed.query, ""))
+
+
+def _source_identity(source_type: str, source_uri: str | None, chunks: list[ChunkDraft]) -> tuple[str, str | None, str]:
+    canonical_uri = normalize_source_url(source_uri or "") if source_type in {"url", "policy_url", "original_policy_url"} else None
+    content_hash = hashlib.sha256("\n".join(chunk.content for chunk in chunks).encode("utf-8")).hexdigest()
+    identity = f"url:{canonical_uri}" if canonical_uri else f"content:{content_hash}"
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest(), canonical_uri or None, content_hash
+
+
+def register_normalized_document(
+    db: Session, document: KnowledgeDocument, chunks: list[ChunkDraft],
+) -> list[KnowledgeSourceChunk]:
+    """Attach a persisted document to reusable source, version, chunks, and usage rows."""
+    identity_hash, canonical_uri, content_hash = _source_identity(
+        document.source_type, document.source_uri, chunks,
+    )
+    source = db.scalar(select(KnowledgeSource).where(KnowledgeSource.identity_hash == identity_hash))
+    if source is None:
+        source = KnowledgeSource(
+            identity_hash=identity_hash,
+            canonical_uri=canonical_uri,
+            source_type=document.source_type,
+            content_sha256=content_hash,
+        )
+        db.add(source)
+        db.flush()
+    source_version = db.scalar(select(KnowledgeSourceVersion).where(
+        KnowledgeSourceVersion.source_id == source.id,
+        KnowledgeSourceVersion.content_sha256 == content_hash,
+    ))
+    if source_version is None:
+        source_version = KnowledgeSourceVersion(source_id=source.id, content_sha256=content_hash)
+        db.add(source_version)
+        db.flush()
+    shared_rows = db.scalars(select(KnowledgeSourceChunk).where(
+        KnowledgeSourceChunk.source_version_id == source_version.id,
+    ).order_by(KnowledgeSourceChunk.chunk_index)).all()
+    if not shared_rows:
+        shared_rows = [
+            KnowledgeSourceChunk(
+                source_version_id=source_version.id,
+                chunk_index=index,
+                content=chunk.content,
+                page_number=chunk.page_number,
+            )
+            for index, chunk in enumerate(chunks)
+        ]
+        db.add_all(shared_rows)
+        db.flush()
+    document.source_id = source.id
+    db.add(KnowledgeDocumentUsage(
+        knowledge_document_id=document.id,
+        scope=document.scope,
+        user_id=document.user_id,
+        session_key=document.session_key,
+        scope_level=document.scope_level,
+        country_id=document.country_id,
+        region_id=document.region_id,
+        sector_id=document.sector_id,
+    ))
+    return shared_rows
+
+
+def delete_orphaned_knowledge_sources(db: Session) -> int:
+    has_document = (
+        select(KnowledgeDocument.id)
+        .where(KnowledgeDocument.source_id == KnowledgeSource.id)
+        .exists()
+    )
+    result = db.execute(delete(KnowledgeSource).where(~has_document))
+    return int(result.rowcount or 0)
 
 
 class KnowledgeBaseService:
@@ -391,11 +465,13 @@ class KnowledgeBaseService:
         )
         self.db.add(document)
         self.db.flush()
+        shared_rows = register_normalized_document(self.db, document, chunks)
 
         chunk_rows: list[KnowledgeChunk] = []
         for index, chunk in enumerate(chunks):
             row = KnowledgeChunk(
                 document_id=document.id,
+                shared_chunk_id=shared_rows[index].id,
                 user_id=self.user_id,
                 chunk_index=index,
                 content=chunk.content,
@@ -556,6 +632,7 @@ class KnowledgeBaseService:
                 KnowledgeDocument.scope == self.scope,
             )
         )
+        delete_orphaned_knowledge_sources(self.db)
         self.db.commit()
         return bool(result.rowcount)
 
@@ -743,6 +820,7 @@ class KnowledgeBaseService:
         chunk_ids = list(self.db.scalars(query).all())
         self._remove_vectors(chunk_ids)
         result = self.db.execute(document_query)
+        delete_orphaned_knowledge_sources(self.db)
         self.db.commit()
         return int(result.rowcount or 0)
 
@@ -768,6 +846,7 @@ class KnowledgeBaseService:
                 KnowledgeDocument.source_uri.in_(source_uris),
             )
         )
+        delete_orphaned_knowledge_sources(self.db)
         self.db.commit()
         return int(result.rowcount or 0)
 

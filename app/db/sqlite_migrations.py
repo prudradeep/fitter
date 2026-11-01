@@ -700,6 +700,97 @@ def _027_policy_knowledge_documents(connection: Connection) -> None:
     """))
 
 
+def _028_normalized_knowledge_sources(connection: Connection) -> None:
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS knowledge_sources (
+            id VARCHAR(36) PRIMARY KEY,
+            identity_hash VARCHAR(64) NOT NULL UNIQUE,
+            canonical_uri TEXT NULL,
+            source_type VARCHAR(40) NOT NULL,
+            content_sha256 VARCHAR(64) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    _create_index(connection, "knowledge_sources", "ix_knowledge_sources_identity_hash", "identity_hash")
+    _create_index(connection, "knowledge_sources", "ix_knowledge_sources_content_sha256", "content_sha256")
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS knowledge_source_versions (
+            id VARCHAR(36) PRIMARY KEY,
+            source_id VARCHAR(36) NOT NULL REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+            content_sha256 VARCHAR(64) NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_knowledge_source_version_hash UNIQUE (source_id, content_sha256)
+        )
+    """))
+    _create_index(connection, "knowledge_source_versions", "ix_knowledge_source_versions_source", "source_id")
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS knowledge_source_chunks (
+            id VARCHAR(36) PRIMARY KEY,
+            source_version_id VARCHAR(36) NOT NULL REFERENCES knowledge_source_versions(id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            page_number INTEGER NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_knowledge_source_chunk_position UNIQUE (source_version_id, chunk_index)
+        )
+    """))
+    _create_index(connection, "knowledge_source_chunks", "ix_knowledge_source_chunks_version", "source_version_id")
+    _add_column(connection, "knowledge_documents", "source_id", "source_id VARCHAR(36) NULL REFERENCES knowledge_sources(id) ON DELETE SET NULL")
+    _create_index(connection, "knowledge_documents", "ix_knowledge_documents_source_id", "source_id")
+    _add_column(connection, "knowledge_chunks", "shared_chunk_id", "shared_chunk_id VARCHAR(36) NULL REFERENCES knowledge_source_chunks(id) ON DELETE SET NULL")
+    _create_index(connection, "knowledge_chunks", "ix_knowledge_chunks_shared_chunk_id", "shared_chunk_id")
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS knowledge_document_usages (
+            id VARCHAR(36) PRIMARY KEY,
+            knowledge_document_id VARCHAR(36) NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+            scope VARCHAR(32) NOT NULL,
+            user_id VARCHAR(36) NULL REFERENCES app_users(id) ON DELETE CASCADE,
+            session_key VARCHAR(64) NULL,
+            scope_level VARCHAR(20) NOT NULL DEFAULT 'global',
+            country_id VARCHAR(36) NULL REFERENCES countries(id) ON DELETE SET NULL,
+            region_id VARCHAR(36) NULL REFERENCES regions(id) ON DELETE SET NULL,
+            sector_id VARCHAR(36) NULL REFERENCES sectors(id) ON DELETE SET NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    for index_name, column in (
+        ("ix_knowledge_document_usages_document", "knowledge_document_id"),
+        ("ix_knowledge_document_usages_scope", "scope"),
+        ("ix_knowledge_document_usages_user", "user_id"),
+        ("ix_knowledge_document_usages_session", "session_key"),
+        ("ix_knowledge_document_usages_country", "country_id"),
+        ("ix_knowledge_document_usages_region", "region_id"),
+        ("ix_knowledge_document_usages_sector", "sector_id"),
+    ):
+        _create_index(connection, "knowledge_document_usages", index_name, column)
+    connection.execute(text("""
+        INSERT INTO knowledge_document_usages
+            (id, knowledge_document_id, scope, user_id, session_key, scope_level,
+             country_id, region_id, sector_id, created_at)
+        SELECT lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
+               substr(lower(hex(randomblob(2))), 2) || '-a' ||
+               substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6))),
+               kd.id, kd.scope, kd.user_id, kd.session_key, kd.scope_level,
+               kd.country_id, kd.region_id, kd.sector_id, kd.created_at
+        FROM knowledge_documents kd
+        WHERE NOT EXISTS (
+            SELECT 1 FROM knowledge_document_usages u
+            WHERE u.knowledge_document_id = kd.id AND u.scope = kd.scope
+              AND ifnull(u.user_id, '') = ifnull(kd.user_id, '')
+              AND ifnull(u.session_key, '') = ifnull(kd.session_key, '')
+        )
+    """))
+
+
+def _029_knowledge_chunk_reuse_index(connection: Connection) -> None:
+    _create_index(
+        connection,
+        "knowledge_chunks",
+        "ix_knowledge_chunks_document_chunk",
+        "document_id, chunk_index",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -728,6 +819,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("025_original_policy_mitigation_relations", _025_original_policy_mitigation_relations),
     ("026_original_policy_picker_links", _026_original_policy_picker_links),
     ("027_policy_knowledge_documents", _027_policy_knowledge_documents),
+    ("028_normalized_knowledge_sources", _028_normalized_knowledge_sources),
+    ("029_knowledge_chunk_reuse_index", _029_knowledge_chunk_reuse_index),
 )
 
 

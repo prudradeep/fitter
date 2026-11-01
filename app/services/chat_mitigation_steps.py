@@ -3103,6 +3103,10 @@ class ChatMitigationStepsMixin:
             f"- {barrier_issue}\n\n"
             if barrier_issue else ""
         )
+        causal_review_note = (
+            "*The causal pathway check could not be completed. Please review the measure before confirming.*\n\n"
+            if causal.get("analysis_unavailable") else ""
+        )
         return ChatResponse(
             session_id=session_id,
             step="inspired_mitigation_confirmation",
@@ -3113,14 +3117,14 @@ class ChatMitigationStepsMixin:
                 f"**What this policy is about:** {policy_about}\n\n"
                 f"{('**How the proposed measure mitigates the selected hazard:** ' + hazard_pathway + chr(10) + chr(10)) if hazard_pathway else ''}"
                 f"{group_section}"
-                f"{access_barrier_section}{uncovered_section}{closing}"
+                f"{access_barrier_section}{uncovered_section}{causal_review_note}{closing}"
             ),
             options=([*INSPIRED_MITIGATION_REVISION_OPTIONS,
                       Option(id=3, label=INSPIRED_MITIGATION_PARTIAL_OPTIONS[1].label)] if needs_revision
                      else INSPIRED_MITIGATION_PARTIAL_OPTIONS),
             session=session.summary(),
             input_mode="text",
-            error=error or bool(causal.get("analysis_unavailable")),
+            error=error,
         )
 
     async def _handle_inspired_mitigation_confirmation(

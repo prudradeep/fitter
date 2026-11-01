@@ -33,6 +33,7 @@ from app.routes.sync import router as sync_router
 from app.security import apply_security_headers, create_csrf_token, csrf_request_allowed, csrf_token_valid
 from app.seed_data import seed_main_kb_from_files
 from app.services.coverage import get_coverage_map_rows, get_coverage_rows
+from app.services.maintenance import cleanup_temporary_knowledge
 from app.services.prompt_store import enable_prompt_db_reads_if_rows, seed_prompts_from_files
 from app.services.policy_knowledge_seed import consolidate_policy_url_documents
 from app.services.seed_index_bundle import install_seed_indexes
@@ -40,6 +41,7 @@ from app.services.sync_permissions import sync_client_permission_enabled
 from app.services.sync_service import SyncService
 
 settings = get_settings()
+TEMPORARY_KNOWLEDGE_CLEANUP_INTERVAL_SECONDS = 60 * 60
 
 configure_logging(
     getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -233,6 +235,9 @@ async def startup() -> None:
             consolidated = consolidate_policy_url_documents(db)
             if consolidated:
                 logger.info("Consolidated %s duplicate policy URL documents", consolidated)
+    app.state.temporary_knowledge_cleanup_task = asyncio.create_task(
+        _temporary_knowledge_cleanup_loop()
+    )
     try:
         if _should_seed_prompts_from_files():
             seeded_prompts = seed_prompts_from_files()
@@ -261,6 +266,22 @@ async def _seed_policy_knowledge_after_startup() -> None:
         logger.info("Bundled knowledge startup import completed result=%s", file_result)
     except Exception:
         logger.exception("Bundled Main KB startup import failed")
+
+
+def _cleanup_expired_temporary_knowledge() -> int:
+    with SessionLocal() as db:
+        return cleanup_temporary_knowledge(db, settings.temporary_knowledge_retention_hours)
+
+
+async def _temporary_knowledge_cleanup_loop() -> None:
+    while True:
+        try:
+            removed = await asyncio.to_thread(_cleanup_expired_temporary_knowledge)
+            if removed:
+                logger.info("Removed %s expired temporary knowledge documents", removed)
+        except Exception:
+            logger.exception("Temporary knowledge cleanup failed")
+        await asyncio.sleep(TEMPORARY_KNOWLEDGE_CLEANUP_INTERVAL_SECONDS)
 
 
 def _start_policy_knowledge_seed_task() -> None:

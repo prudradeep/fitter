@@ -1640,6 +1640,10 @@ def run_runtime_migrations(
             Base.metadata.create_all(bind=engine)
             applied = apply_sqlite_migrations()
 
+        from app.db.knowledge_normalization import backfill_knowledge_normalization
+
+        backfill_knowledge_normalization()
+
         # OfflineAdmin uses the same canonical seed_data.py orchestration as
         # the MySQL server. The SQLite branch must therefore honor the same
         # include_basic_data/seed_reference_data switches instead of returning
@@ -1663,6 +1667,9 @@ def run_runtime_migrations(
     if apply_base_schema:
         run_schema_sql(include_basic_data=include_basic_data)
     apply_versioned_migrations()
+    from app.db.knowledge_normalization import backfill_knowledge_normalization
+
+    backfill_knowledge_normalization()
     repair_partial_installer_schema()
     if seed_reference_data:
         ensure_additional_hazards()

@@ -1,7 +1,7 @@
 from datetime import datetime
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -708,6 +708,9 @@ class KnowledgeDocument(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(40), nullable=False)
     source_uri: Mapped[str | None] = mapped_column(Text)
+    source_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("knowledge_sources.id", ondelete="SET NULL"), index=True
+    )
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="main", index=True)
     faiss_indexed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     session_key: Mapped[str | None] = mapped_column(String(64), index=True)
@@ -718,6 +721,68 @@ class KnowledgeDocument(Base):
         String(36), ForeignKey("policies.id", ondelete="SET NULL"), index=True
     )
     scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="global", server_default="global", index=True)
+    country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True)
+    region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
+    sector_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class KnowledgeSource(Base):
+    """Reusable identity for a source URL or uploaded file, independent of its uses."""
+    __tablename__ = "knowledge_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    identity_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    canonical_uri: Mapped[str | None] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class KnowledgeSourceVersion(Base):
+    __tablename__ = "knowledge_source_versions"
+    __table_args__ = (
+        UniqueConstraint("source_id", "content_sha256", name="uq_knowledge_source_version_hash"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_sources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class KnowledgeSourceChunk(Base):
+    __tablename__ = "knowledge_source_chunks"
+    __table_args__ = (
+        UniqueConstraint("source_version_id", "chunk_index", name="uq_knowledge_source_chunk_position"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_source_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class KnowledgeDocumentUsage(Base):
+    """Access/scope metadata for a document use; content remains on the document."""
+    __tablename__ = "knowledge_document_usages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    knowledge_document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="CASCADE"), index=True
+    )
+    session_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="global", server_default="global")
     country_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("countries.id", ondelete="SET NULL"), index=True)
     region_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("regions.id", ondelete="SET NULL"), index=True)
     sector_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("sectors.id", ondelete="SET NULL"), index=True)
@@ -771,10 +836,14 @@ class CustomHazardPolicyReference(Base):
 
 class KnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
+    __table_args__ = (Index("ix_knowledge_chunks_document_chunk", "document_id", "chunk_index"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     document_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("knowledge_documents.id", ondelete="CASCADE"), index=True
+    )
+    shared_chunk_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("knowledge_source_chunks.id", ondelete="SET NULL"), index=True
     )
     user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("app_users.id", ondelete="CASCADE"), index=True

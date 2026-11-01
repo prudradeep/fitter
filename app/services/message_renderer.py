@@ -157,9 +157,41 @@ def render_message(template_name: str, **context: object) -> str:
             prompt = prompt.replace(
                 '{{ policy.title }}',
                 '{% if policy.document_url %}'
-                '<a href="{{ policy.document_url }}" class="policy-document-link">'
+                '<a href="{{ policy.document_url }}" class="policy-document-link" '
+                'target="_blank" rel="noopener noreferrer">'
                 '{{ policy.title }}</a>{% else %}{{ policy.title }}{% endif %}',
             )
+        def open_policy_links_in_new_tab(match: re.Match[str]) -> str:
+            tag = match.group(0)
+            dynamic_document_url = re.search(
+                r'\bhref\s*=\s*(["\'])\{\{\s*policy\.document_url\s*\}\}\1',
+                tag,
+                flags=re.IGNORECASE,
+            )
+            if dynamic_document_url:
+                tag = re.sub(
+                    r'\s+(?:target|rel)\s*=\s*(["\']).*?\1',
+                    "",
+                    tag,
+                    flags=re.IGNORECASE,
+                )
+                return (
+                    tag[:-1]
+                    + " {% if not policy.document_url.startswith('/api/knowledge/documents/') %}"
+                    + 'target="_blank" rel="noopener noreferrer"{% endif %}>'
+                )
+            if not re.search(r"\btarget\s*=", tag, flags=re.IGNORECASE):
+                tag = tag[:-1] + ' target="_blank">'
+            if not re.search(r"\brel\s*=", tag, flags=re.IGNORECASE):
+                tag = tag[:-1] + ' rel="noopener noreferrer">'
+            return tag
+
+        prompt = re.sub(
+            r'<a\b(?=[^>]*\bclass=["\'][^"\']*\bpolicy-document-link\b[^"\']*["\'])[^>]*>',
+            open_policy_links_in_new_tab,
+            prompt,
+            flags=re.IGNORECASE,
+        )
     if (
         template_name == "reason_confirmation.md"
         and prompt

@@ -22,7 +22,7 @@ from app.services.document_language import (
 from app.services.knowledge_base import (
     ORIGINAL_POLICY_SCOPE, POLICY_DOCUMENT_SCOPE, ChunkDraft, KnowledgeBaseService,
     extract_file_chunks, extract_url_chunks, normalize_source_url,
-    vector_id_for_chunk_id,
+    register_normalized_document, vector_id_for_chunk_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,9 +187,11 @@ async def prepare(session_factory: sessionmaker[Session] = SessionLocal) -> dict
                     )
                     db.add(document)
                     db.flush()
+                    shared_rows = register_normalized_document(db, document, chunks)
                     db.add_all([
                         KnowledgeChunk(
-                            document_id=document.id, chunk_index=index, content=chunk.content,
+                            document_id=document.id, shared_chunk_id=shared_rows[index].id,
+                            chunk_index=index, content=chunk.content,
                             source_type=source_type, source_uri=uri, page_number=chunk.page_number,
                             scope_level="global", country_id=source.country_id, faiss_indexed=0,
                         ) for index, chunk in enumerate(chunks)

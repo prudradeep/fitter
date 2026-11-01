@@ -1,5 +1,5 @@
 #define MyAppName "Dr Transition"
-#define MyAppVersion "0.1.14"
+#define MyAppVersion "0.1.16"
 #define MyAppPublisher "Dr Transition"
 #define MyAppExeName "DrTransition.exe"
 #ifndef InstallerPayloadPath
@@ -116,7 +116,7 @@ begin
   Result := '''' + Result + '''';
 end;
 
-procedure CopyCredentialsButtonClick(Sender: TObject);
+procedure CopyCredentialsToClipboard(ShowSuccessMessage: Boolean);
 var
   PowerShell: String;
   CredentialsPath: String;
@@ -132,11 +132,19 @@ begin
     '[System.Windows.Forms.Clipboard]::SetText((Get-Content -LiteralPath ''' + CredentialsPath + ''' -Raw))"';
 
   if Exec(PowerShell, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
-    MsgBox('Admin credentials copied to the clipboard.', mbInformation, MB_OK)
+  begin
+    if ShowSuccessMessage then
+      MsgBox('Admin credentials copied to the clipboard.', mbInformation, MB_OK);
+  end
   else
     MsgBox('Could not copy admin credentials automatically. The credentials are shown in the setup completion message.', mbError, MB_OK);
 
   DeleteFile(CredentialsPath);
+end;
+
+procedure CopyCredentialsButtonClick(Sender: TObject);
+begin
+  CopyCredentialsToClipboard(True);
 end;
 
 function RunMySqlConnectionTest(AdminUser: String; AdminPassword: String): Integer;
@@ -939,10 +947,11 @@ begin
         'Seeded admin user:' + #13#10 +
         CredentialsForCopy + #13#10#13#10 +
         'Bundled KB PDFs are being seeded into the local knowledge base in the background.' + #13#10#13#10 +
-        'You can also copy these credentials from the final setup screen.',
+        'Click OK to copy these credentials to the clipboard. You can also copy them from the final setup screen.',
         mbInformation,
         MB_OK
       );
+      CopyCredentialsToClipboard(False);
     end
     else
       MsgBox(

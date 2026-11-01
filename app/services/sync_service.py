@@ -740,6 +740,15 @@ class SyncService:
                 normal_knowledge_scopes=normal_knowledge_scopes,
             ):
                 return "skipped"
+        if table.name == "knowledge_document_usages":
+            scope = str(payload_row.get("scope") or "").strip()
+            if self._should_skip_inbound_knowledge_scope(
+                scope,
+                admin_knowledge_sync=admin_knowledge_sync,
+                admin_knowledge_scopes=admin_knowledge_scopes,
+                normal_knowledge_scopes=normal_knowledge_scopes,
+            ):
+                return "skipped"
         pk_col = only_pk(table)
         payload_pk = str(payload_row.get(pk_col.name) or "").strip()
         existing_pk = self._pk_for_sync_id(table, sync_id)
@@ -1006,6 +1015,62 @@ class SyncService:
             query = query.where(
                 table.c.document_id.in_(document_ids)
             )
+        elif table.name == "knowledge_document_usages":
+            document_table = Base.metadata.tables["knowledge_documents"]
+            document_ids = (
+                self._client_exportable_knowledge_document_ids()
+                if self._is_client_mode() and not include_admin_knowledge
+                else select(document_table.c.id).where(
+                    document_table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge))
+                )
+            )
+            query = query.where(table.c.knowledge_document_id.in_(document_ids))
+        elif table.name == "knowledge_sources":
+            document_table = Base.metadata.tables["knowledge_documents"]
+            document_ids = (
+                self._client_exportable_knowledge_document_ids()
+                if self._is_client_mode() and not include_admin_knowledge
+                else select(document_table.c.id).where(
+                    document_table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge))
+                )
+            )
+            query = query.where(table.c.id.in_(
+                select(document_table.c.source_id).where(
+                    document_table.c.id.in_(document_ids), document_table.c.source_id.is_not(None)
+                )
+            ))
+        elif table.name == "knowledge_source_versions":
+            document_table = Base.metadata.tables["knowledge_documents"]
+            document_ids = (
+                self._client_exportable_knowledge_document_ids()
+                if self._is_client_mode() and not include_admin_knowledge
+                else select(document_table.c.id).where(
+                    document_table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge))
+                )
+            )
+            source_table = Base.metadata.tables["knowledge_sources"]
+            source_ids = select(source_table.c.id).where(source_table.c.id.in_(
+                select(document_table.c.source_id).where(
+                    document_table.c.id.in_(document_ids), document_table.c.source_id.is_not(None)
+                )
+            ))
+            query = query.where(table.c.source_id.in_(source_ids))
+        elif table.name == "knowledge_source_chunks":
+            version_table = Base.metadata.tables["knowledge_source_versions"]
+            source_table = Base.metadata.tables["knowledge_sources"]
+            document_table = Base.metadata.tables["knowledge_documents"]
+            document_ids = (
+                self._client_exportable_knowledge_document_ids()
+                if self._is_client_mode() and not include_admin_knowledge
+                else select(document_table.c.id).where(
+                    document_table.c.scope.in_(self._exportable_knowledge_scopes(include_admin_knowledge))
+                )
+            )
+            source_ids = select(document_table.c.source_id).where(
+                document_table.c.id.in_(document_ids), document_table.c.source_id.is_not(None)
+            )
+            version_ids = select(version_table.c.id).where(version_table.c.source_id.in_(source_ids))
+            query = query.where(table.c.source_version_id.in_(version_ids))
         elif table.name in {"original_policy_knowledge_documents", "policy_knowledge_documents"}:
             document_table = Base.metadata.tables["knowledge_documents"]
             document_ids = (

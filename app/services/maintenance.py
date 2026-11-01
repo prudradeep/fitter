@@ -1,11 +1,19 @@
 from datetime import datetime, timedelta, timezone
+import logging
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import AppRateLimit, KnowledgeDocument, LlmExchangeLog, SystemInquiryTelemetryEvent
-from app.services.knowledge_base import TEMPORARY_KB_SCOPE
+from app.models import (
+    AppRateLimit, KnowledgeChunk, KnowledgeDocument, LlmExchangeLog,
+    SystemInquiryTelemetryEvent,
+)
+from app.services.knowledge_base import (
+    TEMPORARY_KB_SCOPE, KnowledgeBaseService, delete_orphaned_knowledge_sources,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def cleanup_retained_data(db: Session, settings: Settings) -> dict[str, int]:
@@ -37,12 +45,24 @@ def cleanup_rate_limits(db: Session, retention_days: int) -> int:
 
 def cleanup_temporary_knowledge(db: Session, retention_hours: int) -> int:
     cutoff = _naive_utc_now() - timedelta(hours=max(1, retention_hours))
-    result = db.execute(
-        delete(KnowledgeDocument).where(
+    expired_ids = list(db.scalars(select(KnowledgeDocument.id).where(
             KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
             KnowledgeDocument.created_at < cutoff,
-        )
-    )
+        )).all())
+    if not expired_ids:
+        orphaned_sources = delete_orphaned_knowledge_sources(db)
+        if orphaned_sources:
+            db.commit()
+        return 0
+    chunk_ids = list(db.scalars(select(KnowledgeChunk.id).where(
+        KnowledgeChunk.document_id.in_(expired_ids),
+    )).all())
+    try:
+        KnowledgeBaseService(db, None, scope=TEMPORARY_KB_SCOPE)._remove_vectors(chunk_ids)
+    except Exception:
+        logger.exception("Could not remove FAISS vectors for expired temporary documents")
+    result = db.execute(delete(KnowledgeDocument).where(KnowledgeDocument.id.in_(expired_ids)))
+    delete_orphaned_knowledge_sources(db)
     db.commit()
     return int(result.rowcount or 0)
 

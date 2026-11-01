@@ -470,15 +470,15 @@ class ChatHazardStepsMixin:
             *((str(policy_id), doc) for policy_id, doc in policy_documents if policy_id),
             *((str(policy_id), doc) for policy_id, doc in original_documents),
         ]:
-            if not document.source_uri:
-                continue
-            url = str(document.source_uri).strip()
+            source_uri = str(document.source_uri or "").strip()
             try:
-                parsed = urlsplit(url)
-                if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-                    continue
+                parsed = urlsplit(source_uri)
+                if parsed.scheme.lower() in {"http", "https"} and parsed.hostname:
+                    url = source_uri
+                else:
+                    url = f"/api/knowledge/documents/{document.id}/open"
             except ValueError:
-                continue
+                url = f"/api/knowledge/documents/{document.id}/open"
             policy_document_urls.setdefault(policy_id, escape(url, quote=True))
         return ChatResponse(
             session_id=session_id,
@@ -2046,6 +2046,22 @@ class ChatHazardStepsMixin:
         )
         await self._enrich_policy_hazards_with_population_context(session)
         session.phase = "hazards"
+        has_linked_hazards = bool(session.hazards or session.additional_hazards)
+        if hasattr(self, "db") and session.selected_context_policy_id:
+            selected_policy = self.db.get(Policy, session.selected_context_policy_id)
+            if selected_policy is None:
+                has_linked_hazards = False
+            else:
+                selected_policy_type = normalize_for_match(selected_policy.policy_type or "")
+                has_linked_hazards = has_linked_hazards and (
+                    getattr(selected_policy, "source", None) == "user"
+                    or selected_policy_type in {
+                        normalize_for_match("Original policy"),
+                        normalize_for_match("Adjustment to existing policy"),
+                    }
+                )
+        else:
+            has_linked_hazards = False
         return ChatResponse(
             session_id=session_id,
             step="hazards",
@@ -2056,6 +2072,7 @@ class ChatHazardStepsMixin:
                 sector=session.sector,
                 selected_policy=session.selected_context_policy,
                 policies=self._policies_for_selected_context(session),
+                has_linked_hazards=has_linked_hazards,
                 hazards=format_hazards(
                     session,
                     show_admin_details=bool(getattr(self, "is_admin", False)),

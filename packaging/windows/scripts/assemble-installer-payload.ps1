@@ -57,6 +57,7 @@ if ($SeedIndexBundlePath) {
             "main" { "main" }
             "sector_prompt" { "sector_prompts" }
             "policy_document" { "policy_reference" }
+            "original_policy" { "original_policy" }
             default { throw "Unsupported seed index scope: $($entry.scope)" }
         }
         if ($entry.file -ne "knowledge.$suffix.faiss") {

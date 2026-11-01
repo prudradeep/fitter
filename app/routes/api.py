@@ -1,13 +1,15 @@
 import json
+import mimetypes
 import re
-from html import unescape
+from html import escape as html_escape, unescape
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 import httpx
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, set_auth_cookie, verify_password
@@ -50,6 +52,7 @@ from app.services.ingestion_progress import (
 from app.services.knowledge_base import (
     MAIN_KB_SCOPE,
     POLICY_DOCUMENT_SCOPE,
+    POLICY_REFERENCE_SCOPE,
     ORIGINAL_POLICY_SCOPE,
     TEMPORARY_KB_SCOPE,
     KnowledgeBaseService,
@@ -71,6 +74,26 @@ from app.services.sync_permissions import sync_client_permission_enabled
 
 router = APIRouter(prefix="/api", tags=["chat"])
 settings = get_settings()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+POLICY_ORIGINAL_FILE_ROOT = PROJECT_ROOT / "kb" / "additional" / "Policy Documents"
+POLICY_UPLOAD_FILE_ROOT = PROJECT_ROOT / "data" / "policy_documents"
+
+
+def _local_policy_document_file(source_uri: str | None) -> Path | None:
+    value = str(source_uri or "").strip()
+    if not value:
+        return None
+    candidate = Path(value.replace("\\", "/"))
+    if not candidate.is_absolute():
+        candidate = PROJECT_ROOT / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+        roots = (POLICY_ORIGINAL_FILE_ROOT.resolve(), POLICY_UPLOAD_FILE_ROOT.resolve())
+        if resolved.is_file() and any(resolved.is_relative_to(root) for root in roots):
+            return resolved
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return None
 
 
 def _ingestion_progress_id(request: Request, user_id: str) -> str | None:
@@ -1059,6 +1082,62 @@ async def knowledge_documents(
     return {"documents": documents}
 
 
+@router.get("/knowledge/documents/{document_id}/open", include_in_schema=False)
+def open_policy_knowledge_document(
+    document_id: str,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Open a linked policy source file, or show its extracted text in the browser."""
+    document = db.scalar(select(KnowledgeDocument).where(
+        KnowledgeDocument.id == document_id,
+        or_(
+            and_(
+                KnowledgeDocument.scope.in_(
+                    (POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE, "policy_pending")
+                ),
+                KnowledgeDocument.user_id.is_(None),
+            ),
+            and_(
+                KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
+                KnowledgeDocument.user_id == str(current_user.id),
+            ),
+        ),
+    ))
+    if document is None:
+        raise HTTPException(status_code=404, detail="Policy document was not found.")
+
+    local_file = _local_policy_document_file(document.source_uri)
+    if local_file is not None and local_file.suffix.casefold() in {".pdf", ".txt", ".md"}:
+        media_type = mimetypes.guess_type(local_file.name)[0] or "application/octet-stream"
+        return FileResponse(
+            local_file,
+            media_type=media_type,
+            filename=local_file.name,
+            content_disposition_type="inline",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
+
+    chunks = db.scalars(select(KnowledgeChunk).where(
+        KnowledgeChunk.document_id == document.id,
+    ).order_by(KnowledgeChunk.chunk_index)).all()
+    if not chunks:
+        raise HTTPException(status_code=404, detail="This document has no viewable content.")
+    sections = []
+    for chunk in chunks:
+        heading = f"<h2>Page {chunk.page_number}</h2>" if chunk.page_number else ""
+        sections.append(f"{heading}<pre>{html_escape(chunk.content)}</pre>")
+    title = html_escape(document.title)
+    return HTMLResponse(
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        f"<title>{title}</title><style>body{{max-width:900px;margin:2rem auto;padding:0 1rem;"
+        "font:16px/1.6 system-ui,sans-serif;color:#182230}pre{white-space:pre-wrap;overflow-wrap:anywhere;"
+        "font:inherit}h2{font-size:1rem;color:#667085}</style></head>"
+        f"<body><h1>{title}</h1>{''.join(sections)}</body></html>",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
 @router.post("/knowledge/upload")
 async def knowledge_upload(
     request: Request,
@@ -1212,6 +1291,7 @@ async def knowledge_policy_document_upload(
     service = KnowledgeBaseService(db, None, scope=POLICY_DOCUMENT_SCOPE)
     progress_id = _ingestion_progress_id(request, str(current_user.id))
     reusable = _document_for_url(db, document_url) if document_url else None
+    uploaded_file_content: bytes | None = None
     try:
         if reusable is not None:
             result = {
@@ -1224,9 +1304,9 @@ async def knowledge_policy_document_upload(
                 progress=_ingestion_step(progress_id, document_url),
             )
         else:
-            content = await file.read()
+            uploaded_file_content = await file.read()
             result = await service.ingest_file(
-                filename, content, translate_to_english=True,
+                filename, uploaded_file_content, translate_to_english=True,
                 progress=_ingestion_step(progress_id, filename),
             )
     except (httpx.HTTPError, ValueError) as exc:
@@ -1238,6 +1318,17 @@ async def knowledge_policy_document_upload(
     document = db.get(KnowledgeDocument, document_id)
     if document is None:
         return {"error": True, "detail": "Policy document was ingested but could not be linked."}
+    if uploaded_file_content is not None:
+        suffix = Path(filename).suffix.casefold()
+        if suffix in {".pdf", ".docx", ".md", ".txt"}:
+            POLICY_UPLOAD_FILE_ROOT.mkdir(parents=True, exist_ok=True)
+            stored_file = POLICY_UPLOAD_FILE_ROOT / f"{document.id}{suffix}"
+            try:
+                stored_file.write_bytes(uploaded_file_content)
+            except OSError:
+                pass
+            else:
+                document.source_uri = stored_file.relative_to(PROJECT_ROOT).as_posix()
     _link_policy(db, document, policy.id)
     if reusable is None:
         document.policy_id = policy.id

@@ -12,6 +12,7 @@ data/*.json
 data/grounding-logs/
 data/service-runtime/
 data/backups/policy_url_dedup_*/
+data/backups/*before_knowledge_normalization*
 *_test_*.xlsx
 *.log
 build/

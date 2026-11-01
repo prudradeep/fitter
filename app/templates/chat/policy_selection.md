@@ -4,7 +4,7 @@ Policies on the platform for **{{ sector }}** sector in **{{ country }}** that m
 
 <ol>
 {% for policy in policies %}
-<li>{% if policy.document_url %}<a href="{{ policy.document_url }}" class="policy-document-link">{{ policy.title }}</a>{% else %}{{ policy.title }}{% endif %} <span class="policy-document-status {% if policy.document_available %}policy-document-status--available{% else %}policy-document-status--unavailable{% endif %}">{% if policy.document_available %}Document available{% else %}Document unavailable{% endif %}</span>{% if policy.description %}<br><small>{{ policy.description }}</small>{% endif %}</li>
+<li>{% if policy.document_url %}<a href="{{ policy.document_url }}" class="policy-document-link"{% if not policy.document_url.startswith('/api/knowledge/documents/') %} target="_blank" rel="noopener noreferrer"{% endif %}>{{ policy.title }}</a>{% else %}{{ policy.title }}{% endif %} <span class="policy-document-status {% if policy.document_available %}policy-document-status--available{% else %}policy-document-status--unavailable{% endif %}">{% if policy.document_available %}Document available{% else %}Document unavailable{% endif %}</span>{% if policy.description %}<br><small>{{ policy.description }}</small>{% endif %}</li>
 {% endfor %}
 </ol>
 

@@ -25,12 +25,15 @@ OFFLINE_REFERENCE_TABLES = {
     "additional_hazard_profile_target_populations", "additional_hazard_profiles",
     "additional_hazards", "countries", "country_sectors", "eurostat_population_cache",
     "evaluation_questions",
-    "knowledge_chunks", "knowledge_documents", "mitigation_measure_examples",
+    "knowledge_chunks", "knowledge_document_usages", "knowledge_documents",
+    "knowledge_source_chunks", "knowledge_sources", "knowledge_source_versions",
+    "mitigation_measure_examples",
     "mitigation_measure_policies", "mitigation_measure_policy_additional_hazards",
     "mitigation_measure_policy_system_hazards", "mitigation_measure_target_groups",
     "policies", "policy_hazard_links", "original_policies", "original_policy_codes",
     "original_policy_system_hazard", "original_policy_sectors",
-    "original_policy_knowledge_documents",
+    "original_policy_knowledge_documents", "original_policy_mitigation_policy_relations",
+    "policy_knowledge_documents", "policy_original_sources", "prompts",
     "question_options", "regions",
     "schema_migrations", "sectors", "system_hazard_socio_demographic_population_matches",
     "system_hazard_socio_demographic_target_populations", "system_hazard_socio_demographics",
@@ -68,6 +71,58 @@ def _write_offline_database(source: sqlite3.Connection, target: Path, scopes: se
                 clean.execute(
                     "DELETE FROM original_policy_knowledge_documents "
                     "WHERE knowledge_document_id NOT IN (SELECT id FROM knowledge_documents)"
+                )
+            if clean.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'policy_knowledge_documents'"
+            ).fetchone():
+                clean.execute(
+                    "DELETE FROM policy_knowledge_documents "
+                    "WHERE knowledge_document_id NOT IN (SELECT id FROM knowledge_documents)"
+                )
+            table_names = {
+                str(row[0]) for row in clean.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name NOT LIKE 'sqlite_%'"
+                )
+            }
+            if {
+                "knowledge_document_usages", "knowledge_source_chunks",
+                "knowledge_source_versions", "knowledge_sources",
+            } <= table_names:
+                usage_columns = {
+                    str(row[1]) for row in clean.execute(
+                        "PRAGMA table_info(knowledge_document_usages)"
+                    )
+                }
+                usage_filters = [
+                    "knowledge_document_id NOT IN (SELECT id FROM knowledge_documents)"
+                ]
+                usage_filters.extend(
+                    f"{_quote_identifier(column)} IS NOT NULL"
+                    for column in {"user_id", "session_key"} & usage_columns
+                )
+                clean.execute(
+                    "DELETE FROM knowledge_document_usages WHERE " + " OR ".join(usage_filters)
+                )
+                if "shared_chunk_id" in {
+                    str(row[1]) for row in clean.execute("PRAGMA table_info(knowledge_chunks)")
+                }:
+                    clean.execute(
+                        "DELETE FROM knowledge_source_chunks "
+                        "WHERE id NOT IN (SELECT shared_chunk_id FROM knowledge_chunks "
+                        "WHERE shared_chunk_id IS NOT NULL)"
+                    )
+                else:
+                    clean.execute("DELETE FROM knowledge_source_chunks")
+                clean.execute(
+                    "DELETE FROM knowledge_source_versions "
+                    "WHERE id NOT IN (SELECT source_version_id FROM knowledge_source_chunks)"
+                )
+                clean.execute(
+                    "DELETE FROM knowledge_sources "
+                    "WHERE id NOT IN (SELECT source_id FROM knowledge_documents "
+                    "WHERE source_id IS NOT NULL)"
                 )
             if clean.execute(
                 "SELECT 1 FROM policies WHERE source = 'user' OR created_by_user_id IS NOT NULL LIMIT 1"
