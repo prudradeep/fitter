@@ -62,8 +62,8 @@ def _load_source_policies(connection: sqlite3.Connection) -> list[sqlite3.Row]:
 def _import_chunks(source: sqlite3.Connection, session_factory, *, dry_run: bool = False) -> dict[str, int]:
     from sqlalchemy import select
 
-    from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, Sector
-    from app.services.knowledge_base import POLICY_DOCUMENT_SCOPE
+    from app.models import Country, KnowledgeChunk, KnowledgeDocument, Policy, PolicyKnowledgeDocument, Sector
+    from app.services.knowledge_base import POLICY_DOCUMENT_SCOPE, normalize_source_url
 
     source_documents = _load_source_policies(source)
     source_counts = {}
@@ -105,11 +105,32 @@ def _import_chunks(source: sqlite3.Connection, session_factory, *, dry_run: bool
             continue
         policy = matches[0]
         with session_factory() as db:
+            candidates = db.scalars(select(KnowledgeDocument).where(
+                KnowledgeDocument.scope == POLICY_DOCUMENT_SCOPE,
+                KnowledgeDocument.source_type == "policy_url",
+            )).all()
+            linked = next((document for document in candidates
+                           if normalize_source_url(document.source_uri or "") == normalize_source_url(policy.policy_url or "")), None)
+            if linked is not None:
+                if not dry_run and db.scalar(select(PolicyKnowledgeDocument.id).where(
+                    PolicyKnowledgeDocument.policy_id == policy.id,
+                    PolicyKnowledgeDocument.knowledge_document_id == linked.id,
+                ).limit(1)) is None:
+                    db.add(PolicyKnowledgeDocument(policy_id=policy.id, knowledge_document_id=linked.id))
+                    db.commit()
+                result["existing"] += 1
+                continue
             existing = db.scalar(select(KnowledgeDocument.id).where(
                 KnowledgeDocument.policy_id == policy.id,
                 KnowledgeDocument.scope == POLICY_DOCUMENT_SCOPE,
             ).limit(1))
             if existing is not None:
+                if not dry_run and db.scalar(select(PolicyKnowledgeDocument.id).where(
+                    PolicyKnowledgeDocument.policy_id == policy.id,
+                    PolicyKnowledgeDocument.knowledge_document_id == existing,
+                ).limit(1)) is None:
+                    db.add(PolicyKnowledgeDocument(policy_id=policy.id, knowledge_document_id=existing))
+                    db.commit()
                 result["existing"] += 1
                 continue
 
@@ -135,6 +156,7 @@ def _import_chunks(source: sqlite3.Connection, session_factory, *, dry_run: bool
             )
             db.add(document)
             db.flush()
+            db.add(PolicyKnowledgeDocument(policy_id=policy.id, knowledge_document_id=document.id))
             for chunk in chunks:
                 db.add(KnowledgeChunk(
                     id=str(uuid.uuid4()), document_id=document.id,

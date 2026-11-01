@@ -9,12 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth import AUTH_COOKIE_NAME, CSRF_COOKIE_NAME, get_current_user, is_admin_user, require_admin_user
 from app.config import get_settings
 from app.db.migrations_runtime import repair_partial_installer_schema, run_runtime_migrations
+from app.db.policy_knowledge_schema import ensure_policy_knowledge_document_schema
 from app.db.session import SessionLocal, get_db, validate_database_connection
 from app.models import AppUser, Policy
 from app.observability import (
@@ -33,6 +34,7 @@ from app.security import apply_security_headers, create_csrf_token, csrf_request
 from app.seed_data import seed_main_kb_from_files
 from app.services.coverage import get_coverage_map_rows, get_coverage_rows
 from app.services.prompt_store import enable_prompt_db_reads_if_rows, seed_prompts_from_files
+from app.services.policy_knowledge_seed import consolidate_policy_url_documents
 from app.services.seed_index_bundle import install_seed_indexes
 from app.services.sync_permissions import sync_client_permission_enabled
 from app.services.sync_service import SyncService
@@ -223,6 +225,14 @@ async def startup() -> None:
     else:
         logger.info("Database auto-migration is disabled; checking installer schema health only")
         repair_partial_installer_schema()
+    with SessionLocal() as db:
+        if ensure_policy_knowledge_document_schema(db.connection()):
+            logger.info("Ensured policy knowledge document links")
+        db.commit()
+        if inspect(db.bind).has_table("policy_knowledge_documents"):
+            consolidated = consolidate_policy_url_documents(db)
+            if consolidated:
+                logger.info("Consolidated %s duplicate policy URL documents", consolidated)
     try:
         if _should_seed_prompts_from_files():
             seeded_prompts = seed_prompts_from_files()
@@ -288,6 +298,10 @@ async def _run_configured_client_sync(trigger: str) -> bool:
         if result.get("error"):
             logger.warning("Client sync failed trigger=%s detail=%s", trigger, result.get("detail"))
             return False
+        with SessionLocal() as db:
+            consolidated = consolidate_policy_url_documents(db)
+            if consolidated:
+                logger.info("Consolidated %s policy URL documents after sync", consolidated)
         logger.info("Client sync completed trigger=%s result=%s", trigger, result)
         return True
     except Exception:

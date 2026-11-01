@@ -26,6 +26,7 @@ from app.models import (
     OriginalPolicySector,
     OriginalPolicySystemHazard,
     Policy,
+    PolicyKnowledgeDocument,
     PolicyOriginalSource,
     SystemHazard,
 )
@@ -620,6 +621,175 @@ class PolicyReferenceMitigationContextTests(unittest.TestCase):
             self.service._stored_context_policy_document_ids(session),
             [document.id],
         )
+
+    def test_shared_policy_document_is_found_for_second_policy(self) -> None:
+        first = Policy(country_id="country-1", sector_id="sector-1", policy="First policy")
+        second = Policy(country_id="country-1", sector_id="sector-1", policy="Second policy")
+        self.db.add_all([first, second])
+        self.db.flush()
+        document = KnowledgeDocument(
+            title="Shared policy", source_type="policy_url",
+            source_uri="https://example.org/shared.pdf", scope="policy_document",
+            policy_id=first.id,
+        )
+        self.db.add(document)
+        self.db.flush()
+        self.db.add_all([
+            PolicyKnowledgeDocument(policy_id=first.id, knowledge_document_id=document.id),
+            PolicyKnowledgeDocument(policy_id=second.id, knowledge_document_id=document.id),
+        ])
+        self.db.commit()
+
+        session = ChatSession(
+            country_id="country-1", sector_id="sector-1",
+            selected_context_policy_id=second.id,
+        )
+        self.assertEqual(self.service._stored_context_policy_document_ids(session), [document.id])
+
+    def test_user_submitted_existing_policy_url_links_without_changing_document(self) -> None:
+        first = Policy(country_id="country-1", sector_id="sector-1", policy="First policy")
+        second = Policy(country_id="country-1", sector_id="sector-1", policy="Second policy")
+        self.db.add_all([first, second])
+        self.db.flush()
+        document = KnowledgeDocument(
+            title="Shared", source_type="policy_url",
+            source_uri="https://example.org/shared.pdf", scope="policy_document",
+            policy_id=first.id,
+        )
+        self.db.add(document)
+        self.db.flush()
+        self.db.add(KnowledgeChunk(
+            document_id=document.id, chunk_index=0, content="Shared policy text",
+            source_type="policy_url", source_uri=document.source_uri,
+        ))
+        self.db.commit()
+        session = ChatSession(
+            session_key="session-1", selected_context_policy_id=second.id,
+            selected_context_policy=second.policy,
+        )
+        self.assertIn("Shared policy text", asyncio.run(
+            self.service._policy_reference_context(session, [document.id], full_text=True)
+        ))
+        with (
+            patch("app.services.chat_hazard_steps.validate_context_policy_document",
+                  AsyncMock(return_value={"missing": []})),
+            patch.object(self.service, "_context_policy_details_step", AsyncMock(return_value="done")),
+        ):
+            response = asyncio.run(self.service._handle_context_policy_reference(
+                "session-1", session,
+                "Policy reference URL: https://example.org/shared.pdf\n"
+                f"Policy reference document ID: {document.id}",
+            ))
+
+        self.assertEqual(response, "done")
+        self.assertEqual(document.scope, "policy_document")
+        self.assertEqual(document.policy_id, first.id)
+        self.assertEqual(self.db.query(PolicyKnowledgeDocument).filter_by(
+            policy_id=second.id, knowledge_document_id=document.id,
+        ).count(), 1)
+
+    def test_new_user_policy_links_reused_url_document(self) -> None:
+        document = KnowledgeDocument(
+            title="Shared", source_type="policy_url",
+            source_uri="https://example.org/shared.pdf", scope="policy_document",
+        )
+        self.db.add(document)
+        self.db.flush()
+        self.db.add(KnowledgeChunk(
+            document_id=document.id, chunk_index=0, content="Shared policy text",
+            source_type="policy_url", source_uri=document.source_uri,
+        ))
+        self.db.commit()
+        session = ChatSession(
+            session_key="session-1", country_id="country-1", sector_id="sector-1",
+            selected_context_policy="New policy", adding_context_policy=True,
+            context_policy_summary_confirmed=True,
+            pending_context_policy_document_ids=[document.id],
+        )
+        with patch.object(self.service, "_context_policy_details_step", AsyncMock(return_value="done")):
+            response = asyncio.run(self.service._save_new_context_policy("session-1", session, []))
+
+        self.assertEqual(response, "done")
+        policy = self.db.get(Policy, session.selected_context_policy_id)
+        self.assertEqual(policy.policy_url, document.source_uri)
+        self.assertEqual(document.scope, "policy_document")
+        self.assertIsNone(document.policy_id)
+        self.assertEqual(self.db.query(PolicyKnowledgeDocument).filter_by(
+            policy_id=policy.id, knowledge_document_id=document.id,
+        ).count(), 1)
+
+    def test_original_policy_url_is_reused_without_changing_shared_document(self) -> None:
+        policy = Policy(country_id="country-1", sector_id="sector-1", policy="Electricity tax")
+        self.db.add(policy)
+        self.db.flush()
+        url = "https://www.gesetze-im-internet.de/stromstg/StromStG.pdf"
+        document = KnowledgeDocument(
+            title="Electricity Tax Act", source_type="original_policy_url",
+            source_uri=url, scope="original_policy",
+        )
+        self.db.add(document)
+        self.db.flush()
+        self.db.add(KnowledgeChunk(
+            document_id=document.id, chunk_index=0, content="Original policy text",
+            source_type="original_policy_url", source_uri=url,
+        ))
+        self.db.commit()
+        session = ChatSession(
+            session_key="session-1", selected_context_policy_id=policy.id,
+            selected_context_policy=policy.policy,
+        )
+        self.assertIn("Original policy text", asyncio.run(
+            self.service._policy_reference_context(session, [document.id], full_text=True)
+        ))
+        with (
+            patch("app.services.chat_hazard_steps.validate_context_policy_document",
+                  AsyncMock(return_value={"missing": []})),
+            patch.object(self.service, "_context_policy_details_step", AsyncMock(return_value="done")),
+        ):
+            response = asyncio.run(self.service._handle_context_policy_reference(
+                "session-1", session,
+                f"Policy reference URL: {url}\nPolicy reference document ID: {document.id}",
+            ))
+
+        self.assertEqual(response, "done")
+        self.assertEqual(document.scope, "original_policy")
+        self.assertIsNone(document.policy_id)
+        self.assertEqual(self.service._stored_context_policy_document_ids(session), [document.id])
+
+    def test_owner_policy_reference_url_can_be_linked_in_another_session(self) -> None:
+        policy = Policy(country_id="country-1", sector_id="sector-1", policy="MaaS policy")
+        self.db.add(policy)
+        self.db.flush()
+        url = "https://assets.innovazione.gov.it/maas.pdf"
+        document = KnowledgeDocument(
+            title=url, source_type="url", source_uri=url,
+            scope="policy_reference", user_id="owner-1",
+        )
+        self.db.add(document)
+        self.db.flush()
+        self.db.add(KnowledgeChunk(
+            document_id=document.id, chunk_index=0, content="MaaS policy text",
+            source_type="url", source_uri=url, user_id="owner-1",
+        ))
+        self.db.commit()
+        session = ChatSession(
+            session_key="new-session", country_id="country-1", sector_id="sector-1",
+            selected_context_policy_id=policy.id, selected_context_policy=policy.policy,
+        )
+        with (
+            patch("app.services.chat_hazard_steps.validate_context_policy_document",
+                  AsyncMock(return_value={"missing": []})),
+            patch.object(self.service, "_context_policy_details_step", AsyncMock(return_value="done")),
+        ):
+            response = asyncio.run(self.service._handle_context_policy_reference(
+                "new-session", session,
+                f"Policy reference URL: {url}\nPolicy reference document ID: {document.id}",
+            ))
+
+        self.assertEqual(response, "done")
+        self.assertEqual(document.scope, "policy_reference")
+        self.assertEqual(document.user_id, "owner-1")
+        self.assertEqual(self.service._stored_context_policy_document_ids(session), [document.id])
 
     def test_policy_selection_requests_document_even_with_catalog_details(self) -> None:
         policy = Policy(

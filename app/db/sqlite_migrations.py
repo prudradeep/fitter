@@ -677,6 +677,29 @@ def _026_original_policy_picker_links(connection: Connection) -> None:
     _create_index(connection, "policy_original_sources", "ix_policy_original_sources_original", "original_policy_id")
 
 
+def _027_policy_knowledge_documents(connection: Connection) -> None:
+    connection.execute(text("""
+        CREATE TABLE IF NOT EXISTS policy_knowledge_documents (
+            id VARCHAR(36) PRIMARY KEY,
+            policy_id VARCHAR(36) NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+            knowledge_document_id VARCHAR(36) NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_policy_knowledge_document UNIQUE (policy_id, knowledge_document_id)
+        )
+    """))
+    _create_index(connection, "policy_knowledge_documents", "ix_policy_knowledge_policy", "policy_id")
+    _create_index(connection, "policy_knowledge_documents", "ix_policy_knowledge_document", "knowledge_document_id")
+    connection.execute(text("""
+        INSERT OR IGNORE INTO policy_knowledge_documents (id, policy_id, knowledge_document_id)
+        SELECT lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
+               substr(lower(hex(randomblob(2))), 2) || '-a' ||
+               substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6))),
+               policy_id, id
+        FROM knowledge_documents
+        WHERE policy_id IS NOT NULL AND scope = 'policy_document'
+    """))
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -704,6 +727,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("024_original_policy_knowledge_documents", _024_original_policy_knowledge_documents),
     ("025_original_policy_mitigation_relations", _025_original_policy_mitigation_relations),
     ("026_original_policy_picker_links", _026_original_policy_picker_links),
+    ("027_policy_knowledge_documents", _027_policy_knowledge_documents),
 )
 
 

@@ -20,6 +20,7 @@ from sqlalchemy.schema import UniqueConstraint
 
 from app.config import get_settings
 from app.db.session import Base
+from app.db.policy_knowledge_schema import ensure_policy_knowledge_document_schema
 from app.services.prompt_loader import clear_prompt_caches
 from app.services.prompt_store import enable_prompt_db_reads
 from app.services.knowledge_base import KnowledgeBaseService
@@ -125,6 +126,7 @@ class SyncService:
         self.sync_token = str(sync_token or "").strip()
 
     def ensure_schema(self) -> None:
+        ensure_policy_knowledge_document_schema(self.db.connection())
         self._ensure_metadata_columns()
         self.ensure_auth_schema()
         connection = self.db.connection()
@@ -139,7 +141,16 @@ class SyncService:
             for column_name, ddl in self._sync_column_ddls(dialect).items():
                 if column_name not in existing:
                     connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))
-            indexes = {index["name"] for index in inspector.get_indexes(table.name)}
+            if dialect == "sqlite":
+                # SQLite can list expression indexes even though SQLAlchemy
+                # cannot reflect their indexed expressions.
+                indexes = {
+                    str(row[1]) for row in connection.exec_driver_sql(
+                        f'PRAGMA index_list("{table.name}")'
+                    )
+                }
+            else:
+                indexes = {index["name"] for index in inspector.get_indexes(table.name)}
             index_name = f"ix_{table.name}_sync_id"
             if index_name not in indexes:
                 connection.execute(text(f"CREATE UNIQUE INDEX {index_name} ON {table.name} (sync_id)"))
@@ -995,7 +1006,7 @@ class SyncService:
             query = query.where(
                 table.c.document_id.in_(document_ids)
             )
-        elif table.name == "original_policy_knowledge_documents":
+        elif table.name in {"original_policy_knowledge_documents", "policy_knowledge_documents"}:
             document_table = Base.metadata.tables["knowledge_documents"]
             document_ids = (
                 self._client_exportable_knowledge_document_ids()

@@ -21,6 +21,7 @@ from app.models import (
     OriginalPolicyMitigationPolicyRelation,
     OriginalPolicySystemHazard,
     Policy,
+    PolicyKnowledgeDocument,
     PolicyHazardLink,
     PolicyOriginalSource,
     Sector,
@@ -53,7 +54,11 @@ from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.document_language import document_language_guidance
 from app.services.enums import ChatPhase
 from app.services.hazard_salience import survey_respondent_count
-from app.services.knowledge_base import ORIGINAL_POLICY_SCOPE, POLICY_DOCUMENT_SCOPE, TEMPORARY_KB_SCOPE
+from app.services.knowledge_base import (
+    ORIGINAL_POLICY_SCOPE, POLICY_DOCUMENT_SCOPE, POLICY_REFERENCE_SCOPE,
+    TEMPORARY_KB_SCOPE, normalize_source_url,
+)
+from app.services.policy_knowledge_seed import _link_policy
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.mechanism_sentence import (
     clean_mechanism_sentence,
@@ -410,11 +415,23 @@ class ChatHazardStepsMixin:
     def _policy_step(self, session_id: str, session: ChatSession) -> ChatResponse:
         policies = self._policy_rows_for_selected_context(session)
         session.phase = "policy"
-        policy_documents = self.db.scalars(
-            select(KnowledgeDocument).where(
-                KnowledgeDocument.policy_id.in_(
-                    [policy_id for policy_id, _ in policies]
+        policy_ids = [policy_id for policy_id, _ in policies]
+        policy_documents = self.db.execute(
+            select(PolicyKnowledgeDocument.policy_id, KnowledgeDocument)
+            .join(KnowledgeDocument, KnowledgeDocument.id == PolicyKnowledgeDocument.knowledge_document_id)
+            .where(
+                PolicyKnowledgeDocument.policy_id.in_(policy_ids),
+                or_(
+                    and_(KnowledgeDocument.scope.in_((POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE)),
+                         KnowledgeDocument.user_id.is_(None)),
+                    and_(KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
+                         KnowledgeDocument.user_id == self.user_id),
                 ),
+            )
+        ).all()
+        legacy_documents = self.db.execute(
+            select(KnowledgeDocument.policy_id, KnowledgeDocument).where(
+                KnowledgeDocument.policy_id.in_(policy_ids),
                 or_(
                     and_(
                         KnowledgeDocument.scope == POLICY_DOCUMENT_SCOPE,
@@ -427,7 +444,8 @@ class ChatHazardStepsMixin:
                 ),
             )
         ).all()
-        policy_document_ids = {str(doc.policy_id) for doc in policy_documents if doc.policy_id}
+        policy_documents = list(dict.fromkeys([*policy_documents, *legacy_documents]))
+        policy_document_ids = {str(policy_id) for policy_id, _ in policy_documents if policy_id}
         policy_document_urls: dict[str, str] = {}
         original_policy_ids = set(self.db.scalars(
             select(PolicyOriginalSource.policy_id).where(
@@ -449,7 +467,7 @@ class ChatHazardStepsMixin:
         for policy_id, _ in original_documents:
             policy_document_ids.add(str(policy_id))
         for policy_id, document in [
-            *((str(doc.policy_id), doc) for doc in policy_documents if doc.policy_id),
+            *((str(policy_id), doc) for policy_id, doc in policy_documents if policy_id),
             *((str(policy_id), doc) for policy_id, doc in original_documents),
         ]:
             if not document.source_uri:
@@ -652,19 +670,31 @@ class ChatHazardStepsMixin:
             select(KnowledgeDocument.id).where(
                 or_(
                     and_(
-                        KnowledgeDocument.policy_id == session.selected_context_policy_id,
-                        KnowledgeDocument.scope == POLICY_DOCUMENT_SCOPE,
+                        or_(
+                            KnowledgeDocument.policy_id == session.selected_context_policy_id,
+                            KnowledgeDocument.id.in_(select(PolicyKnowledgeDocument.knowledge_document_id).where(
+                                PolicyKnowledgeDocument.policy_id == session.selected_context_policy_id,
+                            )),
+                        ),
+                        KnowledgeDocument.scope.in_((POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE)),
                         KnowledgeDocument.user_id.is_(None),
                     ),
                     and_(
                         KnowledgeDocument.user_id == self.user_id,
                         KnowledgeDocument.scope == "policy_reference",
                         or_(
-                            KnowledgeDocument.policy_id == session.selected_context_policy_id,
-                            KnowledgeDocument.title == f"Policy: {session.selected_context_policy}",
+                            KnowledgeDocument.id.in_(select(PolicyKnowledgeDocument.knowledge_document_id).where(
+                                PolicyKnowledgeDocument.policy_id == session.selected_context_policy_id,
+                            )),
+                            and_(
+                                or_(
+                                    KnowledgeDocument.policy_id == session.selected_context_policy_id,
+                                    KnowledgeDocument.title == f"Policy: {session.selected_context_policy}",
+                                ),
+                                KnowledgeDocument.country_id == session.country_id,
+                                KnowledgeDocument.sector_id == session.sector_id,
+                            ),
                         ),
-                        KnowledgeDocument.country_id == session.country_id,
-                        KnowledgeDocument.sector_id == session.sector_id,
                     ),
                 )
             )
@@ -1091,6 +1121,37 @@ class ChatHazardStepsMixin:
         )
         if not document_ids:
             return await self._context_policy_details_step(session_id, session)
+        submitted_url = next(iter(re.findall(
+            r"^Policy reference URL:\s*(\S+)", message, re.IGNORECASE | re.MULTILINE,
+        )), "")
+        for document_id in document_ids:
+            document = self.db.get(KnowledgeDocument, document_id)
+            if document is None:
+                continue
+            is_current_temporary = (
+                document.scope == TEMPORARY_KB_SCOPE
+                and document.user_id == self.user_id
+                and document.session_key == session.session_key
+            )
+            is_shared = (
+                document.scope in (POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE)
+                and document.user_id is None
+            )
+            is_private_reference = (
+                document.scope == POLICY_REFERENCE_SCOPE
+                and document.user_id == self.user_id
+                and document.session_key in (None, session.session_key)
+            )
+            if not is_current_temporary and not (
+                (is_shared or is_private_reference)
+                and submitted_url
+                and normalize_source_url(document.source_uri or "") == normalize_source_url(submitted_url)
+            ):
+                return ChatResponse(
+                    session_id=session_id, step="policy_reference",
+                    bot_message=markdown_to_html("The policy URL does not match an accessible document."),
+                    session=session.summary(), input_mode="policy_reference", error=True,
+                )
         session.pending_context_policy_document_ids = document_ids
         clarification = re.split(
             r"^Policy reference (?:URL|document ID|file|error):",
@@ -1167,9 +1228,23 @@ class ChatHazardStepsMixin:
             return self._context_policy_clarification_response(session_id, session)
         documents = self.db.scalars(select(KnowledgeDocument).where(
             KnowledgeDocument.id.in_(document_ids),
-            KnowledgeDocument.user_id == self.user_id,
-            KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
-            KnowledgeDocument.session_key == session.session_key,
+            or_(
+                and_(
+                    KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
+                    KnowledgeDocument.session_key == session.session_key,
+                ),
+                and_(
+                    KnowledgeDocument.user_id.is_(None),
+                    KnowledgeDocument.scope.in_((POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE)),
+                ),
+                and_(
+                    KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
+                    or_(KnowledgeDocument.session_key.is_(None),
+                        KnowledgeDocument.session_key == session.session_key),
+                ),
+            ),
         )).all()
         if not documents:
             session.phase = "policy_reference"
@@ -1188,6 +1263,10 @@ class ChatHazardStepsMixin:
         if session.adding_context_policy:
             return await self._new_policy_summary_review_step(session_id, session)
         for document in documents:
+            if document.scope in (POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE, POLICY_REFERENCE_SCOPE):
+                if session.selected_context_policy_id:
+                    _link_policy(self.db, document, session.selected_context_policy_id)
+                continue
             document.scope = "policy_reference"
             document.faiss_indexed = 0
             chunks = self.db.scalars(select(KnowledgeChunk).where(
@@ -1434,7 +1513,9 @@ class ChatHazardStepsMixin:
             excerpts = self.db.scalars(select(KnowledgeChunk.content).join(
                 KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id,
             ).where(
-                KnowledgeDocument.policy_id == policy.id,
+                KnowledgeDocument.id.in_(select(PolicyKnowledgeDocument.knowledge_document_id).where(
+                    PolicyKnowledgeDocument.policy_id == policy.id,
+                )) | (KnowledgeDocument.policy_id == policy.id),
                 KnowledgeDocument.scope == POLICY_DOCUMENT_SCOPE,
             ).order_by(KnowledgeChunk.chunk_index).limit(12)).all()
             source_text = "\n".join(str(part) for part in excerpts)[:4500]
@@ -1518,9 +1599,23 @@ class ChatHazardStepsMixin:
         document_ids = session.pending_context_policy_document_ids or []
         documents = self.db.scalars(select(KnowledgeDocument).where(
             KnowledgeDocument.id.in_(document_ids),
-            KnowledgeDocument.user_id == self.user_id,
-            KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
-            KnowledgeDocument.session_key == session.session_key,
+            or_(
+                and_(
+                    KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
+                    KnowledgeDocument.session_key == session.session_key,
+                ),
+                and_(
+                    KnowledgeDocument.user_id.is_(None),
+                    KnowledgeDocument.scope.in_((POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE)),
+                ),
+                and_(
+                    KnowledgeDocument.user_id == self.user_id,
+                    KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
+                    or_(KnowledgeDocument.session_key.is_(None),
+                        KnowledgeDocument.session_key == session.session_key),
+                ),
+            ),
         )).all()
         if not document_ids or len(documents) != len(set(document_ids)):
             session.phase = "policy_reference"
@@ -1572,6 +1667,9 @@ class ChatHazardStepsMixin:
             ))
         for document in documents:
             shared = bool(session.crowd_sourcing_enabled)
+            if document.scope in (POLICY_DOCUMENT_SCOPE, ORIGINAL_POLICY_SCOPE, POLICY_REFERENCE_SCOPE):
+                _link_policy(self.db, document, policy.id)
+                continue
             document.scope = POLICY_DOCUMENT_SCOPE if shared else "policy_reference"
             document.faiss_indexed = 0
             chunks = self.db.scalars(select(KnowledgeChunk).where(
@@ -1590,6 +1688,7 @@ class ChatHazardStepsMixin:
                     chunk.region_id = session.region_id
                     chunk.sector_id = session.sector_id
             document.policy_id = policy.id
+            _link_policy(self.db, document, policy.id)
             document.title = f"Policy: {session.selected_context_policy}"
             document.country_id = session.country_id
             document.region_id = session.region_id

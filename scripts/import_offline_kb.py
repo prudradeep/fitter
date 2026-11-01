@@ -271,7 +271,7 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
 
     from app.models import (
         Country, KnowledgeChunk, KnowledgeDocument, OriginalPolicy,
-        OriginalPolicyKnowledgeDocument, Policy, Region, Sector,
+        OriginalPolicyKnowledgeDocument, Policy, PolicyKnowledgeDocument, Region, Sector,
     )
     from app.services.knowledge_base import ORIGINAL_POLICY_SCOPE, POLICY_DOCUMENT_SCOPE
 
@@ -307,6 +307,12 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
         SOURCE_SCOPES,
     ).fetchall()
     source_original_links: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    source_policy_links: dict[str, list[str]] = defaultdict(list)
+    if "policy_knowledge_documents" in source_tables:
+        for row in source.execute("""
+            SELECT knowledge_document_id, policy_id FROM policy_knowledge_documents
+        """):
+            source_policy_links[str(row["knowledge_document_id"])].append(str(row["policy_id"]))
     if {"original_policy_knowledge_documents", "original_policies"} <= source_tables:
         for row in source.execute("""
             SELECT link.knowledge_document_id, policy.policy_name, country.name AS country_name
@@ -432,15 +438,22 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
 
         source_policy_id = source_doc["policy_id"]
         target_policy = map_policy(source_policy_id, context=context)
+        target_policy_ids = set()
+        if target_policy is not None:
+            target_policy_ids.add(target_policy.id)
+        for source_linked_policy_id in source_policy_links.get(source_doc_id, []):
+            linked_policy = map_policy(source_linked_policy_id, context=context)
+            if linked_policy is not None:
+                target_policy_ids.add(linked_policy.id)
         original_policy_ids = [
             target_original_policies.get((_normalize(name), _normalize(country)))
             for name, country in source_original_links.get(source_doc_id, [])
         ]
         if any(policy_id is None for policy_id in original_policy_ids):
             raise ValueError(f"Seed matching original policies before importing {context}")
-        if source_doc["scope"] == POLICY_DOCUMENT_SCOPE and target_policy is None and not original_policy_ids:
+        if source_doc["scope"] == POLICY_DOCUMENT_SCOPE and not target_policy_ids and not original_policy_ids:
             raise ValueError(f"Policy KB document has no policy reference: {context}")
-        if source_doc["scope"] == ORIGINAL_POLICY_SCOPE and (target_policy is not None or not original_policy_ids):
+        if source_doc["scope"] == ORIGINAL_POLICY_SCOPE and (target_policy_ids or not original_policy_ids):
             raise ValueError(f"Original policy KB document has no original policy reference: {context}")
 
         target_country_id = map_country(source_doc["country_id"], context=context)
@@ -509,6 +522,12 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
                 if existing_chunk_ids != source_chunk_ids:
                     raise ValueError(f"Existing {context} has different chunk IDs from the bundle")
                 if not dry_run:
+                    existing_policy_ids = set(db.scalars(select(PolicyKnowledgeDocument.policy_id).where(
+                        PolicyKnowledgeDocument.knowledge_document_id == source_doc_id,
+                    )).all())
+                    db.add_all(PolicyKnowledgeDocument(
+                        policy_id=policy_id, knowledge_document_id=source_doc_id,
+                    ) for policy_id in target_policy_ids - existing_policy_ids)
                     existing_original_ids = set(db.scalars(
                         select(OriginalPolicyKnowledgeDocument.original_policy_id).where(
                             OriginalPolicyKnowledgeDocument.knowledge_document_id == source_doc_id
@@ -545,6 +564,12 @@ def _import_rows(source: sqlite3.Connection, session_factory, *, dry_run: bool) 
                 )
                 db.add(document)
                 db.flush()
+                db.add_all(
+                    PolicyKnowledgeDocument(
+                        policy_id=policy_id,
+                        knowledge_document_id=document.id,
+                    ) for policy_id in target_policy_ids
+                )
                 db.add_all(
                     OriginalPolicyKnowledgeDocument(
                         original_policy_id=original_policy_id,

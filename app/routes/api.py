@@ -54,6 +54,9 @@ from app.services.knowledge_base import (
     TEMPORARY_KB_SCOPE,
     KnowledgeBaseService,
 )
+from app.services.policy_knowledge_seed import (
+    _document_for_url, _link_policy, reusable_policy_reference_document,
+)
 from app.services.hazard_salience import (
     country_hazard_salience,
     hazard_concern_rows,
@@ -1180,7 +1183,7 @@ async def knowledge_policy_document_upload(
     current_user: AppUser = Depends(require_admin_user),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    """Ingest an admin-managed policy document and link it to one policy."""
+    """Ingest or reuse an admin-managed policy document and link it to a policy."""
     if not await _can_manage_main_knowledge(db, current_user):
         raise HTTPException(status_code=403, detail="Main knowledge sync permission is required.")
     too_large = payload_too_large_response(request, settings.max_upload_bytes, "Policy document upload")
@@ -1208,8 +1211,14 @@ async def knowledge_policy_document_upload(
 
     service = KnowledgeBaseService(db, None, scope=POLICY_DOCUMENT_SCOPE)
     progress_id = _ingestion_progress_id(request, str(current_user.id))
+    reusable = _document_for_url(db, document_url) if document_url else None
     try:
-        if document_url:
+        if reusable is not None:
+            result = {
+                "error": False, "document_id": reusable.id,
+                "title": reusable.title, "reused": True,
+            }
+        elif document_url:
             result = await service.ingest_url(
                 document_url, document_url, translate_to_english=True,
                 progress=_ingestion_step(progress_id, document_url),
@@ -1229,9 +1238,11 @@ async def knowledge_policy_document_upload(
     document = db.get(KnowledgeDocument, document_id)
     if document is None:
         return {"error": True, "detail": "Policy document was ingested but could not be linked."}
-    document.policy_id = policy.id
-    document.country_id = policy.country_id
-    document.sector_id = policy.sector_id
+    _link_policy(db, document, policy.id)
+    if reusable is None:
+        document.policy_id = policy.id
+        document.country_id = policy.country_id
+        document.sector_id = policy.sector_id
     db.commit()
     record_audit_event(
         db,
@@ -1600,12 +1611,19 @@ async def _chat_payload(request: Request, db: Session, user_id: str) -> ChatRequ
                 session_key=session_id,
             )
             try:
-                result = await policy_service.ingest_url(
-                    policy_reference_url,
-                    policy_reference_url,
-                    allow_lexical_only=True,
-                    translate_to_english=True,
-                    progress=_ingestion_step(progress_id, policy_reference_url),
+                reusable = reusable_policy_reference_document(
+                    db, policy_reference_url, user_id=user_id, session_key=session_id,
+                )
+                result = (
+                    {"error": False, "document_id": reusable.id, "reused": True}
+                    if reusable is not None else
+                    await policy_service.ingest_url(
+                        policy_reference_url,
+                        policy_reference_url,
+                        allow_lexical_only=True,
+                        translate_to_english=True,
+                        progress=_ingestion_step(progress_id, policy_reference_url),
+                    )
                 )
                 if result.get("error"):
                     raise ValueError(str(result.get("detail") or "No readable policy text was found."))

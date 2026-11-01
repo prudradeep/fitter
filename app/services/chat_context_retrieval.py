@@ -1,7 +1,7 @@
 import logging
 import re
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from app.models import (
     CustomHazardPolicyReference,
@@ -12,6 +12,7 @@ from app.models import (
 from app.services.chat_session import ChatSession
 from app.services.knowledge_base import (
     POLICY_REFERENCE_SCOPE,
+    ORIGINAL_POLICY_SCOPE,
     MAIN_KB_SCOPE,
     TEMPORARY_KB_SCOPE,
     VALIDATED_EVIDENCE_SCOPE,
@@ -413,9 +414,23 @@ class ChatContextRetrievalMixin:
                 select(KnowledgeChunk, KnowledgeDocument)
                 .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
                 .where(
-                    KnowledgeDocument.user_id == self.user_id,
-                    KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
-                    KnowledgeDocument.session_key == session.session_key,
+                    or_(
+                        and_(
+                            KnowledgeDocument.user_id == self.user_id,
+                            KnowledgeDocument.scope == TEMPORARY_KB_SCOPE,
+                            KnowledgeDocument.session_key == session.session_key,
+                        ),
+                        and_(
+                            KnowledgeDocument.user_id.is_(None),
+                            KnowledgeDocument.scope.in_(("policy_document", ORIGINAL_POLICY_SCOPE)),
+                        ),
+                        and_(
+                            KnowledgeDocument.user_id == self.user_id,
+                            KnowledgeDocument.scope == POLICY_REFERENCE_SCOPE,
+                            or_(KnowledgeDocument.session_key.is_(None),
+                                KnowledgeDocument.session_key == session.session_key),
+                        ),
+                    ),
                 )
                 .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index, KnowledgeChunk.id)
             )

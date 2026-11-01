@@ -2,6 +2,7 @@ import asyncio
 import copy
 import time
 import unittest
+import warnings
 from datetime import datetime, timedelta
 from typing import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,7 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import httpx
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -23,6 +25,8 @@ from app.models import (
     KnowledgeDocument,
     OriginalPolicy,
     OriginalPolicyKnowledgeDocument,
+    Policy,
+    PolicyKnowledgeDocument,
     Prompt,
     QuestionOption,
     Sector,
@@ -113,6 +117,73 @@ class SyncServiceTests(unittest.TestCase):
         self.db.commit()
         indexed_bundle = service.export_bundle(include_admin_knowledge=True)
         self.assertEqual(len(self._rows(indexed_bundle, "original_policy_knowledge_documents")), 1)
+
+    def test_shared_policy_document_links_are_exported(self) -> None:
+        country = Country(name="Germany")
+        sector = Sector(name="Energy")
+        self.db.add_all([country, sector])
+        self.db.flush()
+        policies = [Policy(country_id=country.id, sector_id=sector.id, policy=title)
+                    for title in ("First", "Second")]
+        document = KnowledgeDocument(
+            title="Shared", source_type="policy_url",
+            source_uri="https://example.org/shared.pdf", scope="policy_document",
+        )
+        self.db.add_all([*policies, document])
+        self.db.flush()
+        self.db.add_all(PolicyKnowledgeDocument(
+            policy_id=policy.id, knowledge_document_id=document.id,
+        ) for policy in policies)
+        self.db.commit()
+
+        bundle = SyncService(self.db, device_id="device-a").export_bundle(include_admin_knowledge=True)
+        links = self._rows(bundle, "policy_knowledge_documents")
+        self.assertEqual({row["policy_id"] for row in links}, {policy.id for policy in policies})
+        self.assertEqual({row["knowledge_document_id"] for row in links}, {document.id})
+
+    def test_sync_repairs_missing_policy_link_table_with_auto_migration_disabled(self) -> None:
+        country = Country(name="Germany")
+        sector = Sector(name="Energy")
+        self.db.add_all([country, sector])
+        self.db.flush()
+        policy = Policy(country_id=country.id, sector_id=sector.id, policy="Legacy")
+        self.db.add(policy)
+        self.db.flush()
+        document = KnowledgeDocument(
+            title="Legacy", source_type="policy_url", scope="policy_document",
+            policy_id=policy.id,
+        )
+        self.db.add(document)
+        self.db.commit()
+        self.db.execute(text("DROP TABLE policy_knowledge_documents"))
+        self.db.commit()
+
+        service = SyncService(self.db, device_id="device-a")
+        service.ensure_schema()
+
+        self.assertTrue(inspect(self.engine).has_table("policy_knowledge_documents"))
+        links = self.db.scalars(select(PolicyKnowledgeDocument)).all()
+        self.assertEqual([(link.policy_id, link.knowledge_document_id) for link in links], [
+            (policy.id, document.id),
+        ])
+        service.ensure_schema()
+        self.assertEqual(self.db.query(PolicyKnowledgeDocument).count(), 1)
+
+    def test_sync_schema_check_accepts_sqlite_expression_indexes(self) -> None:
+        self.db.execute(text(
+            "CREATE UNIQUE INDEX uq_policies_country_sector_title "
+            "ON policies (country_id, sector_id, lower(policy))"
+        ))
+        self.db.commit()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", SAWarning)
+            SyncService(self.db, device_id="device-a").ensure_schema()
+
+        self.assertFalse(any(
+            "unsupported reflection of expression-based index" in str(item.message)
+            for item in caught
+        ))
 
     def test_outbound_sync_uses_configured_row_batches(self) -> None:
         service = SyncService(self.db, device_id="device-a")
