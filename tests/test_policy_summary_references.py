@@ -145,6 +145,7 @@ def test_unmatched_d42_uses_linked_policy_document():
         prompt = ask_llm.call_args.kwargs["messages"][0]["content"]
         assert document_text in prompt
         assert "Matched D4.2" not in prompt
+        ask_llm.assert_awaited_once()
     finally:
         db.close()
 

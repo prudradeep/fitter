@@ -1,6 +1,7 @@
 import logging
 import re
 from datetime import datetime, timezone
+from time import perf_counter
 
 from app.llm import ask_llm_chat
 from app.config import get_settings
@@ -83,7 +84,7 @@ from app.services.grounding_models import GroundingModelService
 from app.services.hazard_ranking_service import HazardRankingService
 from app.services.message_renderer import mark_workflow_copy, markdown_to_html, render_message
 from app.services.prompt_loader import load_nested_prompt_file, render_prompt_template
-from app.services.voice_summary import generate_voice_summary
+from app.services.voice_summary import fallback_voice_summary
 from app.services.generated_claim_labels import label_generated_claims
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,7 @@ class ChatService(
         validation_mode: str = "strict",
         crowd_sourcing_enabled: bool = False,
     ) -> ChatResponse:
+        started_at = perf_counter()
         clean_message = message.strip()
         validation_mode = self._validation_mode(validation_mode)
         crowd_sourcing_enabled = bool(crowd_sourcing_enabled)
@@ -217,6 +219,12 @@ class ChatService(
             self._attach_other_options(response, session)
             await self._attach_voice_summary(response)
             self._finalize_chat_response(current_session_id, session, response)
+            total_ms = (perf_counter() - started_at) * 1000
+            if total_ms >= 1000:
+                logger.info(
+                    "Chat flow timing phase=reset step=%s workflow_ms=%.2f total_ms=%.2f",
+                    response.step, total_ms, total_ms,
+                )
             return response
 
         if not self._session_belongs_to_current_user(session_id):
@@ -228,7 +236,10 @@ class ChatService(
         session.crowd_sourcing_enabled = crowd_sourcing_enabled
         self._ensure_user_session(current_session_id, session)
 
+        phase = session.phase
+        workflow_started_at = perf_counter()
         response = await self._chat_response(current_session_id, session, clean_message)
+        workflow_ms = (perf_counter() - workflow_started_at) * 1000
         self._attach_persisted_session_counts(current_session_id, session, response)
         self._attach_other_options(response, session)
         if clean_message:
@@ -243,6 +254,12 @@ class ChatService(
         response.bot_message = label_generated_claims(response.bot_message)
         await self._attach_voice_summary(response)
         self._finalize_chat_response(current_session_id, session, response)
+        total_ms = (perf_counter() - started_at) * 1000
+        if total_ms >= 1000:
+            logger.info(
+                "Chat flow timing phase=%s step=%s workflow_ms=%.2f total_ms=%.2f",
+                phase, response.step, workflow_ms, total_ms,
+            )
         return response
 
 
@@ -298,7 +315,7 @@ class ChatService(
     async def _attach_voice_summary(response: ChatResponse) -> None:
         if response.voice_summary or not response.bot_message.strip():
             return
-        response.voice_summary = await generate_voice_summary(response.bot_message)
+        response.voice_summary = fallback_voice_summary(response.bot_message)
 
     async def generate_auto_user_message(
         self,
@@ -719,6 +736,7 @@ class ChatService(
             "inspired_mitigation_expansion_evidence": self._handle_inspired_mitigation_expansion_evidence,
             "inspired_mitigation_group_pathway_input": self._handle_inspired_mitigation_group_pathway_input,
             "inspired_mitigation_group_pathway_evidence": self._handle_inspired_mitigation_group_pathway_evidence,
+            "inspired_mitigation_group_pathway_review": self._handle_inspired_mitigation_group_pathway_review,
             "new_policy_target_group_pathway_input": self._handle_new_policy_target_group_pathway_input,
             "new_policy_target_group_pathway_evidence": self._handle_new_policy_target_group_pathway_evidence,
             "policy_adaptation_group_pathway_input": self._handle_policy_adaptation_group_pathway_input,
@@ -949,6 +967,7 @@ class ChatService(
             "inspired_mitigation_expansion_evidence",
             "inspired_mitigation_group_pathway_input",
             "inspired_mitigation_group_pathway_evidence",
+            "inspired_mitigation_group_pathway_review",
             "new_policy_target_group_pathway_input",
             "new_policy_target_group_pathway_evidence",
             "policy_adaptation_group_pathway_input",
@@ -1482,6 +1501,7 @@ class ChatService(
             return render_message(
                 "policy_objectives_bubble.md",
                 region=session.region or "the selected region",
+                country=session.country or "",
                 sectors=sectors,
             )
         context = load_nested_prompt_file("llm/selection_message.txt")
@@ -2293,7 +2313,16 @@ class ChatService(
         if session.phase == "new_policy_target_population_add":
             return ["Skip adding groups"]
         if session.phase == "mitigation_dg_review":
-            return ["Confirm target groups"]
+            return (
+                [
+                    "Continue to summary",
+                    "Add disadvantaged group",
+                    "Remove disadvantaged group",
+                    "Revise pathway",
+                ]
+                if session.mitigation_revision_stage == "confirmed_pathway_review"
+                else ["Confirm target groups"]
+            )
         if session.phase == "mitigation_review":
             return [option.label for option in MITIGATION_REVIEW_OPTIONS]
         if session.phase == "implementation_readiness_assessment":

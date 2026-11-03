@@ -404,6 +404,7 @@ Solar objective.
         self.assertIn("The policy aims to improve heating systems.",
                       ask_llm.call_args.kwargs["messages"][0]["content"])
         self.assertIn("### Mechanisms", summary)
+        ask_llm.assert_awaited_once()
 
     def test_existing_policy_flow_uses_proposed_adaptations_heading(self) -> None:
         reference = country_factsheet_reference(

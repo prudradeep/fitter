@@ -3,10 +3,12 @@
 
 {{ hazards }}
 
+{% if show_statistical_deep_dive %}
 ---
 Take a moment to dive into the findings by clicking on **Dive Deeper into Statistical Findings**.
 
 ---
+{% endif %}
 What would you like to do next?
 - Add more hazards for your region?
 - Draft a mitigation approach for one of the above listed hazards?

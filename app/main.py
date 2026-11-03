@@ -146,6 +146,7 @@ async def log_api_request(request: Request, call_next):
 
     duration_ms = (perf_counter() - started_at) * 1000
     response.headers[settings.request_id_header] = request_id
+    response.headers["Server-Timing"] = f"app;dur={duration_ms:.2f}"
     apply_security_headers(response, request, settings)
     increment_metric("requests_total")
     if response.status_code >= 500:

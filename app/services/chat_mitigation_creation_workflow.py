@@ -8,6 +8,17 @@ async def _ask_llm_chat(*args, **kwargs):
 
 
 class ChatMitigationCreationWorkflowMixin:
+    @staticmethod
+    def _target_population_values_for_display(labels: list[str]) -> list[str]:
+        values: list[str] = []
+        for label in labels:
+            cleaned = str(label or "").strip()
+            if not cleaned:
+                continue
+            _, separator, value = cleaned.partition(":")
+            values.append(value.strip() if separator and value.strip() else cleaned)
+        return values
+
     async def _handle_mitigation_clarity_answer(
         self, session_id: str, session: ChatSession, message: str
     ) -> ChatResponse:
@@ -186,9 +197,7 @@ class ChatMitigationCreationWorkflowMixin:
                     f"{session.mitigation_equity} Additional validation clarification: "
                     f"{clarification}"
                 ).strip()
-            return await self._guided_summary_step(
-                session_id, session, "mitigation_final_summary_review"
-            )
+            return self._confirmed_target_group_pathways_review_step(session_id, session)
         if session.mitigation_evidence_declined:
             return await self._validate_frozen_mitigation_inputs(
                 session_id,
@@ -952,8 +961,8 @@ class ChatMitigationCreationWorkflowMixin:
         session.pending_mitigation_measure = mitigation_measure
         session.pending_mitigation_reason = reason
         session.pending_mitigation_evidence = evidence_text
-        target_population = self._group_target_population_labels(
-            session.mitigation_target_population or []
+        target_population = self._target_population_values_for_display(
+            self._group_target_population_labels(session.mitigation_target_population or [])
         )
         target_lines = "\n".join(f"- **{label}**" for label in target_population)
         error_block = f"> {error_reason}\n\n" if error_reason else ""

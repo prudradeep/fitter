@@ -71,6 +71,7 @@ ALLOWED_ATTRIBUTES = {
     "button": [
         "class",
         "type",
+        "title",
         "data-open-methodology",
         "data-open-survey-results",
         "data-open-platform-users",
@@ -80,6 +81,8 @@ ALLOWED_ATTRIBUTES = {
         "data-metric",
         "data-source-key",
         "data-hazard-name",
+        "data-country",
+        "data-sector",
         "aria-label",
     ],
     "details": ["class", "open"],
@@ -111,6 +114,9 @@ def get_message_environment() -> Environment:
 
 def render_message(template_name: str, **context: object) -> str:
     prompt = load_prompt_from_db(f"chat/{template_name}")
+    if template_name == "policy_objectives_bubble.md":
+        # This template contains application controls and must stay in sync with the packaged UI.
+        prompt = None
     if template_name in {
         "hazard_added.md", "hazard_summary_review.md", "target_population_question.md",
     } and prompt:

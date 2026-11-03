@@ -202,6 +202,7 @@ class ChatSelectionStepsMixin:
             fallback=render_message(
                 "policy_objectives_bubble.md",
                 region=region.name,
+                country=session.country or "",
                 sectors=[sector.name for sector in sectors],
             ),
         )
@@ -1960,6 +1961,7 @@ class ChatSelectionStepsMixin:
                 bot_message=render_message(
                     "policy_objectives_bubble.md",
                     region=session.region or session.country or "your selected country",
+                    country=session.country or "",
                     sectors=[sector.name for sector in self._sectors_for_country(session.country_id)],
                 ),
                 options=option_list(self._sectors_for_country(session.country_id)),

@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -68,6 +69,14 @@ struct RuntimeCheck {
 struct RuntimeState {
     children: Mutex<Vec<Child>>,
     diagnostics: Mutex<Option<RuntimeDiagnostics>>,
+}
+
+static NEXT_DOCUMENT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
+
+fn is_app_url(url: &url::Url) -> bool {
+    url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port_or_known_default() == Some(8000)
 }
 
 #[tauri::command]
@@ -168,7 +177,31 @@ fn main() {
                 .title("Dr Transition")
                 .inner_size(1280.0, 820.0)
                 .min_inner_size(1000.0, 780.0)
-                .on_new_window(move |url, _features| {
+                .on_new_window(move |url, features| {
+                    if is_app_url(&url) {
+                        let label = format!(
+                            "document-{}",
+                            NEXT_DOCUMENT_WINDOW_ID.fetch_add(1, Ordering::Relaxed)
+                        );
+                        // The new WebView must use the opener's WebView2 environment so
+                        // it receives the same authenticated cookie session.
+                        let window = WebviewWindowBuilder::new(
+                            &external_open_app,
+                            label,
+                            WebviewUrl::External("about:blank".parse().expect("valid URL")),
+                        )
+                        .title("Dr Transition Document")
+                        .inner_size(1000.0, 780.0)
+                        .window_features(features)
+                        .build();
+                        return match window {
+                            Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+                            Err(error) => {
+                                eprintln!("Could not open app window: {error}");
+                                tauri::webview::NewWindowResponse::Deny
+                            }
+                        };
+                    }
                     if matches!(url.scheme(), "http" | "https") {
                         log_external_link_event("WebView new-window request", &url);
                         if let Err(error) = external_open_app

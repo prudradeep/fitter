@@ -104,6 +104,34 @@ class MechanismSentenceProvenanceTests(unittest.TestCase):
         self.assertIn(f"{source} **Documented**", summary)
         self.assertNotIn("public ro", summary.replace(source, ""))
 
+    def test_long_policy_summary_limits_model_retries(self):
+        service = ChatService.__new__(ChatService)
+        service._policy_summary_reference = Mock(return_value=None)
+        session = ChatSession(selected_context_policy="Clean Heat Act")
+        source = ("Unrelated administrative text. " * 3000) + (
+            "\n\nClean Heat Act provides grants for residents. " * 100
+        )
+        with patch("app.services.chat_hazard_steps.ask_llm_chat",
+                   AsyncMock(return_value="")) as ask_llm:
+            summary = asyncio.run(service._summarize_context_policy(session, source, ""))
+
+        self.assertLessEqual(ask_llm.await_count, 3)
+        self.assertIn("Not identified", summary)
+
+    def test_medium_policy_summary_selects_policy_passage(self):
+        service = ChatService.__new__(ChatService)
+        service._policy_summary_reference = Mock(return_value=None)
+        session = ChatSession(selected_context_policy="Clean Heat Act")
+        source = ("Unrelated administrative material. " * 1000) + (
+            "\n\nClean Heat Act offers heating grants to eligible residents."
+        )
+        with patch("app.services.chat_hazard_steps.ask_llm_chat",
+                   AsyncMock(return_value="")) as ask_llm:
+            asyncio.run(service._summarize_context_policy(session, source, ""))
+
+        first_prompt = ask_llm.await_args_list[0].kwargs["messages"][0]["content"]
+        self.assertIn("Clean Heat Act offers heating grants", first_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

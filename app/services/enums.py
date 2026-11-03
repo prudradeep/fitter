@@ -103,6 +103,7 @@ class ChatPhase(AppStrEnum):
     INSPIRED_MITIGATION_EXPANSION_EVIDENCE = "inspired_mitigation_expansion_evidence"
     INSPIRED_MITIGATION_GROUP_PATHWAY_INPUT = "inspired_mitigation_group_pathway_input"
     INSPIRED_MITIGATION_GROUP_PATHWAY_EVIDENCE = "inspired_mitigation_group_pathway_evidence"
+    INSPIRED_MITIGATION_GROUP_PATHWAY_REVIEW = "inspired_mitigation_group_pathway_review"
     POLICY_ADAPTATION_QUESTION = "policy_adaptation_question"
     POLICY_ADAPTATION_EVIDENCE = "policy_adaptation_evidence"
     POLICY_ADAPTATION_GROUP_PATHWAY_INPUT = "policy_adaptation_group_pathway_input"

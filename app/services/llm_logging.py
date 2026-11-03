@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.config import Settings
+from app.observability import current_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ def log_llm_exchange(
     record: dict[str, Any] = {
         "timestamp": timestamp.isoformat(),
         "request_id": request_id,
+        "http_request_id": current_request_id() or None,
         "provider": provider,
         "endpoint": endpoint,
         "model": model,

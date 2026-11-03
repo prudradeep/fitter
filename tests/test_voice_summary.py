@@ -7,6 +7,9 @@ from app.services.voice_summary import (
     fallback_voice_summary,
     generate_voice_summary,
 )
+from app.schemas import ChatResponse
+from app.services.chat_service import ChatService
+from app.services.chat_session import ChatSession
 
 
 def _run(coro):
@@ -14,6 +17,18 @@ def _run(coro):
 
 
 class VoiceSummaryTests(unittest.TestCase):
+    def test_chat_response_voice_summary_does_not_wait_for_model(self):
+        response = ChatResponse(
+            session_id="session-1", step="mitigation_measure",
+            bot_message="<p>Confirm the mitigation measure.</p>",
+            session=ChatSession().summary(),
+        )
+        with patch("app.services.voice_summary.ask_llm_chat", new=AsyncMock()) as ask_llm:
+            _run(ChatService._attach_voice_summary(response))
+
+        self.assertIn("Confirm the mitigation measure", response.voice_summary)
+        ask_llm.assert_not_awaited()
+
     def test_fallback_voice_summary_omits_closing_when_short_message_is_complete(self):
         summary = fallback_voice_summary(
             "<p>The assistant selected Germany and Bavaria.</p>"

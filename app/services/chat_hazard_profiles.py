@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -31,7 +32,7 @@ from app.services.chat_options import (
 )
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.chat_session import ChatSession
-from app.services.profile_category_matching import match_profile_data
+from app.services.profile_category_matching import match_profile_data, match_profile_data_semantic
 from app.services.hazard_profile_parsing import (
     extract_socio_demographic_profiles,
     parse_hazard_profile_items,
@@ -804,9 +805,24 @@ class ChatHazardProfilesMixin:
     ) -> list[dict[str, str]]:
         if not profiles:
             return profiles
+        semantic_categories = await asyncio.gather(
+            *(match_profile_data_semantic(profile) for profile in profiles)
+        )
+        categories_by_profile = {
+            id(profile): category
+            for profile, category in zip(profiles, semantic_categories, strict=False)
+            if category is not None
+        }
         population_profiles = self._ranking_population_profiles(session, hazard)
         if not population_profiles:
-            return [_mark_profile_population_unavailable(profile) for profile in profiles]
+            unavailable = []
+            for profile in profiles:
+                updated = dict(profile)
+                category = categories_by_profile.get(id(profile))
+                if category:
+                    updated["confirmed_predictor_category"] = category
+                unavailable.append(_mark_profile_population_unavailable(updated))
+            return unavailable
         cached_matches: dict[str, list[dict[str, object]]] = {}
         blocked_profiles: set[str] = set()
         profiles_needing_match: list[dict[str, str]] = []
@@ -862,7 +878,11 @@ class ChatHazardProfilesMixin:
             percentages = self._population_context_percentages(matches) if matches else None
             if percentages is None:
                 self._record_profile_population_match_failure(session, hazard, profile)
-                enriched.append(_mark_profile_population_unavailable(profile))
+                updated = dict(profile)
+                category = categories_by_profile.get(id(profile))
+                if category:
+                    updated["confirmed_predictor_category"] = category
+                enriched.append(_mark_profile_population_unavailable(updated))
                 continue
             self._store_matched_profile_population_references(
                 session,
@@ -871,6 +891,9 @@ class ChatHazardProfilesMixin:
                 matches,
             )
             updated = dict(profile)
+            category = categories_by_profile.get(id(profile))
+            if category:
+                updated["confirmed_predictor_category"] = category
             updated["regional_population_pct"] = percentages[0]
             updated["national_population_pct"] = percentages[1]
             updated.pop("population_context", None)
@@ -906,7 +929,7 @@ class ChatHazardProfilesMixin:
         predictor = str(profile.get("variable_name") or profile.get("variable") or "").strip()
         if not predictor:
             return []
-        category = match_profile_data(profile)
+        category = await match_profile_data_semantic(profile)
         if category is None:
             return []
         country = self.db.get(Country, session.country_id) if session.country_id else None
@@ -965,9 +988,12 @@ class ChatHazardProfilesMixin:
                 enriched.append(profile)
                 continue
             lookup_labels = self._additional_profile_population_lookup_labels(profile)
-            category = match_profile_data(profile)
+            category = await match_profile_data_semantic(profile)
+            updated = dict(profile)
+            if category:
+                updated["confirmed_predictor_category"] = category
             if category is None:
-                enriched.append(_mark_profile_population_unavailable(profile))
+                enriched.append(_mark_profile_population_unavailable(updated))
                 continue
             population_profiles: list[dict[str, object]] = []
             try:
@@ -1004,9 +1030,8 @@ class ChatHazardProfilesMixin:
                 else None
             )
             if percentages is None:
-                enriched.append(_mark_profile_population_unavailable(profile))
+                enriched.append(_mark_profile_population_unavailable(updated))
                 continue
-            updated = dict(profile)
             updated["regional_population_pct"] = percentages[0]
             updated["national_population_pct"] = percentages[1]
             updated["population_context"] = population_profiles

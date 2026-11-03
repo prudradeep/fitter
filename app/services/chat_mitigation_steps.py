@@ -1827,7 +1827,9 @@ class ChatMitigationStepsMixin:
         self, session_id: str, session: ChatSession, *, error_reason: str = ""
     ) -> ChatResponse:
         session.phase = "new_policy_target_population_review"
-        groups = self._group_target_population_labels(session.new_policy_target_population or [])
+        groups = self._target_population_values_for_display(
+            self._group_target_population_labels(session.new_policy_target_population or [])
+        )
         lines = "\n".join(f"- **{group}**" for group in groups)
         return ChatResponse(
             session_id=session_id,
@@ -2639,13 +2641,10 @@ class ChatMitigationStepsMixin:
         session.pending_inspired_mitigation_reason = reason
         session.pending_inspired_mitigation_policy_about = policy_about
         session.pending_inspired_mitigation_hazard_pathway = hazard_pathway or reason
-        try:
-            analysis = await self._analyze_mitigation_evidence(
-                session, measure, sources,
-            )
-        except Exception:
-            logger.exception("Could not build source-traced mitigation explanation")
-            analysis = {"rewrites": [], "mappings": [], "sources": []}
+        # The confirmation view uses the generated causal assessment and the
+        # independent group review below. Keep sources for a later clarification;
+        # the detailed evidence analysis is not shown or used by this step.
+        analysis = {"sources": sources}
         session.pending_inspired_mitigation_evidence_analysis = analysis
         causal_analysis = self._normalize_inspired_mitigation_causality(
             payload.get("causal_analysis") if isinstance(payload, dict) else None
@@ -3265,6 +3264,7 @@ class ChatMitigationStepsMixin:
         session.inspired_mitigation_pathway_evidence = dict(session.inspired_mitigation_pathway_evidence or {})
         session.inspired_mitigation_pathway_unverified = list(session.inspired_mitigation_pathway_unverified or [])
         session.inspired_mitigation_pathway_pending_input = None
+        session.inspired_mitigation_pathway_pending_review = None
         return self._inspired_mitigation_group_pathway_prompt(session_id, session)
 
     def _inspired_mitigation_group_pathway_prompt(self, session_id, session, *, error=False, message=""):
@@ -3278,6 +3278,7 @@ class ChatMitigationStepsMixin:
             session_id=session_id, step=session.phase,
             bot_message=markdown_to_html(
                 (message + "\n\n" if message else "")
+                + "### Describe pathway\n\n"
                 + f"How is **{group}** benefited by this measure? Explain the specific action "
                 "and how it helps. You may skip this group or skip all remaining groups."
             ),
@@ -3294,6 +3295,10 @@ class ChatMitigationStepsMixin:
         if index >= len(groups):
             return await self._finish_inspired_mitigation_group_pathway_review(session_id, session)
         group = groups[index]
+        if session.inspired_mitigation_pathway_pending_review:
+            return await self._handle_inspired_mitigation_group_pathway_review(
+                session_id, session, message
+            )
         if normalize(message) == normalize("Skip all groups"):
             session.inspired_mitigation_pathway_pending_input = None
             session.inspired_mitigation_pathway_skipped_groups = list(dict.fromkeys([
@@ -3480,6 +3485,56 @@ class ChatMitigationStepsMixin:
     async def _store_inspired_mitigation_group_pathway(
         self, session_id, session, group, pathway, *, evidence_supported
     ):
+        session.inspired_mitigation_pathway_pending_review = pathway
+        session.inspired_mitigation_pathway_pending_input = None
+        session.phase = "inspired_mitigation_group_pathway_review"
+        return ChatResponse(
+            session_id=session_id, step=session.phase,
+            bot_message=markdown_to_html(
+                f"### Pathway summary\n\n**{group}:** {pathway}\n\n"
+                "Confirm to continue to the next group, or revise this pathway."
+            ),
+            options=[Option(id=1, label="Confirm and continue"), Option(id=2, label="Revise pathway")],
+            session=session.summary(), input_mode="options_only", error=False,
+        )
+
+    async def _handle_inspired_mitigation_group_pathway_review(self, session_id, session, message):
+        groups = session.inspired_mitigation_pathway_groups or []
+        index = int(session.inspired_mitigation_pathway_index or 0)
+        if index >= len(groups):
+            return await self._finish_inspired_mitigation_group_pathway_review(session_id, session)
+        group = groups[index]
+        pathway = str(session.inspired_mitigation_pathway_pending_review or "").strip()
+        if normalize(message) == normalize("Revise pathway"):
+            session.inspired_mitigation_pathway_pending_review = None
+            session.inspired_mitigation_pathway_inputs = dict(session.inspired_mitigation_pathway_inputs or {})
+            session.inspired_mitigation_pathway_inputs.pop(group, None)
+            session.inspired_mitigation_pathway_evidence = dict(session.inspired_mitigation_pathway_evidence or {})
+            session.inspired_mitigation_pathway_evidence.pop(group, None)
+            session.inspired_mitigation_pathway_unverified = [
+                item for item in (session.inspired_mitigation_pathway_unverified or [])
+                if normalize_for_match(item) != normalize_for_match(group)
+            ]
+            return self._inspired_mitigation_group_pathway_prompt(session_id, session)
+        if normalize(message) != normalize("Confirm and continue"):
+            return ChatResponse(
+                session_id=session_id, step=session.phase,
+                bot_message=markdown_to_html(
+                    f"### Pathway summary\n\n**{group}:** {pathway}\n\n"
+                    "Choose whether to confirm and continue or revise the pathway."
+                ),
+                options=[Option(id=1, label="Confirm and continue"), Option(id=2, label="Revise pathway")],
+                session=session.summary(), input_mode="options_only", error=True,
+            )
+        session.inspired_mitigation_pathway_pending_review = None
+        return await self._commit_inspired_mitigation_group_pathway(
+            session_id, session, group, pathway,
+            evidence_supported=group not in (session.inspired_mitigation_pathway_unverified or []),
+        )
+
+    async def _commit_inspired_mitigation_group_pathway(
+        self, session_id, session, group, pathway, *, evidence_supported
+    ):
         pathways = dict(session.pending_inspired_mitigation_group_pathways or {})
         label = pathway if evidence_supported else f"User-provided, not independently verified: {pathway}"
         pathways[group] = label
@@ -3498,17 +3553,22 @@ class ChatMitigationStepsMixin:
 
     async def _finish_inspired_mitigation_group_pathway_review(self, session_id, session):
         session.inspired_mitigation_pathway_review_complete = True
-        inputs = dict(session.inspired_mitigation_pathway_inputs or {})
-        evidence = dict(session.inspired_mitigation_pathway_evidence or {})
-        unverified = list(session.inspired_mitigation_pathway_unverified or [])
-        return await self._adopt_inspired_mitigation_response(
-            session_id, session, revision=True,
-            revision_feedback="Regenerate the full summary using the validated group benefit pathways.",
-            user_group_pathways=inputs,
-            user_group_evidence=evidence,
-            unverified_user_groups=unverified,
-            skipped_user_groups=list(session.inspired_mitigation_pathway_skipped_groups or []),
-        )
+        pathways = session.pending_inspired_mitigation_group_pathways or {}
+        covered = {
+            normalize_for_match(group)
+            for group, pathway in pathways.items() if str(pathway or "").strip()
+        }
+        session.pending_inspired_mitigation_uncovered_groups = [
+            group for group in (
+                session.inspired_mitigation_considered_groups
+                or session.inspired_mitigation_pathway_groups
+                or session.socio_demographic_profiles
+                or []
+            )
+            if normalize_for_match(group) not in covered
+        ]
+        session.phase = "inspired_mitigation_confirmation"
+        return self._inspired_mitigation_confirmation_response(session_id, session)
 
     def _inspired_mitigation_expansion_input_step(self, session_id, session, *, error=False, message=""):
         session.phase = "inspired_mitigation_expansion_input"

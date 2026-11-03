@@ -245,6 +245,32 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
             mitigation_proposal_type="new_policy",
         )
 
+    def test_skip_all_group_pathways_keeps_draft_without_regeneration(self):
+        engine = _InspiredMeasureEngine()
+        session = self._session()
+        session.inspired_mitigation_considered_groups = ["Low-income tenants", "Older renters"]
+        session.inspired_mitigation_pathway_groups = ["Low-income tenants", "Older renters"]
+        session.inspired_mitigation_pathway_index = 0
+        session.pending_inspired_mitigation_measure = "Offer clear household energy advice."
+        session.pending_inspired_mitigation_policy_about = "The policy expands renewable power."
+        session.pending_inspired_mitigation_group_pathways = {}
+        session.phase = "inspired_mitigation_group_pathway_input"
+
+        with patch.object(engine, "_adopt_inspired_mitigation_response", new=AsyncMock()) as regenerate:
+            response = asyncio.run(engine._handle_inspired_mitigation_group_pathway_input(
+                "session-1", session, "Skip all groups"
+            ))
+
+        self.assertEqual(response.step, "inspired_mitigation_confirmation")
+        self.assertIn("Offer clear household energy advice.", response.bot_message)
+        self.assertEqual(session.pending_inspired_mitigation_measure,
+                         "Offer clear household energy advice.")
+        self.assertEqual(session.inspired_mitigation_pathway_skipped_groups,
+                         ["Low-income tenants", "Older renters"])
+        self.assertEqual(session.pending_inspired_mitigation_uncovered_groups,
+                         ["Low-income tenants", "Older renters"])
+        regenerate.assert_not_awaited()
+
     def test_selected_policy_sources_include_d42_linked_document_and_knowledge_base(self):
         db, _ = _db_with_d42()
         try:
@@ -787,9 +813,7 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
              "content": "Related mitigation policy: Clean Heat Act\n"
                         "Factsheet proposal (not an existing policy duty): Add targeted grants."},
         ])
-        engine._analyze_mitigation_evidence = AsyncMock(
-            return_value={"rewrites": [], "mappings": [], "sources": []},
-        )
+        engine._analyze_mitigation_evidence = AsyncMock()
         session = self._session()
         session.mitigation_proposal_type = "existing_policy"
         session.new_policy_inspiration = {
@@ -821,8 +845,9 @@ class AdoptInspiredMitigationTests(unittest.TestCase):
             [source["kind"] for source in generation_input["sources"]],
             ["policy_document", "related_factsheet_proposal"],
         )
-        reviewed_sources = engine._analyze_mitigation_evidence.await_args.args[2]
+        reviewed_sources = session.pending_inspired_mitigation_evidence_analysis["sources"]
         self.assertEqual(reviewed_sources[1]["kind"], "related_factsheet_proposal")
+        engine._analyze_mitigation_evidence.assert_not_awaited()
 
     def test_related_factsheet_proposal_is_available_to_evidence_analysis(self):
         engine = _InspiredMeasureEngine()

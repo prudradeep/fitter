@@ -866,7 +866,7 @@ class ChatHazardStepsMixin:
             },
         }
         focused_source = _policy_summary_source(
-            source_text, 48000, session.selected_context_policy or ""
+            source_text, 24000, session.selected_context_policy or ""
         )
         d42 = self._policy_summary_reference(session)
         d42_objectives = str((d42.fields if d42 else {}).get("Original Policy Objective") or "").strip()
@@ -928,7 +928,8 @@ class ChatHazardStepsMixin:
                 "none stated in supplied text",
             }
 
-        for source_limit in (48000, 24000):
+        # One complete summary pass; retries below ask only for missing sections.
+        for source_limit in (24000,):
             prompt = (
                 f"{instructions}\n\n"
                 f"Policy: {session.selected_context_policy}\n"
@@ -991,20 +992,38 @@ class ChatHazardStepsMixin:
                     missing.append(key)
             return missing
 
-        # The initial summary examines the first 48K characters. If a section
-        # remains unidentified, scan the whole document in overlapping windows
-        # and ask only for the still-missing sections.
+        # Search the document locally for passages relevant to missing sections.
+        # Bound model retries so a long policy cannot trigger a call per page.
         missing = missing_summary_sections()
-        if missing:
-            window_size = 36000
-            overlap = 2000
+        if missing and len(source_text) > len(focused_source):
+            window_size = 18000
+            overlap = 1000
             step = window_size - overlap
-            for offset in range(0, len(source_text), step):
+            title_terms = {
+                term.casefold() for term in re.findall(r"[\w-]{5,}", session.selected_context_policy or "")
+                if term.casefold() not in {"policy", "local", "public", "economic"}
+            }
+            section_terms = {
+                term for key in missing for term in POLICY_SOURCE_EXCERPT_TERMS.get(key, ())
+            }
+            if "original_objectives" in missing:
+                section_terms.update({"objective", "purpose", "aims to", "intended to"})
+            windows = [
+                (offset, source_text[offset:offset + window_size])
+                for offset in range(0, len(source_text), step)
+            ]
+            windows = [
+                (offset, excerpt) for offset, excerpt in windows
+                if excerpt.strip() and excerpt not in focused_source
+            ]
+            windows.sort(key=lambda item: (
+                -sum(2 for term in title_terms if term in item[1].casefold())
+                -sum(1 for term in section_terms if term in item[1].casefold()),
+                item[0],
+            ))
+            for _, excerpt in windows[:2]:
                 if not missing:
                     break
-                excerpt = source_text[offset:offset + window_size]
-                if not excerpt.strip():
-                    continue
                 chunk_prompt_source = _policy_summary_source(
                     excerpt, 48000, session.selected_context_policy or "",
                 )
@@ -2073,6 +2092,11 @@ class ChatHazardStepsMixin:
                 selected_policy=session.selected_context_policy,
                 policies=self._policies_for_selected_context(session),
                 has_linked_hazards=has_linked_hazards,
+                show_statistical_deep_dive=not (
+                    bool(session.additional_hazards)
+                    and not bool(session.hazards)
+                    and not bool(session.custom_hazards)
+                ),
                 hazards=format_hazards(
                     session,
                     show_admin_details=bool(getattr(self, "is_admin", False)),

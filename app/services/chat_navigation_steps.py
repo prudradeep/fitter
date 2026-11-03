@@ -5,7 +5,10 @@ from sqlalchemy import select
 
 from app.models import Country, Region
 from app.schemas import ChatResponse, Option
-from app.services.chat_formatters import format_all_dgs, normalize_markdown_text
+from app.services.chat_formatters import (
+    format_all_dgs,
+    normalize_markdown_text,
+)
 from app.services.chat_options import (
     ADOPT_INSPIRED_MITIGATION,
     ADD_DGS_OPTIONS,
@@ -36,7 +39,7 @@ from app.services.chat_session import ChatSession
 from app.services.custom_hazard_validation import default_custom_hazard_state
 from app.services.custom_hazard_state_machine import transition_custom_hazard
 from app.services.enums import ChatPhase
-from app.services.message_renderer import render_message
+from app.services.message_renderer import markdown_to_html, render_message
 
 
 POLICY_FLOW_STEPS = frozenset({
@@ -120,6 +123,27 @@ class ChatNavigationStepsMixin:
             return None
 
         action = normalize(message)
+        if action == normalize("Choose another mitigation type"):
+            if not session.mitigation_proposal_type:
+                return None
+            session.mitigation_proposal_type = None
+            session.pending_mitigation_policy_selection = False
+            session.selected_mitigation_policy = None
+            session.pending_mitigation_policy = None
+            session.pending_mitigation_policy_context = None
+            session.pending_mitigation_policy_document_ids = None
+            session.phase = "mitigation_choice"
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_choice",
+                bot_message=markdown_to_html(
+                    "You can switch mitigation approaches. Choose whether to create a new "
+                    "mitigation proposal or adapt the existing policy."
+                ),
+                options=MITIGATION_CHOICE_OPTIONS,
+                session=session.summary(),
+                error=False,
+            )
         if action == normalize("Analyse another hazard for the same selected policy"):
             if session.sector is None or not session.selected_context_policy_id:
                 return self._repeat_current_options(session_id, session, self.invalid_message, True)
@@ -288,6 +312,7 @@ class ChatNavigationStepsMixin:
                 bot_message=render_message(
                     "policy_objectives_bubble.md",
                     region=session.region or session.country or "your selected country",
+                    country=session.country or "",
                     sectors=[sector.name for sector in self._sectors_for_country(session.country_id)],
                 ),
                 options=option_list(self._sectors_for_country(session.country_id)),
@@ -396,6 +421,9 @@ class ChatNavigationStepsMixin:
         session.mitigation_policy_effect_index = 0
         session.mitigation_creation_summary = None
         session.mitigation_user_added_groups = None
+        session.mitigation_dg_benefit_explanations = None
+        session.mitigation_dg_pathway_groups = None
+        session.pending_mitigation_dg_pathway = None
         session.mitigation_dg_evidence = None
         session.mitigation_dg_evidence_index = 0
         session.mitigation_equity = None
@@ -521,7 +549,11 @@ class ChatNavigationStepsMixin:
                 "advisory_decision", "advisory_clarification",
             }
         ):
-            response.other_options = []
+            response.other_options = (
+                ["Choose another mitigation type"]
+                if session.mitigation_proposal_type
+                else []
+            )
             return
         hide_new_hazard = response.step in POLICY_FLOW_STEPS or session.phase in POLICY_FLOW_STEPS
         main_options = {normalize(option.label) for option in response.options}
@@ -583,6 +615,8 @@ class ChatNavigationStepsMixin:
     @staticmethod
     def _other_nav_options(session: ChatSession, step: str) -> list[str]:
         options: list[str] = []
+        if session.mitigation_proposal_type:
+            options.append("Choose another mitigation type")
         if session.mitigation_measure or session.pending_mitigation_measure:
             options.append("Write mitigation measure again")
         if session.sector and session.selected_hazard and session.selected_context_policy_id:
@@ -1088,13 +1122,32 @@ class ChatNavigationStepsMixin:
             "mitigation_summary_review": self._guided_options(
                 "Confirm summary", "Modify summary inputs"
             ),
-            "mitigation_dg_review": self._guided_options(
-                "Confirm target groups",
-                "Add disadvantaged group",
-                "Remove disadvantaged group",
+            "mitigation_dg_review": (
+                self._guided_options(
+                    "Continue to summary",
+                    "Add disadvantaged group",
+                    "Remove disadvantaged group",
+                    "Revise pathway",
+                )
+                if session.mitigation_revision_stage == "confirmed_pathway_review"
+                else self._guided_options(
+                    "Confirm target groups",
+                    "Add disadvantaged group",
+                    "Remove disadvantaged group",
+                )
             ),
-            "mitigation_dg_input": self._guided_options(
-                "Back to suggested disadvantaged groups"
+            "mitigation_dg_input": (
+                self._guided_options("Confirm and continue", "Revise pathway")
+                if session.mitigation_revision_stage in {
+                    "benefit_pathway_review", "initial_benefit_pathway_review",
+                }
+                else self._guided_options(
+                    "Back to target groups and pathways"
+                    if session.mitigation_revision_stage in {
+                        "final_add_dg", "final_remove_dg", "revise_confirmed_pathway",
+                    }
+                    else "Back to suggested disadvantaged groups"
+                )
             ),
             "mitigation_dg_evidence_decision": self._guided_options(
                 "Yes, target group evidence", "No, target group evidence"
@@ -1110,6 +1163,19 @@ class ChatNavigationStepsMixin:
                 bot_message=message,
                 options=guided_option_phases[session.phase],
                 session=session.summary(),
+                input_mode=(
+                    "textarea"
+                    if session.phase == "mitigation_dg_review"
+                    and session.mitigation_revision_stage == "confirmed_pathway_review"
+                    else "options_only"
+                    if session.phase == "mitigation_dg_input"
+                    and session.mitigation_revision_stage in {
+                        "benefit_pathway_review", "initial_benefit_pathway_review",
+                    }
+                    else "textarea"
+                    if session.phase == "mitigation_dg_input"
+                    else None
+                ),
                 error=error,
             )
 

@@ -88,6 +88,10 @@ const sessionsList = document.querySelector("#sessionsList");
 const knowledgeButton = document.querySelector("#knowledgeButton");
 const promptsButton = document.querySelector("#promptsButton");
 const knowledgeDialog = document.querySelector("#knowledgeDialog");
+const localDocumentDialog = document.querySelector("#localDocumentDialog");
+const localDocumentFrame = document.querySelector("#localDocumentFrame");
+const localDocumentTitle = document.querySelector("#localDocumentTitle");
+const closeLocalDocumentButton = document.querySelector("#closeLocalDocumentButton");
 const promptLibraryDialog = document.querySelector("#promptLibraryDialog");
 const closePromptLibraryButton = document.querySelector("#closePromptLibraryButton");
 const closeKnowledgeButton = document.querySelector("#closeKnowledgeButton");
@@ -140,6 +144,11 @@ const renameSessionInput = document.querySelector("#renameSessionInput");
 const cancelRenameButton = document.querySelector("#cancelRenameButton");
 const statsDeepDiveDialog = document.querySelector("#statsDeepDiveDialog");
 const closeStatsDialogButton = document.querySelector("#closeStatsDialogButton");
+const sectoralObjectiveDialog = document.querySelector("#sectoralObjectiveDialog");
+const sectoralObjectiveContext = document.querySelector("#sectoralObjectiveContext");
+const sectoralObjectiveSummary = document.querySelector("#sectoralObjectiveSummary");
+const sectoralObjectiveSources = document.querySelector("#sectoralObjectiveSources");
+const closeSectoralObjectiveDialogButton = document.querySelector("#closeSectoralObjectiveDialog");
 const statsDialogLog = document.querySelector("#statsDialogLog");
 const statsDialogForm = document.querySelector("#statsDialogForm");
 const statsDialogInput = document.querySelector("#statsDialogInput");
@@ -547,7 +556,10 @@ function renderSectorStageTable(session = {}, options = appState.currentOptions)
 function updateFloatingStatsButton() {
   if (!floatingStatsButton) return;
   const hasSector = Boolean(appState.currentSession?.sector);
-  const canOpen = hasSector && !["country", "national_scope", "region", "sector"].includes(appState.currentStep);
+  const expertOnlyHazards = Boolean(appState.currentSession?.expert_hazards_only);
+  const canOpen = hasSector
+    && !expertOnlyHazards
+    && !["country", "national_scope", "region", "sector"].includes(appState.currentStep);
   floatingStatsButton.hidden = !canOpen;
 }
 
@@ -2649,7 +2661,7 @@ function initializeHighcharts(root = document) {
           },
         },
         title: {
-          text: "Affected and target populations(Hover on chart to see details)",
+          text: "Affected and target populations",
           style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" },
         },
         credits: { enabled: false },
@@ -2672,7 +2684,7 @@ function initializeHighcharts(root = document) {
         },
       },
       title: {
-        text: "Affected and target populations(Hover on chart to see details)",
+        text: "Affected and target populations",
         style: { color: "#0f172a", fontSize: "16px", fontWeight: "700" },
       },
       credits: { enabled: false },
@@ -2681,6 +2693,10 @@ function initializeHighcharts(root = document) {
         align: "center",
         verticalAlign: "bottom",
         layout: "horizontal",
+        title: {
+          text: "Hover over a category to see its details.",
+          style: { color: "#64748b", fontSize: "11px", fontWeight: "500" },
+        },
         itemStyle: { color: "#334155", fontSize: "11px", fontWeight: "600" },
         events: {
           itemClick(event) {
@@ -2906,16 +2922,21 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
 
   const template = document.createElement("template");
   renderTrustedHtml(template, html);
+  const totalCharacters = template.content.textContent?.length || 0;
+  const charactersPerFrame = Math.max(1, Math.ceil(totalCharacters / 100));
+  const animationDeadline = performance.now() + 1200;
 
   async function typeNode(node, parent) {
     if (node.nodeType === Node.TEXT_NODE) {
       const textNode = document.createTextNode("");
       parent.appendChild(textNode);
       const text = node.textContent || "";
-      for (const char of text) {
-        textNode.textContent += char;
+      for (let index = 0; index < text.length; index += charactersPerFrame) {
+        textNode.appendData(text.slice(index, index + charactersPerFrame));
         scrollToBottom(targetLog);
-        await new Promise((resolve) => setTimeout(resolve, 8));
+        if (performance.now() < animationDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 8));
+        }
       }
       return;
     }
@@ -3277,13 +3298,15 @@ function setInputMode(mode = "text", step = "", options = [], session = appState
   const evaluationMode = effectiveMode === "evaluation_question";
   const textareaMode = effectiveMode === "textarea";
   const optionsOnlyMode = effectiveMode === "options_only";
+  const policyTypeMultiMode = effectiveMode === "policy_type_multi";
   micButton.disabled = !micSupported || reasonEvidenceMode || evaluationMode;
   const placeholder = placeholderForStep(step, options, session);
   messageInput.placeholder = placeholder;
   textareaInput.placeholder = placeholder;
   setReasonEvidencePlaceholders(step, effectiveMode);
   reasonEvidenceFields.classList.toggle("mitigation-mode", effectiveMode === "mitigation_measure");
-  messageInputRow.hidden = reasonEvidenceMode || evaluationMode || optionsOnlyMode;
+  messageInputRow.hidden = reasonEvidenceMode || evaluationMode || optionsOnlyMode || policyTypeMultiMode;
+  sendButton.hidden = policyTypeMultiMode || optionsOnlyMode;
   messageInput.hidden = textareaMode;
   textareaInput.hidden = !textareaMode;
   reasonEvidenceFields.hidden = !reasonEvidenceMode;
@@ -3800,7 +3823,10 @@ function renderCollapsedHazardOptions(options = []) {
     hiddenHazards.forEach((option) => {
       const button = createOptionButton(option.label);
       button.classList.add("hazard-extra-option");
-      optionTray.insertBefore(button, optionTray.querySelector("[data-hazard-action='true']"));
+      const insertionPoint = optionTray.querySelector("[data-hazard-action='true']")
+        || optionTray.querySelector("[data-other-nav='true']")
+        || optionTray.querySelector("[data-other-toggle='true']");
+      optionTray.insertBefore(button, insertionPoint || null);
     });
     updateOptionHighlight();
   });
@@ -3828,9 +3854,9 @@ function renderCollapsedPolicyOptions(options = []) {
   showMore.addEventListener("click", () => {
     pauseSpeech();
     showMore.remove();
-    const otherOptionsToggle = optionTray.querySelector("[data-other-toggle='true']");
     policies.slice(3).forEach((option) => {
-      optionTray.insertBefore(createOptionButton(option.label), otherOptionsToggle);
+      const button = createOptionButton(option.label);
+      insertOptionBeforeOtherOptions(button);
     });
     updateOptionHighlight();
   });
@@ -4057,18 +4083,24 @@ function renderOtherOptionsMenu() {
       toggle.classList.remove("is-open");
       return;
     }
-    let insertAfter = toggle;
+    const buttons = document.createDocumentFragment();
     navOptions.forEach((label) => {
       const button = createOptionButton(label, "other-option-pill");
       button.dataset.otherNav = "true";
       button.setAttribute("data-tooltip", label);
-      optionTray.insertBefore(button, insertAfter.nextSibling);
-      insertAfter = button;
+      buttons.appendChild(button);
     });
+    optionTray.insertBefore(buttons, toggle);
     toggle.classList.add("is-open");
   });
 
   optionTray.appendChild(toggle);
+}
+
+function insertOptionBeforeOtherOptions(button) {
+  const insertionPoint = optionTray.querySelector("[data-other-nav='true']")
+    || optionTray.querySelector("[data-other-toggle='true']");
+  optionTray.insertBefore(button, insertionPoint || null);
 }
 
 function setStatsDialogLoading(value) {
@@ -4110,6 +4142,44 @@ function closeStatsDeepDiveDialog() {
     statsDeepDiveDialog.setAttribute("hidden", "");
   }
   messageInput.focus();
+}
+
+async function openSectoralObjectiveDialog(button) {
+  if (!sectoralObjectiveDialog) return;
+  const country = String(button.dataset.country || "").trim();
+  const sector = String(button.dataset.sector || "").trim();
+  sectoralObjectiveContext.textContent = [country, sector].filter(Boolean).join(" - ");
+  sectoralObjectiveSummary.textContent = "Loading details for you...";
+  sectoralObjectiveSources.textContent = "";
+  sectoralObjectiveDialog.showModal();
+
+  try {
+    const response = await csrfFetch("/api/sectoral-objective-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ country, sector }),
+    });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    const data = await response.json();
+    if (data.error) throw new Error(data.detail || "Could not load the D3.1 summary.");
+    if (data.summary_html) {
+      renderTrustedHtml(sectoralObjectiveSummary, data.summary_html);
+    } else {
+      sectoralObjectiveSummary.textContent = data.summary || "No summary is available.";
+    }
+    const source = (data.sources || []).find((item) => item.document === "FITTER D3.1");
+    const pages = Array.isArray(source?.pages) ? source.pages : [];
+    sectoralObjectiveSources.textContent = pages.length
+      ? `Source: FITTER D3.1, pp. ${pages.join(", ")}`
+      : "Source: FITTER D3.1";
+  } catch (error) {
+    console.error("Sectoral objective summary request failed", error);
+    sectoralObjectiveSummary.textContent = "The D3.1 summary could not be loaded. Please try again.";
+  }
 }
 
 function showTargetPopulationDialog() {
@@ -4249,6 +4319,11 @@ function closeHazardEvidenceDialog() {
   messageInput?.focus();
 }
 
+function isLocalDocumentUrl(url) {
+  return url.origin === window.location.origin
+    && /^\/api\/knowledge\/documents\/[^/]+\/open\/?$/.test(url.pathname);
+}
+
 function openExternalUrl(externalUrl) {
   let url;
   try {
@@ -4259,6 +4334,10 @@ function openExternalUrl(externalUrl) {
   }
   if (!["http:", "https:"].includes(url.protocol)) {
     console.info("[external-link] Ignored non-web URL", { protocol: url.protocol });
+    return;
+  }
+  if (isLocalDocumentUrl(url)) {
+    openLocalDocument(url, "Document");
     return;
   }
 
@@ -4289,6 +4368,23 @@ function openExternalUrl(externalUrl) {
     window.open(url.href, "_blank", "noopener,noreferrer");
   }
 }
+
+function openLocalDocument(url, title) {
+  if (!localDocumentDialog || !localDocumentFrame) return;
+  localDocumentTitle.textContent = title || "Document";
+  localDocumentFrame.src = url.href;
+  localDocumentDialog.showModal();
+}
+
+function closeLocalDocument() {
+  localDocumentDialog?.close();
+}
+
+closeLocalDocumentButton?.addEventListener("click", closeLocalDocument);
+localDocumentDialog?.addEventListener("close", () => {
+  // Stop the PDF viewer and release the document when the dialog closes.
+  localDocumentFrame.removeAttribute("src");
+});
 
 function showHazardMetricDataDialog() {
   if (!hazardMetricDataDialog) return;
@@ -6416,6 +6512,12 @@ document.addEventListener("click", (event) => {
     }
     if (
       url
+      && isLocalDocumentUrl(url)
+    ) {
+      event.preventDefault();
+      openLocalDocument(url, externalLink.textContent.trim());
+    } else if (
+      url
       && url.origin !== window.location.origin
       && ["http:", "https:"].includes(url.protocol)
     ) {
@@ -6461,6 +6563,7 @@ resetButton.addEventListener("click", async () => {
   pauseSpeech();
   stopAutoConversation();
   autoConversationTurns = 0;
+  if (floatingStatsButton) floatingStatsButton.hidden = true;
   closeStatsDeepDiveDialog();
   clearCurrentInputState();
   localStorage.removeItem(sessionKey);
@@ -6697,6 +6800,14 @@ renameSessionForm?.addEventListener("submit", async (event) => {
 cancelRenameButton?.addEventListener("click", closeRenameDialog);
 
 closeStatsDialogButton?.addEventListener("click", closeStatsDeepDiveDialog);
+closeSectoralObjectiveDialogButton?.addEventListener("click", () => sectoralObjectiveDialog?.close());
+sectoralObjectiveDialog?.addEventListener("click", (event) => {
+  if (event.target === sectoralObjectiveDialog) sectoralObjectiveDialog.close();
+});
+document.addEventListener("click", (event) => {
+  const button = event.target.closest?.(".sectoral-objective-info-button");
+  if (button) openSectoralObjectiveDialog(button);
+});
 
 statsDeepDiveDialog?.addEventListener("close", () => {
   pauseSpeech();

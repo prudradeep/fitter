@@ -12,9 +12,9 @@
   </thead>
   <tbody>
     {% for sector in sectors %}
-    {% if sector == "Energy" %}<tr><td>Energy</td><td>Transition towards renewable energy</td></tr>{% endif %}
-    {% if sector == "Housing" %}<tr><td>Housing &amp; Built Environment</td><td>Adaptation of housing to climate change</td></tr>{% endif %}
-    {% if sector == "Transport" %}<tr><td>Transport &amp; Mobility</td><td>Shift to Sustainable Mobility</td></tr>{% endif %}
+    {% if sector == "Energy" %}<tr><td>Energy</td><td>Transition towards renewable energy <button class="sectoral-objective-info-button" type="button" data-sector="Energy" data-country="{{ country|e }}" aria-label="Show Energy objective details" title="Show objective details">ℹ</button></td></tr>{% endif %}
+    {% if sector == "Housing" %}<tr><td>Housing &amp; Built Environment</td><td>Adaptation of housing to climate change <button class="sectoral-objective-info-button" type="button" data-sector="Housing" data-country="{{ country|e }}" aria-label="Show Housing objective details" title="Show objective details">ℹ</button></td></tr>{% endif %}
+    {% if sector == "Transport" %}<tr><td>Transport &amp; Mobility</td><td>Shift to Sustainable Mobility <button class="sectoral-objective-info-button" type="button" data-sector="Transport" data-country="{{ country|e }}" aria-label="Show Transport objective details" title="Show objective details">ℹ</button></td></tr>{% endif %}
     {% endfor %}
   </tbody>
 </table>

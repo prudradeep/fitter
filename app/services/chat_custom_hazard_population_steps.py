@@ -32,7 +32,7 @@ from app.services.chat_population_edits import (
     fallback_population_edits,
 )
 from app.services.chat_session import ChatSession
-from app.services.profile_category_matching import match_profile_data
+from app.services.profile_category_matching import match_profile_data_semantic
 from app.services.custom_hazard_matching import split_group_entry
 from app.services.custom_hazard_validation import (
     build_custom_hazard_grounding_status,
@@ -1097,9 +1097,10 @@ class ChatCustomHazardPopulationStepsMixin:
         compared_profiles: list[dict[str, str]] = []
         for profile in profiles:
             updated = dict(profile)
-            category = match_profile_data(profile)
+            category = await match_profile_data_semantic(profile)
             prevalence = None
             if category is not None:
+                updated["confirmed_predictor_category"] = category
                 try:
                     prevalence = await self.eurostat.get_prevalence(
                         category,

@@ -84,6 +84,7 @@ class ChatSession:
     inspired_mitigation_pathway_evidence: dict[str, str] | None = None
     inspired_mitigation_pathway_unverified: list[str] | None = None
     inspired_mitigation_pathway_pending_input: str | None = None
+    inspired_mitigation_pathway_pending_review: str | None = None
     inspired_mitigation_pathway_review_complete: bool = False
     inspired_mitigation_pathway_skipped_groups: list[str] | None = None
     policy_adaptation_answers: list[str] | None = None
@@ -162,6 +163,7 @@ class ChatSession:
     mitigation_user_added_groups: list[str] | None = None
     mitigation_dg_benefit_explanations: dict[str, str] | None = None
     mitigation_dg_pathway_groups: list[str] | None = None
+    pending_mitigation_dg_pathway: str | None = None
     mitigation_dg_evidence: dict[str, str] | None = None
     mitigation_dg_evidence_index: int = 0
     mitigation_equity: str | None = None
@@ -297,6 +299,9 @@ class ChatSession:
                 for hazard in (self.additional_hazards or [])
                 if str(hazard).strip()
             ],
+            expert_hazards_only=bool(self.additional_hazards)
+            and not bool(self.hazards)
+            and not bool(self.custom_hazards),
             additional_hazard_population=self._additional_hazard_population_summary(),
             custom_hazards=[
                 str(hazard).strip()

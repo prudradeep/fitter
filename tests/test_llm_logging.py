@@ -22,11 +22,15 @@ class LlmLoggingTests(unittest.TestCase):
         writes: list[str] = []
         handle = MagicMock()
         handle.__enter__.return_value.write.side_effect = writes.append
-        settings = Settings(llm_log_path="unused/llm.jsonl", llm_log_to_db=False)
+        settings = Settings(
+            llm_log_path="unused/llm.jsonl", llm_log_to_db=False,
+            llm_log_include_payloads=True, llm_log_allow_production_payloads=True,
+        )
 
         with (
             patch("pathlib.Path.mkdir"),
             patch("pathlib.Path.open", return_value=handle),
+            patch("app.services.llm_logging.current_request_id", return_value="http-request-1"),
         ):
             log_llm_exchange(
                 settings,
@@ -44,6 +48,7 @@ class LlmLoggingTests(unittest.TestCase):
 
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["request_id"], "request-1")
+        self.assertEqual(records[0]["http_request_id"], "http-request-1")
         self.assertEqual(records[0]["endpoint"], "/api/chat")
         self.assertEqual(records[0]["request"]["messages"][0]["content"], "Hello")
         self.assertEqual(records[0]["response"]["message"]["content"], "Hi")

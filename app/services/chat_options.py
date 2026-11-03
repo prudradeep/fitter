@@ -200,6 +200,7 @@ SYSTEM_INQUIRY_COMPLETE_OPTIONS = [
 ]
 
 OTHER_NAV_OPTIONS = [
+    "Choose another mitigation type",
     "Write mitigation measure again",
     "Analyse another hazard for the same selected policy",
     "Go back to list of hazards",

@@ -42,6 +42,7 @@ class SessionSummary(BaseModel):
     mitigation_measure_count: int = 0
     practical_considerations: list[str] = Field(default_factory=list)
     additional_hazards: list[str] = Field(default_factory=list)
+    expert_hazards_only: bool = False
     additional_hazard_population: list[dict[str, object]] = Field(default_factory=list)
     custom_hazards: list[str] = Field(default_factory=list)
     custom_hazard: dict[str, object] | None = None

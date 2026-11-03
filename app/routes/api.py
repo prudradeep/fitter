@@ -39,7 +39,9 @@ from app.routes.request_limits import (
 from app.schemas import ChatRequest, ChatResponse, Option
 from app.services.chat_session import session_store
 from app.services.chat_service import ChatService
+from app.services.sectoral_objective_summary import summarize_sectoral_objective
 from app.services.chat_parsers import parse_evaluation_answer
+from app.services.message_renderer import markdown_to_html
 from app.services.audit_log import record_audit_event
 from app.services.document_language import EnglishDocumentRequiredError
 from app.services.hazard_effect_size import hazard_effect_size_rows, hazard_predictor_effect_rows
@@ -525,6 +527,26 @@ async def chat(
         payload.validation_mode,
         payload.crowd_sourcing_enabled,
     )
+
+
+@router.post("/sectoral-objective-summary", response_model=None)
+async def sectoral_objective_summary(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object] | JSONResponse:
+    payload = await _json_payload_or_error(request, "Sectoral objective summary payload")
+    if isinstance(payload, JSONResponse):
+        return payload
+    _ = current_user
+    result = await summarize_sectoral_objective(
+        db,
+        country=str(payload.get("country") or ""),
+        sector=str(payload.get("sector") or ""),
+    )
+    if result.get("summary"):
+        result["summary_html"] = markdown_to_html(str(result["summary"]))
+    return result
 
 
 @router.post("/stats-deep-dive", response_model=ChatResponse)

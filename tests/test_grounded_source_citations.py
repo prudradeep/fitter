@@ -1,9 +1,30 @@
+import asyncio
 import unittest
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 from app.services.chat_grounded_question_steps import ChatGroundedQuestionStepsMixin
+from app.services.chat_service import ChatService
+from app.services.chat_session import ChatSession
 
 
 class GroundedSourceCitationTests(unittest.TestCase):
+    def test_reused_evidence_does_not_ground_search_results_twice(self):
+        service = ChatService.__new__(ChatService)
+        service._mitigation_retrieval_query = Mock(return_value="query")
+        service._shared_knowledge_results = AsyncMock(return_value=[{
+            "document_id": "document-1", "knowledge_scope": "main",
+            "title": "Source", "content": "Grounded passage.", "nli_entailed": True,
+        }])
+        service.grounding_models = MagicMock()
+        service.grounding_models.ground_results = AsyncMock()
+
+        result = asyncio.run(service._shared_mitigation_evidence_reference(
+            ChatSession(), "Measure", "Reason",
+        ))
+
+        self.assertIn("Reused evidence document ID: document-1", result)
+        service.grounding_models.ground_results.assert_not_awaited()
+
     def test_grounded_answer_wraps_kb_and_sector_source_ids(self):
         html = ChatGroundedQuestionStepsMixin._grounded_answer_html(
             "The finding is supported by [S1] and [SP1].",

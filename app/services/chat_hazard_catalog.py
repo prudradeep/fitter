@@ -47,11 +47,18 @@ logger = logging.getLogger("app.services.chat_hazard_creation")
 
 class ChatHazardCatalogMixin:
     def _hazard_options(self, session: ChatSession) -> list[Option]:
+        additional_hazards = self._additional_hazard_options(session)
+        if self._expert_hazards_are_only_available(session):
+            return [
+                Option(id=index, label=hazard)
+                for index, hazard in enumerate(additional_hazards, start=1)
+            ]
+
         options = [
             Option(id=index, label=hazard)
             for index, hazard in enumerate(self._primary_hazard_names(session), start=1)
         ]
-        if self._additional_hazard_options(session):
+        if additional_hazards:
             options.append(Option(id=len(options) + 1, label="Show hazards added by experts"))
         if self._custom_hazard_options(session):
             options.append(Option(id=len(options) + 1, label="Show co-created hazards"))
@@ -63,7 +70,8 @@ class ChatHazardCatalogMixin:
             Option(id=index, label=hazard)
             for index, hazard in enumerate(labels, start=1)
         ]
-        options.append(Option(id=len(options) + 1, label="Show listed hazards"))
+        if not self._expert_hazards_are_only_available(session):
+            options.append(Option(id=len(options) + 1, label="Show listed hazards"))
         return options
 
     def _custom_hazard_selection_options(self, session: ChatSession) -> list[Option]:
@@ -74,6 +82,12 @@ class ChatHazardCatalogMixin:
         ]
         options.append(Option(id=len(options) + 1, label="Show listed hazards"))
         return options
+
+    @classmethod
+    def _expert_hazards_are_only_available(cls, session: ChatSession) -> bool:
+        return bool(cls._additional_hazard_options(session)) and not cls._primary_hazard_names(
+            session
+        ) and not cls._custom_hazard_options(session)
 
     @staticmethod
     def _primary_hazard_names(session: ChatSession) -> list[str]:

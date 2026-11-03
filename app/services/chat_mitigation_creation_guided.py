@@ -74,7 +74,7 @@ class ChatMitigationCreationGuidedMixin:
                     value = reference.fields.get(source_label, "").strip()
                     if not value or value.casefold() in {"none", "n/a", "not available"}:
                         continue
-                    points = [part.strip() for part in re.split(r"\s*[•●▪]\s*", value) if part.strip()]
+                    points = self._related_factsheet_points(value)
                     rows = [
                         {"field": "Document", "value": reference.document},
                         {"field": "Source", "value": reference.source_uri},
@@ -138,23 +138,22 @@ class ChatMitigationCreationGuidedMixin:
                         )},
                         {"field": "Referenced excerpt", "value": point},
                     ]
-                    payload = escape(json.dumps(source_rows, ensure_ascii=False), quote=True)
-                    source = (
-                        '<button class="factsheet-source-tag hazard-evidence-label--provided" '
-                        f'type="button" data-source-table="{payload}" '
-                        'aria-label="Show the referenced factsheet data">Source</button>'
-                    )
+                    source = source_button(source_rows, basis="Documented - Strong")
                     lines.append(f"- {point} {source}")
                 sections.append(f"## {heading}\n\n" + "\n".join(lines))
         return "\n\n".join(sections)
 
     @staticmethod
     def _related_factsheet_points(value: str) -> list[str]:
-        return [
-            point.strip(" -*\u0007")
-            for point in re.split(r"\s*[\u0007•]\s*", value)
-            if point.strip(" -*\u0007")
-        ]
+        separators = re.compile(
+            r"\s*(?:\u0007|[•▪◦]|(?:\r?\n)\s*(?:[-*]|\d+[.)])\s*)\s*"
+        )
+        points: list[str] = []
+        for raw_point in separators.split(str(value or "")):
+            point = raw_point.strip(" -*•▪◦\u0007\t\r\n")
+            if point:
+                points.append(point)
+        return points
 
     def _original_policy_mitigation_factsheet_records(
         self, session: ChatSession, policy: Policy,
@@ -1110,8 +1109,7 @@ class ChatMitigationCreationGuidedMixin:
         records = sources[:50]
         adaptation_options: list[dict[str, object]] = []
         for record_id, source in enumerate(records, 1):
-            for point in re.split(
-                r"\s*[•●▪]\s*|(?:^|\n)\s*[-*]\s+",
+            for point in self._related_factsheet_points(
                 source.get("Proposed adaptations", "").strip(),
             ):
                 if point.strip():
@@ -1660,6 +1658,7 @@ class ChatMitigationCreationGuidedMixin:
         session.mitigation_user_added_groups = None
         session.mitigation_dg_benefit_explanations = adopted_pathways or policy_adaptation_pathways or None
         session.mitigation_dg_pathway_groups = None
+        session.pending_mitigation_dg_pathway = None
         session.mitigation_dg_evidence = None
         session.mitigation_dg_evidence_index = 0
         session.mitigation_equity = None
@@ -2944,10 +2943,17 @@ class ChatMitigationCreationGuidedMixin:
         return ""
 
     def _request_mitigation_dg_pathway(
-        self, session_id: str, session: ChatSession, groups: list[str], *, initial: bool = False
+        self,
+        session_id: str,
+        session: ChatSession,
+        groups: list[str],
+        *,
+        initial: bool = False,
+        revise: bool = False,
     ) -> ChatResponse:
         """Ask for a measure-specific pathway when one cannot be grounded automatically."""
         session.mitigation_dg_pathway_groups = self._group_target_population_labels(groups)
+        session.pending_mitigation_dg_pathway = None
         session.mitigation_revision_stage = (
             "initial_benefit_pathway" if initial else "benefit_pathway"
         )
@@ -2957,20 +2963,32 @@ class ChatMitigationCreationGuidedMixin:
         confirmation_context = (
             "You confirmed the disadvantaged groups benefited. " if not initial else ""
         )
+        skip_guidance = (
+            "You may skip all pathway descriptions."
+            if initial
+            else "You may skip this pathway description."
+        )
+        pathway_prompt = (
+            f"Revise the pathway for **{group}**: what the measure does and how that "
+            "benefits this group."
+            if revise
+            else (
+                f"I could not identify how **{measure}** specifically benefits **{group}**. "
+                "Describe the pathway: what the measure does and how that benefits this group."
+            )
+        )
         return ChatResponse(
             session_id=session_id,
             step="mitigation_dg_input",
             bot_message=markdown_to_html(
-                f"{confirmation_context}I could not identify "
-                f"how **{measure}** specifically benefits **{group}**. Describe the pathway: "
-                "what the measure does and how that benefits this group. "
-                "You may skip all remaining pathways."
+                f"### Describe pathway\n\n{confirmation_context}{pathway_prompt} "
+                f"{skip_guidance}"
             ),
             options=(
                 self._guided_options("Skip all groups")
                 if initial
                 else self._guided_options(
-                    "Back to suggested disadvantaged groups", "Skip remaining pathways"
+                    "Back to suggested disadvantaged groups", "Skip pathway description"
                 )
             ),
             session=session.summary(),
@@ -3064,12 +3082,69 @@ class ChatMitigationCreationGuidedMixin:
                 self._guided_options(
                     "Confirm target groups",
                     "Confirm disadvantaged groups",
+                    "Continue to summary",
                     "Add disadvantaged group",
                     "Remove disadvantaged group",
+                    "Revise pathway",
                 ),
             )
             or message
         )
+        if session.mitigation_revision_stage == "confirmed_pathway_review":
+            if action == normalize("Continue to summary"):
+                return await self._guided_summary_step(
+                    session_id, session, "mitigation_final_summary_review"
+                )
+            if action == normalize("Revise pathway"):
+                session.phase = "mitigation_dg_input"
+                session.mitigation_revision_stage = "revise_confirmed_pathway"
+                return ChatResponse(
+                    session_id=session_id,
+                    step="mitigation_dg_input",
+                    bot_message=markdown_to_html(
+                        "### Revise pathway\n\n"
+                        "Type the group and its revised pathway as **Revise [group]: [how the measure benefits them]**."
+                    ),
+                    options=self._guided_options("Back to target groups and pathways"),
+                    session=session.summary(),
+                    input_mode="textarea",
+                    error=False,
+                )
+            if action in {
+                normalize("Add disadvantaged group"),
+                normalize("Remove disadvantaged group"),
+            }:
+                session.phase = "mitigation_dg_input"
+                session.mitigation_revision_stage = (
+                    "final_add_dg"
+                    if action == normalize("Add disadvantaged group")
+                    else "final_remove_dg"
+                )
+                return ChatResponse(
+                    session_id=session_id,
+                    step="mitigation_dg_input",
+                    bot_message=(
+                        "Name the disadvantaged group to add. Include a distinguishing "
+                        "characteristic such as income, tenancy, age, disability, location, "
+                        "or employment status."
+                        if session.mitigation_revision_stage == "final_add_dg"
+                        else "Name the disadvantaged group to remove from the confirmed list."
+                    ),
+                    options=self._guided_options("Back to target groups and pathways"),
+                    session=session.summary(),
+                    input_mode="textarea",
+                    error=False,
+                )
+            revise_edit = re.match(r"^(?:revise|edit)\s+.+?\s*:\s*.+$", message.strip(), re.I)
+            error = await self._apply_mitigation_beneficiary_edits(session, message)
+            if error:
+                return self._confirmed_target_group_pathways_review_step(
+                    session_id, session, error=error
+                )
+            if revise_edit:
+                return self._confirmed_target_group_pathways_review_step(session_id, session)
+            session.mitigation_revision_stage = None
+            return await self._guided_dg_suggestion_step(session_id, session)
         if action in {
             normalize("Confirm target groups"),
             normalize("Confirm disadvantaged groups"),
@@ -3131,17 +3206,50 @@ class ChatMitigationCreationGuidedMixin:
         return self._repeat_current_options(session_id, session, self.invalid_message, True)
 
     async def _handle_mitigation_dg_input(self, session_id, session, message):
+        action = normalize(message)
         if (
-            normalize(message) in {
-                normalize("Skip all groups"), normalize("Skip remaining pathways")
+            session.mitigation_revision_stage in {
+                "final_add_dg", "final_remove_dg", "revise_confirmed_pathway",
             }
-            and session.mitigation_revision_stage in {
-                "benefit_pathway", "initial_benefit_pathway",
-            }
+            and action == normalize("Back to target groups and pathways")
+        ):
+            return self._confirmed_target_group_pathways_review_step(session_id, session)
+
+        if session.mitigation_revision_stage == "revise_confirmed_pathway":
+            error = await self._apply_mitigation_beneficiary_edits(session, message)
+            if error:
+                return ChatResponse(
+                    session_id=session_id,
+                    step="mitigation_dg_input",
+                    bot_message=markdown_to_html(
+                        f"**{error}**\n\n"
+                        "Revise the pathway using **Revise [group]: [how the measure benefits them]**."
+                    ),
+                    options=self._guided_options("Back to target groups and pathways"),
+                    session=session.summary(),
+                    input_mode="textarea",
+                    error=True,
+                )
+            return self._confirmed_target_group_pathways_review_step(session_id, session)
+
+        pathway_stages = {"benefit_pathway", "initial_benefit_pathway"}
+        pathway_review_stages = {
+            "benefit_pathway_review", "initial_benefit_pathway_review",
+        }
+        skip_pathway = action == normalize("Skip pathway description")
+        skip_all_pathways = action in {
+            normalize("Skip all groups"),
+            normalize("Skip remaining pathways"),
+        }
+        if (
+            (skip_pathway or skip_all_pathways)
+            and session.mitigation_revision_stage in pathway_stages
         ):
             initial = session.mitigation_revision_stage == "initial_benefit_pathway"
             explanations = dict(session.mitigation_dg_benefit_explanations or {})
-            for pathway_group in session.mitigation_dg_pathway_groups or []:
+            pathway_groups = list(session.mitigation_dg_pathway_groups or [])
+            skipped_groups = pathway_groups if skip_all_pathways else pathway_groups[:1]
+            for pathway_group in skipped_groups:
                 for selected_group in self._target_population_labels_for_pathway(
                     pathway_group, session.mitigation_target_population
                 ):
@@ -3149,11 +3257,66 @@ class ChatMitigationCreationGuidedMixin:
             session.mitigation_dg_benefit_explanations = explanations
             if session.new_policy_title:
                 session.new_policy_target_group_pathways = dict(explanations)
+            session.pending_mitigation_dg_pathway = None
+            remaining_groups = pathway_groups[len(skipped_groups):]
+            if remaining_groups:
+                return self._request_mitigation_dg_pathway(
+                    session_id, session, remaining_groups, initial=initial
+                )
             session.mitigation_dg_pathway_groups = None
             session.mitigation_revision_stage = None
             if initial:
                 return await self._initial_mitigation_benefit_check(session_id, session)
             return await self._start_mitigation_policy_effect_review(session_id, session)
+
+        if session.mitigation_revision_stage in pathway_review_stages:
+            initial = session.mitigation_revision_stage == "initial_benefit_pathway_review"
+            if action == normalize("Revise pathway"):
+                return self._request_mitigation_dg_pathway(
+                    session_id,
+                    session,
+                    list(session.mitigation_dg_pathway_groups or []),
+                    initial=initial,
+                    revise=True,
+                )
+            if action == normalize("Confirm and continue"):
+                groups = list(session.mitigation_dg_pathway_groups or [])
+                if not groups:
+                    session.pending_mitigation_dg_pathway = None
+                    session.mitigation_revision_stage = None
+                    return await self._guided_dg_suggestion_step(session_id, session)
+                group = groups.pop(0)
+                pathway = str(session.pending_mitigation_dg_pathway or "").strip()
+                explanations = dict(session.mitigation_dg_benefit_explanations or {})
+                for selected_group in self._target_population_labels_for_pathway(
+                    group, session.mitigation_target_population
+                ):
+                    explanations[selected_group] = pathway
+                session.mitigation_dg_benefit_explanations = explanations
+                if session.new_policy_title:
+                    session.new_policy_target_group_pathways = dict(explanations)
+                session.pending_mitigation_dg_pathway = None
+                if groups:
+                    return self._request_mitigation_dg_pathway(
+                        session_id, session, groups, initial=initial
+                    )
+                session.mitigation_dg_pathway_groups = None
+                session.mitigation_revision_stage = None
+                if initial:
+                    return await self._initial_mitigation_benefit_check(session_id, session)
+                return await self._start_mitigation_policy_effect_review(session_id, session)
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_dg_input",
+                bot_message=markdown_to_html(
+                    "Review the pathway summary, then choose **Confirm and continue** or "
+                    "**Revise pathway**."
+                ),
+                options=self._guided_options("Confirm and continue", "Revise pathway"),
+                session=session.summary(),
+                input_mode="options_only",
+                error=True,
+            )
 
         action = normalize(
             exact_option_label(
@@ -3169,6 +3332,7 @@ class ChatMitigationCreationGuidedMixin:
         ):
             session.mitigation_revision_stage = None
             session.mitigation_dg_pathway_groups = None
+            session.pending_mitigation_dg_pathway = None
             return await self._guided_dg_suggestion_step(session_id, session)
 
         if session.mitigation_revision_stage in {
@@ -3185,24 +3349,25 @@ class ChatMitigationCreationGuidedMixin:
             groups = list(session.mitigation_dg_pathway_groups or [])
             if not groups:
                 return await self._guided_dg_suggestion_step(session_id, session)
-            group = groups.pop(0)
-            explanations = dict(session.mitigation_dg_benefit_explanations or {})
-            for selected_group in self._target_population_labels_for_pathway(
-                group, session.mitigation_target_population
-            ):
-                explanations[selected_group] = pathway
-            session.mitigation_dg_benefit_explanations = explanations
-            if session.new_policy_title:
-                session.new_policy_target_group_pathways = dict(explanations)
-            if groups:
-                return self._request_mitigation_dg_pathway(
-                    session_id, session, groups, initial=initial
-                )
-            session.mitigation_dg_pathway_groups = None
-            session.mitigation_revision_stage = None
-            if initial:
-                return await self._initial_mitigation_benefit_check(session_id, session)
-            return await self._start_mitigation_policy_effect_review(session_id, session)
+            session.pending_mitigation_dg_pathway = pathway
+            session.mitigation_revision_stage = (
+                "initial_benefit_pathway_review" if initial else "benefit_pathway_review"
+            )
+            group = groups[0]
+            return ChatResponse(
+                session_id=session_id,
+                step="mitigation_dg_input",
+                bot_message=markdown_to_html(
+                    "### Pathway summary\n\n"
+                    f"**Group:** {group}\n\n"
+                    f"**Pathway:** {pathway}\n\n"
+                    "Confirm to continue, or revise the pathway."
+                ),
+                options=self._guided_options("Confirm and continue", "Revise pathway"),
+                session=session.summary(),
+                input_mode="options_only",
+                error=False,
+            )
         if session.mitigation_revision_stage == "initial_target_population":
             review = await self._guided_text_review("disadvantaged groups", message, session)
             if not review.get("clear"):
@@ -3223,7 +3388,7 @@ class ChatMitigationCreationGuidedMixin:
                 )
             session.mitigation_target_population = groups
             return await self._initial_mitigation_benefit_check(session_id, session)
-        if session.mitigation_revision_stage == "remove_dg":
+        if session.mitigation_revision_stage in {"remove_dg", "final_remove_dg"}:
             group_key = normalize(message)
             groups = session.mitigation_target_population or []
             retained = [group for group in groups if normalize(group) != group_key]
@@ -3253,7 +3418,7 @@ class ChatMitigationCreationGuidedMixin:
                 session_id, session, "mitigation_dg_input", review
             )
         group = str(review.get("normalized_text") or message).strip()
-        if session.mitigation_revision_stage == "add_dg":
+        if session.mitigation_revision_stage in {"add_dg", "final_add_dg"}:
             validation = await self._validate_added_mitigation_dg(session, group)
             if not validation.get("clear") or not validation.get("relevant"):
                 return self._guided_clarification_response(
@@ -3366,8 +3531,55 @@ class ChatMitigationCreationGuidedMixin:
     ) -> ChatResponse:
         session.mitigation_equity = None
         session.mitigation_equity_skipped = False
-        return await self._guided_summary_step(
-            session_id, session, "mitigation_final_summary_review"
+        return self._confirmed_target_group_pathways_review_step(session_id, session)
+
+    def _confirmed_target_group_pathways_review_step(
+        self,
+        session_id: str,
+        session: ChatSession,
+        *,
+        error: str = "",
+    ) -> ChatResponse:
+        session.phase = "mitigation_dg_review"
+        session.mitigation_revision_stage = "confirmed_pathway_review"
+        explanations = session.mitigation_dg_benefit_explanations or {}
+        if session.new_policy_title:
+            session.new_policy_target_population = list(
+                session.mitigation_target_population or []
+            )
+            session.new_policy_target_group_pathways = {
+                group: explanation
+                for group, explanation in explanations.items()
+                if group in session.new_policy_target_population
+                and self._is_complete_mitigation_group_pathway(explanation)
+            }
+        lines = []
+        for group in session.mitigation_target_population or []:
+            _, separator, value = group.partition(":")
+            display_group = value.strip() if separator and value.strip() else group.strip()
+            pathway = str(explanations.get(group) or "").strip()
+            if not self._is_complete_mitigation_group_pathway(pathway):
+                pathway = "Pathway description skipped or not available."
+            lines.append(f"- **{display_group}:** {pathway}")
+        error_block = f"**{error}**\n\n" if error else ""
+        group_pathways = "\n".join(lines) or "- No target groups confirmed."
+        return ChatResponse(
+            session_id=session_id,
+            step="mitigation_dg_review",
+            bot_message=markdown_to_html(
+                f"{error_block}### Confirmed target groups and pathways\n\n"
+                f"{group_pathways}\n\n"
+                "Add, remove, or revise a group or pathway, or continue to the summary."
+            ),
+            options=self._guided_options(
+                "Continue to summary",
+                "Add disadvantaged group",
+                "Remove disadvantaged group",
+                "Revise pathway",
+            ),
+            session=session.summary(),
+            input_mode="textarea",
+            error=bool(error),
         )
 
     async def _guided_dg_evidence_decision_step(self, session_id, session) -> ChatResponse:
@@ -3505,9 +3717,7 @@ class ChatMitigationCreationGuidedMixin:
         if action == normalize("Skip this"):
             session.mitigation_equity = None
             session.mitigation_equity_skipped = True
-            return await self._guided_summary_step(
-                session_id, session, "mitigation_final_summary_review"
-            )
+            return self._confirmed_target_group_pathways_review_step(session_id, session)
         review = await self._guided_text_review("equity explanation", message, session)
         if not review.get("clear"):
             return self._guided_clarification_response(
@@ -3515,9 +3725,7 @@ class ChatMitigationCreationGuidedMixin:
             )
         session.mitigation_equity = str(review.get("normalized_text") or message).strip()
         session.mitigation_equity_skipped = False
-        return await self._guided_summary_step(
-            session_id, session, "mitigation_final_summary_review"
-        )
+        return self._confirmed_target_group_pathways_review_step(session_id, session)
 
     async def _handle_mitigation_final_summary_review(self, session_id, session, message):
         action = normalize(

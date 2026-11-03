@@ -172,10 +172,9 @@ class ChatContextRetrievalMixin:
         if not results:
             return ""
 
-        grounded = await self.grounding_models.ground_results(query, results)
         candidates = [
             result
-            for result in grounded
+            for result in results
             if str(result.get("document_id") or "").strip()
             and str(result.get("knowledge_scope") or "").strip()
             in {MAIN_KB_SCOPE, VALIDATED_EVIDENCE_SCOPE}
