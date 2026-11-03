@@ -4149,6 +4149,18 @@ async function openSectoralObjectiveDialog(button) {
   const country = String(button.dataset.country || "").trim();
   const sector = String(button.dataset.sector || "").trim();
   sectoralObjectiveContext.textContent = [country, sector].filter(Boolean).join(" - ");
+  const cacheKey = `sectoral-objective-summary:v1:${country.toLocaleLowerCase()}:${sector.toLocaleLowerCase()}`;
+  try {
+    const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+    if (cached && typeof cached.summary === "string" && cached.summary.trim()) {
+      renderSectoralObjectiveSummary(cached);
+      if (typeof sectoralObjectiveDialog.showModal === "function") sectoralObjectiveDialog.showModal();
+      else sectoralObjectiveDialog.removeAttribute("hidden");
+      return;
+    }
+  } catch (error) {
+    try { localStorage.removeItem(cacheKey); } catch (_) { /* Storage can be unavailable. */ }
+  }
   sectoralObjectiveSummary.textContent = "Loading details for you...";
   sectoralObjectiveSources.textContent = "";
   sectoralObjectiveDialog.showModal();
@@ -4166,20 +4178,33 @@ async function openSectoralObjectiveDialog(button) {
     if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
     const data = await response.json();
     if (data.error) throw new Error(data.detail || "Could not load the D3.1 summary.");
-    if (data.summary_html) {
-      renderTrustedHtml(sectoralObjectiveSummary, data.summary_html);
-    } else {
-      sectoralObjectiveSummary.textContent = data.summary || "No summary is available.";
+    renderSectoralObjectiveSummary(data);
+    if (typeof data.summary === "string" && data.summary.trim()) {
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({
+          summary: data.summary,
+          summary_html: data.summary_html || "",
+          sources: Array.isArray(data.sources) ? data.sources : [],
+        }));
+      } catch (_) { /* The summary remains usable when storage is full or disabled. */ }
     }
-    const source = (data.sources || []).find((item) => item.document === "FITTER D3.1");
-    const pages = Array.isArray(source?.pages) ? source.pages : [];
-    sectoralObjectiveSources.textContent = pages.length
-      ? `Source: FITTER D3.1, pp. ${pages.join(", ")}`
-      : "Source: FITTER D3.1";
   } catch (error) {
     console.error("Sectoral objective summary request failed", error);
     sectoralObjectiveSummary.textContent = "The D3.1 summary could not be loaded. Please try again.";
   }
+}
+
+function renderSectoralObjectiveSummary(data) {
+  if (data.summary_html) {
+    renderTrustedHtml(sectoralObjectiveSummary, data.summary_html);
+  } else {
+    sectoralObjectiveSummary.textContent = data.summary || "No summary is available.";
+  }
+  const source = (data.sources || []).find((item) => item.document === "FITTER D3.1");
+  const pages = Array.isArray(source?.pages) ? source.pages : [];
+  sectoralObjectiveSources.textContent = pages.length
+    ? `Source: FITTER D3.1, pp. ${pages.join(", ")}`
+    : "Source: FITTER D3.1";
 }
 
 function showTargetPopulationDialog() {

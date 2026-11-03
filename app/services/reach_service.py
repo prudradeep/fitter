@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from sqlalchemy import func, select
@@ -12,7 +13,10 @@ from app.models import (
     SystemHazardSocioDemographic,
     SystemHazardSocioDemographicPopulationMatch,
 )
-from app.services.eurostat_service import EurostatService, predictor_eurostat_mapping
+from app.services.eurostat_service import (
+    EurostatService,
+    predictor_eurostat_mapping_semantic,
+)
 from app.services.hazard_effect_size import hazard_predictor_effect_rows
 
 
@@ -35,6 +39,14 @@ class ReachService:
         region: str,
     ) -> dict[str, object]:
         predictors = hazard_predictor_effect_rows(sector=sector, hazard=hazard, min_or=1.0)
+        mappings = await asyncio.gather(
+            *(
+                predictor_eurostat_mapping_semantic(
+                    str(predictor.get("predictor") or "")
+                )
+                for predictor in predictors
+            )
+        )
         total_predictors = len(predictors)
         mapped_predictors = 0
         used_predictors = 0
@@ -42,11 +54,11 @@ class ReachService:
         profiles: list[dict[str, object]] = []
         skipped: list[dict[str, object]] = []
 
-        for predictor in predictors:
+        for predictor, mapping in zip(predictors, mappings, strict=False):
             predictor_name = str(predictor.get("predictor") or "")
             profile_name = predictor_profile_name(predictor_name)
             log_effect = float(predictor.get("log_effect") or 0.0)
-            if predictor_eurostat_mapping(predictor_name) is None:
+            if mapping is None:
                 skipped.append(
                     {
                         "predictor": predictor_name,
@@ -62,7 +74,7 @@ class ReachService:
                 nuts_code=region,
                 sector=sector,
                 hazard=hazard_name or hazard,
-                confirmed_predictor_category=predictor_name,
+                confirmed_predictor_category=mapping.dimensions["profile"],
             )
             if prevalence is None:
                 skipped.append(
@@ -82,6 +94,7 @@ class ReachService:
                     "predictor": predictor_name,
                     "variable_name": predictor_name,
                     "profile_key": predictor_name,
+                    "confirmed_predictor_category": mapping.dimensions["profile"],
                     "eurostat_population_cache_id": prevalence.get("eurostat_population_cache_id"),
                     "population_pct": round(float(prevalence["population_pct"]), 1),
                     "national_population_pct": (

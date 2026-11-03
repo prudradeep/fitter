@@ -189,9 +189,12 @@ async def match_profile_category_semantic(*labels: object) -> str | None:
         )
     except Exception:
         logger.exception("Semantic profile-category matching failed")
-        _SEMANTIC_CATEGORY_CACHE[cache_key] = None
         return None
     result = parse_json_object(response)
+    if result is None:
+        # Do not cache provider failures or malformed responses as a negative
+        # match; a later request should be able to retry semantic resolution.
+        return None
     selected = str(result.get("category") or "").strip() if result else ""
     canonical_categories = {_normalize(category): category for category in PROFILE_CATEGORIES}
     category = canonical_categories.get(_normalize(selected)) if selected else None
@@ -202,6 +205,16 @@ async def match_profile_category_semantic(*labels: object) -> str | None:
 def match_profile_data(profile: object) -> str | None:
     if not isinstance(profile, dict):
         return match_profile_category(profile)
+    # Enrichment stores a canonical category after semantic resolution. Treat
+    # that explicit result as authoritative so descriptive labels cannot create
+    # a conflicting deterministic match.
+    metadata = profile.get("metadata")
+    confirmed = match_profile_category(
+        profile.get("confirmed_predictor_category"),
+        metadata.get("confirmed_predictor_category") if isinstance(metadata, dict) else None,
+    )
+    if confirmed is not None:
+        return confirmed
     labels = _profile_labels(profile)
     return match_profile_category(*labels)
 

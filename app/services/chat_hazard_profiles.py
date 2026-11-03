@@ -1476,6 +1476,11 @@ class ChatHazardProfilesMixin:
                     "name": name,
                     "profile": name,
                     "explanation": explanation,
+                    "confirmed_predictor_category": str(
+                        item.get("confirmed_predictor_category")
+                        or metadata.get("confirmed_predictor_category")
+                        or ""
+                    ),
                     "variable_name": variable_name,
                     "variable_type": cls._profile_variable_type(variable_name, variable_type),
                     "statistical_basis": statistical_basis,

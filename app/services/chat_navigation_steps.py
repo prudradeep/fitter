@@ -124,7 +124,7 @@ class ChatNavigationStepsMixin:
 
         action = normalize(message)
         if action == normalize("Choose another mitigation type"):
-            if not session.mitigation_proposal_type:
+            if not self._mitigation_type_switch_available(session):
                 return None
             session.mitigation_proposal_type = None
             session.pending_mitigation_policy_selection = False
@@ -551,7 +551,7 @@ class ChatNavigationStepsMixin:
         ):
             response.other_options = (
                 ["Choose another mitigation type"]
-                if session.mitigation_proposal_type
+                if self._mitigation_type_switch_available(session)
                 else []
             )
             return
@@ -615,7 +615,7 @@ class ChatNavigationStepsMixin:
     @staticmethod
     def _other_nav_options(session: ChatSession, step: str) -> list[str]:
         options: list[str] = []
-        if session.mitigation_proposal_type:
+        if ChatNavigationStepsMixin._mitigation_type_switch_available(session):
             options.append("Choose another mitigation type")
         if session.mitigation_measure or session.pending_mitigation_measure:
             options.append("Write mitigation measure again")
@@ -645,6 +645,19 @@ class ChatNavigationStepsMixin:
         if session.country:
             options.append("Start over with a different country")
         return options
+
+    @staticmethod
+    def _mitigation_type_switch_available(session: ChatSession) -> bool:
+        return bool(
+            session.mitigation_proposal_type
+            or session.new_policy_entry_stage
+            or session.pending_mitigation_measure
+            or session.mitigation_measure
+            or session.pending_inspired_mitigation_measure
+            or session.accepted_inspired_mitigation_measure
+            or session.mitigation_creation_summary
+            or session.mitigation_record_id
+        )
 
     def _repeat_current_options(
         self,

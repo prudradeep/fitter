@@ -1,6 +1,6 @@
 {
   "name": "drtransition-desktop",
-  "version": "0.1.16",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "tauri:dev": "tauri dev",

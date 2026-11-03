@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -28,6 +29,9 @@ from app.services.chat_options import (
     option_list,
 )
 from app.services.chat_session import ChatSession
+from app.services.hazard_preparation import (
+    start_hazard_preparation,
+)
 from app.services.conversational_selection import resolve_selection
 from app.services.message_renderer import render_message
 from app.services.question_intent import detect_message_intent
@@ -262,6 +266,32 @@ class ChatSelectionStepsMixin:
         session.sector_id = sector.id
         session.sector = sector.name
         session.phase = "hazards"
+        self._start_hazard_preparation(session_id, session)
+        self._ensure_user_session(session_id, session)
+        self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
+        return self._policy_step(session_id, session)
+
+    def _start_hazard_preparation(self, session_id: str, session: ChatSession) -> str:
+        return start_hazard_preparation(
+            self._hazard_preparation_job_key(session_id, session),
+            asdict(session),
+            self.user_id,
+            self.is_admin,
+        )
+
+    @staticmethod
+    def _hazard_preparation_job_key(session_id: str, session: ChatSession) -> str:
+        return ":".join((
+            session_id,
+            str(session.country_id or ""),
+            str(session.region_id or ""),
+            str(session.sector_id or ""),
+            "hazards",
+        ))
+
+    async def _prepare_hazard_listing(
+        self, session_id: str, session: ChatSession
+    ) -> None:
         if self._load_hazard_listing_cache(session):
             session.custom_hazards = self._saved_custom_hazards_for_context(session)
             self._hydrate_custom_hazard_profiles(session)
@@ -269,10 +299,7 @@ class ChatSelectionStepsMixin:
                 session
             )
             self._filter_session_hazards_without_profiles(session)
-            self._ensure_user_session(session_id, session)
-            self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
-            return self._policy_step(session_id, session)
-
+            return
         self._normalize_stored_sdp_variable_names(session)
         hazard_items = self._stored_hazard_items_for_context(session_id, session)
         expected_hazard_count = await self._sector_prompt_rag_hazard_count(session.sector)
@@ -309,9 +336,6 @@ class ChatSelectionStepsMixin:
         self._filter_session_hazards_without_profiles(session)
         await self._rank_session_hazards(session)
         self._store_hazard_listing_cache(session)
-        self._ensure_user_session(session_id, session)
-        self._record_activity(session_id, session, "sector_selected", sector.name, step="sector")
-        return self._policy_step(session_id, session)
 
     async def _maybe_apply_conversational_selection(
         self,

@@ -12,7 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Country, EurostatPopulationCache, Region, Sector, SystemHazard
-from app.services.profile_category_matching import match_profile_category
+from app.services.profile_category_matching import (
+    match_profile_category,
+    match_profile_category_semantic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,15 +85,16 @@ class EurostatService:
             response = api_response.json()
         if not isinstance(response, dict):
             raise ValueError("Population analysis API returned a non-object JSON response.")
-        self._store_profile_population(
-            country=country,
-            region=region,
-            sector=sector,
-            hazard=hazard,
-            profile=profile,
-            response=response,
-            context_ids=context_ids,
-        )
+        if population_percentages(response)["regional_pct"] is not None:
+            self._store_profile_population(
+                country=country,
+                region=region,
+                sector=sector,
+                hazard=hazard,
+                profile=profile,
+                response=response,
+                context_ids=context_ids,
+            )
         return response
 
     async def get_prevalence(
@@ -105,7 +109,9 @@ class EurostatService:
     ) -> dict[str, object] | None:
         category = match_profile_category(confirmed_predictor_category)
         if category is None:
-            category = match_profile_category(predictor_name)
+            category = await match_profile_category_semantic(
+                confirmed_predictor_category, predictor_name
+            )
         if category is None:
             return None
         mapping = predictor_eurostat_mapping(category)
@@ -176,9 +182,23 @@ class EurostatService:
         if row is None:
             return None
         try:
-            return json.loads(row.response_json)
-        except json.JSONDecodeError:
+            response = json.loads(row.response_json)
+        except (json.JSONDecodeError, TypeError):
+            response = None
+        if (
+            not isinstance(response, dict)
+            or population_percentages(response)["regional_pct"] is None
+        ):
+            # Incomplete historical API responses must not mask a later retry
+            # after semantic matching or API data has improved.
+            try:
+                self.db.delete(row)
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                logger.exception("Could not remove an unusable Eurostat population cache row")
             return None
+        return response
 
     def _profile_population_cache_row(
         self,
@@ -336,6 +356,24 @@ def _first_text(*values: object) -> str:
 @lru_cache(maxsize=512)
 def predictor_eurostat_mapping(predictor_name: str) -> EurostatMapping | None:
     category = match_profile_category(predictor_name)
+    if category is None:
+        return None
+    normalized = predictor_name.casefold().split("__", 1)[0].strip() or "profile"
+    return EurostatMapping(
+        predictor_prefix=normalized,
+        dataset="population_analysis",
+        dimensions={"profile": category},
+        bucket=1,
+    )
+
+
+async def predictor_eurostat_mapping_semantic(
+    predictor_name: str,
+) -> EurostatMapping | None:
+    """Map a predictor with semantic matching as a fallback."""
+    category = match_profile_category(predictor_name)
+    if category is None:
+        category = await match_profile_category_semantic(predictor_name)
     if category is None:
         return None
     normalized = predictor_name.casefold().split("__", 1)[0].strip() or "profile"

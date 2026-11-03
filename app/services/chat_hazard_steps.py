@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from difflib import SequenceMatcher
@@ -43,6 +44,11 @@ from app.services.chat_options import (
     match_option_label,
     normalize,
     normalize_for_match,
+)
+from app.services.hazard_preparation import (
+    clear_hazard_preparation,
+    hazard_preparation_status,
+    wait_for_hazard_preparation,
 )
 from app.services.chat_parsers import is_llm_unavailable_response
 from app.services.chat_session import ChatSession
@@ -599,29 +605,46 @@ class ChatHazardStepsMixin:
     ) -> str:
         if not document_ids:
             return ""
-        rows = self.db.scalars(
-            select(KnowledgeChunk.content)
-            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+        rows = self._context_policy_document_chunks(document_ids)
+        return "\n\n".join(
+            str(row.get("content") or "").strip()
+            for row in rows if str(row.get("content") or "").strip()
+        )
+
+    def _context_policy_document_chunks(
+        self, document_ids: list[str]
+    ) -> list[dict[str, object]]:
+        if not document_ids:
+            return []
+        rows = self.db.execute(
+            select(
+                KnowledgeDocument.title,
+                KnowledgeDocument.source_uri,
+                KnowledgeChunk.page_number,
+                KnowledgeChunk.content,
+            )
+            .join(KnowledgeChunk, KnowledgeChunk.document_id == KnowledgeDocument.id)
             .where(KnowledgeDocument.id.in_(document_ids))
             .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index)
         ).all()
-        return "\n\n".join(str(row).strip() for row in rows if str(row).strip())
+        return [
+            {"title": title, "source_uri": source_uri, "page_number": page, "content": content}
+            for title, source_uri, page, content in rows
+        ]
 
     def _set_policy_summary_sources(
-        self, session: ChatSession, document_ids: list[str] | None = None,
+        self,
+        session: ChatSession,
+        document_ids: list[str] | None = None,
+        *,
+        document_chunks: list[dict[str, object]] | None = None,
     ) -> None:
         ids = document_ids or session.pending_context_policy_document_ids or self._stored_context_policy_document_ids(session)
-        chunks: list[dict[str, object]] = []
-        if ids:
-            rows = self.db.execute(
-                select(KnowledgeDocument.title, KnowledgeDocument.source_uri,
-                       KnowledgeChunk.page_number, KnowledgeChunk.content)
-                .join(KnowledgeChunk, KnowledgeChunk.document_id == KnowledgeDocument.id)
-                .where(KnowledgeDocument.id.in_(ids))
-                .order_by(KnowledgeDocument.id, KnowledgeChunk.chunk_index)
-            ).all()
-            chunks.extend(dict(title=title, source_uri=uri, page_number=page,
-                               content=content) for title, uri, page, content in rows)
+        chunks = (
+            document_chunks
+            if document_chunks is not None
+            else self._context_policy_document_chunks(ids)
+        )
         session.selected_context_policy_sources = policy_point_sources(
             session.selected_context_policy_summary or "", chunks,
         )
@@ -738,8 +761,11 @@ class ChatHazardStepsMixin:
                 "**Hazards found:**\n" + "\n".join(hazard_lines)
                 if hazard_lines else "**No hazards found.**"
             )
-        document_context = self._context_policy_document_context(
-            session, document_ids or self._stored_context_policy_document_ids(session)
+        document_ids = document_ids or self._stored_context_policy_document_ids(session)
+        document_chunks = self._context_policy_document_chunks(document_ids)
+        document_context = "\n\n".join(
+            str(row.get("content") or "").strip()
+            for row in document_chunks if str(row.get("content") or "").strip()
         )
         if not document_context:
             session.phase = "policy_reference"
@@ -765,7 +791,9 @@ class ChatHazardStepsMixin:
         )
         summary = re.sub(r"(?m)^- \*\*Document excerpt:\*\*\s*", "- ", summary)
         session.selected_context_policy_summary = summary
-        self._set_policy_summary_sources(session, document_ids)
+        self._set_policy_summary_sources(
+            session, document_ids, document_chunks=document_chunks
+        )
         session.phase = "policy_summary"
         validation_intro = ""
         if session.context_policy_validation and not session.context_policy_validation.get("missing"):
@@ -874,8 +902,7 @@ class ChatHazardStepsMixin:
             if not d42_objectives:
                 return summary
             objectives = _split_inline_bullets(d42_objectives) or [d42_objectives]
-            completed_objectives = []
-            for objective in objectives:
+            async def complete_objective(objective: str) -> str:
                 objective = re.sub(
                     r"\s*(?:\*\*)?(?:Inferred|Documented(?:\s*[-—]\s*(?:Strong|Moderate|Weak))?)(?:\*\*)?\s*$",
                     "", objective, flags=re.IGNORECASE,
@@ -897,8 +924,13 @@ class ChatHazardStepsMixin:
                         objective = " ".join((complete_prefix, completed)).strip()
                         if basis == "Inferred" and completed:
                             objective += " **Inferred**"
-                if objective:
-                    completed_objectives.append(objective)
+                return objective
+
+            completed_objectives = [
+                objective for objective in await asyncio.gather(
+                    *(complete_objective(objective) for objective in objectives)
+                ) if objective
+            ]
             bullets = "\n".join(f"- {objective}" for objective in completed_objectives)
             return re.sub(
                 r"(?ms)^### Policy Objectives\s*\n.*?(?=^### |\Z)",
@@ -1021,7 +1053,9 @@ class ChatHazardStepsMixin:
                 -sum(1 for term in section_terms if term in item[1].casefold()),
                 item[0],
             ))
-            for _, excerpt in windows[:2]:
+            # One focused retry is enough; remaining unsupported sections use
+            # the local source excerpt fallback instead of another slow model call.
+            for _, excerpt in windows[:1]:
                 if not missing:
                     break
                 chunk_prompt_source = _policy_summary_source(
@@ -1114,15 +1148,20 @@ class ChatHazardStepsMixin:
             else:
                 bullets = [fallback[key]]
             if key == "mechanisms":
-                reviewed_bullets: list[tuple[str, str]] = []
-                for label, detail in bullets:
+                async def complete_mechanism(
+                    item: tuple[str, str],
+                ) -> tuple[str, str] | None:
+                    label, detail = item
                     if label.casefold() == "not identified":
-                        continue
-                    completed, basis = await _complete_policy_mechanism(
-                        detail, focused_source
-                    )
-                    if completed:
-                        reviewed_bullets.append((label, f"{completed} **{basis}**"))
+                        return None
+                    completed, basis = await _complete_policy_mechanism(detail, focused_source)
+                    return (label, f"{completed} **{basis}**") if completed else None
+
+                reviewed_bullets = [
+                    item for item in await asyncio.gather(
+                        *(complete_mechanism(item) for item in bullets)
+                    ) if item is not None
+                ]
                 bullets = reviewed_bullets or [fallback[key]]
             sections.append(
                 f"### {heading}\n\n" + "\n".join(
@@ -2034,6 +2073,49 @@ class ChatHazardStepsMixin:
         return scored[0][1]
 
     async def _hazards_step(self, session_id: str, session: ChatSession) -> ChatResponse:
+        job_key = self._hazard_preparation_job_key(session_id, session)
+        preparation_status = hazard_preparation_status(job_key)
+        if preparation_status == "failed":
+            clear_hazard_preparation(job_key)
+            self._start_hazard_preparation(session_id, session)
+            preparation_status = "pending"
+        if (
+            preparation_status is None
+            and not session.hazards
+            and session.country_id
+            and session.sector_id
+        ):
+            if not self._load_hazard_listing_cache(session):
+                self._start_hazard_preparation(session_id, session)
+                preparation_status = "pending"
+        if preparation_status == "pending":
+            preparation_status = await wait_for_hazard_preparation(job_key)
+        if preparation_status == "failed":
+            return ChatResponse(
+                session_id=session_id,
+                step="policy_summary",
+                bot_message=(
+                    "Hazard preparation failed. Choose **Continue to hazards** to retry."
+                ),
+                options=[Option(id=1, label="Continue to hazards")],
+                session=session.summary(),
+                error=True,
+            )
+        if preparation_status == "complete":
+            if not self._load_hazard_listing_cache(session):
+                clear_hazard_preparation(job_key)
+                self._start_hazard_preparation(session_id, session)
+                await wait_for_hazard_preparation(job_key)
+                if not self._load_hazard_listing_cache(session):
+                    return ChatResponse(
+                        session_id=session_id,
+                        step="policy_summary",
+                        bot_message="Hazards could not be loaded. Choose **Continue to hazards** to retry.",
+                        options=[Option(id=1, label="Continue to hazards")],
+                        session=session.summary(),
+                        error=True,
+                    )
+            clear_hazard_preparation(job_key)
         if (
             (
                 session.custom_hazard_evidence is None

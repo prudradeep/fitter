@@ -1332,6 +1332,23 @@ class ChatCustomHazardGroundingMixin:
             reason = str(item.get("reason") or "").strip()
             if not reason:
                 reason = "The required details were not found in the submitted information."
+            if key == "affected_groups_fit":
+                candidates = state.get("affected_groups") or []
+                candidate_names = []
+                if isinstance(candidates, list):
+                    for candidate in candidates:
+                        name = (
+                            str(candidate.get("group") or candidate.get("name") or "").strip()
+                            if isinstance(candidate, dict)
+                            else str(candidate or "").strip()
+                        )
+                        if name and name not in candidate_names:
+                            candidate_names.append(name)
+                if candidate_names:
+                    reason += "\n\nIdentified groups:\n\n" + "\n".join(
+                        f"- {name}" for name in candidate_names
+                    )
+                    question = "What impact does this hazard have on each identified group?"
             detail = (labels.get(key, key), question, reason)
             if detail not in details:
                 details.append(detail)

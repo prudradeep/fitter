@@ -849,26 +849,25 @@ class ChatCustomHazardPopulationStepsMixin:
             ).strip()
             if not name:
                 continue
-            if reflection:
-                lines.append(f"- **{name}:** {reflection}")
-            else:
-                lines.append(f"- **{name}**")
+            basis_label = ""
             if profile.get("basis"):
                 basis = str(profile["basis"]).strip().casefold()
                 display_basis = (
-                    "Documented — Moderate" if basis == "documented"
+                    "Documented - Moderate" if basis == "documented"
                     else "Inferred"
                 )
                 source_label = str(profile.get("source_label") or "").strip()
                 if basis == "documented" and source_label:
-                    lines.append(
-                        "  - " + source_button(
-                            [{"field": "Source", "value": source_label}],
-                            basis=display_basis,
-                        )
+                    basis_label = source_button(
+                        [{"field": "Source", "value": source_label}],
+                        basis=display_basis,
                     )
                 else:
-                    lines.append('  - <span class="evidence-basis-label">[Inferred]</span>')
+                    basis_label = '<span class="evidence-basis-label">[Inferred]</span>'
+            if reflection:
+                lines.append(f"- **{name}:** {reflection} {basis_label}".rstrip())
+            else:
+                lines.append(f"- **{name}** {basis_label}".rstrip())
         return "\n".join(lines) or "- No affected population groups identified yet."
 
     async def _ensure_affected_population_provenance(self, session: ChatSession) -> None:

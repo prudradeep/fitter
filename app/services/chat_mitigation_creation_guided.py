@@ -145,12 +145,24 @@ class ChatMitigationCreationGuidedMixin:
 
     @staticmethod
     def _related_factsheet_points(value: str) -> list[str]:
+        text = str(value or "")
+        # Some imported factsheet cells have already lost their bullet glyphs.
+        # Recover the clearly labelled items used in the D4.2 proposal list.
+        text = re.sub(
+            r"(?i)\s+(?=Education and information\s+for all citizens\b)",
+            "\n• ", text,
+        )
+        text = re.sub(
+            r"(?i)\s+(?=(?:Advantage|Advantages|Benefits?):\s*)",
+            "\n• ", text,
+        )
         separators = re.compile(
-            r"\s*(?:\u0007|[•▪◦]|(?:\r?\n)\s*(?:[-*]|\d+[.)])\s*)\s*"
+            r"\s*(?:\u0007|[\u2022\u25AA\u25E6\u25CF\u00B7]|"
+            r"(?:\r?\n)\s*(?:[-*]|\d+[.)])\s*)\s*"
         )
         points: list[str] = []
-        for raw_point in separators.split(str(value or "")):
-            point = raw_point.strip(" -*•▪◦\u0007\t\r\n")
+        for raw_point in separators.split(text):
+            point = raw_point.strip(" -*\u2022\u25AA\u25E6\u25CF\u00B7\u0007\t\r\n")
             if point:
                 points.append(point)
         return points
@@ -460,7 +472,8 @@ class ChatMitigationCreationGuidedMixin:
                 {"field": "Referenced excerpt", "value": passage["content"][:1800]},
                 {"field": "Context used", "value": "Suggested adaptation based on this policy passage"},
             ]
-            lines.append(f"- {proposal} {source_button(source_rows, claim=proposal)}")
+            for point in self._related_factsheet_points(proposal):
+                lines.append(f"- {point} {source_button(source_rows, claim=point)}")
         adaptations_section = (
             "## Proposed adaptations for the policy\n\n" + "\n".join(lines)
             if lines else
@@ -2688,21 +2701,13 @@ class ChatMitigationCreationGuidedMixin:
             options = self._guided_options("Confirm summary", "Modify summary inputs")
         else:
             options = self._guided_options("Confirm final summary", "Modify final inputs")
-        hazard_source = source_button([
-            {"field": "Source", "value": "Selected hazard"},
-            {"field": "Context used", "value": selected_hazard},
-        ])
-        policy_source = source_button([
-            {"field": "Source", "value": "Selected policy"},
-            {"field": "Context used", "value": selected_policy},
-        ])
         return ChatResponse(
             session_id=session_id,
             step=phase,
             bot_message=markdown_to_html(
                 "## Summary of our understanding\n\n"
-                f"Selected hazard: **{selected_hazard}** {hazard_source}\n\n"
-                f"Selected policy causing the hazard: **{selected_policy}** {policy_source}\n\n"
+                f"Selected hazard: **{selected_hazard}**\n\n"
+                f"Selected policy causing the hazard: **{selected_policy}**\n\n"
                 f"{summary}\n\nPlease confirm or modify it."
             ),
             options=options,
@@ -2718,6 +2723,16 @@ class ChatMitigationCreationGuidedMixin:
         if evidence_source:
             evidence = f"{evidence} {evidence_source}"
         groups = ", ".join(session.mitigation_target_population or []) or "Not confirmed yet"
+        group_pathways = session.mitigation_dg_benefit_explanations or {}
+        group_pathway_lines = []
+        for group in session.mitigation_target_population or []:
+            pathway = str(group_pathways.get(group) or "").strip()
+            if not self._is_complete_mitigation_group_pathway(pathway):
+                pathway = "Pathway description skipped or not available."
+            _, separator, display_group = group.partition(":")
+            display_group = display_group.strip() if separator and display_group.strip() else group.strip()
+            group_pathway_lines.append(f"  - **{display_group}:** {pathway}")
+        group_pathways_summary = "\n".join(group_pathway_lines) or "  - No target groups confirmed."
         dg_evidence = session.mitigation_dg_evidence or {}
         effect_summary = self._mitigation_policy_effect_decisions_markdown(
             session.mitigation_policy_effects or [], show_sources=True,
@@ -2757,6 +2772,7 @@ class ChatMitigationCreationGuidedMixin:
             f"- **Measure evidence:** {evidence} {'' if evidence_source else input_source('Measure evidence', evidence_value)}\n"
             f"- **Other policy effects reviewed:** {input_source('Policy effects review', effect_context)}\n{effect_summary or '  - No distinct grounded problem identified'}\n"
             f"- **Disadvantaged groups benefited:** {groups} {input_source('Selected groups', groups)}\n"
+            f"- **Target group pathways:**\n{group_pathways_summary}\n"
             f"{group_evidence_summary}"
         )
 
@@ -3531,7 +3547,9 @@ class ChatMitigationCreationGuidedMixin:
     ) -> ChatResponse:
         session.mitigation_equity = None
         session.mitigation_equity_skipped = False
-        return self._confirmed_target_group_pathways_review_step(session_id, session)
+        return await self._guided_summary_step(
+            session_id, session, "mitigation_final_summary_review"
+        )
 
     def _confirmed_target_group_pathways_review_step(
         self,
@@ -3717,7 +3735,9 @@ class ChatMitigationCreationGuidedMixin:
         if action == normalize("Skip this"):
             session.mitigation_equity = None
             session.mitigation_equity_skipped = True
-            return self._confirmed_target_group_pathways_review_step(session_id, session)
+            return await self._guided_summary_step(
+                session_id, session, "mitigation_final_summary_review"
+            )
         review = await self._guided_text_review("equity explanation", message, session)
         if not review.get("clear"):
             return self._guided_clarification_response(
@@ -3725,7 +3745,9 @@ class ChatMitigationCreationGuidedMixin:
             )
         session.mitigation_equity = str(review.get("normalized_text") or message).strip()
         session.mitigation_equity_skipped = False
-        return self._confirmed_target_group_pathways_review_step(session_id, session)
+        return await self._guided_summary_step(
+            session_id, session, "mitigation_final_summary_review"
+        )
 
     async def _handle_mitigation_final_summary_review(self, session_id, session, message):
         action = normalize(

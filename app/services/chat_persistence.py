@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from dataclasses import asdict
+from datetime import datetime, timezone
 
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -202,6 +203,10 @@ class ChatPersistenceMixin:
                     role=role,
                     content=content,
                     is_error=is_error,
+                    # SQLite's CURRENT_TIMESTAMP has only second precision. A
+                    # user message and its bot reply can otherwise get the same
+                    # timestamp and sort in UUID order after a reload.
+                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
                 )
             )
             self.db.commit()

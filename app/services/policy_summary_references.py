@@ -27,6 +27,9 @@ class PolicyReference:
         return self.field_pages.get(label, self.page_number)
 
 
+_D42_REFERENCE_CACHE: dict[tuple[int, str, str, str], PolicyReference | None] = {}
+
+
 _D42_LABELS = (
     "Country", "Sector", "Policy Title", "Policy Type", "Sectoral Challenge Addressed",
     "Original Policy Objective", "Existing Gaps", "Proposed Adjustment",
@@ -56,6 +59,26 @@ def d42_policy_reference(
     """Find one matching existing-policy record in D4.2 portfolio sections 6–11."""
     if not country or not sector or not selected_policy:
         return None
+    key = (
+        id(db.get_bind()),
+        normalize_for_match(country),
+        normalize_for_match(sector),
+        normalize_for_match(selected_policy),
+    )
+    if key in _D42_REFERENCE_CACHE:
+        return _D42_REFERENCE_CACHE[key]
+    result = _build_d42_policy_reference(
+        db, country=country, sector=sector, selected_policy=selected_policy,
+    )
+    if len(_D42_REFERENCE_CACHE) >= 1024:
+        _D42_REFERENCE_CACHE.clear()
+    _D42_REFERENCE_CACHE[key] = result
+    return result
+
+
+def _build_d42_policy_reference(
+    db: Session, *, country: str, sector: str, selected_policy: str,
+) -> PolicyReference | None:
     rows = db.execute(
         select(KnowledgeDocument.source_uri, KnowledgeChunk.page_number,
                KnowledgeChunk.chunk_index, KnowledgeChunk.content)

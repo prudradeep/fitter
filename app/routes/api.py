@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 import httpx
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import and_, case, desc, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth import hash_password, password_rule_errors, require_admin_user, require_current_user, set_auth_cookie, verify_password
@@ -734,7 +734,11 @@ async def restore_session(
     messages = db.scalars(
         select(UserChatMessage)
         .where(UserChatMessage.user_session_id == user_session.id)
-        .order_by(UserChatMessage.created_at, UserChatMessage.id)
+        .order_by(
+            UserChatMessage.created_at,
+            case((UserChatMessage.role == "user", 0), else_=1),
+            UserChatMessage.id,
+        )
     ).all()
     recovered_from_messages = False
     if _session_data_needs_message_recovery(session_data, messages):
@@ -807,7 +811,11 @@ async def export_session(
     rows = db.scalars(
         select(UserChatMessage)
         .where(UserChatMessage.user_session_id == user_session.id)
-        .order_by(UserChatMessage.created_at, UserChatMessage.id)
+        .order_by(
+            UserChatMessage.created_at,
+            case((UserChatMessage.role == "user", 0), else_=1),
+            UserChatMessage.id,
+        )
     ).all()
     return {
         "error": False,

@@ -208,6 +208,14 @@ class ChatCustomHazardMechanismMixin:
             else ""
         )
         objective_score = objective.get("score") if isinstance(objective, dict) else None
+        mechanism_provenance = str(state.get("mechanism_provenance") or "inferred")
+        mechanism_source = str(state.get("mechanism_source_title") or "")
+        mechanism_text = str(state.get("selected_mechanism") or "No mechanism has been identified.")
+        if mechanism_provenance == "documented":
+            mechanism_text = re.sub(
+                r"\s*\[(?:Inferred|Documented)\]\s*$", "", mechanism_text,
+                flags=re.IGNORECASE,
+            )
         objective_prefix = (
             "## Policy Objective Fit\n\n"
             "**Supported**"
@@ -222,12 +230,7 @@ class ChatCustomHazardMechanismMixin:
                 evidence_prefix
                 + objective_prefix
                 + "## Proposed mechanism\n\n"
-                f"{state.get('selected_mechanism') or 'No mechanism has been identified.'}\n\n"
-                + _mechanism_basis_with_source(
-                    str(state.get("mechanism_provenance") or "inferred"),
-                    str(state.get("mechanism_source_title") or ""),
-                )
-                + "\n\n"
+                + f"{mechanism_text}\n\n"
                 + (f"**Supporting details:** {state.get('proposed_mechanism_source_detail')}\n\n" if state.get('proposed_mechanism_source_detail') else "")
                 + "Does this mechanism accurately describe how the hazard is caused or worsened?"
             ),

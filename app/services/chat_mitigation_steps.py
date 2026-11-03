@@ -2338,6 +2338,67 @@ class ChatMitigationStepsMixin:
             error=False,
         )
 
+    @staticmethod
+    def _policy_about_from_summary(summary: str, policy_title: str) -> str:
+        """Build a concise, source-faithful policy description from the stored summary."""
+        if not str(summary or "").strip():
+            return ""
+        section_ranks = {
+            "policy details": 0,
+            "policy objectives": 1,
+            "original objectives": 1,
+            "mechanisms": 2,
+            "intended benefits": 3,
+        }
+        title_key = normalize_for_match(policy_title)
+        section = ""
+        candidates: list[tuple[int, str]] = []
+        for line in str(summary).splitlines():
+            if line.startswith("### "):
+                section = normalize_for_match(line[4:])
+                continue
+            if section not in section_ranks:
+                continue
+            match = re.match(r"^\s*-\s+(.*)$", line)
+            if not match:
+                continue
+            detail = re.sub(r"^\*\*.*?\*\*:\s*", "", match.group(1).strip())
+            detail = re.sub(
+                r"\s*\*\*(?:Inferred|Documented(?:\s*[-—]\s*(?:Strong|Moderate|Weak))?)\*\*\s*$",
+                "", detail, flags=re.I,
+            )
+            detail = re.sub(r"\*{1,2}|_{1,2}", "", detail).strip()
+            normalized = normalize_for_match(detail)
+            if (
+                not normalized
+                or normalized == title_key
+                or normalized.startswith(("not identified", "not stated"))
+            ):
+                continue
+            candidates.append((section_ranks[section], detail))
+        candidates.sort(key=lambda item: item[0])
+        selected: list[str] = []
+        for _, detail in candidates:
+            if normalize_for_match(detail) in {normalize_for_match(item) for item in selected}:
+                continue
+            selected.append(detail)
+            if len(selected) == 2 or sum(map(len, selected)) >= 520:
+                break
+        return " ".join(selected).strip()
+
+    @staticmethod
+    def _policy_about_repeats_title(policy_about: str, policy_title: str) -> bool:
+        about_key = normalize_for_match(policy_about)
+        title_key = normalize_for_match(policy_title)
+        if not about_key:
+            return True
+        if not title_key:
+            return False
+        return about_key == title_key or (
+            title_key in about_key
+            and len(about_key.split()) <= len(title_key.split()) + 3
+        )
+
     async def _adopt_inspired_mitigation_response(
         self, session_id: str, session: ChatSession, *, revision: bool = False,
         attempt: int = 0, sources: list[dict[str, str]] | None = None,
@@ -2503,7 +2564,9 @@ class ChatMitigationStepsMixin:
                 "consistent with any stated green or digital objectives; do not assume "
                 "objectives absent from the policy summary. Explain in one concise "
                 "reason how the measure addresses the hazard and fits the policy. "
-                "Describe the selected policy briefly. Write the mitigation explanation "
+                "For policy_about, write a concise description based on selected_policy_summary; "
+                "do not repeat the selected policy title. If the summary contains no description, "
+                "return an empty policy_about. Write the mitigation explanation "
                 "as one concise paragraph of about 50-100 words, with no heading, list, "
                 "citation, filename, or internal reasoning. "
                 f"{source_guidance}"
@@ -2594,7 +2657,8 @@ class ChatMitigationStepsMixin:
                     "Draft one concrete mitigation measure that reduces the selected hazard "
                     "within the selected policy. Use only the supplied context. A measure "
                     "may benefit some affected groups without benefiting all of them. "
-                    "Return JSON only with measure, reason, policy_about, hazard_pathway, "
+                    "Return JSON only with measure, reason, policy_about (a concise description "
+                    "based on policy_summary, never just the title), hazard_pathway, "
                     "and causal_analysis {status, policy_action, mechanism_changed, direct_effect, "
                     "hazard_reduction, explanation, missing_link, clarification_question, evidence_support}. "
                     "Causal status is independent from evidence support."
@@ -2635,6 +2699,11 @@ class ChatMitigationStepsMixin:
                 session=session.summary(),
                 input_mode="mitigation_measure",
                 error=True,
+            )
+        policy_title = session.selected_mitigation_policy or session.selected_context_policy or ""
+        if self._policy_about_repeats_title(policy_about, policy_title):
+            policy_about = self._policy_about_from_summary(
+                session.selected_context_policy_summary or "", policy_title,
             )
         reason = reason or hazard_pathway
         session.pending_inspired_mitigation_measure = measure
@@ -3267,25 +3336,44 @@ class ChatMitigationStepsMixin:
         session.inspired_mitigation_pathway_pending_review = None
         return self._inspired_mitigation_group_pathway_prompt(session_id, session)
 
-    def _inspired_mitigation_group_pathway_prompt(self, session_id, session, *, error=False, message=""):
+    def _inspired_mitigation_group_pathway_prompt(
+        self, session_id, session, *, error=False, message="", summary_text="",
+    ):
         groups = session.inspired_mitigation_pathway_groups or []
         index = int(session.inspired_mitigation_pathway_index or 0)
         if index >= len(groups):
             return None
         group = groups[index]
         session.phase = "inspired_mitigation_group_pathway_input"
+        clarification = str(message or "").strip() or (
+            f"What specific action in the measure addresses **{group}**'s barrier, "
+            "and how does that action help?"
+        )
+        collected = str(session.inspired_mitigation_pathway_pending_input or "").strip()
+        collected_section = clarification
+        if collected:
+            summary = str(summary_text or "").strip()
+            summary_line = f"**Pathway summary so far:** {summary}\n\n" if summary else ""
+            collected_section = (
+                f"{summary_line}**Still unclear:** {clarification}\n\n"
+                "Add the missing detail, use your current text as unverified, or skip this group."
+            )
         return ChatResponse(
             session_id=session_id, step=session.phase,
             bot_message=markdown_to_html(
-                (message + "\n\n" if message else "")
-                + "### Describe pathway\n\n"
-                + f"How is **{group}** benefited by this measure? Explain the specific action "
-                "and how it helps. You may skip this group or skip all remaining groups."
+                f"### Describe pathway clarification: **{group}**\n\n"
+                + collected_section
             ),
-            options=[
-                Option(id=1, label="Skip this group"),
-                Option(id=2, label="Skip all groups"),
-            ],
+            options=(
+                [
+                    Option(id=1, label="Use pathway as unverified"),
+                    Option(id=2, label="Skip this group"),
+                    Option(id=3, label="Skip all groups"),
+                ] if collected else [
+                    Option(id=1, label="Skip this group"),
+                    Option(id=2, label="Skip all groups"),
+                ]
+            ),
             session=session.summary(), input_mode="textarea", error=error,
         )
 
@@ -3309,6 +3397,22 @@ class ChatMitigationStepsMixin:
             return await self._continue_inspired_mitigation_group_pathway_review(
                 session_id, session
             )
+        if normalize(message) == normalize("Use pathway as unverified"):
+            pathway = str(session.inspired_mitigation_pathway_pending_input or "").strip()
+            if not pathway:
+                return self._inspired_mitigation_group_pathway_prompt(
+                    session_id, session, error=True,
+                    message="Add a pathway description before continuing, or skip this group.",
+                )
+            session.inspired_mitigation_pathway_unverified = list(dict.fromkeys([
+                *(session.inspired_mitigation_pathway_unverified or []), group,
+            ]))
+            session.inspired_mitigation_pathway_inputs = dict(session.inspired_mitigation_pathway_inputs or {})
+            session.inspired_mitigation_pathway_inputs[group] = pathway
+            session.inspired_mitigation_pathway_pending_input = None
+            return await self._store_inspired_mitigation_group_pathway(
+                session_id, session, group, pathway, evidence_supported=False
+            )
         if normalize(message) == normalize("Skip this group"):
             session.inspired_mitigation_pathway_pending_input = None
             session.inspired_mitigation_pathway_skipped_groups = list(dict.fromkeys([
@@ -3326,6 +3430,7 @@ class ChatMitigationStepsMixin:
                 session_id, session, error=True,
                 message=str(review.get("clarification_question") or
                             "Please describe a specific action and benefit for this group."),
+                summary_text=str(review.get("normalized_text") or "").strip(),
             )
         pathway = str(review.get("normalized_text") or combined).strip()
         adaptations = (session.new_policy_inspiration or {}).get("approach", [])
@@ -3347,11 +3452,12 @@ class ChatMitigationStepsMixin:
         )
         validation_payload = None if is_llm_unavailable_response(validation) else parse_json_object(validation)
         if not (isinstance(validation_payload, dict) and validation_payload.get("relevant") is True):
-            session.inspired_mitigation_pathway_pending_input = None
+            session.inspired_mitigation_pathway_pending_input = combined
             return self._inspired_mitigation_group_pathway_prompt(
                 session_id, session, error=True,
                 message=str((validation_payload or {}).get("reason") if isinstance(validation_payload, dict) else "")
                 or "Please explain how a specific L5 adaptation leads to this benefit, or skip this group.",
+                summary_text=pathway,
             )
         session.inspired_mitigation_pathway_pending_input = None
         session.inspired_mitigation_pathway_inputs = dict(session.inspired_mitigation_pathway_inputs or {})
