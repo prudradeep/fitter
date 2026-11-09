@@ -8,6 +8,7 @@ __pycache__/
 .tmp/
 .test-*
 data/old*
+data/*.sqlite
 data/*.faiss
 data/*.json
 data/grounding-logs/
