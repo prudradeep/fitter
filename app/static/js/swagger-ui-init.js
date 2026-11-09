@@ -3,6 +3,13 @@ window.addEventListener("load", () => {
     url: new URL("openapi.json", window.location.href).toString(),
     dom_id: "#swagger-ui",
     deepLinking: true,
+    filter: true,
+    tagsSorter: (a, b) => {
+      if (a === "Read-only listings") return -1;
+      if (b === "Read-only listings") return 1;
+      return a.localeCompare(b);
+    },
+    operationsSorter: "alpha",
     presets: [SwaggerUIBundle.presets.apis],
     layout: "BaseLayout",
     validatorUrl: null,

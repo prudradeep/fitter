@@ -29,6 +29,7 @@ from app.openapi_documentation import enhance_main
 from app.resource_paths import resource_path
 from app.routes.api import router as api_router
 from app.routes.auth import router as auth_router
+from app.routes.readonly_listings import router as readonly_listings_router
 from app.routes.sync import router as sync_router
 from app.security import apply_security_headers, create_csrf_token, csrf_request_allowed, csrf_token_valid
 from app.seed_data import seed_main_kb_from_files
@@ -49,7 +50,21 @@ configure_logging(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.app_name, debug=settings.app_debug, docs_url=None, redoc_url=None)
+app = FastAPI(
+    title=settings.app_name,
+    debug=settings.app_debug,
+    docs_url=None,
+    redoc_url=None,
+    openapi_tags=[
+        {
+            "name": "Read-only listings",
+            "description": (
+                "Authenticated, paginated GET endpoints for reference data, "
+                "socio-demographic profiles, cached Eurostat data, and mitigation measures."
+            ),
+        }
+    ],
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,12 +79,13 @@ templates = Jinja2Templates(directory=str(resource_path("app/templates")))
 
 app.include_router(auth_router)
 app.include_router(api_router)
+app.include_router(readonly_listings_router)
 app.include_router(sync_router)
 
 
 def documented_openapi() -> dict:
     if app.openapi_schema is None:
-        app.openapi_schema = enhance_main(
+        schema = enhance_main(
             get_openapi(
                 title=app.title,
                 version=app.version,
@@ -78,6 +94,44 @@ def documented_openapi() -> dict:
                 routes=app.routes,
             )
         )
+        if (
+            settings.sync_enabled
+            and str(settings.sync_mode or "").strip().casefold() == "server"
+            and not settings.sync_server_expose_app_apis
+        ):
+            safe_methods = {
+                "/login": {"get", "post"},
+                "/health": {"get"},
+                "/health/live": {"get"},
+                "/health/ready": {"get"},
+                "/api/sessions": {"get"},
+                "/api/sessions/{session_key}/export": {"get"},
+                "/api/sessions/{session_key}/report": {"get"},
+                "/api/hazard-salience": {"get"},
+                "/api/hazard-effect-size": {"get"},
+                "/api/hazards/ranked": {"get"},
+                "/api/knowledge/policies": {"get"},
+            }
+            for path in list(schema["paths"]):
+                if path.startswith("/api/v1/listings/"):
+                    safe_methods[path] = {"get"}
+                allowed = safe_methods.get(path, set())
+                operations = schema["paths"][path]
+                for method in list(operations):
+                    if method in {"get", "post", "put", "patch", "delete", "options", "head"} and method not in allowed:
+                        del operations[method]
+                if not operations:
+                    del schema["paths"][path]
+            used_tags = {
+                tag
+                for path_item in schema["paths"].values()
+                for operation in path_item.values()
+                for tag in operation.get("tags", [])
+            }
+            schema["tags"] = [
+                tag for tag in schema.get("tags", []) if tag.get("name") in used_tags
+            ]
+        app.openapi_schema = schema
     return app.openapi_schema
 
 
@@ -98,7 +152,7 @@ async def swagger_docs() -> HTMLResponse:
 <body>
   <div id="swagger-ui"></div>
   <script defer src="/static/vendor/swagger-ui/swagger-ui-bundle.js"></script>
-  <script defer src="/static/js/swagger-ui-init.js?v=3"></script>
+  <script defer src="/static/js/swagger-ui-init.js?v=4"></script>
 </body>
 </html>"""
     )
@@ -114,7 +168,7 @@ async def log_api_request(request: Request, call_next):
     started_at = perf_counter()
     request_id = request.headers.get(settings.request_id_header) or new_request_id()
     set_request_id(request_id)
-    if _sync_server_blocks_app_api(request.url.path):
+    if _sync_server_blocks_app_api(request.url.path, request.method):
         response = JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content={"error": True, "detail": "Endpoint is not available on this sync server."},
@@ -190,7 +244,7 @@ def _should_log_access(path: str) -> bool:
     return random.random() < sample_rate
 
 
-def _sync_server_blocks_app_api(path: str) -> bool:
+def _sync_server_blocks_app_api(path: str, method: str = "GET") -> bool:
     if not settings.sync_enabled:
         return False
     if str(settings.sync_mode or "").strip().casefold() != "server":
@@ -198,6 +252,25 @@ def _sync_server_blocks_app_api(path: str) -> bool:
     if settings.sync_server_expose_app_apis:
         return False
     if path in {"/health", "/health/live", "/health/ready", "/metrics"}:
+        return False
+    normalized_method = str(method or "GET").upper()
+    if path == "/login" and normalized_method in {"GET", "POST"}:
+        return False
+    if normalized_method in {"GET", "HEAD", "OPTIONS"} and (
+        path in {"/docs", "/redoc", "/openapi.json"}
+        or path.startswith("/static/vendor/swagger-ui/")
+        or path == "/static/js/swagger-ui-init.js"
+        or path.startswith("/api/v1/listings/")
+        or path == "/api/sessions"
+        or (path.startswith("/api/sessions/") and path.endswith("/export"))
+        or (path.startswith("/api/sessions/") and path.endswith("/report"))
+        or path in {
+            "/api/hazard-salience",
+            "/api/hazard-effect-size",
+            "/api/hazards/ranked",
+            "/api/knowledge/policies",
+        }
+    ):
         return False
     return not path.startswith("/api/sync")
 

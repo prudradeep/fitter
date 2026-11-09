@@ -48,11 +48,28 @@ def _quote_identifier(name: str) -> str:
 def _write_offline_database(source: sqlite3.Connection, target: Path, scopes: set[str]) -> None:
     temporary = target.with_suffix(target.suffix + ".tmp")
     try:
-        with closing(sqlite3.connect(temporary)) as clean:
+        with closing(sqlite3.connect(":memory:")) as clean:
             source.backup(clean)
-            clean.execute("PRAGMA journal_mode = DELETE")
             clean.execute("PRAGMA foreign_keys = OFF")
             clean.execute("PRAGMA secure_delete = ON")
+            if "original_policy_knowledge_documents" in {
+                str(row[0]) for row in clean.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }:
+                clean.execute(
+                    "DELETE FROM knowledge_chunks WHERE document_id IN "
+                    "(SELECT d.id FROM knowledge_documents d "
+                    "WHERE d.scope = 'original_policy' AND NOT EXISTS "
+                    "(SELECT 1 FROM original_policy_knowledge_documents opd "
+                    "WHERE opd.knowledge_document_id = d.id))"
+                )
+                clean.execute(
+                    "DELETE FROM knowledge_documents "
+                    "WHERE scope = 'original_policy' AND NOT EXISTS "
+                    "(SELECT 1 FROM original_policy_knowledge_documents opd "
+                    "WHERE opd.knowledge_document_id = knowledge_documents.id)"
+                )
             placeholders = ", ".join("?" for _ in scopes)
             included_scopes = tuple(sorted(scopes))
             clean.execute(
@@ -169,7 +186,12 @@ def _write_offline_database(source: sqlite3.Connection, target: Path, scopes: se
                     }
                     if metadata:
                         assignments = ", ".join(f"{_quote_identifier(column)} = NULL" for column in sorted(metadata))
-                        clean.execute(f"UPDATE {_quote_identifier(name)} SET {assignments}")
+                        try:
+                            clean.execute(f"UPDATE {_quote_identifier(name)} SET {assignments}")
+                        except sqlite3.Error as exc:
+                            raise ValueError(
+                                f"Could not sanitize offline table {name}: {exc}"
+                            ) from exc
             clean.commit()
             missing_reference = clean.execute("PRAGMA foreign_key_check").fetchone()
             if missing_reference:
@@ -177,9 +199,12 @@ def _write_offline_database(source: sqlite3.Connection, target: Path, scopes: se
                     "Offline snapshot has a missing referenced row after removing client data "
                     f"({missing_reference[0]} -> {missing_reference[2]})"
                 )
-            clean.execute("VACUUM")
             if clean.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise ValueError("Offline snapshot failed SQLite integrity check")
+            with closing(sqlite3.connect(temporary)) as output_db:
+                clean.backup(output_db)
+                output_db.execute("PRAGMA journal_mode = DELETE")
+                output_db.commit()
         temporary.replace(target)
     finally:
         temporary.unlink(missing_ok=True)
@@ -231,6 +256,8 @@ def export_bundle(
         for scope in scopes:
             if scope not in SCOPES:
                 raise ValueError(f"Unsupported scope: {scope}")
+            if scope == "original_policy" and not mapping_exists:
+                raise ValueError("Original policy knowledge mapping table is missing")
             filename = f"{index_base.stem}.{SCOPES[scope]}{index_base.suffix}"
             index_file = index_base.with_name(filename)
             if not index_file.is_file():
@@ -245,20 +272,22 @@ def export_bundle(
                    WHERE d.scope = ?""",
                 (scope,),
             ).fetchall()
+            if not documents:
+                raise ValueError(f"No indexed knowledge rows found for {scope}")
+            orphan_original_policy_docs: set[str] = set()
             chunks = db.execute(
-                """SELECT c.id, c.user_id, c.faiss_indexed, c.sync_id, c.sync_deleted_at
+                """SELECT c.id, c.document_id, c.user_id, c.faiss_indexed, c.sync_id, c.sync_deleted_at
                    FROM knowledge_chunks c
                    JOIN knowledge_documents d ON d.id = c.document_id
                    WHERE d.scope = ?""",
                 (scope,),
             ).fetchall()
-            if not documents or not chunks:
-                raise ValueError(f"No indexed knowledge rows found for {scope}")
             for row in documents:
                 uri = str(row["source_uri"] or "")
                 if (row["user_id"] or row["session_key"] or row["custom_hazard_id"]
-                    or (not offline and not row["sync_id"])
-                    or row["sync_deleted_at"] or not row["faiss_indexed"]):
+                    or row["sync_deleted_at"]):
+                    raise ValueError(f"{scope} contains private, unsynced, deleted, or unindexed documents")
+                if not offline and not row["sync_id"]:
                     raise ValueError(f"{scope} contains private, unsynced, deleted, or unindexed documents")
                 if scope == "main" and (not uri.startswith("kb/") or row["policy_id"]):
                     raise ValueError(f"Main KB includes a non-bundled source: {uri}")
@@ -272,9 +301,22 @@ def export_bundle(
                     raise ValueError(f"Policy document has an unexpected source or policy: {uri}")
                 if scope == "original_policy" and (
                     not uri.casefold().startswith(("http://", "https://", "kb/additional/policy documents/"))
-                    or not row["original_policy_linked"] or row["policy_id"]
+                    or row["policy_id"]
                 ):
                     raise ValueError(f"Original policy document has an unexpected source or policy: {uri}")
+                if scope == "original_policy" and not row["original_policy_linked"]:
+                    orphan_original_policy_docs.add(str(row["id"]))
+                    continue
+                if not row["faiss_indexed"]:
+                    raise ValueError(f"{scope} contains private, unsynced, deleted, or unindexed documents")
+            orphan_vector_ids = {
+                vector_id(str(row["id"])) for row in chunks
+                if str(row["document_id"]) in orphan_original_policy_docs
+            }
+            chunks = [row for row in chunks
+                      if str(row["document_id"]) not in orphan_original_policy_docs]
+            if not chunks:
+                raise ValueError(f"No indexed knowledge rows found for {scope}")
             if any(row["user_id"] or (not offline and not row["sync_id"]) or row["sync_deleted_at"]
                    or not row["faiss_indexed"] for row in chunks):
                 raise ValueError(f"{scope} contains private, unsynced, deleted, or unindexed chunks")
@@ -293,7 +335,8 @@ def export_bundle(
                            WHERE d.scope = 'policy_reference'"""
                     )
                 } if scope == "policy_document" else set()
-                if not extra <= private_reference_ids:
+                permitted_stale_ids = orphan_vector_ids if scope == "original_policy" else set()
+                if not extra <= private_reference_ids | permitted_stale_ids:
                     raise ValueError(f"FAISS IDs do not exactly match {scope} knowledge chunks")
             entries.append({
                 "scope": scope,

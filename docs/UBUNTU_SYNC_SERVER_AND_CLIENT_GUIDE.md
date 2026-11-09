@@ -252,6 +252,8 @@ SYNC_INCLUDE_LOGS=false
 SYNC_SERVER_EXPOSE_APP_APIS=false
 
 FAISS_INDEX_PATH="/var/lib/dr-transition/knowledge.faiss"
+POLICY_SUMMARY_CACHE_PATH="/var/lib/dr-transition/policy_summary_cache.sqlite"
+POLICY_SUMMARY_CACHE_TTL_SECONDS=1800
 
 LLM_LOG_ENABLED=false
 LLM_LOG_TO_FILE=false

@@ -1257,9 +1257,9 @@ def _seed_original_policies_xlsx(connection) -> None:
         """)).mappings()
     }
     existing_policy_relations = {
-        (str(row["original_policy_id"]), str(row["mitigation_measure_policy_id"]))
+        (str(row["original_policy_id"]), str(row["mitigation_measure_policy_id"])): str(row["id"])
         for row in connection.execute(text("""
-            SELECT original_policy_id, mitigation_measure_policy_id
+            SELECT id, original_policy_id, mitigation_measure_policy_id
             FROM original_policy_mitigation_policy_relations
         """)).mappings()
     }
@@ -1271,6 +1271,11 @@ def _seed_original_policies_xlsx(connection) -> None:
         """)).mappings()
     }
     inserted_policies = inserted_sectors = inserted_codes = inserted_links = inserted_relations = 0
+    desired_policy_ids: set[str] = set()
+    desired_sector_keys: set[tuple[str, str]] = set()
+    desired_code_keys: set[tuple[str, str]] = set()
+    desired_relation_keys: set[tuple[str, str]] = set()
+    desired_link_keys: set[tuple[str, str, str]] = set()
     ignored_relationships = {"No link", "Not provided", "Not applicable"}
     for row in rows:
         policy_name = str(row["policy_name"])
@@ -1303,7 +1308,21 @@ def _seed_original_policies_xlsx(connection) -> None:
                 policies_by_name[policy_key] = (policy_id, country_id)
             elif str(saved_country_id) != country_id:
                 raise ValueError(f"Original policy name maps to multiple countries: {policy_name}")
+            connection.execute(text("""
+                UPDATE original_policies
+                SET objective = :objective,
+                    policy_document = :policy_document,
+                    excel_row_number = :excel_row_number
+                WHERE id = :id
+            """), {
+                "objective": row["objective"] or None,
+                "policy_document": row["policy_document"] or None,
+                "excel_row_number": row["excel_row_number"],
+                "id": policy_id,
+            })
+        desired_policy_ids.add(policy_id)
         sector_key = (policy_id, sector_id)
+        desired_sector_keys.add(sector_key)
         if sector_key not in existing_sectors:
             connection.execute(text("""
                 INSERT INTO original_policy_sectors (id, original_policy_id, sector_id)
@@ -1316,6 +1335,7 @@ def _seed_original_policies_xlsx(connection) -> None:
             existing_sectors.add(sector_key)
             inserted_sectors += 1
         code_key = (policy_id, str(row["code"]).casefold())
+        desired_code_keys.add(code_key)
         code_id = codes_by_policy_code.get(code_key)
         if code_id is None:
             code_id = str(uuid.uuid4())
@@ -1331,6 +1351,12 @@ def _seed_original_policies_xlsx(connection) -> None:
             })
             codes_by_policy_code[code_key] = code_id
             inserted_codes += 1
+        else:
+            connection.execute(text("""
+                UPDATE original_policy_codes
+                SET excel_row_number = :excel_row_number
+                WHERE id = :id
+            """), {"excel_row_number": row["excel_row_number"], "id": code_id})
         mitigation_key = (str(row["code"]).casefold(), sector_id, country_id)
         mitigation_policy_id = mitigation_policy_ids.get(mitigation_key)
         if mitigation_policy_id is None:
@@ -1339,7 +1365,10 @@ def _seed_original_policies_xlsx(connection) -> None:
                 f"{row['country']} / {row['sector']} / {row['code']}"
             )
         relation_key = (policy_id, mitigation_policy_id)
-        if relation_key not in existing_policy_relations:
+        desired_relation_keys.add(relation_key)
+        relation_id = existing_policy_relations.get(relation_key)
+        if relation_id is None:
+            relation_id = str(uuid.uuid4())
             connection.execute(text("""
                 INSERT INTO original_policy_mitigation_policy_relations
                     (id, original_policy_id, mitigation_measure_policy_id,
@@ -1347,19 +1376,31 @@ def _seed_original_policies_xlsx(connection) -> None:
                 VALUES (:id, :original_policy_id, :mitigation_measure_policy_id,
                         :source_mitigation_title, :excel_row_number)
             """), {
-                "id": str(uuid.uuid4()),
+                "id": relation_id,
                 "original_policy_id": policy_id,
                 "mitigation_measure_policy_id": mitigation_policy_id,
                 "source_mitigation_title": row["mitigation_policy_title"],
                 "excel_row_number": row["excel_row_number"],
             })
-            existing_policy_relations.add(relation_key)
+            existing_policy_relations[relation_key] = relation_id
             inserted_relations += 1
+        else:
+            connection.execute(text("""
+                UPDATE original_policy_mitigation_policy_relations
+                SET source_mitigation_title = :source_mitigation_title,
+                    excel_row_number = :excel_row_number
+                WHERE id = :id
+            """), {
+                "source_mitigation_title": row["mitigation_policy_title"],
+                "excel_row_number": row["excel_row_number"],
+                "id": relation_id,
+            })
         for heading, relationship in zip(hazard_headings, row["relationships"]):
             if not relationship or relationship in ignored_relationships:
                 continue
             hazard_id = hazard_ids[(heading[0].casefold(), heading[1].casefold())]
             link_key = (code_id, hazard_id, str(relationship))
+            desired_link_keys.add(link_key)
             if link_key in existing_links:
                 continue
             connection.execute(text("""
@@ -1375,6 +1416,59 @@ def _seed_original_policies_xlsx(connection) -> None:
             })
             existing_links.add(link_key)
             inserted_links += 1
+
+    for code_id, hazard_id, relationship in existing_links - desired_link_keys:
+        connection.execute(text("""
+            DELETE FROM original_policy_system_hazard
+            WHERE original_policy_code_id = :code_id
+              AND system_hazard_id = :hazard_id
+              AND relationship = :relationship
+        """), {
+            "code_id": code_id,
+            "hazard_id": hazard_id,
+            "relationship": relationship,
+        })
+    for relation_key in existing_policy_relations.keys() - desired_relation_keys:
+        connection.execute(text("""
+            DELETE FROM original_policy_mitigation_policy_relations WHERE id = :id
+        """), {"id": existing_policy_relations[relation_key]})
+    for sector_key in existing_sectors - desired_sector_keys:
+        connection.execute(text("""
+            DELETE FROM original_policy_sectors
+            WHERE original_policy_id = :policy_id AND sector_id = :sector_id
+        """), {"policy_id": sector_key[0], "sector_id": sector_key[1]})
+    for code_key in codes_by_policy_code.keys() - desired_code_keys:
+        code_id = codes_by_policy_code[code_key]
+        connection.execute(text("""
+            DELETE FROM original_policy_system_hazard WHERE original_policy_code_id = :id
+        """), {"id": code_id})
+        connection.execute(text("DELETE FROM original_policy_codes WHERE id = :id"), {"id": code_id})
+    stale_policy_ids = {
+        policy_id for policy_id, _country_id in policies_by_name.values()
+        if policy_id not in desired_policy_ids
+    }
+    for policy_id in stale_policy_ids:
+        picker_ids = connection.execute(text("""
+            SELECT policies.id
+            FROM policies
+            JOIN policy_original_sources ON policy_original_sources.policy_id = policies.id
+            WHERE policy_original_sources.original_policy_id = :id
+              AND policies.source = 'original_policy'
+        """), {"id": policy_id}).scalars().all()
+        connection.execute(text("""
+            DELETE FROM policy_original_sources WHERE original_policy_id = :id
+        """), {"id": policy_id})
+        for picker_id in picker_ids:
+            connection.execute(text("DELETE FROM policies WHERE id = :id"), {"id": picker_id})
+        connection.execute(text("""
+            DELETE FROM original_policy_knowledge_documents WHERE original_policy_id = :id
+        """), {"id": policy_id})
+        connection.execute(text("""
+            DELETE FROM original_policy_mitigation_policy_relations WHERE original_policy_id = :id
+        """), {"id": policy_id})
+        connection.execute(text("DELETE FROM original_policy_sectors WHERE original_policy_id = :id"), {"id": policy_id})
+        connection.execute(text("DELETE FROM original_policy_codes WHERE original_policy_id = :id"), {"id": policy_id})
+        connection.execute(text("DELETE FROM original_policies WHERE id = :id"), {"id": policy_id})
     logger.info(
         "Loaded %s original policies, %s sector mappings, %s code mappings, %s mitigation-policy relations, and %s policy-system-hazard links",
         inserted_policies, inserted_sectors, inserted_codes, inserted_relations, inserted_links,
@@ -1431,6 +1525,16 @@ def _seed_original_policy_picker_rows(connection) -> None:
             })
             picker_rows[key] = picker_id
             inserted += 1
+        else:
+            connection.execute(text("""
+                UPDATE policies
+                SET policy = :policy, excel_row_number = :excel_row_number
+                WHERE id = :id AND source = 'original_policy'
+            """), {
+                "policy": original["policy_name"],
+                "excel_row_number": original["excel_row_number"],
+                "id": picker_id,
+            })
         original_id = str(original["original_policy_id"])
         linked_original_id = linked.get(picker_id)
         if linked_original_id is not None and linked_original_id != original_id:

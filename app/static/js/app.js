@@ -360,6 +360,23 @@ const stageIconSets = {
       icon: "M7 3h7l4 4v14H7V3zM14 3v5h5M9 13h6M9 17h6",
     },
   ],
+  policy: [
+    {
+      title: "Policy context",
+      text: "Select and review the policy linked to the identified hazard.",
+      icon: "M6 3h9l4 4v14H6V3zM14 3v5h5M9 12h7M9 16h7",
+    },
+    {
+      title: "Policy evidence",
+      text: "Check the policy summary and its supporting references.",
+      icon: "M8 8h8M8 12h8M8 16h5M5 3h10l4 4v14H5V3z",
+    },
+    {
+      title: "Policy impacts",
+      text: "Clarify how the policy contributes to or affects the hazard.",
+      icon: "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l3 3M15 15l3 3M18 6l-3 3M9 15l-3 3",
+    },
+  ],
   mitigation: [
     {
       title: "Mitigation",
@@ -411,56 +428,61 @@ const stageVisuals = {
     title: "Sectors analyzed",
     text: "Transport, housing, and energy pathways change which hazards and profiles matter most.",
   },
-  hazards: {
+  policy: {
     index: 3,
+    title: "Review the policy context",
+    text: "Select the relevant policy and clarify how it relates to the identified hazard.",
+  },
+  hazards: {
+    index: 4,
     title: "",
     text: "",
   },
   mitigation: {
-    index: 4,
+    index: 5,
     title: "Build mitigation options",
     text: "Mitigation planning turns identified hazards into practical countermeasures.",
   },
   evaluation: {
-    index: 5,
+    index: 6,
     title: "Evaluate the plan",
     text: "The final stage reviews strength, confidence, and evidence before the analysis closes.",
   },
 };
 
 function stageKeyForStep(step = "", mode = appState.inputMode) {
-  if (mode === "mitigation_measure") return "hazards";
+  if (mode === "mitigation_measure") return "mitigation";
   if (["country", "national_scope"].includes(step)) return "country";
   if (["region"].includes(step)) return "region";
   if (["sector"].includes(step)) return "sector";
+  if (["hazard_profile_selection", "socio_demographic_review"].includes(step)) return "mitigation";
+  if (
+    [
+      "policy",
+      "policy_summary",
+      "policy_reference",
+      "policy_clarification",
+      "policy_hazard_confirmation",
+      "policy_hazard_details",
+      "policy_summary_review",
+      "policy_summary_details",
+      "policy_summary_clarification",
+      "custom_hazard_policy_reference",
+      "custom_hazard_policy_details_confirmation",
+      "custom_hazard_policy_relevance_clarification",
+    ].includes(step)
+  ) {
+    return "policy";
+  }
   if (
     [
       "hazards",
       "add_hazard",
       "reason_confirmation",
-      "mitigation_mechanism_selection",
-      "mitigation_policy_confirmation",
-      "mitigation_policy_reference",
-      "mitigation_policy_retry",
-      "mitigation_policy_clarification",
-      "mitigation_mechanism_reflection_review",
-      "mitigation_mechanism_reflection_input",
-      "mitigation_policy_effect_review",
-      "mitigation_policy_effect_mitigation",
-      "mitigation_policy_effect_disagreement",
-      "hazard_profile_selection",
-      "socio_demographic_review",
       "add_dgs",
       "stats_deep_dive",
       "target_population_question",
       "custom_hazard_summary_review",
-      "mitigation_measure",
-      "mitigation_reason",
-      "mitigation_evidence_decision",
-      "mitigation_evidence",
-      "mitigation_duplicate_suggestion",
-      "mitigation_duplicate_report",
-      "mitigation_clarity",
     ].includes(step)
   ) {
     return "hazards";
@@ -6591,14 +6613,28 @@ resetButton.addEventListener("click", async () => {
   if (floatingStatsButton) floatingStatsButton.hidden = true;
   closeStatsDeepDiveDialog();
   clearCurrentInputState();
+  // Invalidate any in-flight map/guide render from the session being left.
+  window.clearTimeout(stageMapRetryTimer);
+  stageMapRetryAttempts.clear();
+  stageVisualRenderId += 1;
+  renderedVisualKey = "";
+  renderedStageCardsKey = "";
+  appState.currentStep = "country";
+  appState.currentOptions = [];
+  appState.currentSession = {};
+  targetPopulationQuestions = [];
+  targetPopulationAnswers = [];
+  stageProgress?.classList.add("is-collapsed");
+  stageProgressToggle?.setAttribute("aria-expanded", "false");
+  stageProgressToggle?.setAttribute("aria-label", "Show analysis stages");
   localStorage.removeItem(sessionKey);
   sessionId = null;
   statsDialogStarted = false;
   clearElement(statsDialogLog);
   clearElement(chatLog);
   clearElement(optionTray);
-  updateSessionCard({ country: null, region: null, sector: null });
   setInputMode("text");
+  updateSessionCard({ country: null, region: null, sector: null });
   await sendMessage("/reset", false);
 });
 

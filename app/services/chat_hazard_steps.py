@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import sqlite3
 from difflib import SequenceMatcher
 from html import escape
 from pathlib import Path
@@ -28,6 +29,7 @@ from app.models import (
     Sector,
     SystemHazard,
 )
+from app.config import get_settings
 from app.schemas import ChatResponse, Option
 from app.llm import ask_llm_chat
 from app.services.chat_formatters import format_hazards
@@ -65,6 +67,11 @@ from app.services.knowledge_base import (
     TEMPORARY_KB_SCOPE, normalize_source_url,
 )
 from app.services.policy_knowledge_seed import _link_policy
+from app.services.policy_summary_cache import (
+    cached_policy_summary,
+    policy_summary_cache_key,
+    store_policy_summary,
+)
 from app.services.message_renderer import markdown_to_html, render_message
 from app.services.mechanism_sentence import (
     clean_mechanism_sentence,
@@ -898,6 +905,38 @@ class ChatHazardStepsMixin:
         )
         d42 = self._policy_summary_reference(session)
         d42_objectives = str((d42.fields if d42 else {}).get("Original Policy Objective") or "").strip()
+        cache_settings = get_settings()
+        cache_key = policy_summary_cache_key(
+            {
+                "summary_version": 1,
+                "instructions": instructions,
+                "schema": schema,
+                "policy": session.selected_context_policy or "",
+                "country": session.country or "",
+                "region": session.region or "",
+                "sector": session.sector or "",
+                "source_text": source_text,
+                "catalog_details": _catalog_details,
+                "clarifications": clarifications or [],
+                "reference_objectives": d42_objectives,
+                "llm_provider": cache_settings.llm_provider,
+                "ollama_model": cache_settings.ollama_model,
+                "bedrock_model_id": cache_settings.bedrock_model_id,
+            }
+        )
+        try:
+            cached_summary = cached_policy_summary(
+                cache_settings.policy_summary_cache_path,
+                cache_key,
+                cache_settings.policy_summary_cache_ttl_seconds,
+            )
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            logger.warning("Policy summary cache read failed: %s", exc)
+            cached_summary = None
+        if cached_summary is not None:
+            logger.info("Reused cached policy summary for matching policy context")
+            return cached_summary
+
         async def use_d42_objectives(summary: str) -> str:
             if not d42_objectives:
                 return summary
@@ -1169,7 +1208,17 @@ class ChatHazardStepsMixin:
                     for label, text in bullets
                 )
             )
-        return await use_d42_objectives("\n\n".join(sections))
+        summary = await use_d42_objectives("\n\n".join(sections))
+        try:
+            store_policy_summary(
+                cache_settings.policy_summary_cache_path,
+                cache_key,
+                summary,
+                cache_settings.policy_summary_cache_ttl_seconds,
+            )
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            logger.warning("Policy summary cache write failed: %s", exc)
+        return summary
 
     async def _handle_context_policy_reference(
         self, session_id: str, session: ChatSession, message: str
