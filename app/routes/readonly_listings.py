@@ -25,7 +25,9 @@ from app.models import (
     OriginalPolicy,
     OriginalPolicyCode,
     OriginalPolicySector,
+    OriginalPolicySystemHazard,
     Policy,
+    PolicyHazardLink,
     QuestionOption,
     Region,
     Sector,
@@ -204,11 +206,12 @@ def list_policies(
     }
 
 
-@router.get("/hazards", summary="List hazards", description="Lists system, additional, and owner-visible custom hazards. Filters apply to the hazard types that support the corresponding context.")
+@router.get("/hazards", summary="List hazards", description="Lists system, additional, and owner-visible custom hazards. Use policy_id to return hazards linked to a policy.")
 def list_hazards(
     country_id: str | None = Query(default=None, min_length=1),
     sector_id: str | None = Query(default=None, min_length=1),
     region_id: str | None = Query(default=None, min_length=1),
+    policy_id: str | None = Query(default=None, min_length=1),
     include_additional: bool = Query(default=True),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -216,6 +219,25 @@ def list_hazards(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     system_query = select(SystemHazard, Sector.name).join(Sector, Sector.id == SystemHazard.sector_id)
+    if policy_id:
+        linked_system_hazards = select(PolicyHazardLink.system_hazard_id).where(
+            PolicyHazardLink.policy_id == policy_id,
+            PolicyHazardLink.system_hazard_id.is_not(None),
+        )
+        linked_original_system_hazards = (
+            select(OriginalPolicySystemHazard.system_hazard_id)
+            .join(
+                OriginalPolicyCode,
+                OriginalPolicyCode.id == OriginalPolicySystemHazard.original_policy_code_id,
+            )
+            .where(OriginalPolicyCode.original_policy_id == policy_id)
+        )
+        system_query = system_query.where(
+            or_(
+                SystemHazard.id.in_(linked_system_hazards),
+                SystemHazard.id.in_(linked_original_system_hazards),
+            )
+        )
     if sector_id:
         system_query = system_query.where(SystemHazard.sector_id == sector_id)
     if country_id:
@@ -245,6 +267,12 @@ def list_hazards(
             additional_query = additional_query.where(AdditionalHazard.country_id == country_id)
         if sector_id:
             additional_query = additional_query.where(AdditionalHazard.sector_id == sector_id)
+        if policy_id:
+            linked_additional_hazards = select(PolicyHazardLink.additional_hazard_id).where(
+                PolicyHazardLink.policy_id == policy_id,
+                PolicyHazardLink.additional_hazard_id.is_not(None),
+            )
+            additional_query = additional_query.where(AdditionalHazard.id.in_(linked_additional_hazards))
         items.extend(
             {
                 "id": row.id,
@@ -277,6 +305,8 @@ def list_hazards(
         custom_query = custom_query.where(CustomHazard.sector_id == sector_id)
     if region_id:
         custom_query = custom_query.where(CustomHazard.region_id == region_id)
+    if policy_id:
+        custom_query = custom_query.where(CustomHazard.policy_id == policy_id)
     items.extend(
         {
             "id": row.id,

@@ -88,14 +88,14 @@ email=<account email>&password=<account password>
 | `GET /api/v1/listings/regions` | Lists regions, optionally for one country, so a client can narrow a national context to a subnational area before reviewing hazards and population impacts. | `country_id`, `limit`, `offset` | Regions with country context. Logged-in user. |
 | `GET /api/v1/listings/sectors` | Lists available sectors, optionally filtered to a country, so policy and hazard results can be scoped to the economic activity being analyzed. | `country_id`, `limit`, `offset` | Sectors available globally or for a country. Logged-in user. |
 | `GET /api/v1/listings/policies` | Returns the policies available for the selected country and sector, allowing users to review the policy context that may give rise to or worsen transition hazards. | `country_id`, `sector_id`, `limit`, `offset` | `policies` and `original_policies` arrays. Logged-in user; excludes policies created by other users. |
-| `GET /api/v1/listings/hazards` | Lists available system, additional, and accessible custom hazards for the supplied context filters. It does not accept a policy ID or return a selected policy's hazard links. | `country_id`, `sector_id`, `region_id`, `include_additional`, `limit`, `offset` | System, additional, and accessible custom hazards. Logged-in user; excludes custom hazards created by other users. |
+| `GET /api/v1/listings/hazards` | Lists available system, additional, and accessible custom hazards for the supplied context filters. Pass `policy_id` to return hazards linked to the selected policy. | `country_id`, `sector_id`, `region_id`, `policy_id`, `include_additional`, `limit`, `offset` | System, additional, and accessible custom hazards linked to the policy and matching other supplied filters. Logged-in user; excludes custom hazards created by other users. |
 | `GET /api/v1/listings/socio-demographics` | Retrieves population profile categories applicable to a context, hazard, or owned session so users can identify and describe groups affected by each hazard. | At least one of `country_id`, `region_id`, `sector_id`, `hazard_id`, `session_key`; `limit`, `offset` | System/additional profiles and, optionally, the user's session-specific profiles. `session_key` must belong to the logged-in user. |
 | `GET /api/v1/listings/eurostat` | Reads cached population statistics for the requested context or profile to quantify affected groups and provide regional or national population shares where available. | At least one of `country_id`, `region_id`, `sector_id`, `hazard_id`, `profile`; `include_expired`, `limit`, `offset` | Cached Eurostat population values and data. Cache read only; expired rows are excluded by default. |
 | `GET /api/v1/listings/mitigation-measures` | Lists measures applicable to a country, sector, or hazard, including target groups and links, so users can assess which measures address each hazard and how they are intended to benefit affected groups. | `country_id`, `sector_id`, `hazard_id`, `limit`, `offset` | Measures with target groups and hazard links. Logged-in user. |
 
 All listing routes use HTTP GET and do not create or update records. `/api/v1/listings/eurostat` only reads cached rows. The existing `GET /api/hazards/ranked` may populate or refresh the Eurostat cache on a cache miss. `GET /api/sessions/{session_key}` is omitted because the UI restore route may repair persisted session state from messages.
 
-**Policy-to-hazard limitation:** The guided conversation derives or presents hazards after the user selects a policy. The read-only endpoints in this document do not currently expose that policy-to-hazard lookup: neither `/api/hazards/ranked` nor `/api/v1/listings/hazards` accepts `policy_id`. The first endpoint ranks by geographic and sector context; the second lists hazard records for its supported context filters. Do not describe either response as the hazards caused or worsened by a particular selected policy.
+**Policy-to-hazard lookup:** `GET /api/v1/listings/hazards` accepts `policy_id` and returns linked system, additional, and custom hazards, with any supplied geography and sector filters applied as well. `GET /api/hazards/ranked` remains a context-wide ranking and does not accept `policy_id`; do not interpret that ranking as the selected policy's hazard list.
 
 Listing responses contain `items`, `limit`, and `offset`, except `/policies`, which returns separate `policies` and `original_policies` arrays. The default page size is 100 and the maximum is 500. IDs are database IDs and can be passed to related filters.
 
@@ -107,7 +107,7 @@ Listing responses contain `items`, `limit`, and `offset`, except `/policies`, wh
 | `/regions` | `country_id` filters regions by country. |
 | `/sectors` | `country_id` filters to sectors assigned to that country. |
 | `/policies` | `country_id` and `sector_id` independently filter both arrays. |
-| `/hazards` | `sector_id` filters all hazard types; `country_id` filters country-scoped hazards; `region_id` filters custom hazards; `include_additional` defaults to `true`. |
+| `/hazards` | `policy_id` filters to hazards linked to that policy across system, additional, and custom hazards; `sector_id` filters all hazard types; `country_id` filters country-scoped hazards; `region_id` filters custom hazards; `include_additional` defaults to `true`. |
 | `/socio-demographics` | `country_id`, `sector_id`, and `hazard_id` filter catalogue profiles. `session_key` adds the owner's session profiles and supplies the session's country/region/sector filters when omitted. `region_id` is valid only with an owned `session_key`. At least one filter is required. |
 | `/eurostat` | Filters cache rows by country, region, sector, hazard, and/or exact profile. At least one is required. `include_expired` defaults to `false`. |
 | `/mitigation-measures` | Filters by country, sector, and/or system or additional hazard ID. |
@@ -196,19 +196,17 @@ curl -sS -b cookies.txt \
 **Use case:** A user wants to understand which transition hazards are associated with the policy they selected for a country and sector.
 
 1. Use Example 1 to list policies for the selected `country_id` and `sector_id`. The user chooses a policy from those results.
-2. In the guided conversation, submit or confirm that policy selection. The conversation's hazard step is policy-dependent and presents hazards in relation to that selected policy.
-3. If using only the read-only API, note that the available hazard endpoints cannot retrieve that policy-specific result. The ranked-hazards route returns a context-wide ranking; the hazard-listing route returns records matching its geography and sector filters. Neither accepts the selected policy ID.
+2. Submit or confirm the policy selection and keep its `policy_id` from the policy listing response.
+3. Pass that `policy_id` to the hazard-listing route to retrieve linked hazards. The ranked-hazards route remains an optional context-wide ranking and is not policy-specific.
 
 ```bash
 curl -sS -b cookies.txt \
   "$BASE_URL/api/v1/listings/policies?country_id=<country-id>&sector_id=<sector-id>"
 curl -sS -b cookies.txt \
-  "$BASE_URL/api/hazards/ranked?country_id=<country-id>&sector_id=<sector-id>&region_id=<region-id>"
-curl -sS -b cookies.txt \
-  "$BASE_URL/api/v1/listings/hazards?country_id=<country-id>&sector_id=<sector-id>&region_id=<region-id>"
+  "$BASE_URL/api/v1/listings/hazards?policy_id=<policy-id>&country_id=<country-id>&sector_id=<sector-id>&region_id=<region-id>"
 ```
 
-Omit `region_id` when the analysis is national. Use the first response to select a policy. The other two responses are optional context-level reference data only; they do not identify hazards linked to that selected policy. A read-only policy-specific hazard lookup would need to be added to the API before a client can retrieve that relationship directly.
+Omit `region_id` when the analysis is national. The `policy_id` must be the ID of the selected policy returned by the policy listing. `country_id`, `sector_id`, and `region_id` further narrow the linked hazards to the requested context. The ranked-hazards endpoint can be called separately when a context-wide ranking is useful.
 
 ### Example 3: Find affected population groups
 
