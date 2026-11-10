@@ -19,6 +19,11 @@ from app.services.bedrock_provider import (
 )
 from app.services.prompt_loader import clear_prompt_caches
 from app.services.prompt_store import prompt_metadata
+from app.services.frontend_translation import (
+    FrontendTranslationError,
+    LANGUAGES,
+    translate_fixed_frontend_texts,
+)
 from app.services.sync_service import SyncService
 from app.services.system_inquiry_telemetry import (
     accept_system_inquiry_telemetry_batch,
@@ -45,6 +50,46 @@ def require_sync_token(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid sync token.")
     client["_token"] = supplied
     return client
+
+
+@router.post("/frontend-translations", response_model=None)
+async def shared_frontend_translations(
+    request: Request,
+    _: dict[str, object] = Depends(require_sync_token),
+) -> dict[str, object] | JSONResponse:
+    """Translate interface text through the server's shared 30-day cache."""
+    payload = await _sync_payload_or_error(request)
+    if isinstance(payload, JSONResponse):
+        return payload
+    source_language = str(payload.get("source_language") or "").strip().casefold()
+    target_language = str(payload.get("target_language") or "").strip().casefold()
+    texts = payload.get("texts")
+    cacheable = payload.get("cacheable")
+    if (
+        source_language not in LANGUAGES
+        or target_language not in LANGUAGES
+        or not isinstance(texts, list)
+        or not isinstance(cacheable, list)
+        or len(texts) != len(cacheable)
+        or len(texts) > 40
+        or not all(isinstance(text, str) for text in texts)
+        or not all(isinstance(flag, bool) for flag in cacheable)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid translation request.")
+    if any(len(text) > 4000 for text in texts) or sum(map(len, texts)) > 12000:
+        raise HTTPException(status_code=413, detail="Translation request is too large.")
+    try:
+        translations = await translate_fixed_frontend_texts(
+            settings.frontend_translation_cache_path,
+            settings.frontend_translation_cache_ttl_seconds,
+            texts,
+            source_language,
+            target_language,
+            cacheable,
+        )
+    except FrontendTranslationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"translations": translations}
 
 
 @router.get("/status")

@@ -13,6 +13,397 @@ const crowdSourcingKey = storageKeys.crowdSourcing || "dr_transition_crowd_sourc
 const promptSourceKeyPrefix = storageKeys.promptSource || "dr_transition_prompt_source";
 const teacherAvatarPath = appSettings.assets?.teacherAvatarPath || "/static/img/teacher.png";
 const collapsibleMessageWordLimit = appSettings.chat?.collapsibleMessageWordLimit || 100;
+const appLanguageSelect = document.querySelector("#appLanguageSelect");
+const languageTranslationStatus = document.querySelector("#languageTranslationStatus");
+const appLanguageStorageKey = "dr_transition_display_language";
+const fixedTranslationStoragePrefix = "dr_transition_fixed_translation_v1:";
+const fixedTranslationTtlMs = 30 * 24 * 60 * 60 * 1000;
+const fixedTranslationMaxEntries = 1500;
+const appLanguages = { en: "en-US", de: "de-DE", es: "es-ES", pt: "pt-PT", it: "it-IT", hu: "hu-HU" };
+const translationCache = new Map();
+let activeDisplayLanguage = localStorage.getItem(appLanguageStorageKey) || "en";
+let displayTranslationReady = activeDisplayLanguage === "en";
+let pendingTranslationRoots = new Set();
+let translationObserverTimer = null;
+let assistantTranslationQueue = Promise.resolve();
+let translationRequestQueue = Promise.resolve();
+let domTranslationJobs = 0;
+let fixedTranslationWrites = 0;
+
+const translationStatusText = {
+  en: { interface: "Updating interface language…", input: "Translating your message into English…", response: "Translating response…" },
+  de: { interface: "Oberfläche wird übersetzt…", input: "Nachricht wird ins Englische übersetzt…", response: "Antwort wird übersetzt…" },
+  es: { interface: "Traduciendo la interfaz…", input: "Traduciendo tu mensaje al inglés…", response: "Traduciendo la respuesta…" },
+  pt: { interface: "A traduzir a interface…", input: "A traduzir a sua mensagem para inglês…", response: "A traduzir a resposta…" },
+  it: { interface: "Traduzione dell’interfaccia…", input: "Traduzione del messaggio in inglese…", response: "Traduzione della risposta…" },
+  hu: { interface: "A felület fordítása…", input: "Üzenet fordítása angolra…", response: "Válasz fordítása…" },
+};
+
+translationStatusText.de = { interface: "Uebersetzung der Oberflaeche laeuft.", input: "Nachricht wird ins Englische uebersetzt.", response: "Antwort wird uebersetzt." };
+translationStatusText.es = { interface: "Traduciendo la interfaz.", input: "Traduciendo tu mensaje al ingles.", response: "Traduciendo la respuesta." };
+translationStatusText.pt = { interface: "A traduzir a interface.", input: "A traduzir a sua mensagem para ingles.", response: "A traduzir a resposta." };
+translationStatusText.hu = { interface: "A felulet forditasa.", input: "Uzenet forditasa angolra.", response: "Valasz forditasa." };
+
+function queueTranslationRequest(payload, signal) {
+  const execute = () => csrfFetch("/api/translate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify(payload),
+  });
+  const request = translationRequestQueue.then(execute, execute);
+  translationRequestQueue = request.catch(() => {});
+  return request;
+}
+
+function fixedTranslationStorageKey(language, text) {
+  let hashA = 2166136261;
+  let hashB = 2246822519;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    hashA = Math.imul(hashA ^ code, 16777619) >>> 0;
+    hashB = Math.imul(hashB ^ (code + index), 3266489917) >>> 0;
+  }
+  return `${fixedTranslationStoragePrefix}${language}:${text.length}:${hashA.toString(16)}:${hashB.toString(16)}`;
+}
+
+function pruneFixedTranslationStorage(maxEntries = fixedTranslationMaxEntries) {
+  const entries = [];
+  const now = Date.now();
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(fixedTranslationStoragePrefix)) continue;
+    let entry;
+    try { entry = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) {}
+    if (!entry || entry.expiresAt <= now) localStorage.removeItem(key);
+    else entries.push({ key, createdAt: Number(entry.createdAt) || 0 });
+  }
+  if (entries.length > maxEntries) {
+    entries.sort((left, right) => left.createdAt - right.createdAt);
+    entries.slice(0, entries.length - maxEntries).forEach(({ key }) => localStorage.removeItem(key));
+  }
+}
+
+function cachedTranslation(language, text, cacheScope = "none") {
+  const key = `${language}\u0000${text}`;
+  if (translationCache.has(key)) return translationCache.get(key);
+  if (cacheScope === "fixed" && text.length <= 1500) {
+    try {
+      const storageKey = fixedTranslationStorageKey(language, text);
+      const entry = JSON.parse(localStorage.getItem(storageKey) || "null");
+      if (entry?.source === text && entry.expiresAt > Date.now() && typeof entry.translation === "string") {
+        translationCache.set(key, entry.translation);
+        return entry.translation;
+      }
+      if (entry) localStorage.removeItem(storageKey);
+    } catch (_) {}
+  }
+  try {
+    const stored = sessionStorage.getItem(`dr_transition_translation:${key}`);
+    if (stored) translationCache.set(key, stored);
+  } catch (_) {}
+  return translationCache.get(key);
+}
+
+function rememberTranslation(language, text, translation, cacheScope = "none") {
+  const key = `${language}\u0000${text}`;
+  translationCache.set(key, translation);
+  try { sessionStorage.setItem(`dr_transition_translation:${key}`, translation); } catch (_) {}
+  if (cacheScope === "fixed" && text.length <= 1500) {
+    try {
+      const storageKey = fixedTranslationStorageKey(language, text);
+      const now = Date.now();
+      localStorage.setItem(storageKey, JSON.stringify({
+        source: text,
+        translation,
+        createdAt: now,
+        expiresAt: now + fixedTranslationTtlMs,
+      }));
+      fixedTranslationWrites += 1;
+      if (fixedTranslationWrites % 100 === 0) pruneFixedTranslationStorage();
+    } catch (_) {
+      try {
+        pruneFixedTranslationStorage(500);
+        const storageKey = fixedTranslationStorageKey(language, text);
+        const now = Date.now();
+        localStorage.setItem(storageKey, JSON.stringify({
+          source: text,
+          translation,
+          createdAt: now,
+          expiresAt: now + fixedTranslationTtlMs,
+        }));
+      } catch (_) {}
+    }
+  }
+}
+
+async function translateBatch(texts, language = activeDisplayLanguage, cacheScope = "none", cacheableFlags = null) {
+  if (!language || language === "en" || !texts.length) return texts;
+  const translations = [...texts];
+  const pending = new Map();
+  texts.forEach((text, index) => {
+    const cacheable = cacheScope === "fixed" || Boolean(cacheableFlags?.[index]);
+    const cached = cachedTranslation(language, text, cacheable ? "fixed" : "none");
+    if (cached) translations[index] = cached;
+    else {
+      if (!pending.has(text)) pending.set(text, { indexes: [], cacheable: false });
+      const group = pending.get(text);
+      group.indexes.push(index);
+      group.cacheable ||= cacheable;
+    }
+  });
+  const groups = [...pending.entries()];
+  let cursor = 0;
+  while (cursor < groups.length) {
+    const batch = [];
+    let batchChars = 0;
+    while (cursor < groups.length && batch.length < 40) {
+      const group = groups[cursor];
+      const length = group[0].length;
+      if (batch.length && batchChars + length > 11000) break;
+      batch.push(group);
+      batchChars += length;
+      cursor += 1;
+    }
+    const originals = batch.map(([text]) => text);
+    const batchCacheable = batch.map(([, group]) => group.cacheable);
+    const requestCacheScope = batchCacheable.every(Boolean) ? "fixed" : batchCacheable.some(Boolean) ? "mixed" : "none";
+    try {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 45000);
+      let response;
+      try {
+        response = await queueTranslationRequest({
+          language,
+          texts: originals,
+          cache_scope: requestCacheScope,
+          ...(requestCacheScope === "mixed" ? { cacheable: batchCacheable } : {}),
+        }, controller.signal);
+      } finally {
+        window.clearTimeout(timeout);
+      }
+      if (!response.ok) {
+        const failure = await response.json().catch(() => ({}));
+        console.warn("Display translation request failed", response.status, failure.detail || "");
+        continue;
+      }
+      const data = await response.json();
+      if (!Array.isArray(data.translations) || data.translations.length !== batch.length) continue;
+      batch.forEach(([text, group], offset) => {
+        const value = data.translations[offset];
+        if (typeof value === "string" && value.trim()) {
+          group.indexes.forEach((index) => { translations[index] = value; });
+          rememberTranslation(language, text, value, group.cacheable ? "fixed" : "none");
+        }
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") console.warn("Display translation timed out; keeping the text in English.");
+      console.warn("Display translation failed", error);
+    }
+  }
+  return translations;
+}
+
+function isPersistentUiText(node) {
+  const parent = node?.parentElement;
+  if (!parent) return false;
+  return !parent.closest(
+    ".profile-panel,#sessionsList,.stage-selection dd,#stageVisualTitle,#stageVisualText,#selectedHazardContext,#stageIconGrid,#stageSectorTable,.message-row",
+  );
+}
+
+function collectTranslatableText(root = document.body) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    const parent = node.parentElement;
+    if (!parent || !node.data.trim() || parent.closest("script,style,noscript,textarea,input,code,pre,#appLanguageSelect,#languageTranslationStatus,.message-row.user,.message-row.bot,[hidden],[aria-hidden='true']")) continue;
+    if ((root.isConnected && parent.getClientRects().length === 0) || node.__i18nLanguage === activeDisplayLanguage) continue;
+    if (node.__i18nSource === undefined) node.__i18nSource = node.data;
+    nodes.push(node);
+  }
+  return nodes;
+}
+
+async function translateNodes(nodes, language) {
+  if (!nodes.length) return;
+  domTranslationJobs += 1;
+  if (languageTranslationStatus) {
+    languageTranslationStatus.textContent = translationStatusText[language]?.interface || "Updating interface language…";
+    languageTranslationStatus.hidden = false;
+  }
+  nodes.forEach((node) => { node.__i18nLanguage = language; });
+  try {
+    const translated = await translateBatch(
+      nodes.map((node) => node.__i18nSource),
+      language,
+      "mixed",
+      nodes.map(isPersistentUiText),
+    );
+    if (language !== activeDisplayLanguage) return;
+    nodes.forEach((node, index) => { if (node.isConnected) node.data = translated[index]; });
+  } finally {
+    domTranslationJobs = Math.max(0, domTranslationJobs - 1);
+    if (!domTranslationJobs && languageTranslationStatus) languageTranslationStatus.hidden = true;
+  }
+}
+
+async function translateDom(root = document.body) {
+  const language = activeDisplayLanguage;
+  const nodes = collectTranslatableText(root);
+  if (!language || language === "en") {
+    nodes.forEach((node) => {
+      node.data = node.__i18nSource;
+      node.__i18nLanguage = "en";
+    });
+    return;
+  }
+  await translateNodes(nodes, language);
+}
+
+async function translateHtml(html, language = activeDisplayLanguage) {
+  if (!language || language === "en" || !html) return html;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = html;
+  const nodes = collectTranslatableText(wrapper);
+  const translated = await translateBatch(nodes.map((node) => node.__i18nSource), language);
+  nodes.forEach((node, index) => { node.data = translated[index]; });
+  return wrapper.innerHTML;
+}
+
+async function translateUserInputToEnglish(text) {
+  const value = String(text || "");
+  if (!value.trim() || activeDisplayLanguage === "en" || value.startsWith("/") || /^[A-Z0-9_]+:/.test(value)) return value;
+  const cached = cachedTranslation("en", `auto:${value}`);
+  if (cached) return cached;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 45000);
+  let response;
+  try {
+    response = await queueTranslationRequest(
+      { language: "en", source_language: "auto", texts: [value] },
+      controller.signal,
+    );
+  } finally {
+    window.clearTimeout(timeout);
+  }
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    throw new Error(failure.detail || "Could not translate your message. Please try again or switch to English.");
+  }
+  const data = await response.json();
+  if (!Array.isArray(data.translations) || typeof data.translations[0] !== "string") {
+    throw new Error("Could not translate your message. Please try again or switch to English.");
+  }
+  rememberTranslation("en", `auto:${value}`, data.translations[0]);
+  return data.translations[0];
+}
+
+function configureDisplayLanguage() {
+  if (!appLanguageSelect) return;
+  if (!Object.hasOwn(appLanguages, activeDisplayLanguage)) activeDisplayLanguage = "en";
+  appLanguageSelect.value = activeDisplayLanguage;
+  document.documentElement.lang = activeDisplayLanguage;
+  appLanguageSelect.addEventListener("change", async () => {
+    activeDisplayLanguage = appLanguageSelect.value;
+    displayTranslationReady = true;
+    localStorage.setItem(appLanguageStorageKey, activeDisplayLanguage);
+    document.documentElement.lang = activeDisplayLanguage;
+    await translateDom();
+  });
+  const observer = new MutationObserver((records) => {
+    if (!displayTranslationReady || activeDisplayLanguage === "en") return;
+    records.forEach((record) => {
+      if (record.type === "attributes" && record.target.nodeType === Node.ELEMENT_NODE) {
+        pendingTranslationRoots.add(record.target);
+      }
+      record.addedNodes.forEach((node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) pendingTranslationRoots.add(node);
+        else if (node.nodeType === Node.TEXT_NODE && record.target.nodeType === Node.ELEMENT_NODE) pendingTranslationRoots.add(record.target);
+      });
+    });
+    if (pendingTranslationRoots.size && !translationObserverTimer) {
+      translationObserverTimer = window.setTimeout(async () => {
+        translationObserverTimer = null;
+        const roots = [...pendingTranslationRoots];
+        pendingTranslationRoots.clear();
+        const filtered = roots.filter((root) => !roots.some((other) => other !== root && other.contains(root)));
+        const nodes = new Set();
+        filtered.forEach((root) => collectTranslatableText(root).forEach((node) => nodes.add(node)));
+        await translateNodes([...nodes], activeDisplayLanguage);
+      }, 250);
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "open", "aria-hidden"] });
+}
+
+function activateDisplayTranslation() {
+  if (displayTranslationReady) return;
+  displayTranslationReady = true;
+  if (activeDisplayLanguage !== "en") translateDom(document.body);
+}
+
+function translateAssistantRowInBackground(row, englishHtml, englishSummary = "", targetLog = chatLog, speak = true) {
+  const initialLanguage = activeDisplayLanguage;
+  const status = initialLanguage === "en" ? null : attachTranslationStatus(
+    row,
+    translationStatusText[initialLanguage]?.response || "Translating response…",
+  );
+  const task = async () => {
+    const language = activeDisplayLanguage;
+    const sourceHtml = String(englishHtml || "").trim()
+      ? englishHtml
+      : "The assistant response was empty. Please try again.";
+    try {
+      if (language === "en") {
+        if (speak) speakServerMessage(sourceHtml, englishSummary);
+        return;
+      }
+      if (status) status.textContent = translationStatusText[language]?.response || "Translating response…";
+      const displayHtml = await translateHtml(sourceHtml, language);
+      if (language !== activeDisplayLanguage) {
+        status?.remove();
+        translateAssistantRowInBackground(row, sourceHtml, englishSummary, targetLog, speak);
+        return;
+      }
+      const content = row?.querySelector(".bubble-content");
+      if (content && row.isConnected) {
+        renderTrustedHtml(content, displayHtml);
+        normalizePracticalConsiderationLists(content);
+        initializeHighcharts(content);
+        syncCollapsibleMessages(targetLog);
+      }
+      const translatedSummary = englishSummary
+        ? (await translateBatch([englishSummary], language))[0]
+        : "";
+      if (speak && language === activeDisplayLanguage) speakServerMessage(displayHtml, translatedSummary);
+    } catch (error) {
+      console.warn("Assistant display translation failed", error);
+    } finally {
+      status?.remove();
+    }
+  };
+  assistantTranslationQueue = assistantTranslationQueue.then(task, task);
+  return assistantTranslationQueue;
+}
+
+function attachTranslationStatus(row, message) {
+  const bubble = row?.querySelector(".bubble");
+  if (!bubble) return null;
+  let status = bubble.querySelector(".chat-translation-status");
+  if (!status) {
+    status = document.createElement("small");
+    status.className = "chat-translation-status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    bubble.appendChild(status);
+  }
+  status.textContent = message;
+  return status;
+}
+
+configureDisplayLanguage();
 
 const chatLog = document.querySelector("#chatLog");
 const chatScrollBottomButton = document.querySelector("#chatScrollBottomButton");
@@ -2919,6 +3310,7 @@ function addMessage(role, text, isError = false, targetLog = chatLog) {
 }
 
 async function typeServerMessage(row, html, targetLog = chatLog) {
+  const messageHtml = String(html || "").trim() || "The assistant response was empty. Please try again.";
   const bubble = row.querySelector(".bubble");
   const timestamp = bubble.querySelector(".timestamp");
   timestamp.remove();
@@ -2932,7 +3324,7 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
   content.textContent = "";
 
   if (!typingEffectEnabled()) {
-    renderTrustedHtml(content, html);
+    renderTrustedHtml(content, messageHtml);
     normalizePracticalConsiderationLists(content);
     initializeHighcharts(content);
     bubble.appendChild(timestamp);
@@ -2943,7 +3335,7 @@ async function typeServerMessage(row, html, targetLog = chatLog) {
   }
 
   const template = document.createElement("template");
-  renderTrustedHtml(template, html);
+  renderTrustedHtml(template, messageHtml);
   const totalCharacters = template.content.textContent?.length || 0;
   const charactersPerFrame = Math.max(1, Math.ceil(totalCharacters / 100));
   const animationDeadline = performance.now() + 1200;
@@ -4704,14 +5096,20 @@ async function sendStatsDialogMessage(message, echoUser = true) {
   if (echoUser) addMessage("user", cleanMessage, false, statsDialogLog);
 
   const typing = addTyping(statsDialogLog);
+  const inputTranslationStatus = activeDisplayLanguage === "en" ? null : attachTranslationStatus(
+    typing,
+    translationStatusText[activeDisplayLanguage]?.input || "Translating your message into English…",
+  );
   setStatsDialogLoading(true);
 
   try {
+    const englishMessage = await translateUserInputToEnglish(cleanMessage);
+    inputTranslationStatus?.remove();
     const response = await csrfFetch("/api/stats-deep-dive", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        message: cleanMessage,
+        message: englishMessage,
         session_id: sessionId,
         validation_mode: currentValidationMode(),
         crowd_sourcing_enabled: crowdSourcingEnabled(),
@@ -4730,11 +5128,12 @@ async function sendStatsDialogMessage(message, echoUser = true) {
 
     typing.remove();
     const botRow = addMessage("bot", "", data.error, statsDialogLog);
-    speakServerMessage(data.bot_message, data.voice_summary);
     await typeServerMessage(botRow, data.bot_message, statsDialogLog);
+    translateAssistantRowInBackground(botRow, data.bot_message, data.voice_summary || "", statsDialogLog);
     updateSessionCard(data.session);
     loadSessions();
   } catch (error) {
+    inputTranslationStatus?.remove();
     typing.remove();
     console.error("Stats deep dive request failed", error);
   } finally {
@@ -6055,6 +6454,7 @@ async function restoreSession(nextSessionId) {
   saveCurrentInputState();
   setLoading(true);
   let shouldStartFresh = false;
+  let assistantTranslationsQueued = false;
   try {
     const response = await fetch(`/api/sessions/${encodeURIComponent(nextSessionId)}`);
     if (response.status === 401) {
@@ -6071,8 +6471,13 @@ async function restoreSession(nextSessionId) {
     clearElement(optionTray);
     statsDialogStarted = false;
     clearElement(statsDialogLog);
-    (data.messages || []).forEach((message) => {
-      addMessage(message.role, message.content, Boolean(message.is_error));
+    const messages = data.messages || [];
+    messages.forEach((message, index) => {
+      const row = addMessage(message.role, message.content, Boolean(message.is_error));
+      if (message.role === "bot" && index >= messages.length - 5) {
+        translateAssistantRowInBackground(row, message.content, "", chatLog, false);
+        assistantTranslationsQueued = true;
+      }
     });
     updateSessionCard(data.session || {});
     setInputMode(data.input_mode || "text", data.step, data.options || [], data.session);
@@ -6092,6 +6497,8 @@ async function restoreSession(nextSessionId) {
   } finally {
     setLoading(false);
   }
+  if (assistantTranslationsQueued) assistantTranslationQueue.finally(activateDisplayTranslation);
+  else if (!shouldStartFresh) activateDisplayTranslation();
   if (shouldStartFresh) {
     sendMessage("", false);
   } else {
@@ -6219,11 +6626,17 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
   clearCurrentInputState();
 
   const typing = addTyping();
+  const inputTranslationStatus = activeDisplayLanguage === "en" ? null : attachTranslationStatus(
+    typing,
+    translationStatusText[activeDisplayLanguage]?.input || "Translating your message into English…",
+  );
   setLoading(true);
   let shouldScheduleAuto = false;
   let progress = null;
 
   try {
+    const englishMessage = await translateUserInputToEnglish(cleanMessage);
+    inputTranslationStatus?.remove();
     const hasEvidenceFile = extras.evidenceFile instanceof File && extras.evidenceFile.size > 0;
     const hasEvidenceUrl = Boolean(extras.evidenceUrl);
     const hasPolicyReferenceFile = extras.policyReferenceFile instanceof File && extras.policyReferenceFile.size > 0;
@@ -6247,12 +6660,12 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
       ...(progress ? { headers: { "X-Ingestion-Progress-ID": progress.id } } : {}),
       ...(useMultipart
         ? {
-            body: buildChatFormData(cleanMessage, extras),
+            body: buildChatFormData(englishMessage, extras),
           }
         : {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              message: cleanMessage,
+              message: englishMessage,
               session_id: sessionId,
               validation_mode: currentValidationMode(),
               crowd_sourcing_enabled: crowdSourcingEnabled(),
@@ -6280,12 +6693,12 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
       setInputMode(data.input_mode || "text", appState.currentStep, data.options || [], data.session);
       updateSessionCard(data.session);
       renderOptions(data.options || [], data.other_options || []);
+      activateDisplayTranslation();
       await openStatsDeepDiveDialog(data.input_values?.stats_question || "", true);
       loadSessions();
       return;
     }
     const botRow = addMessage("bot", "", data.error);
-    speakServerMessage(data.bot_message, data.voice_summary);
     await typeServerMessage(botRow, data.bot_message);
     renderValidationDetails(botRow, data.validation_details);
     updateSessionCard(data.session);
@@ -6293,11 +6706,14 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     applyInputValues(data.input_values);
     renderOptions(data.options || [], data.other_options || []);
     loadSessions();
+    translateAssistantRowInBackground(botRow, data.bot_message, data.voice_summary || "").finally(activateDisplayTranslation);
     shouldScheduleAuto = true;
   } catch (error) {
+    inputTranslationStatus?.remove();
     typing.remove();
     console.error("Chat request failed", error);
     addMessage("bot", error.message || "The document could not be processed.", true);
+    activateDisplayTranslation();
   } finally {
     progress?.stop();
     setLoading(false);

@@ -1,8 +1,8 @@
 @import url("./shell-layout.css");
 @import url("./dialogs.css?v=20261102-local-document-modal");
 @import url("./knowledge.css");
-@import url("./stage-visual.css?v=20261013-context-layout");
-@import url("./chat.css?v=20260925-collapsible-hazard-categories-plain");
+@import url("./stage-visual.css?v=20261110-stage-layout");
+@import url("./chat.css?v=20261110-translation-status");
 @import url("./auth.css");
 @import url("./responsive.css");
 @import url("./ui-tour.css");

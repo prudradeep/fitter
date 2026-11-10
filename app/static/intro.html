@@ -1,49 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="UTF-8"><link rel="stylesheet" href="/static/css/intro.css?v=20261110-csp-cover"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Welcome to Dr Transition</title>
-<style>
-:root{--navy:#071d50;--blue:#1678d5;--teal:#00d8c0}*{box-sizing:border-box}
-body{margin:0;background:#f5fcff;color:var(--navy);font-family:Arial,Helvetica,sans-serif}
-.page{max-width:1024px;margin:auto;background:linear-gradient(#d9f4ff 0%,#fff 49%,#f5fdff 100%);overflow:hidden}
-.hero{position:relative;min-height:540px;padding:44px 32px 0;overflow:hidden;background-image:url(/static/img/intro-bg.png);background-position:center bottom;background-repeat:no-repeat;background-size:100% auto}
-.hero h1{position:relative;z-index:2;margin:0;font-size:clamp(32px,4.5vw,51px);letter-spacing:-1.5px}
-.logo{position:relative;z-index:2;display:inline-block;margin:8px 0 14px;padding:8px 25px;background:#071d50;border-radius:27px;color:white;font-size:clamp(44px,7.5vw,88px);font-weight:900;letter-spacing:-3px}
-.logo span{color:#24ead0}
-.intro{position:relative;z-index:2;font-size:clamp(17px,2.3vw,25px);line-height:1.36;max-width:600px;margin:0}
 
 
-.section{margin:0 26px 16px;position:relative}
-.heading{display:inline-block;background:linear-gradient(90deg,#07538b,#06357c);color:#fff;padding:8px 30px;border-radius:24px 24px 24px 0;font-size:clamp(25px,3.7vw,39px);font-weight:800;position:relative;z-index:2}
-.steps{margin-top:-14px;background:#e8f9ff;border-radius:28px;padding:70px 9px 15px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px}
-.step{position:relative;text-align:center;background:linear-gradient(#f4fcff,#eaf8ff);border:2px solid white;border-radius:28px;padding:36px 8px 20px;min-height:304px;display:flex;align-items:center;flex-direction:column;justify-content:flex-start}
-.step:nth-child(2){background:#fff8e8}.step:nth-child(3){background:#f4efff}.step:nth-child(4){background:#eafff4}.step:nth-child(5){background:#fff0f0}
-.num{position:absolute;top:-20px;left:50%;transform:translateX(-50%);border-radius:50%;width:56px;height:56px;display:grid;place-items:center;color:white;font-weight:800;font-size:31px;background:#1478d5}
-.step:nth-child(2) .num{background:#ffb300}.step:nth-child(3) .num{background:#7841db}.step:nth-child(4) .num{background:#0aaf6b}.step:nth-child(5) .num{background:#f65d62}
-.step svg{width:100%;height:132px;max-width:145px;margin:8px auto 10px}
-.step strong{font-size:clamp(14px,1.9vw,21px);line-height:1.18}
-.assistant{display:flex;align-items:center;gap:22px;background:#fff6de;border:1.5px solid #ffbf4c;border-radius:28px;padding:25px 30px;margin-top:18px;margin-bottom:16px}
-.assistant svg{width:120px;height:120px;flex-shrink:0}.assistant strong{font-size:clamp(19px,3vw,32px);line-height:1.22}.assistant em{font-style:normal;color:#f26c1d}.assistant .assistant-message{flex:1;min-width:0}.assistant .bulb-icon{width:105px;height:120px;flex-shrink:0}
-.countries{background:#dcf6ff;border-radius:28px;padding:20px 12px 17px;margin:0 26px 25px}
-.country-title{display:flex;gap:15px;align-items:center;margin:0 10px 17px}.country-title svg{width:65px;height:65px;flex-shrink:0}
-.country-title h2{font-size:clamp(22px,3vw,32px);margin:0}.country-title p{margin:2px 0;font-size:18px}
-.country-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px}
-.country{border:1px solid #fff;border-radius:22px;background:#f7fcff;text-align:center;padding:12px 5px;display:flex;align-items:center;flex-direction:column;gap:9px;min-height:184px}
-.country svg.flag{width:55px;height:55px}.country svg.map{width:75px;height:75px;fill:#69a9ec}.country b{font-size:18px}
-svg{overflow:visible}
-@media(max-width:700px){.hero{min-height:395px;padding:20px 16px 0}.intro{max-width:90%}.section{margin-left:12px;margin-right:12px}.heading{padding:8px 16px}.steps{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:30px;padding:45px 8px 14px}.step{min-height:215px;padding:27px 6px 14px}.step svg{height:88px}.num{width:40px;height:40px;font-size:23px}.assistant{padding:14px;gap:10px}.assistant svg{width:65px;height:65px}.assistant .bulb-icon{width:54px;height:65px}.assistant strong{font-size:clamp(16px,4vw,23px)}.countries{margin:0 12px 15px}.country-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.country{min-height:155px}.country svg.map{height:54px;width:60px}.country b{font-size:14px}.country-title svg{width:45px;height:45px}.country-title p{font-size:14px}}
-@media(max-width:380px){.logo{letter-spacing:-2px;padding:8px 13px}.hero{min-height:370px}.step strong{font-size:15px}.country-title h2{font-size:20px}}
-</style>
-<style>
-.step .step-icon{display:block;width:100%;height:132px;max-width:145px;object-fit:contain;margin:8px auto 10px;border-radius:12px}
-.assistant .robot-image{width:120px;height:120px;object-fit:contain;flex-shrink:0;border-radius:50%}
-.assistant .bulb-image{width:120px;height:120px;object-fit:contain;flex-shrink:0}
-.country-title .globe-image{width:65px;height:65px;object-fit:contain;border-radius:50%;flex-shrink:0}
-.country .flag-image{width:55px;height:55px;object-fit:contain;border-radius:50%}
-.country .map-image{width:75px;height:75px;object-fit:contain}
-@media(max-width:700px){.step .step-icon{height:88px}.assistant .robot-image,.assistant .bulb-image{width:65px;height:65px}.country-title .globe-image{width:45px;height:45px}.country .map-image{width:60px;height:54px}}
-</style></head>
+</head>
 <body>
 <!-- Reusable vector icons -->
 <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0" aria-hidden="true">

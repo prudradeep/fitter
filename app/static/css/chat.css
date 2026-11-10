@@ -2575,3 +2575,12 @@
   font-size: 0.85rem;
   color: inherit;
 }
+
+.chat-translation-status {
+  display: block;
+  margin-top: 0.55rem;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.35;
+}

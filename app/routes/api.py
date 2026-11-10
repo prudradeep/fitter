@@ -1,4 +1,5 @@
 import json
+import logging
 import mimetypes
 import re
 from html import escape as html_escape, unescape
@@ -44,6 +45,11 @@ from app.services.chat_parsers import parse_evaluation_answer
 from app.services.message_renderer import markdown_to_html
 from app.services.audit_log import record_audit_event
 from app.services.document_language import EnglishDocumentRequiredError
+from app.services.frontend_translation import (
+    FrontendTranslationError,
+    translate_fixed_frontend_texts,
+    translate_frontend_texts,
+)
 from app.services.hazard_effect_size import hazard_effect_size_rows, hazard_predictor_effect_rows
 from app.services.hazard_ranking_service import HAZARD_COLUMN_BY_SLUG, HazardRankingService
 from app.services.ingestion_progress import (
@@ -75,6 +81,7 @@ from app.services.sector_prompt_rag import SectorPromptRagService, SECTOR_PROMPT
 from app.services.sync_permissions import sync_client_permission_enabled
 
 router = APIRouter(prefix="/api", tags=["chat"])
+logger = logging.getLogger(__name__)
 settings = get_settings()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 POLICY_ORIGINAL_FILE_ROOT = PROJECT_ROOT / "kb" / "additional" / "Policy Documents"
@@ -527,6 +534,95 @@ async def chat(
         payload.validation_mode,
         payload.crowd_sourcing_enabled,
     )
+
+
+@router.post("/translate", response_model=None)
+async def translate_frontend_text(
+    request: Request,
+    current_user: AppUser = Depends(require_current_user),
+) -> dict[str, object] | JSONResponse:
+    """Translate frontend strings while keeping the application workflow in English."""
+    _ = current_user
+    payload = await _json_payload_or_error(request, "Frontend translation payload")
+    if isinstance(payload, JSONResponse):
+        return payload
+    language = str(payload.get("language") or "").strip().casefold()
+    from app.services.frontend_translation import LANGUAGES, SOURCE_LANGUAGES
+
+    source_language = str(payload.get("source_language") or "en").strip().casefold()
+    cache_scope = str(payload.get("cache_scope") or "none").strip().casefold()
+    values = payload.get("texts")
+    if (
+        language not in LANGUAGES
+        or source_language not in SOURCE_LANGUAGES
+        or cache_scope not in {"none", "fixed", "mixed"}
+        or not isinstance(values, list)
+        or len(values) > 40
+    ):
+        raise HTTPException(status_code=400, detail="Invalid translation request.")
+    texts = [str(value) for value in values]
+    if any(len(value) > 4000 for value in texts):
+        raise HTTPException(status_code=413, detail="A translation item is too large.")
+    if sum(map(len, texts)) > 12000:
+        raise HTTPException(status_code=413, detail="Translation request is too large.")
+    cacheable_value = payload.get("cacheable")
+    if cache_scope == "mixed":
+        if not isinstance(cacheable_value, list) or len(cacheable_value) != len(texts) or not all(
+            isinstance(value, bool) for value in cacheable_value
+        ):
+            raise HTTPException(status_code=400, detail="Invalid translation cache flags.")
+        cacheable = cacheable_value
+    else:
+        cacheable = [cache_scope == "fixed"] * len(texts)
+    if (language == source_language) or not texts:
+        return {"translations": texts}
+    try:
+        if (
+            cache_scope != "none"
+            and source_language != "auto"
+            and _is_sync_client_mode()
+            and str(settings.sync_server_url or "").strip()
+            and str(settings.sync_api_token or "").strip()
+        ):
+            async with httpx.AsyncClient(timeout=settings.ollama_timeout_seconds) as client:
+                upstream = await client.post(
+                    f"{str(settings.sync_server_url).strip().rstrip('/')}/api/sync/frontend-translations",
+                    headers={"X-Sync-Token": str(settings.sync_api_token)},
+                    json={
+                        "source_language": source_language,
+                        "target_language": language,
+                        "texts": texts,
+                        "cacheable": cacheable,
+                    },
+                )
+            if upstream.status_code != 200:
+                logger.warning("Shared frontend translation service returned status %s.", upstream.status_code)
+                raise HTTPException(status_code=503, detail="The shared translation service is unavailable.")
+            data = upstream.json()
+            translated = data.get("translations") if isinstance(data, dict) else None
+            if not isinstance(translated, list) or len(translated) != len(texts) or not all(
+                isinstance(value, str) for value in translated
+            ):
+                raise HTTPException(status_code=503, detail="The shared translation service returned an invalid response.")
+            return {"translations": translated}
+        if cache_scope == "none" or source_language == "auto":
+            translated = await translate_frontend_texts(texts, source_language, language)
+        else:
+            translated = await translate_fixed_frontend_texts(
+                settings.frontend_translation_cache_path,
+                settings.frontend_translation_cache_ttl_seconds,
+                texts,
+                source_language,
+                language,
+                cacheable,
+            )
+        return {"translations": translated}
+    except FrontendTranslationError as exc:
+        logger.warning("Frontend translation unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        logger.warning("Could not reach shared frontend translation service: %s", exc)
+        raise HTTPException(status_code=503, detail="The shared translation service is unavailable.") from exc
 
 
 @router.post("/sectoral-objective-summary", response_model=None)

@@ -1165,6 +1165,10 @@ body[data-analysis-stage="evaluation"] .node-evaluation {
   font-size: 0.76rem;
 }
 
+.stage-empty:empty {
+  display: none;
+}
+
 .selected-hazard-context {
   display: grid;
   gap: 10px;

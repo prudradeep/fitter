@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     bedrock_chat_cache_ttl_seconds: int = 86400
     policy_summary_cache_path: str = "data/service-runtime/policy_summary_cache.sqlite"
     policy_summary_cache_ttl_seconds: int = Field(default=1800, ge=0)
+    frontend_translation_cache_path: str = "data/service-runtime/frontend_translation_cache.sqlite"
+    frontend_translation_cache_ttl_seconds: int = Field(default=30 * 24 * 60 * 60, ge=0)
     bedrock_embedding_model_id: str = "amazon.titan-embed-text-v2:0"
     bedrock_embedding_cache_enabled: bool = True
     bedrock_embedding_cache_path: str = "data/service-runtime/bedrock_embeddings.sqlite"
@@ -228,6 +230,7 @@ class Settings(BaseSettings):
         self.faiss_index_path = _frozen_program_data_path(self.faiss_index_path)
         self.bedrock_chat_cache_path = _frozen_program_data_path(self.bedrock_chat_cache_path)
         self.policy_summary_cache_path = _frozen_program_data_path(self.policy_summary_cache_path)
+        self.frontend_translation_cache_path = _frozen_program_data_path(self.frontend_translation_cache_path)
         self.bedrock_embedding_cache_path = _frozen_program_data_path(self.bedrock_embedding_cache_path)
         self.llm_log_path = _frozen_program_data_path(self.llm_log_path)
         self.sqlite_database_path = _frozen_program_data_path(self.sqlite_database_path)

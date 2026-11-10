@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261102-local-document-modal" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261110-translation-status" />
   </head>
   <body data-tour-user-id="{{ current_user.id }}">
     <header class="topbar">
@@ -21,6 +21,17 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <label class="language-picker" for="appLanguageSelect">
+            <select id="appLanguageSelect" aria-label="Display language">
+              <option value="en">Ireland · English</option>
+              <option value="de">Germany · Deutsch</option>
+              <option value="es">Spain · Español</option>
+              <option value="pt">Portugal · Português</option>
+              <option value="it">Italy · Italiano</option>
+              <option value="hu">Hungary · Magyar</option>
+            </select>
+          </label>
+          <small id="languageTranslationStatus" class="language-translation-status" role="status" aria-live="polite" hidden></small>
           <div id="voiceAnalyzer" class="voice-analyzer" aria-hidden="true" hidden></div>
           <div class="session-menu">
             <button id="sessionsButton" class="reset-button" type="button">Manage Sessions</button>
@@ -436,7 +447,7 @@
           <iframe
             id="stageIntroGuide"
             class="stage-intro-guide"
-            src="{{ url_for('static', path='/intro.html') }}"
+            src="{{ url_for('static', path='/intro.html') }}?v=20261110-csp-cover"
             title="Introduction to Dr Transition"
             hidden
           ></iframe>
@@ -1308,6 +1319,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260904-prompt-source-preference"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261102-bounded-typing"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261110-translation-cache4"></script>
   </body>
 </html>
