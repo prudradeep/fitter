@@ -39,6 +39,10 @@ from app.routes.request_limits import (
 )
 from app.schemas import ChatRequest, ChatResponse, Option
 from app.services.chat_session import session_store
+from app.services.chat_option_translations import (
+    SUPPORTED_OPTION_LANGUAGES,
+    load_chat_option_translations,
+)
 from app.services.chat_service import ChatService
 from app.services.sectoral_objective_summary import summarize_sectoral_objective
 from app.services.chat_parsers import parse_evaluation_answer
@@ -670,6 +674,20 @@ async def translate_frontend_text(
             exc_info=True,
         )
         raise HTTPException(status_code=503, detail="The shared translation service is unavailable.") from exc
+
+
+@router.get("/chat-option-translations", response_model=None)
+async def chat_option_translations(
+    language: str,
+    current_user: AppUser = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Return pretranslated option labels while preserving English option values."""
+    _ = current_user
+    language = str(language or "").strip().casefold()
+    if language not in SUPPORTED_OPTION_LANGUAGES:
+        raise HTTPException(status_code=400, detail="Unsupported option translation language.")
+    return {"translations": load_chat_option_translations(db, language)}
 
 
 @router.post("/sectoral-objective-summary", response_model=None)

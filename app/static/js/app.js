@@ -21,6 +21,9 @@ const fixedTranslationTtlMs = 30 * 24 * 60 * 60 * 1000;
 const fixedTranslationMaxEntries = 1500;
 const appLanguages = { en: "en-US", de: "de-DE", es: "es-ES", pt: "pt-PT", it: "it-IT", hu: "hu-HU" };
 const translationCache = new Map();
+const optionTranslationBundles = new Map([["en", {}]]);
+let optionTranslations = {};
+let optionTranslationReady = Promise.resolve();
 let activeDisplayLanguage = localStorage.getItem(appLanguageStorageKey) || "en";
 let displayTranslationReady = activeDisplayLanguage === "en";
 let pendingTranslationRoots = new Set();
@@ -137,6 +140,67 @@ function rememberTranslation(language, text, translation, cacheScope = "none") {
   }
 }
 
+async function loadOptionTranslations(language = activeDisplayLanguage) {
+  if (!language || language === "en") {
+    optionTranslations = {};
+    return optionTranslations;
+  }
+  if (optionTranslationBundles.has(language)) {
+    optionTranslations = optionTranslationBundles.get(language);
+    return optionTranslations;
+  }
+  try {
+    const response = await fetch(`/api/chat-option-translations?language=${encodeURIComponent(language)}`);
+    if (!response.ok) throw new Error(`Option translation lookup failed (${response.status}).`);
+    const data = await response.json();
+    const translations = data.translations && typeof data.translations === "object"
+      ? data.translations
+      : {};
+    optionTranslationBundles.set(language, translations);
+    if (language === activeDisplayLanguage) optionTranslations = translations;
+  } catch (error) {
+    console.warn("Could not load pretranslated chat options", error);
+    optionTranslationBundles.set(language, {});
+    if (language === activeDisplayLanguage) optionTranslations = {};
+  }
+  return optionTranslations;
+}
+
+function setOptionDisplayText(element, sourceLabel) {
+  const translated = optionTranslations[sourceLabel];
+  const displayLabel = translated || sourceLabel;
+  element.textContent = displayLabel;
+  const textNode = element.firstChild;
+  if (textNode?.nodeType === Node.TEXT_NODE) {
+    if (translated && activeDisplayLanguage !== "en") {
+      textNode.__i18nSource = sourceLabel;
+      textNode.__i18nLanguage = activeDisplayLanguage;
+    } else {
+      delete textNode.__i18nSource;
+      delete textNode.__i18nLanguage;
+    }
+  }
+  return displayLabel;
+}
+
+function refreshPretranslatedOptionLabels() {
+  document.querySelectorAll("[data-source-option]").forEach((element) => {
+    const sourceLabel = element.dataset.sourceOption || "";
+    const displayLabel = setOptionDisplayText(element, sourceLabel);
+    element.setAttribute("aria-label", displayLabel);
+    element.setAttribute("data-tooltip", displayLabel);
+  });
+  document.querySelectorAll("[data-option-source]").forEach((element) => {
+    const sourceLabel = element.dataset.optionSource || "";
+    const displayLabel = setOptionDisplayText(element, sourceLabel);
+    const accessibilitySource = element.dataset.optionAriaSource || "";
+    const accessibilityLabel = optionTranslations[accessibilitySource] || accessibilitySource || displayLabel;
+    element.setAttribute("aria-label", accessibilityLabel);
+    element.setAttribute("data-tooltip", accessibilityLabel);
+    element.closest("label")?.setAttribute("data-tooltip", accessibilityLabel);
+  });
+}
+
 async function translateBatch(texts, language = activeDisplayLanguage, cacheScope = "none", cacheableFlags = null) {
   if (!language || language === "en" || !texts.length) return texts;
   const translations = [...texts];
@@ -212,13 +276,22 @@ function isPersistentUiText(node) {
   );
 }
 
+function pretranslatedDisplayText(sourceText) {
+  const normalized = String(sourceText || "").trim();
+  const translation = optionTranslations[normalized];
+  if (!translation) return null;
+  const leading = String(sourceText).match(/^\s*/)?.[0] || "";
+  const trailing = String(sourceText).match(/\s*$/)?.[0] || "";
+  return `${leading}${translation}${trailing}`;
+}
+
 function collectTranslatableText(root = document.body) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes = [];
   let node;
   while ((node = walker.nextNode())) {
     const parent = node.parentElement;
-    if (!parent || !node.data.trim() || parent.closest("script,style,noscript,textarea,input,code,pre,#appLanguageSelect,#languageTranslationStatus,.message-row.user,.message-row.bot,[hidden],[aria-hidden='true']")) continue;
+    if (!parent || !node.data.trim() || parent.closest("script,style,noscript,textarea,input,code,pre,#appLanguageSelect,#languageTranslationStatus,.evidence-basis-label,.factsheet-source-tag,.message-row.user,.message-row.bot,[hidden],[aria-hidden='true']")) continue;
     if ((root.isConnected && parent.getClientRects().length === 0) || node.__i18nLanguage === activeDisplayLanguage) continue;
     if (node.__i18nSource === undefined) node.__i18nSource = node.data;
     nodes.push(node);
@@ -235,14 +308,24 @@ async function translateNodes(nodes, language) {
   }
   nodes.forEach((node) => { node.__i18nLanguage = language; });
   try {
-    const translated = await translateBatch(
-      nodes.map((node) => node.__i18nSource),
-      language,
-      "mixed",
-      nodes.map(isPersistentUiText),
-    );
+    await optionTranslationReady;
     if (language !== activeDisplayLanguage) return;
-    nodes.forEach((node, index) => { if (node.isConnected) node.data = translated[index]; });
+    const pendingNodes = [];
+    nodes.forEach((node) => {
+      const pretranslated = pretranslatedDisplayText(node.__i18nSource);
+      if (pretranslated !== null) node.data = pretranslated;
+      else pendingNodes.push(node);
+    });
+    const translated = pendingNodes.length
+      ? await translateBatch(
+          pendingNodes.map((node) => node.__i18nSource),
+          language,
+          "mixed",
+          pendingNodes.map(isPersistentUiText),
+        )
+      : [];
+    if (language !== activeDisplayLanguage) return;
+    pendingNodes.forEach((node, index) => { if (node.isConnected) node.data = translated[index]; });
   } finally {
     domTranslationJobs = Math.max(0, domTranslationJobs - 1);
     if (!domTranslationJobs && languageTranslationStatus) languageTranslationStatus.hidden = true;
@@ -266,6 +349,16 @@ async function translateHtml(html, language = activeDisplayLanguage) {
   if (!language || language === "en" || !html) return html;
   const wrapper = document.createElement("div");
   wrapper.innerHTML = html;
+  wrapper.querySelectorAll(".evidence-basis-label, .factsheet-source-tag").forEach((element) => {
+    const sourceText = element.textContent.trim();
+    if (optionTranslations[sourceText]) element.textContent = optionTranslations[sourceText];
+    for (const attribute of ["aria-label", "title"]) {
+      const sourceValue = element.getAttribute(attribute);
+      if (sourceValue && optionTranslations[sourceValue]) {
+        element.setAttribute(attribute, optionTranslations[sourceValue]);
+      }
+    }
+  });
   const nodes = collectTranslatableText(wrapper);
   const translated = await translateBatch(nodes.map((node) => node.__i18nSource), language);
   nodes.forEach((node, index) => { node.data = translated[index]; });
@@ -340,12 +433,19 @@ function configureDisplayLanguage() {
   appLanguageSelect.value = activeDisplayLanguage;
   document.documentElement.lang = activeDisplayLanguage;
   updateStaticHtmlFrameLanguages();
+  optionTranslationReady = loadOptionTranslations(activeDisplayLanguage).then(() => {
+    refreshPretranslatedOptionLabels();
+  });
   appLanguageSelect.addEventListener("change", async () => {
     activeDisplayLanguage = appLanguageSelect.value;
     displayTranslationReady = true;
     localStorage.setItem(appLanguageStorageKey, activeDisplayLanguage);
     document.documentElement.lang = activeDisplayLanguage;
     updateStaticHtmlFrameLanguages();
+    optionTranslationReady = loadOptionTranslations(activeDisplayLanguage).then(() => {
+      refreshPretranslatedOptionLabels();
+    });
+    await optionTranslationReady;
     await translateDom();
   });
   const observer = new MutationObserver((records) => {
@@ -2772,7 +2872,11 @@ function setCollapsibleBubbleExpanded(bubble, expanded) {
   if (!bubble?.classList.contains("is-collapsible")) return;
   bubble.classList.toggle("is-expanded", expanded);
   const toggle = bubble.querySelector(".bubble-toggle");
-  if (toggle) toggle.textContent = expanded ? "Show less" : "Show more";
+  if (toggle) {
+    const sourceLabel = expanded ? "Show less" : "Show more";
+    toggle.dataset.optionSource = sourceLabel;
+    setOptionDisplayText(toggle, sourceLabel);
+  }
 }
 
 function syncCollapsibleMessages(targetLog = chatLog) {
@@ -3503,7 +3607,8 @@ function applyCollapsibleBubble(bubble) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "bubble-toggle";
-  button.textContent = "Show less";
+  button.dataset.optionSource = "Show less";
+  setOptionDisplayText(button, "Show less");
   button.addEventListener("click", () => {
     const expanded = !bubble.classList.contains("is-expanded");
     setCollapsibleBubbleExpanded(bubble, expanded);
@@ -4264,9 +4369,11 @@ function renderCollapsedHazardOptions(options = []) {
   const showMore = document.createElement("button");
   showMore.type = "button";
   showMore.className = "option-pill show-more-options-toggle";
-  showMore.textContent = "Show More";
-  showMore.setAttribute("aria-label", "Show more hazards");
-  showMore.setAttribute("data-tooltip", "Show more hazards");
+  showMore.dataset.optionSource = "Show More";
+  showMore.dataset.optionAriaSource = "Show more hazards";
+  setOptionDisplayText(showMore, "Show More");
+  showMore.setAttribute("aria-label", optionTranslations["Show more hazards"] || "Show more hazards");
+  showMore.setAttribute("data-tooltip", optionTranslations["Show more hazards"] || "Show more hazards");
   showMore.addEventListener("click", () => {
     pauseSpeech();
     showMore.remove();
@@ -4298,9 +4405,11 @@ function renderCollapsedPolicyOptions(options = []) {
   const showMore = document.createElement("button");
   showMore.type = "button";
   showMore.className = "option-pill show-more-options-toggle";
-  showMore.textContent = "Show More";
-  showMore.setAttribute("aria-label", "Show more policies");
-  showMore.setAttribute("data-tooltip", "Show more policies");
+  showMore.dataset.optionSource = "Show More";
+  showMore.dataset.optionAriaSource = "Show more policies";
+  setOptionDisplayText(showMore, "Show More");
+  showMore.setAttribute("aria-label", optionTranslations["Show more policies"] || "Show more policies");
+  showMore.setAttribute("data-tooltip", optionTranslations["Show more policies"] || "Show more policies");
   showMore.addEventListener("click", () => {
     pauseSpeech();
     showMore.remove();
@@ -4438,8 +4547,9 @@ function renderTargetPopulationOptions(options = []) {
       checkbox.dataset.targetOption = "true";
       checkbox.checked = previouslySelected.has(normalizeForMatch(option.label));
       const span = document.createElement("span");
-      span.textContent = option.label;
-      label.setAttribute("data-tooltip", option.label);
+      setOptionDisplayText(span, option.label);
+      span.dataset.optionSource = option.label;
+      label.setAttribute("data-tooltip", span.textContent);
       label.appendChild(checkbox);
       label.appendChild(span);
       group.appendChild(label);
@@ -4462,8 +4572,8 @@ function renderTargetPopulationOptions(options = []) {
       }
       collapseExpandedMessages();
       disableOldOptions();
-      addMessage("user", selected.join(", "));
-      sendMessage(selected.join("\n"), false);
+      addMessage("user", selected.map((value) => optionTranslations[value] || value).join(", "));
+      sendMessage(selected.join("\n"), false, { messageIsEnglish: true });
     });
     optionTray.appendChild(submit);
   }
@@ -4478,10 +4588,10 @@ function createOptionButton(label, extraClass = "") {
   const button = document.createElement("button");
   button.type = "button";
   button.className = ["option-pill", extraClass].filter(Boolean).join(" ");
-  button.textContent = label;
   button.dataset.sourceOption = label;
-  button.setAttribute("aria-label", label);
-  button.setAttribute("data-tooltip", label);
+  const displayLabel = setOptionDisplayText(button, label);
+  button.setAttribute("aria-label", displayLabel);
+  button.setAttribute("data-tooltip", displayLabel);
   button.addEventListener("click", () => {
     pauseSpeech();
     collapseExpandedMessages();
@@ -4510,7 +4620,10 @@ function createOptionButton(label, extraClass = "") {
       return;
     }
     disableOldOptions();
-    sendMessage(label, true);
+    sendMessage(label, true, {
+      displayMessage: button.textContent,
+      messageIsEnglish: true,
+    });
   });
   return button;
 }
@@ -5099,8 +5212,9 @@ function openTargetPopulationDialog() {
       checkbox.dataset.quickTargetOption = "true";
       checkbox.checked = previouslySelected.has(normalizeForMatch(option));
       const span = document.createElement("span");
-      span.textContent = option;
-      label.setAttribute("data-tooltip", option);
+      setOptionDisplayText(span, option);
+      span.dataset.optionSource = option;
+      label.setAttribute("data-tooltip", span.textContent);
       label.appendChild(checkbox);
       label.appendChild(span);
       optionGrid.appendChild(label);
@@ -6500,6 +6614,8 @@ async function restoreSession(nextSessionId) {
     }
     if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
     const data = await response.json();
+    await optionTranslationReady;
+    refreshPretranslatedOptionLabels();
     if (data.error) throw new Error(data.detail || "Session restore failed");
 
     sessionId = data.session_id;
@@ -6659,11 +6775,11 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
   if (loading) return;
   stopAutoConversation();
   const cleanMessage = message.trim();
-  if (echoUser && cleanMessage) addMessage("user", cleanMessage);
+  if (echoUser && cleanMessage) addMessage("user", extras.displayMessage || cleanMessage);
   clearCurrentInputState();
 
   const typing = addTyping();
-  const inputTranslationStatus = activeDisplayLanguage === "en" ? null : attachTranslationStatus(
+  const inputTranslationStatus = activeDisplayLanguage === "en" || extras.messageIsEnglish ? null : attachTranslationStatus(
     typing,
     translationStatusText[activeDisplayLanguage]?.input || "Translating your message into English…",
   );
@@ -6672,7 +6788,9 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
   let progress = null;
 
   try {
-    const englishMessage = await translateUserInputToEnglish(cleanMessage);
+    const englishMessage = extras.messageIsEnglish
+      ? cleanMessage
+      : await translateUserInputToEnglish(cleanMessage);
     inputTranslationStatus?.remove();
     const hasEvidenceFile = extras.evidenceFile instanceof File && extras.evidenceFile.size > 0;
     const hasEvidenceUrl = Boolean(extras.evidenceUrl);
@@ -6721,6 +6839,8 @@ async function sendMessage(message = "", echoUser = false, extras = {}) {
     }
 
     const data = await response.json();
+    await optionTranslationReady;
+    refreshPretranslatedOptionLabels();
     sessionId = data.session_id;
     localStorage.setItem(sessionKey, sessionId);
 
