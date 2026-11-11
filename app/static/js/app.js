@@ -272,9 +272,43 @@ async function translateHtml(html, language = activeDisplayLanguage) {
   return wrapper.innerHTML;
 }
 
+function localizedStaticHtmlUrl(source, language = activeDisplayLanguage) {
+  const url = new URL(source, window.location.href);
+  if (/(?:\.[a-z]{2})?\.html$/i.test(url.pathname)) {
+    url.pathname = url.pathname.replace(/\.[a-z]{2}(?=\.html$)/i, "");
+    if (language && language !== "en") {
+      url.pathname = url.pathname.replace(/\.html$/i, `.${language}.html`);
+    }
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function updateStaticHtmlFrameLanguages() {
+  document.querySelectorAll("iframe[data-static-html-frame][src]").forEach((frame) => {
+    const localizedUrl = localizedStaticHtmlUrl(frame.getAttribute("src") || "");
+    if (frame.getAttribute("src") !== localizedUrl) frame.src = localizedUrl;
+  });
+}
+
+function canonicalCurrentOptionInput(value) {
+  const normalized = normalizeForMatch(value);
+  if (!normalized) return null;
+  const options = [...(appState.currentOptions || []), ...(appState.currentOtherOptions || [])];
+  for (const option of options) {
+    const label = typeof option === "string" ? option : String(option?.label || "");
+    if (label && normalizeForMatch(label) === normalized) return label;
+  }
+  const displayedOption = [...(optionTray?.querySelectorAll("[data-source-option]") || [])].find(
+    (button) => normalizeForMatch(button.textContent || "") === normalized,
+  );
+  return displayedOption?.dataset.sourceOption || null;
+}
+
 async function translateUserInputToEnglish(text) {
   const value = String(text || "");
   if (!value.trim() || activeDisplayLanguage === "en" || value.startsWith("/") || /^[A-Z0-9_]+:/.test(value)) return value;
+  const exactOption = canonicalCurrentOptionInput(value);
+  if (exactOption) return exactOption;
   const cached = cachedTranslation("en", `auto:${value}`);
   if (cached) return cached;
   const controller = new AbortController();
@@ -305,11 +339,13 @@ function configureDisplayLanguage() {
   if (!Object.hasOwn(appLanguages, activeDisplayLanguage)) activeDisplayLanguage = "en";
   appLanguageSelect.value = activeDisplayLanguage;
   document.documentElement.lang = activeDisplayLanguage;
+  updateStaticHtmlFrameLanguages();
   appLanguageSelect.addEventListener("change", async () => {
     activeDisplayLanguage = appLanguageSelect.value;
     displayTranslationReady = true;
     localStorage.setItem(appLanguageStorageKey, activeDisplayLanguage);
     document.documentElement.lang = activeDisplayLanguage;
+    updateStaticHtmlFrameLanguages();
     await translateDom();
   });
   const observer = new MutationObserver((records) => {
@@ -1156,7 +1192,7 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
     stagePolicySummary.hidden = !showPolicySummary;
     if (showPolicySummary) {
       if (!stagePolicySummary.getAttribute("src")) {
-        stagePolicySummary.src = stagePolicySummary.dataset.src;
+        stagePolicySummary.src = localizedStaticHtmlUrl(stagePolicySummary.dataset.src);
       } else if (stagePolicySummary.contentWindow) {
         stagePolicySummary.contentWindow.postMessage({
           type: "policy-summary:update",
@@ -1181,7 +1217,7 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
   if (stageMitigationGuide) {
     stageMitigationGuide.hidden = !showMitigationGuide;
     if (showMitigationGuide && !stageMitigationGuide.getAttribute("src")) {
-      stageMitigationGuide.src = stageMitigationGuide.dataset.src;
+      stageMitigationGuide.src = localizedStaticHtmlUrl(stageMitigationGuide.dataset.src);
     }
     stageMitigationGuide.parentElement?.classList.toggle("has-mitigation-guide", showMitigationPlanningPanel);
     const visualPanel = stageMitigationGuide.closest(".stage-visual-panel");
@@ -1194,13 +1230,13 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
   if (stageSystemsInquiryGuide) {
     stageSystemsInquiryGuide.hidden = !showSystemsInquiryGuide;
     if (showSystemsInquiryGuide && !stageSystemsInquiryGuide.getAttribute("src")) {
-      stageSystemsInquiryGuide.src = stageSystemsInquiryGuide.dataset.src;
+      stageSystemsInquiryGuide.src = localizedStaticHtmlUrl(stageSystemsInquiryGuide.dataset.src);
     }
   }
   if (stageThankYouGuide) {
     stageThankYouGuide.hidden = !showThankYouGuide;
     if (showThankYouGuide && !stageThankYouGuide.getAttribute("src")) {
-      stageThankYouGuide.src = stageThankYouGuide.dataset.src;
+      stageThankYouGuide.src = localizedStaticHtmlUrl(stageThankYouGuide.dataset.src);
     }
   }
   const showHazardGuide = appState.currentStep === "hazards";
@@ -1233,7 +1269,7 @@ async function renderDynamicStageVisual(key, session = {}, options = appState.cu
   if (stageSectorGuide) {
     stageSectorGuide.hidden = !showSectorGuide;
     if (showSectorGuide) {
-      const guideUrl = new URL(sectorGuideSource, window.location.href);
+      const guideUrl = new URL(localizedStaticHtmlUrl(sectorGuideSource), window.location.href);
       guideUrl.searchParams.set("country", String(session.country || ""));
       guideUrl.searchParams.set("region", String(session.region || ""));
       const guideSourceWithLocation = `${guideUrl.pathname}${guideUrl.search}`;
@@ -4443,6 +4479,7 @@ function createOptionButton(label, extraClass = "") {
   button.type = "button";
   button.className = ["option-pill", extraClass].filter(Boolean).join(" ");
   button.textContent = label;
+  button.dataset.sourceOption = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("data-tooltip", label);
   button.addEventListener("click", () => {

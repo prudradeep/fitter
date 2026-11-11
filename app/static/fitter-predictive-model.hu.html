@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mire történik a kockázatok előrejelzése</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/css/fitter-predictive-model.css">
+</head>
+<body>
+
+<!-- Icon sprite: single stroke style throughout -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-solar" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="31" cy="9" r="3.5"/><path d="M31 2.5v1.5M37.5 9H36M35.6 4.4l-1 1M26.4 4.4l1 1"/><path d="M5 30 10 16h20l5 14Z"/><path d="M7.5 23h25M15 16l-2 14M25 16l2 14"/><path d="M20 30v6M14 36h12"/></g></symbol>
+    <symbol id="i-house" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 20 6l15 13"/><path d="M9 16v18h22V16"/><path d="M17 34v-9h6v9"/><path d="M26 10V6h3v6.5"/><path d="M12 21h3M25 21h3"/></g></symbol>
+    <symbol id="i-car" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 26v-5l4-7h16l5 7h4v5"/><path d="M5 26h29"/><circle cx="11" cy="27" r="3"/><circle cx="28" cy="27" r="3"/><path d="M17 15l-2 5h4l-2 5"/><path d="M34 26v-3h3v-6"/></g></symbol>
+    <symbol id="i-warn" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5 36 33H4Z"/><path d="M20 15v8M20 28v.5"/></g></symbol>
+    <symbol id="i-form" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="6" width="24" height="30" rx="2"/><path d="M15 6V4h10v2"/><path d="M13 14h14M13 20h14M13 26h8"/><path d="m24 28 2 2 4-4"/></g></symbol>
+    <symbol id="i-people" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="13" r="4"/><circle cx="27" cy="13" r="4"/><circle cx="20" cy="22" r="4"/><path d="M6 27c0-4 3-7 7-7M34 27c0-4-3-7-7-7"/><path d="M12 35c0-4 3.5-7 8-7s8 3 8 7"/></g></symbol>
+    <symbol id="i-shield" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4 33 9v9c0 9-6 15-13 18C13 33 7 27 7 18V9Z"/><path d="m14 19 4 4 8-8"/></g></symbol>
+    <symbol id="i-check" viewBox="0 0 20 20"><g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"><circle cx="10" cy="10" r="8"/><path d="m6.5 10 2.5 2.5 4.5-5"/></g></symbol>
+    <symbol id="i-gate" viewBox="0 0 20 20"><g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"><path d="M3 4h14l-5 6v6l-4-2v-4Z"/></g></symbol>
+    <symbol id="i-score" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="30" height="30" rx="2"/><path d="M5 17h30M5 23h30M17 5v30M23 5v30"/><path d="M23 5h12v12H23Z" fill="currentColor" fill-opacity=".18"/></g></symbol>
+    <symbol id="i-map" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l9-3 12 4 9-3v24l-9 3-12-4-9 3Z"/><path d="M14 6v24M26 10v24"/><circle cx="20" cy="17" r="3"/></g></symbol>
+    <symbol id="i-sieve" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 10h30l-11 12v11l-8-3v-8Z"/><circle cx="11" cy="5" r="1.4"/><circle cx="18" cy="4" r="1.4"/><circle cx="26" cy="5" r="1.4"/><circle cx="31" cy="3.5" r="1.4"/></g></symbol>
+    <symbol id="i-model" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 35V5M5 35h30"/><path d="M8 31c6 0 7-3 10-9s5-11 15-11"/><circle cx="12" cy="29" r="1.3"/><circle cx="17" cy="24" r="1.3"/><circle cx="22" cy="17" r="1.3"/><circle cx="28" cy="13" r="1.3"/></g></symbol>
+    <symbol id="i-confirm" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h28M6 20h28M6 32h28"/><circle cx="14" cy="8" r="3"/><circle cx="24" cy="20" r="3"/><circle cx="17" cy="32" r="3"/></g></symbol>
+    <symbol id="i-effect" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="20" r="15"/><circle cx="20" cy="20" r="9"/><circle cx="20" cy="20" r="3" fill="currentColor"/></g></symbol>
+    <symbol id="i-hazard1" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="8" width="28" height="24" rx="2"/><path d="M11 26v-5M17 26v-9M23 26v-7M29 26v-12"/></g></symbol>
+    <symbol id="i-layers" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 35 14 20 22 5 14Z"/><path d="m5 20 15 8 15-8M5 26l15 8 15-8"/></g></symbol>
+    <symbol id="i-screen" viewBox="0 0 40 40"><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="32" height="21" rx="2"/><path d="M14 34h12M20 28v6"/><path d="M10 22l5-6 4 3 6-7 5 4"/></g></symbol>
+    <symbol id="i-wallet" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h26a2 2 0 0 1 2 2v18a2 2 0 0 1-2 2H6Z"/><path d="M6 12 26 6v6"/><path d="M34 19h-7a3 3 0 0 0 0 6h7"/></g></symbol>
+    <symbol id="i-crowd" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="14" r="3"/><circle cx="20" cy="12" r="3"/><circle cx="30" cy="14" r="3"/><path d="M4 28c0-4 2.5-7 6-7s6 3 6 7M14 26c0-4 2.5-7 6-7s6 3 6 7M24 28c0-4 2.5-7 6-7s6 3 6 7"/></g></symbol>
+    <symbol id="i-globe" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="20" r="15"/><path d="M5 20h30M20 5c5 5 5 25 0 30M20 5c-5 5-5 25 0 30"/></g></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>Hogyan határozza meg a platform a kockázatokra érzékenyeket</h1>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Infografikus mellékletek">
+      <button class="tab" role="tab" id="t1" aria-controls="s1" aria-selected="true"><span class="n">1</span><span class="t"><b>A kockázatérzékelés mérnökössége</b><span>3 szakmacsoportból történő felmérés</span></span></button>
+      <span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <button class="tab" role="tab" id="t2" aria-controls="s2" aria-selected="false" tabindex="-1"><span class="n">2</span><span class="t"><b>A előrejelzési modell építése</b><span>Nézetek a előrejelzésekig</span></span></button>
+      <span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <button class="tab" role="tab" id="t3" aria-controls="s3" aria-selected="false" tabindex="-1"><span class="n">3</span><span class="t"><b>Eredmények</b><span>Ki a legérzékenyebb</span></span></button>
+    </div>
+  </div>
+
+  <!-- ===================== SLIDE 1 ===================== -->
+  <section class="slide active" id="s1" role="tabpanel" aria-labelledby="t1">
+    <div class="slide-top">
+      <h2>Mire kérdeznek fel az emberek</h2>
+      <span class="src">Felmérés tervezése és adatgyűjtés,  <b>FITTER-EU D4.1</b></span>
+    </div>
+
+    <div class="flow s5">
+      <div class="station">
+        <div class="marker"><span class="num">1</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-warn"/></svg>
+          <h3>Három szabály, 26 kockázat</h3>
+          <p class="small">A hazai esetkutatásokból származó kockázatok, egy szakmacsoportban egy szabály.</p>
+          <div class="sectors">
+            <div class="sec-row"><svg style="color:var(--energy)"><use href="#i-solar"/></svg><b>7</b>Folytatópanel telepítése</div>
+            <div class="sec-row"><svg style="color:var(--housing)"><use href="#i-house"/></svg><b>13</b>Háztartási felújítás</div>
+            <div class="sec-row"><svg style="color:var(--transport)"><use href="#i-car"/></svg><b>6</b>Elektronikus járművek</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">2</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-form"/></svg>
+          <h3>Egy szakmacsoportból egy kérdőíves feladat</h3>
+          <div class="qparts">
+            <div class="qpart"><span class="k">A</span>Meg tudod-e elérni a szabályt?</div>
+            <div class="qpart"><span class="k">B</span>Ki vagy: jövedelem, háztartás, munka, egészség</div>
+            <div class="qpart c"><span class="k">C</span>Keresd meg minden kockázatot kétszer</div>
+          </div>
+          <div class="likert" aria-label="Három pontskálával">
+            <span class="small" style="padding-right:6px">Milyen valószínűséggel</span><span class="b" style="opacity:.2"></span><span class="b" style="opacity:.4"></span><span class="b" style="opacity:.6"></span><span class="b" style="opacity:.8"></span><span class="b"></span>
+            <span class="small" style="padding-right:6px">Mennyire veszélyes</span><span class="b" style="opacity:.2"></span><span class="b" style="opacity:.4"></span><span class="b" style="opacity:.6"></span><span class="b" style="opacity:.8"></span><span class="b"></span>
+          </div>
+          <span class="tag">5 pontskálával</span><span class="tag">EU-SILC kompatibilis</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">3</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-people"/></svg>
+          <h3>Egy mintavétel, amely minden országban tükrözi</h3>
+          <p class="small">A szabályok a hivatalos EU statisztikák alapján határozzák meg, szintenként.</p>
+          <div class="strata">
+            <div class="stratum">Nemzetközi lakosságszám</div>
+            <div class="stratum">Háztartási jövedelem és tulajdon</div>
+            <div class="stratum">Szex és fogyatékosság a közlekedésben</div>
+          </div>
+          <p class="small" style="margin-top:8px">Cél: 456 ember szakmacsoportban.</p>
+          <span class="tag">Kategóriás mintavételezés</span><span class="tag">Prolific</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">Rigírozott minőségi ellenőrzések</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-shield"/></svg>
+          <h3>A válaszok a regisztrált profiljuknak megfelelőek</h3>
+          <ul class="checks">
+            <li><svg><use href="#i-check"/></svg>Legalább 4 perc eltöltés a feladatban</li>
+            <li><svg><use href="#i-check"/></svg>Egy válasz egy emberre</li>
+            <li><svg><use href="#i-check"/></svg>5</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">Egy megerősített adatbázis</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-hazard1"/></svg>
+          <h3>Minden ember és minden kockázatra: két értékelés plusz az Ön személyes profilja.</h3>
+          <p class="small">Ez a bevitel a következő mellékleten szereplő modellre.</p>
+          <p class="small">A válaszokból a modellhez</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="funnel-band">
+      <div>
+        <h3 style="margin-top:0">1.572</h3>
+        <div class="funnel">
+          <div class="fbar"><span class="bar" style="width:72%">kittöltött kérdőív</span><span class="lab">1.059</span></div>
+          <div class="fbar"><span class="bar" style="width:48.5%">profil megerősítve</span><span class="lab">1.059</span></div>
+          <div class="fbar"><span class="bar" style="width:47.2%">1.031</span><span class="lab">a idő és duplikáció ellenőrzés után</span></div>
+          <div class="fbar final"><span class="bar" style="width:47.1%">1.028</span><span class="lab">model építésére használták</span></div>
+        </div>
+      </div>
+      <div class="countries">
+        <h3 style="margin:0">6 ország célzott, 5 elérve</h3>
+        <div class="crow"><span class="sname" style="color:var(--energy)">Energia</span><span class="cc">DE</span><span class="cc">ES</span><span class="cc">IE</span><span class="cc">IT</span><span class="cc">PT</span><span class="cc off">HU</span></div>
+        <div class="crow"><span class="sname" style="color:var(--housing)">Házviszonyok</span><span class="cc">DE</span><span class="cc">IE</span><span class="cc">PT</span></div>
+        <div class="crow"><span class="sname" style="color:var(--transport)">Transport</span><span class="cc">ES</span><span class="cc">IT</span><span class="cc off">HU</span></div>
+        <p class="note">Elérhető résztvevők nem kerültek be Magyarországra a felmérésben, így Magyarország hiányzik a adatbázisból.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SLIDE 2 ===================== -->
+  <section class="slide" id="s2" role="tabpanel" aria-labelledby="t2" hidden>
+    <div class="slide-top">
+      <h2>A pontszámok előrejelzési modellekbe történő átalakítása</h2>
+      <span class="src">Kalkulációs elemzés, <b>FITTER-EU D4.4</b></span>
+    </div>
+
+    <div class="phases" aria-hidden="true">
+      <div class="phase"><b>Adatkezelés</b> Model és ellenőrzés</div>
+      <div class="phase"><b>mi a figyelemmel kísérés meghatározója?</b> Interpretáljuk</div>
+      <div class="phase"><b>1</b></div>
+    </div>
+
+    <div class="flow s6">
+      <div class="station">
+        <div class="marker"><span class="num">Hozzájegyezzük a kockázatokhoz</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-score"/></svg>
+          <h3>Lehetséges × Káros = 1-25</h3>
+          <p class="formula">5 x 5 rács; 12 vagy több pont magas figyelemmel kísérésnek számít</p>
+          <div class="grid5" aria-label="12 vagy több pont magas figyelemmel kísérés.">
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span class="h"></span><span class="h"></span>
+            <span></span><span></span><span class="h"></span><span class="h"></span><span class="h"></span>
+            <span></span><span></span><span class="h"></span><span class="h"></span><span class="h"></span>
+          </div>
+          <p class="small">2</p>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">5 kategóriába soroljuk a figyelemmel kísérés szintjeit</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-hazard1"/></svg>
+          <h3>Közvetlen alacsony</h3>
+          <div class="levels" aria-hidden="true"><span style="height:20%;opacity:.3"></span><span style="height:40%;opacity:.45"></span><span style="height:60%;opacity:.6"></span><span style="height:80%;opacity:.8"></span><span style="height:100%"></span></div>
+          <div class="levels-lab"><span>Magas</span><span>Minden szint tartja az válaszadók ötödik részét.</span></div>
+          <p class="small" style="margin-top:6px">Péntilok</p>
+          <span class="tag">3</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">Adjunk helyi kontextust</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-map"/></svg>
+          <h3>9 hivatalos mutatót van minden szektorban, amelyeket egy adott ember régiójának vagy országának megfelelően állítottunk össze. Például:</h3>
+          <p class="small">Házastól a számlák elmaradása</p>
+          <ul class="ctxlist small">
+            <li>Fűtésigény</li>
+            <li>Gázárak</li>
+            <li>Eurostat</li>
+          </ul>
+          <span class="tag">NUTS 2 régiók</span><span class="tag">4</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">Kiválasztjuk, ami fontos</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-sieve"/></svg>
+          <h3>95-130 lehetséges tényező közül csak azokat választjuk ki, amelyek figyelemmel kísérésre képesek új adatokból.</h3>
+          <p class="small">LASSO</p>
+          <div class="dotsfield" aria-hidden="true">
+            <span></span><span class="k"></span><span></span><span></span><span></span><span></span><span class="k"></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span class="k"></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <span class="tag">5-fold cross-validáció</span><span class="tag">5</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">Model és ellenőrzés</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-model"/></svg>
+          <h3>Mindenki figyelemmel kísérés szintjét előrejelzünk, majd csak akkor tartjuk a tényezőt, ha minden kapun átjutott:</h3>
+          <p class="small">Statistikai jelentőségű korrigálva több teszt után</p>
+          <div class="gates">
+            <div class="gate"><svg><use href="#i-gate"/></svg>Nincs több tényező, mint amennyi az adatok támogatják</div>
+            <div class="gate"><svg><use href="#i-gate"/></svg>A teljes modell jobb, mint egy tényező nélküli modell</div>
+            <div class="gate"><svg><use href="#i-gate"/></svg>Újra megtalálva, amikor a minta átalakítva</div>
+            <div class="gate"><svg><use href="#i-gate"/></svg>%20%3F</div>
+          </div>
+          <span class="tag">Ordinal regresszió</span><span class="tag">FDR korektúra</span><span class="tag">Bootstrap</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">6</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-effect"/></svg>
+          <h3>Az hatás mértéke</h3>
+          <p class="small">Minden megerősített tényezőre:</p>
+          <ul class="ctxlist small">
+            <li>Hogyan magasabb a félelmet érző valószínűsége?</li>
+            <li>Mely csoportok a legmagasabban félelnek?</li>
+            <li>Nem változnak-e az országok között?</li>
+          </ul>
+          <span class="tag">Odds arányok</span><span class="tag">ANOVA</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="twin">
+      <div class="twin-lab">Minden lépés kettős, és a eredmények megegyeznie kell</div>
+      <div class="track main">
+        <svg style="color:var(--thread)"><use href="#i-confirm"/></svg>
+        <div><h4>Hazard by hazard</h4><p>A különálló modell minden egyes 26 hazadhoz.</p></div>
+      </div>
+      <div class="track">
+        <svg style="color:var(--ink-2)"><use href="#i-layers"/></svg>
+        <div><h4>Ez a fő eredményt mutatja a platformon.</h4><p>Teljes szektor</p></div>
+      </div>
+    </div>
+
+    <div class="output">
+      <svg><use href="#i-screen"/></svg>
+      <div><b>Egy modell minden ember átlagos félelemére az egész szektornál, mint ellenőrzés.</b><p>A platformon látható</p></div>
+    </div>
+  </section>
+
+  <!-- ===================== SLIDE 3 ===================== -->
+  <section class="slide" id="s3" role="tabpanel" aria-labelledby="t3" hidden>
+    <div class="slide-top">
+      <h2>Kiválasztott hazadhoz: mely csoportok a legmagasabban valószínűnek számolnak, és hány százalékkal magasabbak azok a valószínűségek, mint mások?</h2>
+      <span class="src">Milyen eredményt kapott a modell? <b>Eredmények,</b></span>
+    </div>
+    <p class="lede">FITTER-EU D4.4</p>
+
+    <div class="findings">
+      <article class="fcard" style="--c:var(--energy)">
+        <div class="fhead"><svg><use href="#i-solar"/></svg><div><h3>A leggyakoribban megerősített csoport minden szektornál, és hány százalékkal magasabbak azok az oddsuk, mint hasonló emberek más csoportjában.</h3><span class="small">Energiát</span></div></div>
+        <div class="big">Napelemek, 407 ember, 5 ország <small>≈6× </small></div>
+        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="lbl">az odds</span><span class="p"></span></div>
+        <div class="who">vs</div>
+        <ul class="also">
+          <li>Azok a személyek, akik két vagy több alkalommal hátrányos helyzetben voltak az áramköltségekkel kapcsolatban</li>
+          <li>Alacsony bizalom a fizetésben és egy középkori házban élésében is felmerül félelem</li>
+        </ul>
+      </article>
+
+      <article class="fcard" style="--c:var(--housing)">
+        <div class="fhead"><svg><use href="#i-house"/></svg><div><h3>A félelmeket mindhárom országban hasonlóan mérik</h3><span class="small">Házasság</span></div></div>
+        <div class="big">Retrofitting, 263 ember, 3 ország <small>2–3× </small></div>
+        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on"></span><span class="p on" style="opacity:.45"></span><span class="lbl">az odds</span><span class="p"></span></div>
+        <div class="who">vs</div>
+        <ul class="also">
+          <li>Azok a házak, akik a legkisebb házhoz kötött árú kategóriában élnek, négy hazadon keresztül</li>
+          <li>5-13 hazad közül 5-en az esetekben mindannyian vannak érintve, nem egy csoport</li>
+        </ul>
+      </article>
+
+      <article class="fcard" style="--c:var(--transport)">
+        <div class="fhead"><svg><use href="#i-car"/></svg><div><h3>Csak az egyik szektornál számít az ország: Portugália magasabb félelmet mutat, mint Németország</h3><span class="small">Vélemény</span></div></div>
+        <div class="big">Elektronikus járművek, 358 ember, 2 ország <small>1.8× </small></div>
+        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on" style="opacity:.6"></span><span class="lbl">az odds</span><span class="p"></span></div>
+        <div class="who">vs</div>
+        <ul class="also">
+          <li>Azok a személyek, akik nem beszélnek az országhoz tartozó nyelvet, és ez növekszik 2.3-ig hosszabb utakon</li>
+          <li>Nővégek, munkanélküliek és gyakori utazók is magasabban vannak a félelmeik</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="across">
+      <div class="aico"><svg><use href="#i-wallet"/></svg><div><h3>A távolról dolgozók alacsonyabbak a félelmeikben</h3><p>Finanszírozási nehézség először jelentkezik</p></div></div>
+      <div class="aico"><svg><use href="#i-crowd"/></svg><div><h3>Minden szektornál az already finanszírozási nyomás alatt lévő emberek a transzzió hazadokat jobban érzik</h3><p>A közös aggályok széles válaszokra igényelnek</p></div></div>
+      <div class="aico"><svg><use href="#i-globe"/></svg><div><h3>A leggyakoribb érzett hazadok, mint például magasabb áramköltségek, az egyik csoporthoz legnehezebb kapcsolni. Ilyenkor a megoldások mindenki számára elérhetők kellene.</h3><p>Az esetek fontosabbak az országnál</p></div></div>
+    </div>
+
+    <p class="caveat">Az ország csak magyarázza 1–4%-ot a félelmek eltérésében. A megoldásokat az emberek helyzetére lehet építeni, és ezeket több országban is alkalmazni.</p>
+  </section>
+
+  <div class="nav">
+    <button id="prev" type="button" aria-label="Ezek az eredmények azt mutatják, hogy milyen érzékelésben vannak a felmért személyek a hazadokhoz, nem pedig mért károsodásról.">Az odds összehasonlítást végeznek egy csoportkal és olyanokkal, akik hasonlóan vannak, de más csoportban élnek.</button>
+    <div class="dots" aria-hidden="true"><span class="on"></span><span></span><span></span></div>
+    <button id="next" type="button" aria-label="Előző oldalt">Előző oldalra kattintva visszaállítva a feliratot a beállításokba (prev slide), vagy az előző oldalt (Previous slide) nézve visszaállítva a feliratot a beállításokba (prev slide). A következő oldalt (Next slide) nézve visszaállítva a feliratot a beállításokba (next slide). A következő oldalt (Next) nézve visszaállítva a feliratot a beállításokba (next).</button>
+  </div>
+</div>
+
+<script src="/static/js/fitter-predictive-model.js" defer></script>
+</body>
+</html>

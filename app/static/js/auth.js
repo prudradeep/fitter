@@ -2,6 +2,7 @@ const authModal = document.querySelector("#authModal");
 const startAnalysisButton = document.querySelector("#startAnalysisButton");
 const aboutProjectModal = document.querySelector("#aboutProjectModal");
 const aboutProjectButton = document.querySelector("#aboutProjectButton");
+const aboutProjectFrame = document.querySelector(".about-project-frame");
 const closeAuthModalButton = document.querySelector(".auth-modal-close");
 const closeAboutProjectModalButton = document.querySelector(".about-project-modal-close");
 const authTabs = Array.from(document.querySelectorAll("[data-auth-tab]"));
@@ -46,6 +47,14 @@ function openAuthModal(mode = authModal?.dataset.authMode || "login") {
 }
 
 function openAboutProjectModal() {
+  const language = localStorage.getItem("dr_transition_display_language") || "en";
+  const supportedLanguages = new Set(["de", "es", "pt", "it", "hu"]);
+  if (supportedLanguages.has(language) && aboutProjectFrame) {
+    const url = new URL(aboutProjectFrame.getAttribute("src") || "", window.location.href);
+    url.pathname = url.pathname.replace(/\.[a-z]{2}(?=\.html$)/i, "");
+    url.pathname = url.pathname.replace(/\.html$/i, `.${language}.html`);
+    aboutProjectFrame.src = `${url.pathname}${url.search}${url.hash}`;
+  }
   if (typeof aboutProjectModal?.showModal === "function") {
     aboutProjectModal.showModal();
   } else {

@@ -576,14 +576,24 @@ async def translate_frontend_text(
         cacheable = [cache_scope == "fixed"] * len(texts)
     if (language == source_language) or not texts:
         return {"translations": texts}
+    use_shared_service = (
+        cache_scope != "none"
+        and source_language != "auto"
+        and _is_sync_client_mode()
+        and str(settings.sync_server_url or "").strip()
+        and str(settings.sync_api_token or "").strip()
+    )
+    logger.info(
+        "Frontend translation requested source=%s target=%s items=%d chars=%d cache_scope=%s route=%s",
+        source_language,
+        language,
+        len(texts),
+        sum(map(len, texts)),
+        cache_scope,
+        "shared" if use_shared_service else "local",
+    )
     try:
-        if (
-            cache_scope != "none"
-            and source_language != "auto"
-            and _is_sync_client_mode()
-            and str(settings.sync_server_url or "").strip()
-            and str(settings.sync_api_token or "").strip()
-        ):
+        if use_shared_service:
             async with httpx.AsyncClient(timeout=settings.ollama_timeout_seconds) as client:
                 upstream = await client.post(
                     f"{str(settings.sync_server_url).strip().rstrip('/')}/api/sync/frontend-translations",
@@ -596,14 +606,35 @@ async def translate_frontend_text(
                     },
                 )
             if upstream.status_code != 200:
-                logger.warning("Shared frontend translation service returned status %s.", upstream.status_code)
+                logger.warning(
+                    "Shared frontend translation service returned status=%s response_body=%r",
+                    upstream.status_code,
+                    upstream.text[:500],
+                )
                 raise HTTPException(status_code=503, detail="The shared translation service is unavailable.")
-            data = upstream.json()
+            try:
+                data = upstream.json()
+            except ValueError as exc:
+                logger.warning(
+                    "Shared frontend translation service returned invalid JSON status=%s response_body=%r",
+                    upstream.status_code,
+                    upstream.text[:500],
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="The shared translation service returned an invalid response.",
+                ) from exc
             translated = data.get("translations") if isinstance(data, dict) else None
             if not isinstance(translated, list) or len(translated) != len(texts) or not all(
                 isinstance(value, str) for value in translated
             ):
+                logger.warning(
+                    "Shared frontend translation service returned invalid payload status=%s expected_items=%d",
+                    upstream.status_code,
+                    len(texts),
+                )
                 raise HTTPException(status_code=503, detail="The shared translation service returned an invalid response.")
+            logger.info("Shared frontend translation succeeded items=%d", len(translated))
             return {"translations": translated}
         if cache_scope == "none" or source_language == "auto":
             translated = await translate_frontend_texts(texts, source_language, language)
@@ -616,12 +647,28 @@ async def translate_frontend_text(
                 language,
                 cacheable,
             )
+        logger.info("Frontend translation succeeded route=%s items=%d", "shared" if use_shared_service else "local", len(translated))
         return {"translations": translated}
     except FrontendTranslationError as exc:
-        logger.warning("Frontend translation unavailable: %s", exc)
+        logger.warning(
+            "Frontend translation unavailable route=%s source=%s target=%s items=%d error=%s",
+            "shared" if use_shared_service else "local",
+            source_language,
+            language,
+            len(texts),
+            exc,
+            exc_info=True,
+        )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
-        logger.warning("Could not reach shared frontend translation service: %s", exc)
+        logger.warning(
+            "Could not reach shared frontend translation service source=%s target=%s items=%d error=%s",
+            source_language,
+            language,
+            len(texts),
+            exc,
+            exc_info=True,
+        )
         raise HTTPException(status_code=503, detail="The shared translation service is unavailable.") from exc
 
 

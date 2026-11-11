@@ -23,12 +23,12 @@
         <div class="topbar-actions">
           <label class="language-picker" for="appLanguageSelect">
             <select id="appLanguageSelect" aria-label="Display language">
-              <option value="en">Ireland · English</option>
-              <option value="de">Germany · Deutsch</option>
-              <option value="es">Spain · Español</option>
-              <option value="pt">Portugal · Português</option>
-              <option value="it">Italy · Italiano</option>
-              <option value="hu">Hungary · Magyar</option>
+              <option value="en">English</option>
+              <option value="de">Deutsch</option>
+              <option value="es">Español</option>
+              <option value="pt">Português</option>
+              <option value="it">Italiano</option>
+              <option value="hu">Magyar</option>
             </select>
           </label>
           <small id="languageTranslationStatus" class="language-translation-status" role="status" aria-live="polite" hidden></small>
@@ -447,6 +447,7 @@
           <iframe
             id="stageIntroGuide"
             class="stage-intro-guide"
+            data-static-html-frame
             src="{{ url_for('static', path='/intro.html') }}?v=20261110-csp-cover"
             title="Introduction to Dr Transition"
             hidden
@@ -462,6 +463,7 @@
           <iframe
             id="stageHazardGuide"
             class="stage-hazard-guide"
+            data-static-html-frame
             src="{{ url_for('static', path='/hazard/index.html') }}"
             title="Hazard analysis guide"
             hidden
@@ -469,6 +471,7 @@
           <iframe
             id="stageSectorGuide"
             class="stage-sector-guide"
+            data-static-html-frame
             data-energy-src="{{ url_for('static', path='/energy-hbg.html') }}?v=20261030-mobile-cards"
             data-housing-src="{{ url_for('static', path='/housing-hbg.html') }}?v=20261030-mobile-cards"
             data-transport-src="{{ url_for('static', path='/transport-hbg.html') }}?v=20261030-mobile-cards"
@@ -478,6 +481,7 @@
           <iframe
             id="stagePolicySummary"
             class="stage-policy-summary"
+            data-static-html-frame
             data-src="{{ url_for('static', path='/policy-summary.html') }}?v=20261013-sources"
             title="Selected policy summary"
             hidden
@@ -485,6 +489,7 @@
           <iframe
             id="stageMitigationGuide"
             class="stage-mitigation-guide"
+            data-static-html-frame
             data-src="{{ url_for('static', path='/mitigation_planning.html') }}"
             title="Mitigation planning guide"
             hidden
@@ -492,6 +497,7 @@
           <iframe
             id="stageSystemsInquiryGuide"
             class="stage-systems-inquiry-guide"
+            data-static-html-frame
             data-src="{{ url_for('static', path='/systems_thinking_inquiry.html') }}"
             title="Systems thinking inquiry guide"
             hidden
@@ -499,6 +505,7 @@
           <iframe
             id="stageThankYouGuide"
             class="stage-thankyou-guide"
+            data-static-html-frame
             data-src="{{ url_for('static', path='/thankyou.html') }}"
             title="Thank you for using Dr. Transition"
             hidden
@@ -810,6 +817,7 @@
         <iframe
           id="methodologyFrame"
           class="methodology-frame"
+          data-static-html-frame
           src="{{ url_for('static', path='/methodology.html') }}?v=20260702-methodology-file"
           title="Methodology for hazard identification in Open Labs"
           loading="lazy"
@@ -831,6 +839,7 @@
         <iframe
           id="predictiveModelFrame"
           class="predictive-model-frame"
+          data-static-html-frame
           src="{{ url_for('static', path='/fitter-predictive-model.html') }}"
           title="How hazards are predicted"
         ></iframe>
@@ -1319,6 +1328,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260904-prompt-source-preference"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261110-translation-cache4"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261111-static-guide-translations"></script>
   </body>
 </html>

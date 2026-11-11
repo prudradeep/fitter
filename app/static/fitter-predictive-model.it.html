@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Come sono previsti i rischi</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/css/fitter-predictive-model.css">
+</head>
+<body>
+
+<!-- Icon sprite: single stroke style throughout -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-solar" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="31" cy="9" r="3.5"/><path d="M31 2.5v1.5M37.5 9H36M35.6 4.4l-1 1M26.4 4.4l1 1"/><path d="M5 30 10 16h20l5 14Z"/><path d="M7.5 23h25M15 16l-2 14M25 16l2 14"/><path d="M20 30v6M14 36h12"/></g></symbol>
+    <symbol id="i-house" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 20 6l15 13"/><path d="M9 16v18h22V16"/><path d="M17 34v-9h6v9"/><path d="M26 10V6h3v6.5"/><path d="M12 21h3M25 21h3"/></g></symbol>
+    <symbol id="i-car" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 26v-5l4-7h16l5 7h4v5"/><path d="M5 26h29"/><circle cx="11" cy="27" r="3"/><circle cx="28" cy="27" r="3"/><path d="M17 15l-2 5h4l-2 5"/><path d="M34 26v-3h3v-6"/></g></symbol>
+    <symbol id="i-warn" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5 36 33H4Z"/><path d="M20 15v8M20 28v.5"/></g></symbol>
+    <symbol id="i-form" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="6" width="24" height="30" rx="2"/><path d="M15 6V4h10v2"/><path d="M13 14h14M13 20h14M13 26h8"/><path d="m24 28 2 2 4-4"/></g></symbol>
+    <symbol id="i-people" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="13" r="4"/><circle cx="27" cy="13" r="4"/><circle cx="20" cy="22" r="4"/><path d="M6 27c0-4 3-7 7-7M34 27c0-4-3-7-7-7"/><path d="M12 35c0-4 3.5-7 8-7s8 3 8 7"/></g></symbol>
+    <symbol id="i-shield" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4 33 9v9c0 9-6 15-13 18C13 33 7 27 7 18V9Z"/><path d="m14 19 4 4 8-8"/></g></symbol>
+    <symbol id="i-check" viewBox="0 0 20 20"><g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"><circle cx="10" cy="10" r="8"/><path d="m6.5 10 2.5 2.5 4.5-5"/></g></symbol>
+    <symbol id="i-gate" viewBox="0 0 20 20"><g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="currentColor"><path d="M3 4h14l-5 6v6l-4-2v-4Z"/></g></symbol>
+    <symbol id="i-score" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="30" height="30" rx="2"/><path d="M5 17h30M5 23h30M17 5v30M23 5v30"/><path d="M23 5h12v12H23Z" fill="currentColor" fill-opacity=".18"/></g></symbol>
+    <symbol id="i-map" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l9-3 12 4 9-3v24l-9 3-12-4-9 3Z"/><path d="M14 6v24M26 10v24"/><circle cx="20" cy="17" r="3"/></g></symbol>
+    <symbol id="i-sieve" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 10h30l-11 12v11l-8-3v-8Z"/><circle cx="11" cy="5" r="1.4"/><circle cx="18" cy="4" r="1.4"/><circle cx="26" cy="5" r="1.4"/><circle cx="31" cy="3.5" r="1.4"/></g></symbol>
+    <symbol id="i-model" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 35V5M5 35h30"/><path d="M8 31c6 0 7-3 10-9s5-11 15-11"/><circle cx="12" cy="29" r="1.3"/><circle cx="17" cy="24" r="1.3"/><circle cx="22" cy="17" r="1.3"/><circle cx="28" cy="13" r="1.3"/></g></symbol>
+    <symbol id="i-confirm" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h28M6 20h28M6 32h28"/><circle cx="14" cy="8" r="3"/><circle cx="24" cy="20" r="3"/><circle cx="17" cy="32" r="3"/></g></symbol>
+    <symbol id="i-effect" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="20" r="15"/><circle cx="20" cy="20" r="9"/><circle cx="20" cy="20" r="3" fill="currentColor"/></g></symbol>
+    <symbol id="i-hazard1" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="8" width="28" height="24" rx="2"/><path d="M11 26v-5M17 26v-9M23 26v-7M29 26v-12"/></g></symbol>
+    <symbol id="i-layers" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 35 14 20 22 5 14Z"/><path d="m5 20 15 8 15-8M5 26l15 8 15-8"/></g></symbol>
+    <symbol id="i-screen" viewBox="0 0 40 40"><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="32" height="21" rx="2"/><path d="M14 34h12M20 28v6"/><path d="M10 22l5-6 4 3 6-7 5 4"/></g></symbol>
+    <symbol id="i-wallet" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h26a2 2 0 0 1 2 2v18a2 2 0 0 1-2 2H6Z"/><path d="M6 12 26 6v6"/><path d="M34 19h-7a3 3 0 0 0 0 6h7"/></g></symbol>
+    <symbol id="i-crowd" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="14" r="3"/><circle cx="20" cy="12" r="3"/><circle cx="30" cy="14" r="3"/><path d="M4 28c0-4 2.5-7 6-7s6 3 6 7M14 26c0-4 2.5-7 6-7s6 3 6 7M24 28c0-4 2.5-7 6-7s6 3 6 7"/></g></symbol>
+    <symbol id="i-globe" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="20" r="15"/><path d="M5 20h30M20 5c5 5 5 25 0 30M20 5c-5 5-5 25 0 30"/></g></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>Come la piattaforma predice chi è preoccupato per un rischio</h1>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Schede infografiche">
+      <button class="tab" role="tab" id="t1" aria-controls="s1" aria-selected="true"><span class="n">1</span><span class="t"><b>Misurazione della percezione del rischio</b><span>Survey su 3 settori</span></span></button>
+      <span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <button class="tab" role="tab" id="t2" aria-controls="s2" aria-selected="false" tabindex="-1"><span class="n">2</span><span class="t"><b>Costruire il modello predittivo</b><span>Da valutazioni a previsioni</span></span></button>
+      <span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <button class="tab" role="tab" id="t3" aria-controls="s3" aria-selected="false" tabindex="-1"><span class="n">3</span><span class="t"><b>Risultati chiave</b><span>Chi è più preoccupato</span></span></button>
+    </div>
+  </div>
+
+  <!-- ===================== SLIDE 1 ===================== -->
+  <section class="slide active" id="s1" role="tabpanel" aria-labelledby="t1">
+    <div class="slide-top">
+      <h2>Chiedere alle persone come vedono i rischi</h2>
+      <span class="src">Progettazione della survey e raccolta dati,  <b>FITTER-EU D4.1</b></span>
+    </div>
+
+    <div class="flow s5">
+      <div class="station">
+        <div class="marker"><span class="num">1</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-warn"/></svg>
+          <h3>Tre politiche, 26 rischi</h3>
+          <p class="small">Rischi tratti da studi di caso nazionali, una politica per settore.</p>
+          <div class="sectors">
+            <div class="sec-row"><svg style="color:var(--energy)"><use href="#i-solar"/></svg><b>7</b>Installazione pannelli solari</div>
+            <div class="sec-row"><svg style="color:var(--housing)"><use href="#i-house"/></svg><b>13</b>Rifitto abitazioni</div>
+            <div class="sec-row"><svg style="color:var(--transport)"><use href="#i-car"/></svg><b>6</b>Veicoli elettrici</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">2</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-form"/></svg>
+          <h3>Un questionario per settore</h3>
+          <div class="qparts">
+            <div class="qpart"><span class="k">A</span>Puoi accedere alla politica?</div>
+            <div class="qpart"><span class="k">B</span>Chi sei: reddito, casa, lavoro, salute</div>
+            <div class="qpart c"><span class="k">C</span>Tutti i rischi valutati due volte</div>
+          </div>
+          <div class="likert" aria-label="Due valutazioni su scala a cinque punti">
+            <span class="small" style="padding-right:6px">Quanto è probabile</span><span class="b" style="opacity:.2"></span><span class="b" style="opacity:.4"></span><span class="b" style="opacity:.6"></span><span class="b" style="opacity:.8"></span><span class="b"></span>
+            <span class="small" style="padding-right:6px">Quanto è dannoso</span><span class="b" style="opacity:.2"></span><span class="b" style="opacity:.4"></span><span class="b" style="opacity:.6"></span><span class="b" style="opacity:.8"></span><span class="b"></span>
+          </div>
+          <span class="tag">Scala a cinque punti</span><span class="tag">Allineato alla SILC UE</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">3</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-people"/></svg>
+          <h3>Un campione che riflette ogni paese</h3>
+          <p class="small">Quote impostate dalle statistiche ufficiali dell'UE, per livello.</p>
+          <div class="strata">
+            <div class="stratum">Popolazione nazionale</div>
+            <div class="stratum">Rendimento e titolarità di casa</div>
+            <div class="stratum">Sesso e disabilità nel trasporto</div>
+          </div>
+          <p class="small" style="margin-top:8px">Obiettivo: 456 persone per settore.</p>
+          <span class="tag">Campione a quota stratificata</span><span class="tag">Prolific</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">4</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-shield"/></svg>
+          <h3>Controlli di qualità rigorosi</h3>
+          <ul class="checks">
+            <li><svg><use href="#i-check"/></svg>Le risposte corrispondono al profilo registrato dell'utente</li>
+            <li><svg><use href="#i-check"/></svg>Almeno 4 minuti trascorsi nella ricerca</li>
+            <li><svg><use href="#i-check"/></svg>Una risposta per persona</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">5</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-hazard1"/></svg>
+          <h3>Un dataset verificato</h3>
+          <p class="small">Per ogni persona e ogni rischio: due valutazioni più il proprio profilo.</p>
+          <p class="small">Questo è l'input per il modello sulla prossima slide.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="funnel-band">
+      <div>
+        <h3 style="margin-top:0">Dalle risposte al modello</h3>
+        <div class="funnel">
+          <div class="fbar"><span class="bar" style="width:72%">1.572</span><span class="lab">questionari completati</span></div>
+          <div class="fbar"><span class="bar" style="width:48.5%">1.059</span><span class="lab">profilo verificato</span></div>
+          <div class="fbar"><span class="bar" style="width:47.2%">1.031</span><span class="lab">dopo il tempo e le verifiche duplici</span></div>
+          <div class="fbar final"><span class="bar" style="width:47.1%">1.028</span><span class="lab">per costruire il modello</span></div>
+        </div>
+      </div>
+      <div class="countries">
+        <h3 style="margin:0">6 paesi bersaglio, 5 raggiunti</h3>
+        <div class="crow"><span class="sname" style="color:var(--energy)">Energia</span><span class="cc">DE</span><span class="cc">ES</span><span class="cc">IE</span><span class="cc">IT</span><span class="cc">PT</span><span class="cc off">HU</span></div>
+        <div class="crow"><span class="sname" style="color:var(--housing)">Abitazione</span><span class="cc">DE</span><span class="cc">IE</span><span class="cc">PT</span></div>
+        <div class="crow"><span class="sname" style="color:var(--transport)">Transporte</span><span class="cc">ES</span><span class="cc">IT</span><span class="cc off">HU</span></div>
+        <p class="note">Non è stato possibile reclutare partecipanti elegibili in Ungheria nel panel di sondaggio, quindi l'Ungheria non è presente nei dati.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SLIDE 2 ===================== -->
+  <section class="slide" id="s2" role="tabpanel" aria-labelledby="t2" hidden>
+    <div class="slide-top">
+      <h2>Convertire le valutazioni in un modello predittivo</h2>
+      <span class="src">Analisi computazionale, <b>FITTER-EU D4.4</b></span>
+    </div>
+
+    <div class="phases" aria-hidden="true">
+      <div class="phase"><b>Preparare</b> i dati</div>
+      <div class="phase"><b>Modello e confermare</b> cosa predice il preoccupazione</div>
+      <div class="phase"><b>Interpretare</b></div>
+    </div>
+
+    <div class="flow s6">
+      <div class="station">
+        <div class="marker"><span class="num">1</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-score"/></svg>
+          <h3>Calcola ogni rischio</h3>
+          <p class="formula">Probabile × Dannoso = da 1 a 25</p>
+          <div class="grid5" aria-label="Griglia 5x5; punteggi di 12 o più considerati come alta preoccupazione">
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span class="h"></span><span class="h"></span>
+            <span></span><span></span><span class="h"></span><span class="h"></span><span class="h"></span>
+            <span></span><span></span><span class="h"></span><span class="h"></span><span class="h"></span>
+          </div>
+          <p class="small">12 o più conta come alta preoccupazione.</p>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">2</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-hazard1"/></svg>
+          <h3>Dividi in 5 livelli di preoccupazione</h3>
+          <div class="levels" aria-hidden="true"><span style="height:20%;opacity:.3"></span><span style="height:40%;opacity:.45"></span><span style="height:60%;opacity:.6"></span><span style="height:80%;opacity:.8"></span><span style="height:100%"></span></div>
+          <div class="levels-lab"><span>Molto basso</span><span>Molto alto</span></div>
+          <p class="small" style="margin-top:6px">Ogni livello ospita una quinta parte dei rispondenti.</p>
+          <span class="tag">Quintili</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">3</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-map"/></svg>
+          <h3>Aggiungi contesto regionale</h3>
+          <p class="small">9 indicatori ufficiali per settore, corrispondenti alla regione o al paese di ogni persona. Ad esempio:</p>
+          <ul class="ctxlist small">
+            <li>Famiglie in ritardo con le fatture</li>
+            <li>Domanda di riscaldamento</li>
+            <li>Prezzi del carburante</li>
+          </ul>
+          <span class="tag">Eurostat</span><span class="tag">Regioni NUTS 2</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">4</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-sieve"/></svg>
+          <h3>Elenco ciò che conta</h3>
+          <p class="small">Da 95-130 possibili fattori, mantieni solo quelli che aiutano a prevedere la preoccupazione in dati non visti.</p>
+          <div class="dotsfield" aria-hidden="true">
+            <span></span><span class="k"></span><span></span><span></span><span></span><span></span><span class="k"></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span class="k"></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <span class="tag">LASSO</span><span class="tag">Cross-validazione a 5 fold</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">5</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-model"/></svg>
+          <h3>Modello e conferma</h3>
+          <p class="small">Predice il livello di preoccupazione di ogni persona, poi mantieni un fattore solo se passa ogni filtro:</p>
+          <div class="gates">
+            <div class="gate"><svg><use href="#i-gate"/></svg>Significativo dopo aver corretto per molti test</div>
+            <div class="gate"><svg><use href="#i-gate"/></svg>Non più fattori che i dati possono supportare</div>
+            <div class="gate"><svg><use href="#i-gate"/></svg>Il modello intero supera un modello senza fattori</div>
+            <div class="gate"><svg><use href="#i-gate"/></svg>Rimesso in evidenza quando il campione viene riordinato</div>
+          </div>
+          <span class="tag">Riduzione ordinatoriale</span><span class="tag">Correzione FDR</span><span class="tag">Bootstrap</span>
+        </div>
+      </div>
+
+      <div class="station">
+        <div class="marker"><span class="num">6</span><span class="line"></span></div>
+        <div class="body">
+          <svg class="ico"><use href="#i-effect"/></svg>
+          <h3>Misurare l'effetto</h3>
+          <p class="small">Per ogni fattore confermato:</p>
+          <ul class="ctxlist small">
+            <li>Quanto è più probabile che la preoccupazione sia alta</li>
+            <li>I quali gruppi sono più preoccupati</li>
+            <li>Se i paesi differiscono</li>
+          </ul>
+          <span class="tag">Rapporti di probabilità</span><span class="tag">ANOVA</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="twin">
+      <div class="twin-lab">Ogni passo viene eseguito due volte, e i risultati devono essere coerenti</div>
+      <div class="track main">
+        <svg style="color:var(--thread)"><use href="#i-confirm"/></svg>
+        <div><h4>Per ogni gruppo a rischio</h4><p>Un modello separato per ciascuno dei 26 rischi. Questo è il risultato principale mostrato sulla piattaforma.</p></div>
+      </div>
+      <div class="track">
+        <svg style="color:var(--ink-2)"><use href="#i-layers"/></svg>
+        <div><h4>Tutto il settore</h4><p>Un modello su ciascuna persona media preoccupata nel settore, usato come controllo incrociato.</p></div>
+      </div>
+    </div>
+
+    <div class="output">
+      <svg><use href="#i-screen"/></svg>
+      <div><b>Cosa vedi sulla piattaforma</b><p>Per un rischio scelto: quali gruppi sono previsti come più preoccupati e in quanto rispetto agli altri.</p></div>
+    </div>
+  </section>
+
+  <!-- ===================== SLIDE 3 ===================== -->
+  <section class="slide" id="s3" role="tabpanel" aria-labelledby="t3" hidden>
+    <div class="slide-top">
+      <h2>Cosa ha trovato il modello</h2>
+      <span class="src">Risultati,  <b>FITTER-EU D4.4</b></span>
+    </div>
+    <p class="lede">Il gruppo confermato più forte nel settore e quanto più alto è la probabilità che le loro preoccupazioni per l'alto livello siano rispetto a persone simili fuori da quel gruppo.</p>
+
+    <div class="findings">
+      <article class="fcard" style="--c:var(--energy)">
+        <div class="fhead"><svg><use href="#i-solar"/></svg><div><h3>Energia</h3><span class="small">Pannelli solari, 407 persone, 5 paesi</span></div></div>
+        <div class="big">≈6×  <small>la probabilità</small></div>
+        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="lbl">vs</span><span class="p"></span></div>
+        <div class="who">Le persone che sono indietro nel pagamento delle fatture due o più volte</div>
+        <ul class="also">
+          <li>Bassa fiducia nel pagare le fatture e vivere in una casa di metà secolo solleva anche preoccupazione</li>
+          <li>I livelli di preoccupazione sono simili in tutti e cinque i paesi</li>
+        </ul>
+      </article>
+
+      <article class="fcard" style="--c:var(--housing)">
+        <div class="fhead"><svg><use href="#i-house"/></svg><div><h3>Abitazione</h3><span class="small">Rafforzamento, 263 persone, 3 paesi</span></div></div>
+        <div class="big">2–3×  <small>le probabilità</small></div>
+        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on"></span><span class="p on" style="opacity:.45"></span><span class="lbl">vs</span><span class="p"></span></div>
+        <div class="who">Famiglie nella fascia più bassa dei costi abitativi, in quattro categorie di rischi</div>
+        <ul class="also">
+          <li>Per 5 delle 13 categorie di rischio, la preoccupazione è condivisa da tutti piuttosto che da un gruppo specifico</li>
+          <li>Il solo settore in cui conta il paese: il Portogallo è più preoccupato della Germania</li>
+        </ul>
+      </article>
+
+      <article class="fcard" style="--c:var(--transport)">
+        <div class="fhead"><svg><use href="#i-car"/></svg><div><h3>Trasporti</h3><span class="small">Veicoli elettrici, 358 persone, 2 paesi</span></div></div>
+        <div class="big">1.8×  <small>le probabilità</small></div>
+        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on" style="opacity:.6"></span><span class="lbl">vs</span><span class="p"></span></div>
+        <div class="who">Le persone che non parlano la lingua nazionale, che aumentano fino a 2.3× per i viaggi più lunghi</div>
+        <ul class="also">
+          <li>Le donne, le persone disoccupate e gli itinerari frequenti sono anche più preoccupate</li>
+          <li>I lavoratori remoti sono meno preoccupati</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="across">
+      <div class="aico"><svg><use href="#i-wallet"/></svg><div><h3>La pressione finanziaria arriva prima</h3><p>In ogni settore, le persone già sotto pressione finanziaria vedono i rischi di transizione come più seri</p></div></div>
+      <div class="aico"><svg><use href="#i-crowd"/></svg><div><h3>Le preoccupazioni condivise richiedono risposte ampie</h3><p>I rischi più ampiamente sentiti, come costi più alti, sono più difficili da collegare a un singolo gruppo. Chiedono misure che raggiungano tutti.</p></div></div>
+      <div class="aico"><svg><use href="#i-globe"/></svg><div><h3>Le circostanze contano di più del paese</h3><p>Il paese spiega solo il 1–4% delle differenze nella preoccupazione. Le misure possono essere progettate in base alle situazioni delle persone e applicate in diversi paesi.</p></div></div>
+    </div>
+
+    <p class="caveat">Questi risultati descrivono come le persone intervistate percepiscono i rischi, non danni misurati. Le probabilità confrontano un gruppo con altre persone simili fuori da esso.</p>
+  </section>
+
+  <div class="nav">
+    <button id="prev" type="button" aria-label="Slide precedente">Precedente</button>
+    <div class="dots" aria-hidden="true"><span class="on"></span><span></span><span></span></div>
+    <button id="next" type="button" aria-label="Prossima slide">Prossimo</button>
+  </div>
+</div>
+
+<script src="/static/js/fitter-predictive-model.js" defer></script>
+</body>
+</html>

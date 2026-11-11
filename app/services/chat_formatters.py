@@ -211,7 +211,7 @@ def format_hazards(
             f"{predictive_summary}</p>",
             '<details class="hazard-category">',
             '<summary class="hazard-group-heading hazard-group-heading--top">'
-            "Top 3</summary>",
+            "Most Relevant Hazards</summary>",
             '<div class="hazard-category-content">',
             format_system_hazards(
                 session, survey_hazards[:3], show_admin_details=show_admin_details,
