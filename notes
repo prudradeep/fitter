@@ -360,6 +360,8 @@ uv run python -m app.seed_data --skip-schema --reindex-sector-prompts --seed-mai
 $env:ENV_FILE=".env.client.dev"
 uv run python scripts/apply_migrations.py --apply-base-schema
 
+python .\scripts\seed_chat_option_translations.py
+
 //Sqlite version
 uv run python -m app.seed_data --include-basic-data --seed-prompts-from-files
 

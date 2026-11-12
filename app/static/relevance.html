@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hazard Relevance — Dr Transition Infographic</title>
+<link rel="stylesheet" href="/static/css/relevance.css?v=20261112-csp" />
+</head>
+<body>
+<main class="infographic">
+<header class="hero"><h1><span>Hazard Relevance:</span> What It Is and How It’s Calculated</h1><div class="scene" aria-hidden="true">🌱 ⚡ 🏙️</div></header>
+<section class="intro" aria-label="Relevance overview">
+<div class="intro-left"><div class="big-icon" aria-hidden="true">🎯</div><div><h2>Relevance</h2><p>A composite score that tells how important a hazard is for a country–region, combining public concern, association strength, and regional exposure.</p></div></div>
+<div class="main-formula"><span class="formula-tag navy">Relevance (h, c, r)</span><span>= w<sub>S</sub> ·</span><span class="formula-tag purple">Salience (h, c)</span><span>+ w<sub>E</sub> ·</span><span class="formula-tag green">EffectSize (h)</span><span>+ w<sub>R</sub> ·</span><span class="formula-tag orange">Reach (h, c, r)</span></div>
+</section>
+<section class="cards" aria-label="Relevance components">
+<article class="card purple-card"><div class="card-head"><span class="symbol">👥</span><h3>Salience (h, c)</h3></div><p class="desc">How strongly people in a country are concerned about the hazard.</p><div class="equation">Salience (h, c) = mean concern score × (high-concern % / 100)</div><div class="visual"><div class="item"><div class="ico">📋</div><strong>Mean concern score</strong><div class="note">Average level of concern</div></div><div class="operator">×</div><div class="item"><div class="ico">👥</div><strong>% with high concern</strong><div class="note">Share of respondents in country c</div></div></div></article>
+<article class="card green-card"><div class="card-head"><span class="symbol">📊</span><h3>EffectSize (h)</h3></div><p class="desc">How strongly the hazard is associated with confirmed risk factors (predictors).</p><div class="equation">EffectSize (h) = mean of |log(OR<sub>k</sub>)|<small>Across confirmed predictors</small></div><div class="visual"><div class="item"><div class="ico">🔎</div><strong>OR<sub>k</sub> (odds ratio)</strong><div class="note">Strength of association between a predictor and high concern</div></div><div class="operator">→</div><div class="item"><div class="ico">📈</div><strong>Average |log(OR<sub>k</sub>)|</strong><div class="note">Overall association strength of the hazard</div></div></div></article>
+<article class="card orange-card"><div class="card-head"><span class="symbol">📍</span><h3>Reach (h, c, r)</h3></div><p class="desc">How prevalent higher-risk groups are in a specific region, weighted by association strength.</p><div class="equation">Reach (h, c, r) = ∑<sub>k</sub> P<sub>kr</sub> × |log(OR<sub>k</sub>)|</div><div class="visual"><div class="item"><div class="ico">🗺️</div><strong>P<sub>kr</sub> (prevalence)</strong><div class="note">Share of people in risk category k in region r</div></div><div class="operator">×</div><div class="item"><div class="ico">📊</div><strong>|log(OR<sub>k</sub>)|</strong><div class="note">Strength of association for that category</div></div><div class="operator">=</div><div class="item"><div class="ico">👥</div><strong>Reach</strong><div class="note">Weighted regional exposure</div></div></div></article>
+</section>
+<section class="process" aria-label="Calculation process"><div class="process-label"><span aria-hidden="true">⚙️</span> How the Relevance Score Is Computed</div><div class="step"><span class="number">1</span><span class="step-icon">▦</span><span>Compute <strong>Salience, EffectSize and Reach</strong> for each hazard.</span></div><div class="arrow">→</div><div class="step"><span class="number">2</span><span class="step-icon">☷</span><span><strong>Normalise</strong> each component within the sector (min–max to 0–1).</span></div><div class="arrow">→</div><div class="step"><span class="number">3</span><span class="step-icon">🎯</span><span><strong>Combine</strong> the normalised components using weights.</span></div><div class="arrow">→</div><div class="step result"><span class="step-icon">🏆</span><span><strong>Result</strong><br>Relevance score used to rank hazards for the selected country, region and sector.</span></div></section>
+<p class="footnote">h = hazard · c = country · r = region · k = confirmed risk category · OR = odds ratio · w = component weight. A 0–1 final score assumes non-negative weights summing to 1.</p>
+</main>
+</body>
+</html>

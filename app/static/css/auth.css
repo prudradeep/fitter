@@ -4,6 +4,32 @@
   background: var(--page);
 }
 
+.auth-language-picker {
+  position: absolute;
+  top: 24px;
+  right: 32px;
+  z-index: 5;
+}
+
+.auth-language-disclaimer {
+  position: absolute;
+  top: 78px;
+  right: 32px;
+  z-index: 5;
+  max-width: min(520px, calc(100vw - 64px));
+  padding: 10px 14px;
+  border: 1px solid #f0d98a;
+  border-radius: 10px;
+  background: #fff8dc;
+  color: #433714;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.auth-language-disclaimer[hidden] {
+  display: none;
+}
+
 .auth-shell {
   min-height: 100vh;
   display: grid;

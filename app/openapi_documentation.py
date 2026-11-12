@@ -3,6 +3,68 @@
 from __future__ import annotations
 
 METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
+READ_ONLY_PATHS = {
+    "/api/sessions",
+    "/api/sessions/{session_key}/export",
+    "/api/sessions/{session_key}/report",
+    "/api/hazards/ranked",
+    "/api/hazard-salience",
+    "/api/hazard-effect-size",
+    "/api/knowledge/policies",
+    "/api/v1/listings/countries",
+    "/api/v1/listings/regions",
+    "/api/v1/listings/sectors",
+    "/api/v1/listings/policies",
+    "/api/v1/listings/hazards",
+    "/api/v1/listings/socio-demographics",
+    "/api/v1/listings/mitigation-measures",
+}
+
+
+def _component_references(value: object) -> set[tuple[str, str]]:
+    references: set[tuple[str, str]] = set()
+    if isinstance(value, dict):
+        ref = value.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/components/"):
+            parts = ref.split("/")
+            if len(parts) >= 4:
+                references.add((parts[2], parts[3]))
+        for child in value.values():
+            references.update(_component_references(child))
+    elif isinstance(value, list):
+        for child in value:
+            references.update(_component_references(child))
+    return references
+
+
+def _prune_unused_components(spec: dict) -> None:
+    components = spec.get("components", {})
+    referenced = _component_references(spec.get("paths", {}))
+    for path_item in spec.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            for requirement in operation.get("security", []):
+                if isinstance(requirement, dict):
+                    referenced.update(("securitySchemes", name) for name in requirement)
+
+    retained: dict[str, set[str]] = {}
+    while referenced:
+        section, name = referenced.pop()
+        if name in retained.setdefault(section, set()):
+            continue
+        item = components.get(section, {}).get(name)
+        if item is None:
+            continue
+        retained[section].add(name)
+        referenced.update(_component_references(item))
+
+    for section, entries in list(components.items()):
+        for name in list(entries):
+            if name not in retained.get(section, set()):
+                del entries[name]
+        if not entries:
+            del components[section]
 
 
 def obj(properties: dict, required: list[str] | None = None, description: str = "") -> dict:
@@ -71,9 +133,15 @@ ADMIN = {"/metrics", "/api/auto-user-message", "/api/sessions/import", "/api/kno
 
 
 def enhance_main(spec: dict) -> dict:
-    spec["info"]["description"] = "Dr Transition application and sync API. See docs/API_USAGE_GUIDE.md for authentication, CSRF, deployment modes, examples, and endpoint behavior."
+    spec["info"]["description"] = (
+        "Read-only API surface for the FITTER-EU API cookbook. This schema includes only "
+        "the documented GET endpoints plus POST /login for Swagger session authentication. "
+        "The public base URL and final authentication "
+        "mechanism will be released toward the end of the project; connection details "
+        "and examples are illustrative until then."
+    )
     schemes = spec.setdefault("components", {}).setdefault("securitySchemes", {})
-    schemes["sessionCookie"] = {"type": "apiKey", "in": "cookie", "name": "dr_transition_auth", "description": "Session cookie set by POST /login."}
+    schemes["sessionCookie"] = {"type": "apiKey", "in": "cookie", "name": "dr_transition_auth", "description": "Application login session. The final public authentication mechanism will be announced toward the end of the project."}
     schemes["syncBearer"] = {"type": "http", "scheme": "bearer", "description": "Server-issued sync client token."}
     schemes["syncHeader"] = {"type": "apiKey", "in": "header", "name": "X-Sync-Token", "description": "Alternative to Authorization: Bearer for sync clients."}
     for path, methods in spec["paths"].items():
@@ -128,6 +196,30 @@ def enhance_main(spec: dict) -> dict:
     logout["description"] = "Send Accept: application/json for JSON confirmation. Browser form submissions redirect to /login. Cookie-authenticated requests still need CSRF protection."
     logout["responses"]["200"] = {"description": "Logged out.", "content": {"application/json": {"schema": obj({"error": {"type": "boolean", "const": False}, "detail": string()}, ["error", "detail"])}}}
     logout["responses"]["303"] = {"description": "Browser form submission redirects to /login."}
+
+    for path in list(spec["paths"]):
+        if path == "/login" and "post" in spec["paths"][path]:
+            spec["paths"][path] = {"post": spec["paths"][path]["post"]}
+            spec["paths"][path]["post"]["tags"] = ["Authentication"]
+            spec["paths"][path]["post"]["description"] = (
+                "Submit email and password as form data. Swagger sends Accept: "
+                "application/json; on success the response sets the application session "
+                "and CSRF cookies, which the browser reuses for the read-only endpoints."
+            )
+            continue
+        if path not in READ_ONLY_PATHS or "get" not in spec["paths"][path]:
+            del spec["paths"][path]
+            continue
+        spec["paths"][path] = {"get": spec["paths"][path]["get"]}
+        spec["paths"][path]["get"]["tags"] = ["Read-only APIs"]
+    spec["tags"] = [{
+        "name": "Read-only APIs",
+        "description": "Authenticated GET endpoints for the read-only scope documented in the FITTER-EU API cookbook.",
+    }, {
+        "name": "Authentication",
+        "description": "Log in to Swagger and establish the browser session used by the read-only endpoints.",
+    }]
+    _prune_unused_components(spec)
     return spec
 
 

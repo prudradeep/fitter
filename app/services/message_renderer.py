@@ -73,6 +73,7 @@ ALLOWED_ATTRIBUTES = {
         "type",
         "title",
         "data-open-methodology",
+        "data-open-relevance-guide",
         "data-open-survey-results",
         "data-open-platform-users",
         "data-evidence-url",

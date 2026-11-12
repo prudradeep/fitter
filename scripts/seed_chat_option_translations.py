@@ -8,14 +8,108 @@ import asyncio
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("LLM_LOG_TO_DB", "false")
+
+CURATED_UI_TRANSLATIONS = {
+    "de": {
+        "Language disclaimer:": "Sprachhinweis:",
+        "Please note that the platform only translates the final chat outputs. The entire AI processing takes place in “English”. There may be errors in real-time translation as a result": "Bitte beachten Sie, dass die Plattform nur die endgültigen Chat-Ausgaben übersetzt. Die gesamte KI-Verarbeitung erfolgt auf Englisch. Daher kann es bei der Echtzeitübersetzung zu Fehlern kommen.",
+        "Other Options": "Weitere Optionen",
+        "Deep dive into statistical findings": "Statistische Ergebnisse genauer untersuchen",
+        "Analysis Stage": "Analysestufe",
+        "Country": "Land",
+        "Region": "Region",
+        "Sector": "Sektor",
+        "Policy": "Richtlinie",
+        "Hazards": "Gefahren",
+        "Mitigation": "Minderung",
+        "Evaluation": "Bewertung",
+        "Manage Sessions": "Sitzungen verwalten",
+        "New Session": "Neue Sitzung",
+        "Export Current Session": "Aktuelle Sitzung exportieren",
+        "Import Session": "Sitzung importieren",
+    },
+    "es": {
+        "Language disclaimer:": "Aviso sobre el idioma:",
+        "Please note that the platform only translates the final chat outputs. The entire AI processing takes place in “English”. There may be errors in real-time translation as a result": "Ten en cuenta que la plataforma solo traduce las respuestas finales del chat. Todo el procesamiento de IA se realiza en inglés. Por ello, pueden producirse errores en la traducción en tiempo real.",
+        "Other Options": "Otras opciones",
+        "Deep dive into statistical findings": "Profundizar en los resultados estadísticos",
+        "Analysis Stage": "Etapa del análisis",
+        "Country": "País",
+        "Region": "Región",
+        "Sector": "Sector",
+        "Policy": "Política",
+        "Hazards": "Riesgos",
+        "Mitigation": "Mitigación",
+        "Evaluation": "Evaluación",
+        "Manage Sessions": "Gestionar sesiones",
+        "New Session": "Nueva sesión",
+        "Export Current Session": "Exportar sesión actual",
+        "Import Session": "Importar sesión",
+    },
+    "pt": {
+        "Language disclaimer:": "Aviso sobre o idioma:",
+        "Please note that the platform only translates the final chat outputs. The entire AI processing takes place in “English”. There may be errors in real-time translation as a result": "Note que a plataforma traduz apenas as respostas finais do chat. Todo o processamento de IA é realizado em inglês. Por isso, podem ocorrer erros na tradução em tempo real.",
+        "Other Options": "Outras opções",
+        "Deep dive into statistical findings": "Aprofundar a análise dos resultados estatísticos",
+        "Analysis Stage": "Etapa da análise",
+        "Country": "País",
+        "Region": "Região",
+        "Sector": "Setor",
+        "Policy": "Política",
+        "Hazards": "Riscos",
+        "Mitigation": "Mitigação",
+        "Evaluation": "Avaliação",
+        "Manage Sessions": "Gerir sessões",
+        "New Session": "Nova sessão",
+        "Export Current Session": "Exportar sessão atual",
+        "Import Session": "Importar sessão",
+    },
+    "it": {
+        "Language disclaimer:": "Avviso sulla lingua:",
+        "Please note that the platform only translates the final chat outputs. The entire AI processing takes place in “English”. There may be errors in real-time translation as a result": "La piattaforma traduce solo le risposte finali della chat. L'intera elaborazione dell'IA avviene in inglese. Di conseguenza, la traduzione in tempo reale può contenere errori.",
+        "Other Options": "Altre opzioni",
+        "Deep dive into statistical findings": "Approfondisci i risultati statistici",
+        "Analysis Stage": "Fase dell'analisi",
+        "Country": "Paese",
+        "Region": "Regione",
+        "Sector": "Settore",
+        "Policy": "Politica",
+        "Hazards": "Rischi",
+        "Mitigation": "Mitigazione",
+        "Evaluation": "Valutazione",
+        "Manage Sessions": "Gestisci sessioni",
+        "New Session": "Nuova sessione",
+        "Export Current Session": "Esporta sessione corrente",
+        "Import Session": "Importa sessione",
+    },
+    "hu": {
+        "Language disclaimer:": "Nyelvi tájékoztató:",
+        "Please note that the platform only translates the final chat outputs. The entire AI processing takes place in “English”. There may be errors in real-time translation as a result": "A platform csak a végleges chatválaszokat fordítja le. A teljes MI-feldolgozás angolul történik. Emiatt a valós idejű fordítás hibákat tartalmazhat.",
+        "Other Options": "Egyéb lehetőségek",
+        "Deep dive into statistical findings": "A statisztikai eredmények részletes vizsgálata",
+        "Analysis Stage": "Elemzési szakasz",
+        "Country": "Ország",
+        "Region": "Régió",
+        "Sector": "Ágazat",
+        "Policy": "Szakpolitika",
+        "Hazards": "Kockázatok",
+        "Mitigation": "Mérséklés",
+        "Evaluation": "Értékelés",
+        "Manage Sessions": "Munkamenetek kezelése",
+        "New Session": "Új munkamenet",
+        "Export Current Session": "Aktuális munkamenet exportálása",
+        "Import Session": "Munkamenet importálása",
+    },
+}
 
 from app.db.session import SessionLocal  # noqa: E402
 from app.models import Country, Prompt, Region, Sector  # noqa: E402
@@ -42,8 +136,20 @@ def collect_fixed_options() -> list[str]:
         "[Inferred]",
         "Source",
         "Show source context",
+        "Language disclaimer:",
+        "Please note that the platform only translates the final chat outputs. The entire AI processing takes place in “English”. There may be errors in real-time translation as a result",
         "Manage Sessions",
         "New Session",
+        "Other Options",
+        "Deep dive into statistical findings",
+        "Analysis Stage",
+        "Country",
+        "Region",
+        "Sector",
+        "Policy",
+        "Hazards",
+        "Mitigation",
+        "Evaluation",
         "Settings",
         "Open settings",
         "Close settings",
@@ -116,6 +222,34 @@ def _chunks(values: list[str], max_items: int = 25, max_chars: int = 4500):
         yield chunk
 
 
+def _commit_bundle(db, key: str, language: str, content: str) -> None:
+    """Retry prompt writes when the SQLite database is briefly busy."""
+    for attempt in range(7):
+        try:
+            row = db.query(Prompt).filter(Prompt.prompt_key == key).one_or_none()
+            if row is None:
+                row = Prompt(prompt_key=key)
+                db.add(row)
+            row.category = "chat-option-translations"
+            row.model = language
+            row.display_name = f"Chat option translations ({LANGUAGES[language]})"
+            row.content = content
+            row.source_path = "app/services/chat_options.py"
+            db.commit()
+            return
+        except OperationalError as exc:
+            db.rollback()
+            if "locked" not in str(exc).casefold() or attempt == 6:
+                raise
+            delay = min(0.5 * (2**attempt), 8)
+            print(
+                f"  {language}: database is busy; retrying write in {delay:g}s "
+                f"({attempt + 1}/6)",
+                flush=True,
+            )
+            time.sleep(delay)
+
+
 async def _translate_chunk(values: list[str], language: str) -> dict[str, str]:
     attempts = 3 if len(values) == 1 else 2
     last_error: FrontendTranslationError | None = None
@@ -142,12 +276,18 @@ async def _translate_chunk(values: list[str], language: str) -> dict[str, str]:
     return result
 
 
-async def seed(languages: list[str], force: bool) -> None:
+async def seed(
+    languages: list[str],
+    force: bool,
+    selected_labels: set[str] | None = None,
+) -> None:
     with SessionLocal() as db:
         labels = set(collect_fixed_options())
         labels.update(db.scalars(select(Country.name)).all())
         labels.update(db.scalars(select(Region.name)).all())
         labels.update(db.scalars(select(Sector.name)).all())
+        if selected_labels is not None:
+            labels.intersection_update(selected_labels)
         labels = sorted(label.strip() for label in labels if label and label.strip())
         print(f"Found {len(labels)} fixed and reference option labels.", flush=True)
         for language in languages:
@@ -170,22 +310,45 @@ async def seed(languages: list[str], force: bool) -> None:
                         }
                 except (TypeError, json.JSONDecodeError):
                     pass
-            missing = [label for label in labels if force or label not in existing]
+            curated = CURATED_UI_TRANSLATIONS.get(language, {})
+            curated_missing = {
+                label: curated[label]
+                for label in labels
+                if label in curated and (force or label not in existing)
+            }
+            existing.update(curated_missing)
+            missing = [
+                label
+                for label in labels
+                if label not in curated and (force or label not in existing)
+            ]
+            if curated_missing:
+                _commit_bundle(
+                    db,
+                    key,
+                    language,
+                    json.dumps(existing, ensure_ascii=False, sort_keys=True),
+                )
+                print(
+                    f"{language}: stored {len(curated_missing)} curated UI translations",
+                    flush=True,
+                )
             print(f"{language}: translating {len(missing)} labels", flush=True)
-            if row is None:
-                row = Prompt(prompt_key=key)
-                db.add(row)
-            row.category = "chat-option-translations"
-            row.model = language
-            row.display_name = f"Chat option translations ({LANGUAGES[language]})"
-            row.content = json.dumps(existing, ensure_ascii=False, sort_keys=True)
-            row.source_path = "app/services/chat_options.py"
-            db.commit()
+            _commit_bundle(
+                db,
+                key,
+                language,
+                json.dumps(existing, ensure_ascii=False, sort_keys=True),
+            )
             translated_count = 0
             for chunk in _chunks(missing):
                 existing.update(await _translate_chunk(chunk, language))
-                row.content = json.dumps(existing, ensure_ascii=False, sort_keys=True)
-                db.commit()
+                _commit_bundle(
+                    db,
+                    key,
+                    language,
+                    json.dumps(existing, ensure_ascii=False, sort_keys=True),
+                )
                 translated_count += len(chunk)
                 print(
                     f"  {language}: saved {translated_count}/{len(missing)} new labels",
@@ -203,8 +366,13 @@ def main() -> None:
         default=sorted(SUPPORTED_OPTION_LANGUAGES),
     )
     parser.add_argument("--force", action="store_true", help="Regenerate existing language bundles.")
+    parser.add_argument(
+        "--labels",
+        nargs="+",
+        help="Translate only these exact source labels from the fixed and reference label set.",
+    )
     args = parser.parse_args()
-    asyncio.run(seed(args.languages, args.force))
+    asyncio.run(seed(args.languages, args.force, set(args.labels) if args.labels else None))
 
 
 if __name__ == "__main__":

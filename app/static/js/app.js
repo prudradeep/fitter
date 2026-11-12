@@ -14,6 +14,8 @@ const promptSourceKeyPrefix = storageKeys.promptSource || "dr_transition_prompt_
 const teacherAvatarPath = appSettings.assets?.teacherAvatarPath || "/static/img/teacher.png";
 const collapsibleMessageWordLimit = appSettings.chat?.collapsibleMessageWordLimit || 100;
 const appLanguageSelect = document.querySelector("#appLanguageSelect");
+const languageDisclaimer = document.querySelector("#languageDisclaimer");
+const closeLanguageDisclaimer = document.querySelector("#closeLanguageDisclaimer");
 const languageTranslationStatus = document.querySelector("#languageTranslationStatus");
 const appLanguageStorageKey = "dr_transition_display_language";
 const fixedTranslationStoragePrefix = "dr_transition_fixed_translation_v1:";
@@ -291,7 +293,7 @@ function collectTranslatableText(root = document.body) {
   let node;
   while ((node = walker.nextNode())) {
     const parent = node.parentElement;
-    if (!parent || !node.data.trim() || parent.closest("script,style,noscript,textarea,input,code,pre,#appLanguageSelect,#languageTranslationStatus,.evidence-basis-label,.factsheet-source-tag,.message-row.user,.message-row.bot,[hidden],[aria-hidden='true']")) continue;
+    if (!parent || !node.data.trim() || parent.closest("script,style,noscript,textarea,input,code,pre,#appLanguageSelect,#languageTranslationStatus,#languageDisclaimer,.evidence-basis-label,.factsheet-source-tag,.message-row.user,.message-row.bot,[hidden],[aria-hidden='true']")) continue;
     if ((root.isConnected && parent.getClientRects().length === 0) || node.__i18nLanguage === activeDisplayLanguage) continue;
     if (node.__i18nSource === undefined) node.__i18nSource = node.data;
     nodes.push(node);
@@ -431,6 +433,25 @@ function configureDisplayLanguage() {
   if (!appLanguageSelect) return;
   if (!Object.hasOwn(appLanguages, activeDisplayLanguage)) activeDisplayLanguage = "en";
   appLanguageSelect.value = activeDisplayLanguage;
+  let languageDisclaimerDismissed = false;
+  const updateLanguageDisclaimer = () => {
+    if (!languageDisclaimer) return;
+    languageDisclaimer.hidden = activeDisplayLanguage === "en" || languageDisclaimerDismissed;
+    if (languageDisclaimer.hidden) {
+      document.documentElement.style.removeProperty("--language-disclaimer-space");
+      return;
+    }
+    const style = window.getComputedStyle(languageDisclaimer);
+    const verticalMargin = Number.parseFloat(style.marginTop) + Number.parseFloat(style.marginBottom);
+    const occupiedSpace = languageDisclaimer.getBoundingClientRect().height + verticalMargin;
+    document.documentElement.style.setProperty("--language-disclaimer-space", `${occupiedSpace}px`);
+  };
+  updateLanguageDisclaimer();
+  window.addEventListener("resize", updateLanguageDisclaimer);
+  closeLanguageDisclaimer?.addEventListener("click", () => {
+    languageDisclaimerDismissed = true;
+    updateLanguageDisclaimer();
+  });
   document.documentElement.lang = activeDisplayLanguage;
   updateStaticHtmlFrameLanguages();
   optionTranslationReady = loadOptionTranslations(activeDisplayLanguage).then(() => {
@@ -438,8 +459,10 @@ function configureDisplayLanguage() {
   });
   appLanguageSelect.addEventListener("change", async () => {
     activeDisplayLanguage = appLanguageSelect.value;
+    languageDisclaimerDismissed = false;
     displayTranslationReady = true;
     localStorage.setItem(appLanguageStorageKey, activeDisplayLanguage);
+    updateLanguageDisclaimer();
     document.documentElement.lang = activeDisplayLanguage;
     updateStaticHtmlFrameLanguages();
     optionTranslationReady = loadOptionTranslations(activeDisplayLanguage).then(() => {
@@ -4635,10 +4658,11 @@ function renderOtherOptionsMenu() {
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "option-pill other-options-toggle";
-  toggle.textContent = "Other Options";
+  toggle.dataset.sourceOption = "Other Options";
+  const displayLabel = setOptionDisplayText(toggle, "Other Options");
   toggle.dataset.otherToggle = "true";
-  toggle.setAttribute("aria-label", "Other Options");
-  toggle.setAttribute("data-tooltip", "Other Options");
+  toggle.setAttribute("aria-label", displayLabel);
+  toggle.setAttribute("data-tooltip", displayLabel);
   toggle.addEventListener("click", () => {
     pauseSpeech();
     const existingButtons = Array.from(optionTray.querySelectorAll("[data-other-nav='true']"));
@@ -4964,6 +4988,18 @@ function openLocalDocument(url, title) {
   localDocumentFrame.src = url.href;
   localDocumentDialog.showModal();
 }
+
+document.addEventListener("click", (event) => {
+  const relevanceHelp = event.target instanceof Element
+    ? event.target.closest("[data-open-relevance-guide]")
+    : null;
+  if (!relevanceHelp) return;
+  event.preventDefault();
+  openLocalDocument(
+    new URL(localizedStaticHtmlUrl("/static/relevance.html"), window.location.href),
+    "Hazard relevance",
+  );
+});
 
 function closeLocalDocument() {
   localDocumentDialog?.close();

@@ -57,12 +57,16 @@ app = FastAPI(
     redoc_url=None,
     openapi_tags=[
         {
-            "name": "Read-only listings",
+            "name": "Read-only APIs",
             "description": (
-                "Authenticated, paginated GET endpoints for reference data, "
-                "socio-demographic profiles, cached Eurostat data, and mitigation measures."
+                "Authenticated GET endpoints in the read-only scope documented by the "
+                "FITTER-EU API cookbook."
             ),
-        }
+        },
+        {
+            "name": "Authentication",
+            "description": "Use POST /login in Swagger to establish the browser session for read-only API calls.",
+        },
     ],
 )
 
@@ -152,7 +156,7 @@ async def swagger_docs() -> HTMLResponse:
 <body>
   <div id="swagger-ui"></div>
   <script defer src="/static/vendor/swagger-ui/swagger-ui-bundle.js"></script>
-  <script defer src="/static/js/swagger-ui-init.js?v=4"></script>
+  <script defer src="/static/js/swagger-ui-init.js?v=5"></script>
 </body>
 </html>"""
     )

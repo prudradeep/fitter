@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Relevancia — Infografía de Transición Dr</title>
+<link rel="stylesheet" href="/static/css/relevance.css?v=20261112-csp" />
+</head>
+<body>
+<main class="infographic">
+<header class="hero"><h1><span>Relevancia:</span> ¿Qué es y cómo se calcula?</h1><div class="scene" aria-hidden="true">🌱 ⚡ 🏙️</div></header>
+<section class="intro" aria-label="Resumen de relevancia">
+<div class="intro-left"><div class="big-icon" aria-hidden="true">🎯</div><div><h2>Relevancia</h2><p>Una puntuación compuesta que indica qué tan importante es un peligro para un país-territorio, combinando preocupación pública, fuerza de asociación y exposición regional.</p></div></div>
+<div class="main-formula"><span class="formula-tag navy">Relevancia (h, c, r)</span><span>= w<sub>S</sub>  ·</span><span class="formula-tag purple">Saliencia (h, c)</span><span>+ w<sub>E</sub>  ·</span><span class="formula-tag green">EfectoTamaño (h)</span><span>+ w<sub>R</sub>  ·</span><span class="formula-tag orange">Alcance (h, c, r)</span></div>
+</section>
+<section class="cards" aria-label="Componentes de relevancia">
+<article class="card purple-card"><div class="card-head"><span class="symbol">👥</span><h3>Saliencia (h, c)</h3></div><p class="desc">¿Qué tan fuerte es la preocupación de las personas en un país por el peligro.</p><div class="equation">Saliencia (h, c) = media puntuación de preocupación × (% de alto riesgo / 100)</div><div class="visual"><div class="item"><div class="ico">📋</div><strong>Puntuación de preocupación media</strong><div class="note">Nivel medio de preocupación</div></div><div class="operator">×</div><div class="item"><div class="ico">👥</div><strong>% con alta preocupación</strong><div class="note">Porcentaje de los encuestados en el país c</div></div></div></article>
+<article class="card green-card"><div class="card-head"><span class="symbol">📊</span><h3>EfectoTamaño (h)</h3></div><p class="desc">¿Qué tan fuerte es la asociación del peligro con factores de riesgo confirmados (predictores)?</p><div class="equation">EfectoTamaño (h) = media de |log(OR<sub>k</sub>)|<small>A través de todos los predictores confirmados</small></div><div class="visual"><div class="item"><div class="ico">🔎</div><strong>OR<sub>k</sub>  (ratio de odds)</strong><div class="note">Fuerza de asociación entre un predictor y alta preocupación</div></div><div class="operator">→</div><div class="item"><div class="ico">📈</div><strong>Media |log(OR<sub>k</sub>)|</strong><div class="note">Fuerza general de asociación del peligro</div></div></div></article>
+<article class="card orange-card"><div class="card-head"><span class="symbol">📍</span><h3>Alcance (h, c, r)</h3></div><p class="desc">¿Qué tan prevalentes son los grupos de mayor riesgo en un territorio específico, ponderados por la fuerza de asociación?</p><div class="equation">Reach (h, c, r) = ∑<sub>k</sub>  P<sub>kr</sub>  × |log(OR<sub>k</sub>)|</div><div class="visual"><div class="item"><div class="ico">🗺️</div><strong>P<sub>kr</sub>  (prevalencia)</strong><div class="note">Porcentaje de la población en el grupo de riesgo k en la región r</div></div><div class="operator">×</div><div class="item"><div class="ico">📊</div><strong>|log(OR<sub>k</sub>)|</strong><div class="note">Fuerza de asociación para ese grupo</div></div><div class="operator">=</div><div class="item"><div class="ico">👥</div><strong>Alcance</strong><div class="note">Exposición regional ponderada</div></div></div></article>
+</section>
+<section class="process" aria-label="Proceso de cálculo"><div class="process-label"><span aria-hidden="true">⚙️</span>  ¿Cómo se Calcula la Puntuación de Relevancia</div><div class="step"><span class="number">1</span><span class="step-icon">▦</span><span>Calcular  <strong>Saliencia, EfectoTamaño y Alcance</strong>  para cada amenaza.</span></div><div class="arrow">→</div><div class="step"><span class="number">2</span><span class="step-icon">☷</span><span><strong>Normalizar</strong>  cada componente dentro del sector (de mínimo a máximo a 0–1).</span></div><div class="arrow">→</div><div class="step"><span class="number">3</span><span class="step-icon">🎯</span><span><strong>Combinar</strong>  los componentes normalizados usando ponderaciones.</span></div><div class="arrow">→</div><div class="step result"><span class="step-icon">🏆</span><span><strong>Resultado</strong><br>Puntuación de relevancia utilizada para clasificar las amenazas para el país seleccionado, la región y el sector.</span></div></section>
+<p class="footnote">h = amenaza · c = país · r = región · k = categoría de riesgo confirmado · OR = razón de odds · w = ponderación del componente. Una puntuación final de 0–1 asume ponderaciones no negativas que suman a 1.</p>
+</main>
+</body>
+</html>

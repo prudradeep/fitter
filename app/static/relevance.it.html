@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rilevanza — Infografica Dr. Transizione</title>
+<link rel="stylesheet" href="/static/css/relevance.css?v=20261112-csp" />
+</head>
+<body>
+<main class="infographic">
+<header class="hero"><h1><span>Rilevanza:</span> Cosa è e come viene calcolato</h1><div class="scene" aria-hidden="true">🌱 ⚡ 🏙️</div></header>
+<section class="intro" aria-label="Rilevanza panoramica">
+<div class="intro-left"><div class="big-icon" aria-hidden="true">🎯</div><div><h2>Rilevanza</h2><p>Un punteggio composto che indica quanto importante è un rischio per un paese–regione, combinando preoccupazione pubblica, forza dell'associazione e esposizione regionale.</p></div></div>
+<div class="main-formula"><span class="formula-tag navy">Rilevanza (h, c, r)</span><span>= w<sub>S</sub>  ·</span><span class="formula-tag purple">Salienza (h, c)</span><span>+ w<sub>E</sub>  ·</span><span class="formula-tag green">Effetto Dimensione (h)</span><span>+ w<sub>R</sub>  ·</span><span class="formula-tag orange">Raggiungibilità (h, c, r)</span></div>
+</section>
+<section class="cards" aria-label="Componenti della rilevanza">
+<article class="card purple-card"><div class="card-head"><span class="symbol">👥</span><h3>Salienza (h, c)</h3></div><p class="desc">Quanto forte è la preoccupazione delle persone in un paese per il rischio.</p><div class="equation">Salienza (h, c) = media punteggio di preoccupazione × (% con alta preoccupazione / 100)</div><div class="visual"><div class="item"><div class="ico">📋</div><strong>Media punteggio di preoccupazione</strong><div class="note">Livello medio di preoccupazione</div></div><div class="operator">×</div><div class="item"><div class="ico">👥</div><strong>% con alta preoccupazione</strong><div class="note">Partecipanti del paese c</div></div></div></article>
+<article class="card green-card"><div class="card-head"><span class="symbol">📊</span><h3>Effetto Dimensione (h)</h3></div><p class="desc">Quanto forte è l'associazione del rischio con i fattori di rischio confermati (predittori).</p><div class="equation">Effetto Dimensione (h) = media dei |log(OR<sub>k</sub>)|<small>Tra i predittori confermati</small></div><div class="visual"><div class="item"><div class="ico">🔎</div><strong>OR<sub>k</sub> (odds ratio)</strong><div class="note">Forte dell'associazione tra un predittore e alta preoccupazione</div></div><div class="operator">→</div><div class="item"><div class="ico">📈</div><strong>Media |log(OR<sub>k</sub>)|</strong><div class="note">Forte associazione complessiva del rischio</div></div></div></article>
+<article class="card orange-card"><div class="card-head"><span class="symbol">📍</span><h3>Raggiungibilità (h, c, r)</h3></div><p class="desc">Quanto diffuso sono i gruppi a maggior rischio in una regione specifica, ponderati per la forza dell'associazione.</p><div class="equation">Reach (h, c, r) = ∑<sub>k</sub>  P<sub>kr</sub>  × |log(OR<sub>k</sub>)|</div><div class="visual"><div class="item"><div class="ico">🗺️</div><strong>P<sub>kr</sub>  (prevalenza)</strong><div class="note">Share of people in risk category k in region r</div></div><div class="operator">×</div><div class="item"><div class="ico">📊</div><strong>|log(OR<sub>k</sub>)|</strong><div class="note">Strength of association for that category</div></div><div class="operator">=</div><div class="item"><div class="ico">👥</div><strong>Reach</strong><div class="note">Weighted regional exposure</div></div></div></article>
+</section>
+<section class="process" aria-label="Calculation process"><div class="process-label"><span aria-hidden="true">⚙️</span> Come viene calcolato il punteggio di rilevanza</div><div class="step"><span class="number">1</span><span class="step-icon">▦</span><span>Calcola  <strong>Salienza, Effetto Dimensione e Raggiamento</strong>  per ogni rischio.</span></div><div class="arrow">→</div><div class="step"><span class="number">2</span><span class="step-icon">☷</span><span><strong>Normalizza</strong>  ciascun componente all'interno del settore (da minimo a massimo 0–1).</span></div><div class="arrow">→</div><div class="step"><span class="number">3</span><span class="step-icon">🎯</span><span><strong>Combinano</strong>  i componenti normalizzati utilizzando le pesi.</span></div><div class="arrow">→</div><div class="step result"><span class="step-icon">🏆</span><span><strong>Risultato</strong><br>Punteggio di rilevanza utilizzato per ordinare i rischi per il paese selezionato, la regione e il settore.</span></div></section>
+<p class="footnote">h = rischio · c = paese · r = regione · k = categoria a rischio confermata · OR = rapporto di probabilità ponderato · w = peso del componente. Un punteggio finale da 0 a 1 assume pesi non negativi che sommano a 1.</p>
+</main>
+</body>
+</html>

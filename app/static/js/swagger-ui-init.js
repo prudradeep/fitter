@@ -5,14 +5,15 @@ window.addEventListener("load", () => {
     deepLinking: true,
     filter: true,
     tagsSorter: (a, b) => {
-      if (a === "Read-only listings") return -1;
-      if (b === "Read-only listings") return 1;
+      if (a === "Authentication") return -1;
+      if (b === "Authentication") return 1;
       return a.localeCompare(b);
     },
     operationsSorter: "alpha",
     presets: [SwaggerUIBundle.presets.apis],
     layout: "BaseLayout",
     validatorUrl: null,
+    withCredentials: true,
     requestInterceptor: (request) => {
       const method = (request.method || "GET").toUpperCase();
       const url = new URL(request.url, window.location.href);

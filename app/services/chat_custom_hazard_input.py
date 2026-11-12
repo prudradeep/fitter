@@ -500,8 +500,8 @@ class ChatCustomHazardInputMixin:
                 session=session,
                 step="custom_hazard_input",
                 bot_message=(
-                    "I could not extract and review the hazard because the local "
-                    "validation model is unavailable. Please try again."
+                    "I could not extract and review the hazard because the AI validation "
+                    "service did not return a usable response. Please try again."
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 input_mode="textarea",
@@ -612,8 +612,8 @@ class ChatCustomHazardInputMixin:
                 session=session,
                 step="custom_hazard_title_clarification",
                 bot_message=(
-                    "I could not review this clarification because the local validation "
-                    "model is unavailable. Please try again."
+                    "I could not review this clarification because the AI validation "
+                    "service did not return a usable response. Please try again."
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 input_mode="textarea",
@@ -1138,8 +1138,8 @@ class ChatCustomHazardInputMixin:
                 session_id=session_id,
                 step="hazards",
                 bot_message=(
-                    "I could not review this clarification because the local LLM is "
-                    "unavailable. Please try again."
+                    "I could not review this clarification because the AI validation "
+                    "service did not return a usable response. Please try again."
                 ),
                 options=HAZARD_ENTRY_OPTIONS,
                 session=session.summary(),

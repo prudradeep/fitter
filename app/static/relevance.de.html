@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hazard Relevanz – Dr. Transition Infografik</title>
+<link rel="stylesheet" href="/static/css/relevance.css?v=20261112-csp" />
+</head>
+<body>
+<main class="infographic">
+<header class="hero"><h1><span>Hazard Relevanz:</span> Was es ist und wie es berechnet wird</h1><div class="scene" aria-hidden="true">🌱 ⚡ 🏙️</div></header>
+<section class="intro" aria-label="Relevanzübersicht">
+<div class="intro-left"><div class="big-icon" aria-hidden="true">🎯</div><div><h2>Relevanz</h2><p>Ein zusammengesetzter Score, der angibt, wie wichtig ein Risiko für einen Staat–Region ist, indem es die öffentliche Sorge, die Stärke der Assoziation und die regionale Exposition kombiniert.</p></div></div>
+<div class="main-formula"><span class="formula-tag navy">Relevanz (h, c, r)</span><span>= w<sub>S</sub>  ·</span><span class="formula-tag purple">Salienz (h, c)</span><span>+ w<sub>E</sub>  ·</span><span class="formula-tag green">Effektgröße (h)</span><span>+ w<sub>R</sub>  ·</span><span class="formula-tag orange">Reichweite (h, c, r)</span></div>
+</section>
+<section class="cards" aria-label="Relevanzkomponenten">
+<article class="card purple-card"><div class="card-head"><span class="symbol">👥</span><h3>Salienz (h, c)</h3></div><p class="desc">Wie stark sind die Menschen in einem Land besorgt um das Risiko?</p><div class="equation">Salienz (h, c) = durchschnittliche Sorge-Score × (Hochsorge-% / 100)</div><div class="visual"><div class="item"><div class="ico">📋</div><strong>Durchschnittlicher Sorge-Score</strong><div class="note">Durchschnittlicher Sorge-Niveau</div></div><div class="operator">×</div><div class="item"><div class="ico">👥</div><strong>% mit hoher Sorge</strong><div class="note">Anteil der Befragten in Land c</div></div></div></article>
+<article class="card green-card"><div class="card-head"><span class="symbol">📊</span><h3>Effektgröße (h)</h3></div><p class="desc">Wie stark ist das Risiko mit bestätigten Risikofaktoren (Prädiktoren) assoziiert?</p><div class="equation">Effektgröße (h) = Durchschnitt von |log(OR<sub>k</sub>)|<small>Über alle bestätigten Prädiktoren</small></div><div class="visual"><div class="item"><div class="ico">🔎</div><strong>OR<sub>k</sub> (Odds Ratio)</strong><div class="note">Stärke der Assoziation zwischen einem Prädiktor und hoher Sorge</div></div><div class="operator">→</div><div class="item"><div class="ico">📈</div><strong>Durchschnitt von |log(OR<sub>k</sub>)|</strong><div class="note">Gesamtstärke der Assoziation des Risikos</div></div></div></article>
+<article class="card orange-card"><div class="card-head"><span class="symbol">📍</span><h3>Reichweite (h, c, r)</h3></div><p class="desc">Wie verbreitet sind höhere Risikogruppen in einer bestimmten Region, gewichtet nach der Assoziation?</p><div class="equation">Reach (h, c, r) = ∑<sub>k</sub>  P<sub>kr</sub>  × |log(OR<sub>k</sub>)|</div><div class="visual"><div class="item"><div class="ico">🗺️</div><strong>P<sub>kr</sub>  (prävalenz)</strong><div class="note">Teil der Personen in Risikokategorie k im Bereich r</div></div><div class="operator">×</div><div class="item"><div class="ico">📊</div><strong>|log(OR<sub>k</sub>)|</strong><div class="note">Stärke der Assoziation für diese Kategorie</div></div><div class="operator">=</div><div class="item"><div class="ico">👥</div><strong>Reichweite</strong><div class="note">Gewichtete regionale Exposition</div></div></div></article>
+</section>
+<section class="process" aria-label="Berechnungsvorgang"><div class="process-label"><span aria-hidden="true">⚙️</span> Wie die Relevanzscore berechnet wird</div><div class="step"><span class="number">1</span><span class="step-icon">▦</span><span>Berechnen  <strong>Salienz, Effektgröße und Reichweite</strong>  für jedes Risiko.</span></div><div class="arrow">→</div><div class="step"><span class="number">2</span><span class="step-icon">☷</span><span><strong>Normalisieren</strong>  jeden Komponente innerhalb des Sektors (min–max auf 0–1).</span></div><div class="arrow">→</div><div class="step"><span class="number">3</span><span class="step-icon">🎯</span><span><strong>Verbinden</strong>  die normalisierten Komponenten unter Verwendung von Gewichten.</span></div><div class="arrow">→</div><div class="step result"><span class="step-icon">🏆</span><span><strong>Ergebnis</strong><br>Relevanzscore, der verwendet wird, um Risiken für den ausgewählten Staat, Bereich und Sektor zu rangieren.</span></div></section>
+<p class="footnote">h = Risiko · c = Land · r = Region · k = bestätigtes Risikokategorie · OR = Odds Ratio · w = Komponentengewicht. Ein 0–1 Endscore setzt voraus, dass die Gewichte nicht-negativ sind und sich auf 1 summieren.</p>
+</main>
+</body>
+</html>

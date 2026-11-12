@@ -1500,19 +1500,58 @@ class ChatSelectionStepsMixin:
                 )
             )
             if row is None:
+                logger.debug(
+                    "Hazard-listing cache miss: no row country_id=%s region_id=%s sector_id=%s cache_version=%s",
+                    session.country_id,
+                    session.region_id,
+                    session.sector_id,
+                    HAZARD_LISTING_CACHE_VERSION,
+                )
                 return False
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             if row.expires_at is not None and row.expires_at <= now:
+                logger.info(
+                    "Hazard-listing cache expired: cache_id=%s country_id=%s region_id=%s sector_id=%s expires_at=%s",
+                    row.id,
+                    session.country_id,
+                    session.region_id,
+                    session.sector_id,
+                    row.expires_at,
+                )
                 return False
-            if row.source_fingerprint != self._hazard_listing_source_fingerprint(session):
+            source_fingerprint = self._hazard_listing_source_fingerprint(session)
+            if row.source_fingerprint != source_fingerprint:
+                logger.info(
+                    "Hazard-listing cache is stale: cache_id=%s country_id=%s region_id=%s sector_id=%s",
+                    row.id,
+                    session.country_id,
+                    session.region_id,
+                    session.sector_id,
+                )
                 return False
             payload = json.loads(row.payload_json)
         except Exception:
-            logger.exception("Hazard-listing cache lookup failed")
+            logger.exception(
+                "Hazard-listing cache lookup failed country_id=%s region_id=%s sector_id=%s",
+                session.country_id,
+                session.region_id,
+                session.sector_id,
+            )
             return False
         if not isinstance(payload, dict):
+            logger.warning(
+                "Hazard-listing cache payload is not an object: cache_id=%s",
+                row.id,
+            )
             return False
-        return self._apply_hazard_listing_cache_payload(session, payload)
+        applied = self._apply_hazard_listing_cache_payload(session, payload)
+        if not applied:
+            logger.warning(
+                "Hazard-listing cache payload has an invalid shape: cache_id=%s keys=%s",
+                row.id,
+                sorted(payload.keys()),
+            )
+        return applied
 
     def _store_hazard_listing_cache(self, session: ChatSession) -> None:
         if session.country_id is None or session.sector_id is None:
@@ -1618,7 +1657,9 @@ class ChatSelectionStepsMixin:
             for hazard, ranking in hazard_rankings.items()
             if isinstance(ranking, dict)
         }
-        return bool(session.hazards or session.additional_hazards)
+        # An empty but well-formed listing is still a successful preparation result.
+        # It allows the workflow to continue and present its empty-state choices.
+        return True
 
     def _hazard_listing_source_fingerprint(self, session: ChatSession) -> str:
         parts: list[object] = [

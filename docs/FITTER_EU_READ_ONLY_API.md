@@ -1,6 +1,8 @@
 # FITTER-EU Read-Only API
 
-This document follows the FITTER-EU contribution section in the *FITTER-EU Data Schema Cookbook v0.1*. It describes the read-only listing endpoints and existing session/report endpoints. All require the application's existing login session; there is no separate API-key authentication scheme.
+This document follows the FITTER-EU contribution section in the *FITTER-EU Data Schema Cookbook v0.1*. It describes the read-only listing endpoints and existing session/report endpoints for the current development API. The public base URL and final authentication mechanism will be released toward the end of the project for public use.
+
+**Purpose of the cookbook and APIs.** The cookbook documents the FITTER-EU data structure, field definitions, relationships, and contribution conventions so that data can be prepared and interpreted consistently. The APIs provide authenticated, read-only access to that reference data and related analysis through a consistent interface, without requiring clients to query the underlying database directly. Together, they connect a shared data model to practical use of policy, hazard, population, and mitigation information in Dr Transition and other compatible tools.
 
 ## 1.1 Project Overview
 
@@ -10,11 +12,11 @@ The conversation proceeds through these stages:
 
 1. **Set the context.** The user selects a country, optionally narrows it to a region or national scope, and chooses a sector. These selections determine which policy, hazard, population, and mitigation records are relevant. Country, region, and sector listings provide the IDs and labels used by the other API requests.
 2. **Review policies and identify hazards.** The user reviews policies available for the selected context and examines hazards that may be associated with, caused by, or worsened by those policies. Hazard ranking, salience, and effect-size information help describe and compare the hazards. These measures depend on the source data available for the selected context.
-3. **Understand who may be affected.** The user reviews the population profiles associated with a hazard and the impacts described for those groups. Cached Eurostat data can add regional or national population percentages when a matching profile and valid cached value are available; it may not provide a percentage for every group or place.
+3. **Understand who may be affected.** The user reviews the population profiles associated with a hazard and the impacts described for those groups.
 4. **Review mitigation and its target groups.** The user considers measures associated with the hazard, how each measure is intended to work, and which affected groups it targets. The workflow supports checking the measure's fit and available evidence, confirming or clarifying the target groups, and completing evaluation or system-inquiry questions. A listed measure or target-group link is information for review; it does not by itself prove that the measure is effective.
 5. **Save and communicate the analysis.** The conversation and its structured state are saved to a user-owned session. The user can return to that session, inspect its messages, or generate a PDF report for the current hazard, the user's hazard, or all hazards in the session.
 
-The API follows the same stages: listing endpoints help establish context and retrieve policies, hazards, profiles, cached population data, and mitigation measures; analysis endpoints return hazard ranking and related calculations; session endpoints expose only the signed-in user's saved sessions; and the report endpoint returns a PDF for an owned session. All calls use the application's existing login session. The API is read-only: it provides access to the documented data and generated report but does not provide API operations for changing reference records or advancing the guided conversation.
+The API follows the same stages: listing endpoints help establish context and retrieve policies, hazards, population profiles, and mitigation measures; analysis endpoints return hazard ranking and related calculations; session endpoints expose only the signed-in user's saved sessions; and the report endpoint returns a PDF for an owned session. All calls use the application's existing login session. The API is read-only: it provides access to the documented data and generated report but does not provide API operations for changing reference records or advancing the guided conversation.
 
 ## 1.2 Outcomes / Results Expected
 
@@ -22,7 +24,7 @@ The API follows the same stages: listing endpoints help establish context and re
 | --- | --- | --- | --- |
 | Review policies for the selected context | List policies relevant to the selected country, region or national scope, and sector, with objectives and source details where available. | Policy IDs, titles, jurisdiction, sector, objectives, and linked policy metadata. | Results depend on the policy records and source links available for that context. |
 | Identify policy-linked twin-transition hazards | In the guided conversation, show hazards associated with, caused, or worsened by the policy the user selected. | Policy selection and its hazard links in the conversation, plus hazard descriptions and evidence; context ranking indicators are available separately. | The read-only hazard endpoints listed in section 1.5 currently filter by geography and sector, not by policy ID. Their ranking must not be interpreted as the selected policy's hazard list. |
-| Understand affected population groups | Identify the groups exposed to each hazard and summarize the impacts they experience. | Group labels, impact descriptions, supporting evidence, and regional/national population shares where available. | Population percentages are estimates and may be unavailable when no valid data or profile match exists. |
+| Understand affected population groups | Identify the groups exposed to each hazard and summarize the impacts they experience. | Group labels, profile descriptions, impact descriptions, and supporting evidence. | Profile availability depends on the selected context and available reference records. |
 | Compare mitigation measures and their population targets | List measures addressing each hazard and explain which affected groups each measure targets and how the intended benefit reaches them. | Measure description, hazard link, target groups, targeting mechanism, evidence, and evaluation results where available. | Target-group links depend on the measure's documented or user-confirmed population information. |
 
 ## 1.3 Key Data Points
@@ -39,23 +41,22 @@ The API follows the same stages: listing endpoints help establish context and re
 | D8 | Countries, regions, and sectors | Reference IDs and readable labels for the geographies and economic sectors used to scope policy and hazard queries. | JSON | Enables consumers to select and interpret a consistent context before reviewing policies and hazards (outcomes: review policies and identify hazards). Regions and sectors can be filtered by country. |
 | D9 | Policies and hazards | Policy and hazard records, including standard/original policies and system, additional, or custom hazards. | JSON | Shows the policy context and the hazards linked to it, supporting the first two outcomes in section 1.2. Policies and custom hazards created by other users are omitted. |
 | D10 | Socio-demographic profiles | Profile definitions describing population characteristics, including system profiles, additional-hazard profiles, and eligible session-specific profiles. | JSON | Supplies the group categories used to explain who is affected by each hazard (outcome: understand affected population groups). Session-specific data is owner-scoped. |
-| D11 | Eurostat population data | Cached regional or national population percentages, dataset metadata, and related Eurostat lookup information. | JSON | Adds population context to affected-group analysis and helps quantify the groups discussed (outcome: understand affected population groups). Reads cache only; it does not call the external API. |
-| D12 | Mitigation measures | Mitigation records with their descriptions, linked hazards, target population groups, and targeting information where available. | JSON | Shows which measures address a hazard, who each measure is intended to reach, and how the intended benefit relates to affected groups (outcome: compare mitigation measures and their population targets). Filterable by country, sector, or hazard. |
+| D11 | Mitigation measures | Mitigation records with their descriptions, linked hazards, target population groups, and targeting information where available. | JSON | Shows which measures address a hazard, who each measure is intended to reach, and how the intended benefit relates to affected groups (outcome: compare mitigation measures and their population targets). Filterable by country, sector, or hazard. |
 
 | Data point | Access method | Availability | Notes |
 | --- | --- | --- | --- |
 | D1–D3 | API | Yes | Requires a valid login session; session data is owner-scoped. |
 | D4 | API / file response | Yes | Requires a valid login session; returns a PDF download. |
 | D5–D7 | API | Yes | Requires a valid login session. |
-| D8-D12 | API | Yes | Requires a valid login session; user-created records are scoped to their owner. |
+| D8-D11 | API | Yes | Requires a valid login session; user-created records are scoped to their owner. |
 
 ## 1.4 Data Access / Availability
 
 | Access method | Available | Notes |
 | --- | --- | --- |
-| API | Yes | Provides authenticated, read-only access to reference listings, policy and hazard analysis, affected-population profiles and data, mitigation measures, and the user's saved sessions. Use these endpoints to retrieve the evidence and records needed to review the outcomes in section 1.2. The OpenAPI schema at `/openapi.json` describes request parameters and response formats; Swagger UI at `/docs` lets an authenticated user inspect and call the available endpoints. On sync-only servers, the published schema contains only the permitted read-only routes and login. |
+| API | Yes | Provides authenticated, read-only access to reference listings, policy and hazard analysis, affected-population profiles, mitigation measures, and the user's saved sessions. Use these endpoints to retrieve the evidence and records needed to review the outcomes in section 1.2. The OpenAPI schema at `/openapi.json` and Swagger UI at `/docs` expose the 14 read-only GET endpoints listed in this section plus `POST /login`, which lets users establish a session in Swagger. On sync-only servers, the interactive documentation routes may be disabled; use the checked-in OpenAPI schema for local reference. |
 | File export | Yes | Downloads a session's generated PDF report, giving users a portable, readable account of the mitigation analysis and selected report scope. It supports communicating the mitigation outcome in section 1.2 beyond the interactive application. |
-| Database access | No | Direct database connections or queries are not provided. Consumers should use the documented API to retrieve the approved records; this keeps access within application authentication, ownership checks, and response formats while supporting the policy, hazard, population, and mitigation outcomes in section 1.2. |
+| Database access | No | Direct database connections or queries are not provided. Consumers should use the documented API to retrieve the approved records; this keeps access within application authentication, ownership checks, and response formats while supporting the policy, hazard, affected-population-profile, and mitigation outcomes in section 1.2. |
 | Dashboard / UI | Yes | Provides the interactive, end-to-end workflow: choose a country, region and sector; review policies and hazards; examine affected groups; assess mitigation measures and their target groups; and save or export the analysis. It is the user-facing way to interpret and act on the same information exposed through the API. |
 | Other | No | No separate API-key, partner, or alternate data-delivery interface is configured. API consumers authenticate through the application's existing login session, so access follows the same identity and ownership rules as the dashboard. |
 
@@ -63,15 +64,7 @@ The API follows the same stages: listing endpoints help establish context and re
 
 ### Base URL and authentication
 
-Use the deployed application origin as the base URL, for example `https://your-host.example`. Authenticate with the application's existing login flow and retain the `dr_transition_auth` session cookie. The login endpoint accepts form fields named `email` and `password`. Session endpoints only return sessions owned by the authenticated account.
-
-```text
-POST /login
-Content-Type: application/x-www-form-urlencoded
-Accept: application/json
-
-email=<account email>&password=<account password>
-```
+This cookbook version explains the API structure and defines the scope of the API services, including endpoint purposes, supported filters, and response data. The public base URL and final authentication mechanism will be released toward the end of the project for public use. Until then, the connection details and request examples in this document are illustrative and should not be treated as final public access instructions.
 
 ### Read-only endpoints
 
@@ -90,10 +83,9 @@ email=<account email>&password=<account password>
 | `GET /api/v1/listings/policies` | Returns the policies available for the selected country and sector, allowing users to review the policy context that may give rise to or worsen transition hazards. | `country_id`, `sector_id`, `limit`, `offset` | `policies` and `original_policies` arrays. Logged-in user; excludes policies created by other users. |
 | `GET /api/v1/listings/hazards` | Lists available system, additional, and accessible custom hazards for the supplied context filters. Pass `policy_id` to return hazards linked to the selected policy. | `country_id`, `sector_id`, `region_id`, `policy_id`, `include_additional`, `limit`, `offset` | System, additional, and accessible custom hazards linked to the policy and matching other supplied filters. Logged-in user; excludes custom hazards created by other users. |
 | `GET /api/v1/listings/socio-demographics` | Retrieves population profile categories applicable to a context, hazard, or owned session so users can identify and describe groups affected by each hazard. | At least one of `country_id`, `region_id`, `sector_id`, `hazard_id`, `session_key`; `limit`, `offset` | System/additional profiles and, optionally, the user's session-specific profiles. `session_key` must belong to the logged-in user. |
-| `GET /api/v1/listings/eurostat` | Reads cached population statistics for the requested context or profile to quantify affected groups and provide regional or national population shares where available. | At least one of `country_id`, `region_id`, `sector_id`, `hazard_id`, `profile`; `include_expired`, `limit`, `offset` | Cached Eurostat population values and data. Cache read only; expired rows are excluded by default. |
 | `GET /api/v1/listings/mitigation-measures` | Lists measures applicable to a country, sector, or hazard, including target groups and links, so users can assess which measures address each hazard and how they are intended to benefit affected groups. | `country_id`, `sector_id`, `hazard_id`, `limit`, `offset` | Measures with target groups and hazard links. Logged-in user. |
 
-All listing routes use HTTP GET and do not create or update records. `/api/v1/listings/eurostat` only reads cached rows. The existing `GET /api/hazards/ranked` may populate or refresh the Eurostat cache on a cache miss. `GET /api/sessions/{session_key}` is omitted because the UI restore route may repair persisted session state from messages.
+All listing routes use HTTP GET and do not create or update records. `GET /api/sessions/{session_key}` is omitted because the UI restore route may repair persisted session state from messages.
 
 **Policy-to-hazard lookup:** `GET /api/v1/listings/hazards` accepts `policy_id` and returns linked system, additional, and custom hazards, with any supplied geography and sector filters applied as well. `GET /api/hazards/ranked` remains a context-wide ranking and does not accept `policy_id`; do not interpret that ranking as the selected policy's hazard list.
 
@@ -109,8 +101,13 @@ Listing responses contain `items`, `limit`, and `offset`, except `/policies`, wh
 | `/policies` | `country_id` and `sector_id` independently filter both arrays. |
 | `/hazards` | `policy_id` filters to hazards linked to that policy across system, additional, and custom hazards; `sector_id` filters all hazard types; `country_id` filters country-scoped hazards; `region_id` filters custom hazards; `include_additional` defaults to `true`. |
 | `/socio-demographics` | `country_id`, `sector_id`, and `hazard_id` filter catalogue profiles. `session_key` adds the owner's session profiles and supplies the session's country/region/sector filters when omitted. `region_id` is valid only with an owned `session_key`. At least one filter is required. |
-| `/eurostat` | Filters cache rows by country, region, sector, hazard, and/or exact profile. At least one is required. `include_expired` defaults to `false`. |
 | `/mitigation-measures` | Filters by country, sector, and/or system or additional hazard ID. |
+
+#### Endpoint dependency map
+
+The arrows show common data dependencies: for example, a policy ID returned by the policy listing can be passed to the hazard listing. These are not mandatory lookup calls if the required IDs or labels are already known. The session/report path is separate from the policy-to-hazard workflow.
+
+![API endpoint dependency map](FITTER_EU_API_DEPENDENCIES.png)
 
 ### Important response fields
 
@@ -147,37 +144,27 @@ This section explains how fields returned by the API correspond to the applicati
 | `messages[]` | Rows in `user_chat_messages` for the owned session | Each item represents a user or assistant message belonging to that session, with its role, content, status, and timestamp. The messages provide the discussion and clarifications behind the structured session state; only messages for a session the user owns are returned. |
 | `hazards[]` | Hazard ranking service output for the requested context | These are computed ranking results for the country, optional region, and sector supplied to the hazard-ranking endpoint. They are service output rather than a direct copy of one database table, and support identifying and comparing policy-linked hazards. |
 | Report PDF | Generated from the owned session and selected report scope | The PDF is assembled when requested from the saved session and the chosen scope (`current`, `user_hazard`, or `all_hazard`). It presents the relevant mitigation analysis as a portable report; it is not a stored database field. |
-| `/api/v1/listings/countries[].id` | `countries.id` | The country listing's `id` is the primary identifier for a country record. Pass it as `country_id` when filtering related regions, policies, hazards, profiles, population data, or mitigation measures. |
+| `/api/v1/listings/countries[].id` | `countries.id` | The country listing's `id` is the primary identifier for a country record. Pass it as `country_id` when filtering related regions, policies, hazards, profiles, or mitigation measures. |
 | `/api/v1/listings/regions[].id` | `regions.id`; parent is `regions.country_id` | A region `id` identifies the subnational area, while `country_id` identifies its parent country. The relationship lets clients display the region in the correct national context and use it to narrow supported queries. |
 | `/api/v1/listings/sectors[].id` | `sectors.id`; country assignment is in `country_sectors` | A sector `id` identifies the economic activity used to scope analysis. The `country_sectors` relationship indicates which sectors are available for a country and helps clients build valid policy and hazard filters. |
 | `/api/v1/listings/policies[].id` | `policies.id`; original rows use `original_policies.id` | Policy results can come from the standard policy catalogue or the original-policy collection, so the source collection determines which table owns the identifier. Use the returned policy record and source details to understand the policy context associated with hazards. |
 | `/api/v1/listings/hazards[].id` | `system_hazards.id`, `additional_hazards.id`, or owner-visible `custom_hazards.id`; distinguished by `type` | Hazard identifiers belong to one of several hazard collections. Interpret each ID together with its `type`; this identifies the correct record and preserves the link between the selected hazard, its policy context, affected groups, and mitigation measures. |
 | `/api/v1/listings/socio-demographics[].id` | System/additional profile ID or owner-scoped session profile ID | The identifier refers to a population profile from the shared catalogue or from the authenticated user's session. Use the profile type and owning session context to distinguish these sources when relating a profile to affected-group analysis. |
-| `/api/v1/listings/eurostat[].id` | `eurostat_population_cache.id` | Each returned ID identifies a cached population-statistics record. The accompanying geography, profile, dataset, and percentage fields provide quantitative context for affected population groups; the listing reads this cache rather than fetching live Eurostat data. |
 | `/api/v1/listings/mitigation-measures[].id` | `mitigation_measure_policies.id` | This ID identifies a mitigation-measure record and its policy association. Read it with the measure's hazard links, target groups, and targeting details to assess which affected groups a measure is intended to reach and how. |
 
 ## 1.7 API Example (How-To-Use)
 
-The examples below follow the four outcomes in section 1.2. Each starts with a user goal and then shows the steps to make the request and interpret the result. They use `curl` and the application's existing login session. Replace the example host and ID placeholders with values from your deployment and the listing responses.
+The examples below follow the four outcomes in section 1.2. Each starts with a user goal and then shows the request structure and how to interpret the result. They use `curl`, placeholder hosts and IDs, and a placeholder session cookie; the public base URL and final authentication instructions will be released toward the end of the project.
 
-### Sign in once before using the examples
+### Public connection details (to be released)
 
-1. Set the application URL and log in. The cookie jar stores the login session so later requests can reuse it. Keep your credentials and cookie file private.
-
-```bash
-BASE_URL="https://your-host.example"
-
-curl -sS -c cookies.txt \
-  -H 'Accept: application/json' \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  --data-urlencode "email=$DRTRANSITION_EMAIL" \
-  --data-urlencode "password=$DRTRANSITION_PASSWORD" \
-  "$BASE_URL/login"
-```
+The public base URL and final authentication mechanism will be published toward the end of the project. Until then, the following `curl` requests are illustrative only. Set `BASE_URL` to the published host and provide session or credential details according to the final instructions.
 
 ### Example 1: Review policies for a selected context
 
 **Use case:** A user wants to see which policies are available for a country and sector.
+
+![Example 1 call flow: choose a country and sector, then list policies](FITTER_EU_API_EXAMPLE_1.png)
 
 1. Find valid IDs with the country and sector listings. If the user needs a region-specific context, also retrieve regions for the selected country.
 2. Request policies with the selected `country_id` and `sector_id`.
@@ -195,6 +182,8 @@ curl -sS -b cookies.txt \
 
 **Use case:** A user wants to understand which transition hazards are associated with the policy they selected for a country and sector.
 
+![Example 2 call flow: select a policy and list its linked hazards](FITTER_EU_API_EXAMPLE_2.png)
+
 1. Use Example 1 to list policies for the selected `country_id` and `sector_id`. The user chooses a policy from those results.
 2. Submit or confirm the policy selection and keep its `policy_id` from the policy listing response.
 3. Pass that `policy_id` to the hazard-listing route to retrieve linked hazards. The ranked-hazards route remains an optional context-wide ranking and is not policy-specific.
@@ -210,25 +199,26 @@ Omit `region_id` when the analysis is national. The `policy_id` must be the ID o
 
 ### Example 3: Find affected population groups
 
-**Use case:** A user wants to understand which groups are affected by a selected hazard and see population percentages when available.
+**Use case:** A user wants to identify the population groups associated with a selected hazard and review their profile information.
+
+![Example 3 call flow: list population profiles for a context and hazard](FITTER_EU_API_EXAMPLE_3.png)
 
 1. Copy the relevant `hazard_id` from the hazard results and use the same country, sector, and optional region.
 2. Request socio-demographic profiles to see the population groups available for that context and hazard.
-3. Request Eurostat data with the same filters to read cached population values. The endpoint does not fetch new data from Eurostat.
-4. Compare the profile labels and any returned percentages. Percentages may be absent if there is no matching cached value.
+3. Review the profile labels and descriptions to understand the groups represented in the analysis.
 
 ```bash
 curl -sS -b cookies.txt \
   "$BASE_URL/api/v1/listings/socio-demographics?country_id=<country-id>&sector_id=<sector-id>&hazard_id=<hazard-id>"
-curl -sS -b cookies.txt \
-  "$BASE_URL/api/v1/listings/eurostat?country_id=<country-id>&sector_id=<sector-id>&hazard_id=<hazard-id>"
 ```
 
-Add `region_id=<region-id>` to either request when a regional value is needed. To filter Eurostat data for a particular profile, use its profile value with the `profile` parameter as described in section 1.5.
+For profiles associated with a saved session, provide an owned `session_key`; see section 1.5 for supported filters.
 
 ### Example 4: Compare mitigation measures and their target groups
 
 **Use case:** A user wants to find measures that address a hazard and understand which affected groups each measure is intended to reach.
+
+![Example 4 call flow: retrieve mitigation measures and review their target groups](FITTER_EU_API_EXAMPLE_4.png)
 
 1. Use the `country_id`, `sector_id`, and `hazard_id` for the analysis.
 2. Request the mitigation-measure listing.
@@ -244,6 +234,8 @@ The measures and target-group links depend on the records available for the sele
 ### Optional: Review or export a saved analysis
 
 **Use case:** A user wants to reopen the conversation behind an analysis or share its report.
+
+![Saved analysis call flow: list sessions, then restore, export, or report](FITTER_EU_API_EXAMPLE_5.png)
 
 1. List the signed-in user's saved sessions and copy the required `session_id`.
 2. Use that session key to retrieve the saved state and messages, or download a PDF report.

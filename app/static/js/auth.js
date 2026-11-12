@@ -1,4 +1,6 @@
 const authModal = document.querySelector("#authModal");
+const authLanguageSelect = document.querySelector("#authLanguageSelect");
+const authLanguageDisclaimer = document.querySelector("#authLanguageDisclaimer");
 const startAnalysisButton = document.querySelector("#startAnalysisButton");
 const aboutProjectModal = document.querySelector("#aboutProjectModal");
 const aboutProjectButton = document.querySelector("#aboutProjectButton");
@@ -60,6 +62,28 @@ function openAboutProjectModal() {
   } else {
     aboutProjectModal?.setAttribute("open", "");
   }
+}
+
+if (authLanguageSelect) {
+  const languageKey = "dr_transition_display_language";
+  const supportedLanguages = new Set(["en", "de", "es", "pt", "it", "hu"]);
+  let savedLanguage = "en";
+  try {
+    savedLanguage = localStorage.getItem(languageKey) || "en";
+  } catch (_) {}
+  if (!supportedLanguages.has(savedLanguage)) savedLanguage = "en";
+  authLanguageSelect.value = savedLanguage;
+  document.documentElement.lang = savedLanguage;
+  if (authLanguageDisclaimer) authLanguageDisclaimer.hidden = savedLanguage === "en";
+  authLanguageSelect.addEventListener("change", () => {
+    const language = supportedLanguages.has(authLanguageSelect.value) ? authLanguageSelect.value : "en";
+    authLanguageSelect.value = language;
+    document.documentElement.lang = language;
+    if (authLanguageDisclaimer) authLanguageDisclaimer.hidden = language === "en";
+    try {
+      localStorage.setItem(languageKey, language);
+    } catch (_) {}
+  });
 }
 
 function showStep(stepNumber) {

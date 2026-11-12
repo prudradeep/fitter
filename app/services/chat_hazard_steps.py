@@ -2140,6 +2140,16 @@ class ChatHazardStepsMixin:
         if preparation_status == "pending":
             preparation_status = await wait_for_hazard_preparation(job_key)
         if preparation_status == "failed":
+            logger.warning(
+                "Hazard preparation job failed before listing load: session_id=%s user_id=%s "
+                "country_id=%s region_id=%s sector_id=%s selected_policy_id=%s",
+                session_id,
+                self.user_id,
+                session.country_id,
+                session.region_id,
+                session.sector_id,
+                session.selected_context_policy_id,
+            )
             return ChatResponse(
                 session_id=session_id,
                 step="policy_summary",
@@ -2156,6 +2166,18 @@ class ChatHazardStepsMixin:
                 self._start_hazard_preparation(session_id, session)
                 await wait_for_hazard_preparation(job_key)
                 if not self._load_hazard_listing_cache(session):
+                    logger.error(
+                        "Hazard preparation completed but listing cache could not be applied after retry: "
+                        "session_id=%s user_id=%s country_id=%s region_id=%s sector_id=%s "
+                        "selected_policy_id=%s job_status=%s",
+                        session_id,
+                        self.user_id,
+                        session.country_id,
+                        session.region_id,
+                        session.sector_id,
+                        session.selected_context_policy_id,
+                        hazard_preparation_status(job_key),
+                    )
                     return ChatResponse(
                         session_id=session_id,
                         step="policy_summary",

@@ -37,7 +37,7 @@
   .app-shell {
     grid-template-columns: 1fr;
     padding: 0 16px 20px;
-    height: calc(100vh - 162px);
+    height: calc(100vh - 162px - var(--language-disclaimer-space, 0px));
     margin: 18px auto;
     overflow-y: auto;
   }

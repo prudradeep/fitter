@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from app.llm import ask_llm_chat
@@ -26,10 +27,15 @@ _PROVIDER_FAILURE_PREFIXES = (
     "the local model", "error communicating with ollama", "the sync server rejected",
     "could not reach the sync server", "the sync server returned", "bedrock is selected",
 )
+logger = logging.getLogger(__name__)
 
 
 class FrontendTranslationError(ValueError):
     """The configured language model could not return usable translations."""
+
+
+class FrontendTranslationInvalidResponse(FrontendTranslationError):
+    """The model response was not a correctly shaped translation array."""
 
 
 def _parse_translation_response(response: object, expected_count: int) -> list[str]:
@@ -53,7 +59,7 @@ def _parse_translation_response(response: object, expected_count: int) -> list[s
     ):
         if value.casefold().startswith(_PROVIDER_FAILURE_PREFIXES):
             raise FrontendTranslationError("The configured translation model is unavailable.")
-        raise FrontendTranslationError("The translation model returned an invalid response.")
+        raise FrontendTranslationInvalidResponse("The translation model returned an invalid response.")
     return parsed
 
 
@@ -83,7 +89,21 @@ async def translate_frontend_texts(
             "maxItems": len(texts),
         },
     )
-    return _parse_translation_response(result, len(texts))
+    try:
+        return _parse_translation_response(result, len(texts))
+    except FrontendTranslationInvalidResponse:
+        # Smaller responses are more reliable with local models and avoid losing
+        # an entire UI batch when the model drops or adds an array item.
+        if len(texts) <= 5:
+            raise
+        midpoint = len(texts) // 2
+        logger.warning(
+            "Translation model returned a malformed batch; splitting it for retry item_count=%d",
+            len(texts),
+        )
+        first_half = await translate_frontend_texts(texts[:midpoint], source_language, target_language)
+        second_half = await translate_frontend_texts(texts[midpoint:], source_language, target_language)
+        return [*first_half, *second_half]
 
 
 async def translate_fixed_frontend_texts(

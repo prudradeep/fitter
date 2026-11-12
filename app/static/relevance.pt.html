@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Relevância — Infográfico de Transição Dr</title>
+<link rel="stylesheet" href="/static/css/relevance.css?v=20261112-csp" />
+</head>
+<body>
+<main class="infographic">
+<header class="hero"><h1><span>Relevância:</span> O que é e como é calculado</h1><div class="scene" aria-hidden="true">🌱 ⚡ 🏙️</div></header>
+<section class="intro" aria-label="Visão geral da relevância">
+<div class="intro-left"><div class="big-icon" aria-hidden="true">🎯</div><div><h2>Relevância</h2><p>Uma pontuação composta que indica a importância de um risco para um país-região, combinando preocupação pública, força de associação e exposição regional.</p></div></div>
+<div class="main-formula"><span class="formula-tag navy">Relevância (h, c, r)</span><span>= w<sub>S</sub>  ·</span><span class="formula-tag purple">Saliência (h, c)</span><span>+ w<sub>E</sub>  ·</span><span class="formula-tag green">Efeito do Tamanho (h)</span><span>+ w<sub>R</sub>  ·</span><span class="formula-tag orange">Alcance (h, c, r)</span></div>
+</section>
+<section class="cards" aria-label="Componentes da Relevância">
+<article class="card purple-card"><div class="card-head"><span class="symbol">👥</span><h3>Saliência (h, c)</h3></div><p class="desc">Quão fortemente as pessoas de um país se preocupam com o risco.</p><div class="equation">Saliência (h, c) = média do pontuação de preocupação × (% de alta preocupação / 100)</div><div class="visual"><div class="item"><div class="ico">📋</div><strong>Média da pontuação de preocupação</strong><div class="note">Nível médio de preocupação</div></div><div class="operator">×</div><div class="item"><div class="ico">👥</div><strong>% com alta preocupação</strong><div class="note">Participantes do país c</div></div></div></article>
+<article class="card green-card"><div class="card-head"><span class="symbol">📊</span><h3>Efeito do Tamanho (h)</h3></div><p class="desc">Quão fortemente o risco está associado a fatores confirmados de risco (preditores).</p><div class="equation">Efeito do Tamanho (h) = média de |log(OR<sub>k</sub>)|<small>Em todos os preditores confirmados</small></div><div class="visual"><div class="item"><div class="ico">🔎</div><strong>OR<sub>k</sub>  (razão de odds)</strong><div class="note">Força da associação entre um preditor e alta preocupação</div></div><div class="operator">→</div><div class="item"><div class="ico">📈</div><strong>Média de |log(OR<sub>k</sub>)|</strong><div class="note">Força geral de associação do risco</div></div></div></article>
+<article class="card orange-card"><div class="card-head"><span class="symbol">📍</span><h3>Alcance (h, c, r)</h3></div><p class="desc">Quão prevalentes são grupos com maior risco em uma região específica, ponderados pela força de associação.</p><div class="equation">Reach (h, c, r) = ∑<sub>k</sub>  P<sub>kr</sub>  × |log(OR<sub>k</sub>)|</div><div class="visual"><div class="item"><div class="ico">🗺️</div><strong>P<sub>kr</sub>  (prevalência)</strong><div class="note">Participação da população em categoria de risco k na região r</div></div><div class="operator">×</div><div class="item"><div class="ico">📊</div><strong>|log(OR<sub>k</sub>)|</strong><div class="note">Força da associação para essa categoria</div></div><div class="operator">=</div><div class="item"><div class="ico">👥</div><strong>Alcance</strong><div class="note">Exposição regional ponderada</div></div></div></article>
+</section>
+<section class="process" aria-label="Processo de cálculo"><div class="process-label"><span aria-hidden="true">⚙️</span> Como o Score de Relevância é Calculado</div><div class="step"><span class="number">1</span><span class="step-icon">▦</span><span>Calcular  <strong>Saliência, Efeito-Grande e Alcance</strong>  para cada risco.</span></div><div class="arrow">→</div><div class="step"><span class="number">2</span><span class="step-icon">☷</span><span><strong>Normalizar</strong>  cada componente dentro do setor (de 0 a 1).</span></div><div class="arrow">→</div><div class="step"><span class="number">3</span><span class="step-icon">🎯</span><span><strong>Combinar</strong>  os componentes normalizados usando pesos.</span></div><div class="arrow">→</div><div class="step result"><span class="step-icon">🏆</span><span><strong>Resultado</strong><br>Score de relevância utilizado para classificar os riscos para o país, região e setor selecionados.</span></div></section>
+<p class="footnote">h = risco · c = país · r = região · k = categoria de risco confirmado · OR = razão de odds · w = peso do componente. Um score final de 0–1 assume pesos não negativos somando a 1.</p>
+</main>
+</body>
+</html>

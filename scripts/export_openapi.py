@@ -32,6 +32,6 @@ def write(name: str, app, expected: int) -> None:
 
 
 if __name__ == "__main__":
-    write("main.openapi.json", main_app, 53)
+    write("main.openapi.json", main_app, 15)
     write("nli.openapi.json", nli_app, 2)
     write("reranker.openapi.json", reranker_app, 2)

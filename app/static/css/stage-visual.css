@@ -8,7 +8,7 @@
     minmax(470px, 1fr);
   gap: 12px;
   width: min(1408px, calc(100% - 64px));
-  height: calc(100vh - 116px);
+  height: calc(100vh - 116px - var(--language-disclaimer-space, 0px));
   margin: 12px auto;
   overflow: hidden;
 }

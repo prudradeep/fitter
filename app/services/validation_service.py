@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.llm import ask_llm_chat
 from app.models import (
     EvaluationQuestion,
@@ -1149,9 +1150,27 @@ class ChatValidationServiceMixin:
             max_tokens=1200,
         )
         if is_llm_unavailable_response(response):
+            settings = get_settings()
+            logger.warning(
+                "Custom hazard title review could not reach a usable LLM response provider=%s "
+                "model=%s response=%r",
+                settings.llm_provider,
+                settings.bedrock_model_id
+                if settings.llm_provider == "bedrock"
+                else settings.ollama_model,
+                response[:400],
+            )
             return None
 
         review = self._parse_custom_hazard_classifier_response(response)
+        if review is None:
+            settings = get_settings()
+            logger.warning(
+                "Custom hazard title review returned an unusable classifier response provider=%s "
+                "response=%r",
+                settings.llm_provider,
+                response[:400],
+            )
         if (
             isinstance(review, dict)
             and not review.get("valid")

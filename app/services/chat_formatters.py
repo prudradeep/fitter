@@ -920,13 +920,8 @@ def _hazard_relevance_badge(session: ChatSession, hazard: str) -> str:
         '<span class="hazard-relevance" '
         'title="Overall policy relevance score" aria-label="Relevance score">'
         '<span class="hazard-relevance-label">Relevance'
-        '<span class="hazard-relevance-info" tabindex="0" role="button" '
-        'aria-label="Overall ranking score used to order hazards. It combines salience, '
-        'effect size, and reach; higher values indicate greater overall relevance.">?'
-        '<span class="hazard-relevance-tooltip" role="tooltip">'
-        "Overall ranking score used to order hazards. It combines salience, effect size, "
-        "and reach; higher values indicate greater overall relevance."
-        "</span></span></span>"
+        '<button class="hazard-relevance-info" type="button" '
+        'data-open-relevance-guide aria-label="About relevance">?</button></span>'
         f"<strong>{relevance}</strong>"
         "</span>"
     )

@@ -4,9 +4,23 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ page_title or "Dr Transition" }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261019-auth-landing" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261112-auth-language-picker" />
   </head>
   <body class="auth-page auth-landing-page{% if auth_only %} auth-only-landing-page{% endif %}">
+    <label class="language-picker auth-language-picker" for="authLanguageSelect">
+      <select id="authLanguageSelect" aria-label="Display language">
+        <option value="en">English</option>
+        <option value="de">Deutsch</option>
+        <option value="es">Español</option>
+        <option value="pt">Português</option>
+        <option value="it">Italiano</option>
+        <option value="hu">Magyar</option>
+      </select>
+    </label>
+    <aside id="authLanguageDisclaimer" class="auth-language-disclaimer" role="note" hidden>
+      <strong>Language disclaimer:</strong>
+      Please note that the platform only translates the final chat outputs. The entire AI processing takes place in “English”. There may be errors in real-time translation as a result
+    </aside>
     {% set active_mode = auth_mode or "login" %}
     <main class="landing-shell">
       <section class="landing-map-panel" aria-label="European coverage map">
@@ -240,6 +254,6 @@
 
     <script src="{{ url_for('static', path='/vendor/highcharts/highmaps.js') }}"></script>
     <script src="{{ url_for('static', path='/js/auth-map.js') }}"></script>
-    <script src="{{ url_for('static', path='/js/auth.js') }}?v=20261111-pretranslated-about"></script>
+    <script src="{{ url_for('static', path='/js/auth.js') }}?v=20261112-auth-language-picker"></script>
   </body>
 </html>

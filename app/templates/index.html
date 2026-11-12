@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ app_name }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261110-translation-status" />
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20261112-pretranslated-ui-labels" />
   </head>
   <body data-tour-user-id="{{ current_user.id }}">
     <header class="topbar">
@@ -21,6 +21,7 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <small id="languageTranslationStatus" class="language-translation-status" role="status" aria-live="polite" hidden></small>
           <label class="language-picker" for="appLanguageSelect">
             <select id="appLanguageSelect" aria-label="Display language">
               <option value="en">English</option>
@@ -31,7 +32,6 @@
               <option value="hu">Magyar</option>
             </select>
           </label>
-          <small id="languageTranslationStatus" class="language-translation-status" role="status" aria-live="polite" hidden></small>
           <div id="voiceAnalyzer" class="voice-analyzer" aria-hidden="true" hidden></div>
           <div class="session-menu">
             <button id="sessionsButton" class="reset-button" type="button">Manage Sessions</button>
@@ -324,6 +324,14 @@
       </div>
     </header>
 
+    <aside id="languageDisclaimer" class="language-disclaimer" role="note" aria-live="polite" hidden>
+      <span class="language-disclaimer-text">
+        <strong data-source-option="Language disclaimer:">Language disclaimer:</strong>
+        <span data-source-option="Please note that the platform only translates the final chat outputs. The entire AI processing takes place in “English”. There may be errors in real-time translation as a result">Please note that the platform only translates the final chat outputs. The entire AI processing takes place in “English”. There may be errors in real-time translation as a result</span>
+      </span>
+      <button id="closeLanguageDisclaimer" class="language-disclaimer-close" type="button" aria-label="Close language disclaimer">&times;</button>
+    </aside>
+
     <main class="app-shell">
       <section class="stage-visual-panel" aria-label="Analysis progress">
         <!--
@@ -537,6 +545,7 @@
           class="floating-stats-button"
           type="button"
           aria-label="Deep dive into statistical findings"
+          data-source-option="Deep dive into statistical findings"
           hidden
         >
           Deep dive into statistical findings
@@ -1328,6 +1337,6 @@
     <script src="{{ url_for('static', path='/js/app-settings.js') }}?v=20260904-prompt-source-preference"></script>
     <script src="{{ url_for('static', path='/js/app-dom-icons.js') }}?v=20260709-dom-icons"></script>
     <script src="{{ url_for('static', path='/js/app-session-export.js') }}?v=20260711-session-export-module"></script>
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261111-pretranslated-settings"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v=20261112-pretranslated-ui-labels"></script>
   </body>
 </html>

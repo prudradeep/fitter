@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hazard Relevancia – Infografika Dr. Transzició</title>
+<link rel="stylesheet" href="/static/css/relevance.css?v=20261112-csp" />
+</head>
+<body>
+<main class="infographic">
+<header class="hero"><h1><span>Hazard Relevancia:</span> Mit jelent és hogyan számolják ki?</h1><div class="scene" aria-hidden="true">🌱 ⚡ 🏙️</div></header>
+<section class="intro" aria-label="Relevancia áttekintése">
+<div class="intro-left"><div class="big-icon" aria-hidden="true">🎯</div><div><h2>Relevancia</h2><p>A kompozit pontszám, amely megmutatja, mennyire fontos egy kockázat egy ország–terület számára, kombinálva a nyilvános aggályokat, az asszociáció erősségét és a területi kiterjedést.</p></div></div>
+<div class="main-formula"><span class="formula-tag navy">Relevancia (h, c, r)</span><span>w<sub>S</sub> ·</span><span class="formula-tag purple">Agyúhatár (h, c)</span><span>+ w<sub>E</sub> ·</span><span class="formula-tag green">Hatás mértéke (h)</span><span>+ w<sub>R</sub> ·</span><span class="formula-tag orange">Elterjedés (h, c, r)</span></div>
+</section>
+<section class="cards" aria-label="Relevancia összetevői">
+<article class="card purple-card"><div class="card-head"><span class="symbol">👥</span><h3>Agyúhatár (h, c)</h3></div><p class="desc">Hogyan aggódnak a lakosság egy országban a kockázatról.</p><div class="equation">Agyúhatár (h, c) = az aggálypontszám átlaga × (magas aggály %-át 100-ig osztva)</div><div class="visual"><div class="item"><div class="ico">📋</div><strong>Átlagos aggálypontszám</strong><div class="note">Hogyan aggódnak a válaszadók?</div></div><div class="operator">×</div><div class="item"><div class="ico">👥</div><strong>% magas aggályú válaszadók aránya</strong><div class="note">A ország c lakosainak aránya</div></div></div></article>
+<article class="card green-card"><div class="card-head"><span class="symbol">📊</span><h3>Hatás mértéke (h)</h3></div><p class="desc">Hogyan asszociálódik a kockázattal az igazolt kockázati tényezőkre (prediktóroknak).</p><div class="equation">Hatás mértéke (h) = az |log(OR<sub>k</sub>)| átlaga<small>Az igazolt prediktőrökön belül</small></div><div class="visual"><div class="item"><div class="ico">🔎</div><strong>OR<sub>k</sub> (kockázati arány)</strong><div class="note">A kockázattal és magas aggályú válaszadók közötti asszociáció erőssége</div></div><div class="operator">→</div><div class="item"><div class="ico">📈</div><strong>|log(OR<sub>k</sub>)| átlaga</strong><div class="note">A kockázattal összefüggés általános erőssége</div></div></div></article>
+<article class="card orange-card"><div class="card-head"><span class="symbol">📍</span><h3>Elterjedés (h, c, r)</h3></div><p class="desc">Hogyan terjednek a magasabb kockázatú csoportok egy adott területen, súlyozva az asszociáció erősséggel.</p><div class="equation">Reach (h, c, r) = ∑<sub>k</sub> P<sub>kr</sub>  × |log(OR<sub>k</sub>)|</div><div class="visual"><div class="item"><div class="ico">🗺️</div><strong>P<sub>kr</sub>  (prevalencia)</strong><div class="note">Tartalom a krisztény kategóriákban lévő emberek aránya az r régióban</div></div><div class="operator">×</div><div class="item"><div class="ico">📊</div><strong>|log(OR<sub>k</sub>)|</strong><div class="note">A kapcsolás erőssége</div></div><div class="operator">=</div><div class="item"><div class="ico">👥</div><strong>Elérés</strong><div class="note">Súlyozott régióbeli kitérés</div></div></div></article>
+</section>
+<section class="process" aria-label="Kalkulációs folyamat"><div class="process-label"><span aria-hidden="true">⚙️</span>  Hogyan számítják ki a Relevancia pontszámot</div><div class="step"><span class="number">1</span><span class="step-icon">▦</span><span>Számítsuk ki  <strong>Salience, EffectSize és Elérés</strong>  minden kockázatot.</span></div><div class="arrow">→</div><div class="step"><span class="number">2</span><span class="step-icon">☷</span><span><strong>Normalizáljuk</strong>  minden komponenset az adott szektorban (min–max 0–1-re).</span></div><div class="arrow">→</div><div class="step"><span class="number">3</span><span class="step-icon">🎯</span><span><strong>Kombináljuk</strong>  a normalizált komponenseket súlyokkal.</span></div><div class="arrow">→</div><div class="step result"><span class="step-icon">🏆</span><span><strong>Eredmény</strong><br>A relevancia pontszám, amely a kiválasztott ország, régió és szektorra vonatkozóan sorolja fel a kockázatozatokat.</span></div></section>
+<p class="footnote">h = kockázat · c = ország · r = régió · k = megerősített kockázatkategória · OR = valószínűségi hányados · w = komponens súly. Egy 0–1 végpontú végső pontszám nemnegatív súlyokból áll, amelyek összege 1.</p>
+</main>
+</body>
+</html>

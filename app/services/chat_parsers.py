@@ -610,6 +610,9 @@ def is_llm_unavailable_response(response: str) -> bool:
             "ollama returned an invalid response",
             "returned an empty response",
             "cannot reach the local",
+            "bedrock chat request failed",
+            "bedrock is selected, but boto3 is not installed",
+            "bedrock returned an empty response",
         ]
     )
 

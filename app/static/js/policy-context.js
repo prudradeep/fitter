@@ -15,7 +15,12 @@ if (selectedRegion || selectedCountry) {
 }
 
 if (policyContextMount) {
-  fetch("/static/policy-context.html")
+  const displayLanguage = localStorage.getItem("dr_transition_display_language") || "en";
+  const supportedLanguages = new Set(["de", "es", "pt", "it", "hu"]);
+  const localizedPage = supportedLanguages.has(displayLanguage)
+    ? `/static/policy-context.${displayLanguage}.html`
+    : "/static/policy-context.html";
+  fetch(localizedPage)
     .then((response) => {
       if (!response.ok) throw new Error(`Policy context request failed: ${response.status}`);
       return response.text();

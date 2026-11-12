@@ -39,6 +39,8 @@ SOURCE_FILES = (
     "thankyou.html",
     "methodology.html",
     "fitter-predictive-model.html",
+    "policy-context.html",
+    "relevance.html",
 )
 TRANSLATABLE_ATTRIBUTES = {"alt", "aria-label", "placeholder", "title", "value"}
 SKIP_TEXT_TAGS = {"code", "noscript", "pre", "script", "style", "template"}
@@ -195,8 +197,8 @@ def set_document_language(path: Path, language: str) -> None:
         path.write_text(updated, encoding="utf-8", newline="")
 
 
-async def generate(languages: list[str], force: bool) -> None:
-    for relative in SOURCE_FILES:
+async def generate(languages: list[str], force: bool, files: list[str]) -> None:
+    for relative in files:
         source_path = STATIC_ROOT / relative
         source = source_path.read_text(encoding="utf-8")
         parser = HtmlTranslationCollector(source)
@@ -216,9 +218,10 @@ async def generate(languages: list[str], force: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--languages", nargs="+", choices=LANGUAGES.keys(), default=["de", "es", "pt", "it", "hu"])
+    parser.add_argument("--files", nargs="+", choices=SOURCE_FILES, default=list(SOURCE_FILES), help="Only generate selected source pages.")
     parser.add_argument("--force", action="store_true", help="Regenerate even current language variants.")
     args = parser.parse_args()
-    asyncio.run(generate(args.languages, args.force))
+    asyncio.run(generate(args.languages, args.force, args.files))
 
 
 if __name__ == "__main__":
