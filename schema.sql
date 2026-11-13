@@ -881,6 +881,11 @@ INSERT INTO sectors (name) VALUES
   ('Transport')
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
+DELETE r FROM regions r
+JOIN countries c ON c.id = r.country_id
+WHERE c.name = 'Ireland'
+  AND r.name NOT IN ('Border', 'West', 'Mid-West', 'South-East', 'South-West', 'Dublin', 'Mid-East', 'Midland');
+
 INSERT INTO regions (country_id, name)
 SELECT c.id, region_rows.region_name
 FROM countries c
@@ -919,22 +924,14 @@ JOIN (
   UNION ALL SELECT 'Hungary', 'Vas'
   UNION ALL SELECT 'Hungary', 'Veszprém'
   UNION ALL SELECT 'Hungary', 'Zala'
-  UNION ALL SELECT 'Ireland', 'Clare'
-  UNION ALL SELECT 'Ireland', 'Connacht'
-  UNION ALL SELECT 'Ireland', 'Cork'
+  UNION ALL SELECT 'Ireland', 'Border'
+  UNION ALL SELECT 'Ireland', 'West'
+  UNION ALL SELECT 'Ireland', 'Mid-West'
+  UNION ALL SELECT 'Ireland', 'South-East'
+  UNION ALL SELECT 'Ireland', 'South-West'
   UNION ALL SELECT 'Ireland', 'Dublin'
-  UNION ALL SELECT 'Ireland', 'Galway'
-  UNION ALL SELECT 'Ireland', 'Kerry'
-  UNION ALL SELECT 'Ireland', 'Kilkenny'
-  UNION ALL SELECT 'Ireland', 'Leinster'
-  UNION ALL SELECT 'Ireland', 'Limerick'
-  UNION ALL SELECT 'Ireland', 'Mayo'
-  UNION ALL SELECT 'Ireland', 'Munster'
-  UNION ALL SELECT 'Ireland', 'Sligo'
-  UNION ALL SELECT 'Ireland', 'Tipperary'
-  UNION ALL SELECT 'Ireland', 'Ulster (ROI)'
-  UNION ALL SELECT 'Ireland', 'Waterford'
-  UNION ALL SELECT 'Ireland', 'Wicklow'
+  UNION ALL SELECT 'Ireland', 'Mid-East'
+  UNION ALL SELECT 'Ireland', 'Midland'
   UNION ALL SELECT 'Italy', 'Abruzzo'
   UNION ALL SELECT 'Italy', 'Aosta Valley'
   UNION ALL SELECT 'Italy', 'Basilicata'

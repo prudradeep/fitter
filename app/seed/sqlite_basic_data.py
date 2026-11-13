@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from app.db.session import engine
 
@@ -14,7 +14,7 @@ COUNTRIES = [['Germany', 'DE', 'countries/de/de-all.geo.json'], ['Hungary', 'HU'
 
 SECTORS = [['Energy'], ['Housing'], ['Transport']]
 
-REGIONS = [['Germany', 'Baden-Württemberg'], ['Germany', 'Bavaria'], ['Germany', 'Berlin'], ['Germany', 'Brandenburg'], ['Germany', 'Bremen'], ['Germany', 'Hamburg'], ['Germany', 'Hesse'], ['Germany', 'Lower Saxony'], ['Germany', 'Mecklenburg-Vorpommern'], ['Germany', 'North Rhine-Westphalia'], ['Germany', 'Rhineland-Palatinate'], ['Germany', 'Saarland'], ['Germany', 'Saxony'], ['Germany', 'Saxony-Anhalt'], ['Germany', 'Schleswig-Holstein'], ['Germany', 'Thuringia'], ['Hungary', 'Baranya'], ['Hungary', 'Borsod-Abaúj-Zemplén'], ['Hungary', 'Budapest'], ['Hungary', 'Csongrád-Csanád'], ['Hungary', 'Fejér'], ['Hungary', 'Győr-Moson-Sopron'], ['Hungary', 'Hajdú-Bihar'], ['Hungary', 'Heves'], ['Hungary', 'Jász-Nagykun-Szolnok'], ['Hungary', 'Komárom-Esztergom'], ['Hungary', 'Nógrád'], ['Hungary', 'Pest'], ['Hungary', 'Somogy'], ['Hungary', 'Szabolcs-Szatmár-Bereg'], ['Hungary', 'Tolna'], ['Hungary', 'Vas'], ['Hungary', 'Veszprém'], ['Hungary', 'Zala'], ['Ireland', 'Clare'], ['Ireland', 'Connacht'], ['Ireland', 'Cork'], ['Ireland', 'Dublin'], ['Ireland', 'Galway'], ['Ireland', 'Kerry'], ['Ireland', 'Kilkenny'], ['Ireland', 'Leinster'], ['Ireland', 'Limerick'], ['Ireland', 'Mayo'], ['Ireland', 'Munster'], ['Ireland', 'Sligo'], ['Ireland', 'Tipperary'], ['Ireland', 'Ulster (ROI)'], ['Ireland', 'Waterford'], ['Ireland', 'Wicklow'], ['Italy', 'Abruzzo'], ['Italy', 'Aosta Valley'], ['Italy', 'Basilicata'], ['Italy', 'Calabria'], ['Italy', 'Campania'], ['Italy', 'Emilia-Romagna'], ['Italy', 'Friuli-Venezia Giulia'], ['Italy', 'Lazio'], ['Italy', 'Liguria'], ['Italy', 'Lombardy'], ['Italy', 'Marche'], ['Italy', 'Molise'], ['Italy', 'Piedmont'], ['Italy', 'Puglia'], ['Italy', 'Sardinia'], ['Italy', 'Sicily'], ['Italy', 'Trentino-Alto Adige'], ['Italy', 'Tuscany'], ['Italy', 'Umbria'], ['Italy', 'Veneto'], ['Spain', 'Andalusia'], ['Spain', 'Aragon'], ['Spain', 'Asturias'], ['Spain', 'Balearic Islands'], ['Spain', 'Basque Country'], ['Spain', 'Canary Islands'], ['Spain', 'Cantabria'], ['Spain', 'Castile and León'], ['Spain', 'Castile-La Mancha'], ['Spain', 'Catalonia'], ['Spain', 'Extremadura'], ['Spain', 'Galicia'], ['Spain', 'La Rioja'], ['Spain', 'Madrid'], ['Spain', 'Murcia'], ['Spain', 'Navarre'], ['Spain', 'Valencia'], ['Portugal', 'Alentejo'], ['Portugal', 'Algarve'], ['Portugal', 'Azores'], ['Portugal', 'Centro'], ['Portugal', 'Lisbon Metropolitan Area'], ['Portugal', 'Madeira'], ['Portugal', 'Norte']]
+REGIONS = [['Germany', 'Baden-Württemberg'], ['Germany', 'Bavaria'], ['Germany', 'Berlin'], ['Germany', 'Brandenburg'], ['Germany', 'Bremen'], ['Germany', 'Hamburg'], ['Germany', 'Hesse'], ['Germany', 'Lower Saxony'], ['Germany', 'Mecklenburg-Vorpommern'], ['Germany', 'North Rhine-Westphalia'], ['Germany', 'Rhineland-Palatinate'], ['Germany', 'Saarland'], ['Germany', 'Saxony'], ['Germany', 'Saxony-Anhalt'], ['Germany', 'Schleswig-Holstein'], ['Germany', 'Thuringia'], ['Hungary', 'Baranya'], ['Hungary', 'Borsod-Abaúj-Zemplén'], ['Hungary', 'Budapest'], ['Hungary', 'Csongrád-Csanád'], ['Hungary', 'Fejér'], ['Hungary', 'Győr-Moson-Sopron'], ['Hungary', 'Hajdú-Bihar'], ['Hungary', 'Heves'], ['Hungary', 'Jász-Nagykun-Szolnok'], ['Hungary', 'Komárom-Esztergom'], ['Hungary', 'Nógrád'], ['Hungary', 'Pest'], ['Hungary', 'Somogy'], ['Hungary', 'Szabolcs-Szatmár-Bereg'], ['Hungary', 'Tolna'], ['Hungary', 'Vas'], ['Hungary', 'Veszprém'], ['Hungary', 'Zala'], ['Ireland', 'Border'], ['Ireland', 'West'], ['Ireland', 'Mid-West'], ['Ireland', 'South-East'], ['Ireland', 'South-West'], ['Ireland', 'Dublin'], ['Ireland', 'Mid-East'], ['Ireland', 'Midland'], ['Italy', 'Abruzzo'], ['Italy', 'Aosta Valley'], ['Italy', 'Basilicata'], ['Italy', 'Calabria'], ['Italy', 'Campania'], ['Italy', 'Emilia-Romagna'], ['Italy', 'Friuli-Venezia Giulia'], ['Italy', 'Lazio'], ['Italy', 'Liguria'], ['Italy', 'Lombardy'], ['Italy', 'Marche'], ['Italy', 'Molise'], ['Italy', 'Piedmont'], ['Italy', 'Puglia'], ['Italy', 'Sardinia'], ['Italy', 'Sicily'], ['Italy', 'Trentino-Alto Adige'], ['Italy', 'Tuscany'], ['Italy', 'Umbria'], ['Italy', 'Veneto'], ['Spain', 'Andalusia'], ['Spain', 'Aragon'], ['Spain', 'Asturias'], ['Spain', 'Balearic Islands'], ['Spain', 'Basque Country'], ['Spain', 'Canary Islands'], ['Spain', 'Cantabria'], ['Spain', 'Castile and León'], ['Spain', 'Castile-La Mancha'], ['Spain', 'Catalonia'], ['Spain', 'Extremadura'], ['Spain', 'Galicia'], ['Spain', 'La Rioja'], ['Spain', 'Madrid'], ['Spain', 'Murcia'], ['Spain', 'Navarre'], ['Spain', 'Valencia'], ['Portugal', 'Alentejo'], ['Portugal', 'Algarve'], ['Portugal', 'Azores'], ['Portugal', 'Centro'], ['Portugal', 'Lisbon Metropolitan Area'], ['Portugal', 'Madeira'], ['Portugal', 'Norte']]
 
 COUNTRY_SECTORS = [['Germany', 'Energy'], ['Germany', 'Housing'], ['Hungary', 'Energy'], ['Hungary', 'Housing'], ['Ireland', 'Energy'], ['Ireland', 'Housing'], ['Italy', 'Energy'], ['Italy', 'Transport'], ['Spain', 'Energy'], ['Spain', 'Transport'], ['Portugal', 'Energy'], ['Portugal', 'Housing']]
 
@@ -82,6 +82,14 @@ def seed_sqlite_basic_data() -> dict[str, int]:
                     text("INSERT INTO regions (id,country_id,name) VALUES (:id,:country_id,:name)"),
                     {"id": _stable_id("region", country_name, region_name), "country_id": country_id, "name": region_name},
                 )
+
+        ireland_region_names = [name for country, name in REGIONS if country == "Ireland"]
+        connection.execute(
+            text("DELETE FROM regions WHERE country_id=:country_id AND name NOT IN :names").bindparams(
+                bindparam("names", expanding=True)
+            ),
+            {"country_id": country_ids["ireland"], "names": ireland_region_names},
+        )
 
         for country_name, sector_name in COUNTRY_SECTORS:
             country_id = country_ids[country_name.casefold()]

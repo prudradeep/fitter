@@ -9,9 +9,10 @@ constructs that SQLite cannot execute (``information_schema``, ``UUID()``,
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Callable
 
-from sqlalchemy import inspect, text
+from sqlalchemy import bindparam, inspect, text
 from sqlalchemy.engine import Connection
 
 from app.db.session import engine
@@ -791,6 +792,34 @@ def _029_knowledge_chunk_reuse_index(connection: Connection) -> None:
     )
 
 
+def _030_ireland_regions(connection: Connection) -> None:
+    if not _table_exists(connection, "countries") or not _table_exists(connection, "regions"):
+        return
+    names = ("Border", "West", "Mid-West", "South-East", "South-West", "Dublin", "Mid-East", "Midland")
+    country_id = connection.execute(
+        text("SELECT id FROM countries WHERE name = 'Ireland' LIMIT 1")
+    ).scalar()
+    if not country_id:
+        return
+    connection.execute(
+        text("DELETE FROM regions WHERE country_id=:country_id AND name NOT IN :names").bindparams(
+            bindparam("names", expanding=True)
+        ),
+        {"country_id": country_id, "names": names},
+    )
+    for name in names:
+        connection.execute(
+            text("INSERT INTO regions (id, country_id, name) "
+                 "SELECT :id, :country_id, :name "
+                 "WHERE NOT EXISTS (SELECT 1 FROM regions WHERE country_id=:country_id AND name=:name)"),
+            {
+                "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"drtransition:ireland-region:{name}")),
+                "country_id": country_id,
+                "name": name,
+            },
+        )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("001_app_rate_limits", _001_app_rate_limits),
     ("002_auth_session_audit", _002_auth_session_audit),
@@ -821,6 +850,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("027_policy_knowledge_documents", _027_policy_knowledge_documents),
     ("028_normalized_knowledge_sources", _028_normalized_knowledge_sources),
     ("029_knowledge_chunk_reuse_index", _029_knowledge_chunk_reuse_index),
+    ("030_ireland_regions", _030_ireland_regions),
 )
 
 

@@ -54,22 +54,14 @@ REGIONS = [['Germany', 'Baden-Württemberg'],
  ['Hungary', 'Vas'],
  ['Hungary', 'Veszprém'],
  ['Hungary', 'Zala'],
- ['Ireland', 'Clare'],
- ['Ireland', 'Connacht'],
- ['Ireland', 'Cork'],
+ ['Ireland', 'Border'],
+ ['Ireland', 'West'],
+ ['Ireland', 'Mid-West'],
+ ['Ireland', 'South-East'],
+ ['Ireland', 'South-West'],
  ['Ireland', 'Dublin'],
- ['Ireland', 'Galway'],
- ['Ireland', 'Kerry'],
- ['Ireland', 'Kilkenny'],
- ['Ireland', 'Leinster'],
- ['Ireland', 'Limerick'],
- ['Ireland', 'Mayo'],
- ['Ireland', 'Munster'],
- ['Ireland', 'Sligo'],
- ['Ireland', 'Tipperary'],
- ['Ireland', 'Ulster (ROI)'],
- ['Ireland', 'Waterford'],
- ['Ireland', 'Wicklow'],
+ ['Ireland', 'Mid-East'],
+ ['Ireland', 'Midland'],
  ['Italy', 'Abruzzo'],
  ['Italy', 'Aosta Valley'],
  ['Italy', 'Basilicata'],
@@ -335,6 +327,13 @@ def seed(conn: sqlite3.Connection) -> dict[str, int]:
                 "INSERT INTO regions (id, country_id, name) VALUES (?, ?, ?)",
                 (stable_id("region", country_name, region_name), country_id, region_name),
             )
+
+    ireland_region_names = [name for country, name in REGIONS if country == "Ireland"]
+    placeholders = ", ".join("?" for _ in ireland_region_names)
+    conn.execute(
+        f"DELETE FROM regions WHERE country_id = ? AND name NOT IN ({placeholders})",
+        (country_ids["Ireland"], *ireland_region_names),
+    )
 
     for country_name, sector_name in COUNTRY_SECTORS:
         country_id = country_ids[country_name]
