@@ -162,29 +162,86 @@ p{margin:0 0 6px}
 .output p{margin:0; font-size:13.5px; opacity:.85}
 
 /* ---------- Slide 3 specifics ---------- */
-.findings{display:grid; grid-template-columns:repeat(3,1fr); gap:18px}
-.fcard{border:1px solid var(--rule); border-top:4px solid var(--c); border-radius:10px; padding:16px 18px 14px; display:flex; flex-direction:column}
-.fcard .fhead{display:flex; align-items:center; gap:10px}
-.fcard .fhead svg{width:34px; height:34px; color:var(--c)}
-.fcard .fhead h3{margin:0; font-size:17px}
-.fcard .fhead .small{display:block}
-.big{font-size:42px; font-weight:800; letter-spacing:-.02em; color:var(--c); line-height:1; margin:16px 0 4px}
-.big small{font-size:16px; font-weight:700; letter-spacing:0}
-.who{font-size:14px; font-weight:600; margin-bottom:12px}
-.also{list-style:none; padding:0; margin:auto 0 0; border-top:1px solid var(--rule); padding-top:10px; display:flex; flex-direction:column; gap:6px}
-.also li{font-size:13px; display:flex; gap:8px}
-.also li::before{content:""; width:6px; height:6px; border-radius:50%; background:var(--c); margin-top:7px; flex:none}
-.odds{display:flex; align-items:center; gap:6px; margin:6px 0 12px}
-.odds .p{width:14px; height:22px; border-radius:7px 7px 2px 2px; background:var(--rule)}
-.odds .p.on{background:var(--c)}
-.odds .lbl{font-size:11.5px; color:var(--ink-2); margin-left:4px}
+.lede3{margin:-10px 0 18px; color:var(--ink-2); max-width:78ch}
+.keys{display:grid; grid-template-columns:repeat(3,1fr); gap:16px 24px}
+.key{display:flex; gap:12px; align-items:flex-start; padding-top:14px; border-top:1px solid var(--rule)}
+.key.wide{grid-column:1 / -1}
+.key .kb{width:26px; height:26px; border-radius:50%; background:var(--thread); color:#fff; font-weight:700; font-size:13px; display:grid; place-items:center; flex:none}
+.key > div{flex:1; min-width:0}
+.key h3{margin:2px 0 2px; font-size:15px}
+.key .q{font-size:12px; color:var(--thread); font-weight:600; margin-bottom:6px}
+.key p{font-size:13px; color:var(--ink-2); margin:0 0 5px}
+.key p b{color:var(--ink)}
+.viz{margin:8px 0}
+svg.scale{width:100%; height:auto; display:block; overflow:visible}
+svg.scale text{font-family:inherit; font-size:10px; fill:var(--ink-2)}
+svg.scale .strong{font-weight:700; fill:var(--ink)}
+svg.scale.cvz text{font-size:12px}
+svg.scale .acc{font-weight:700; fill:var(--thread)}
+.cats{display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:6px 0 4px}
+.cat{font-size:12px; font-weight:600; border:1px solid var(--rule); border-radius:4px; padding:4px 8px; position:relative}
+.cat.ref{border:1.5px solid var(--ink); background:var(--muted)}
+.cat.ref small{display:block; font-size:10.5px; font-weight:700; color:var(--thread)}
+.cats .lab{font-size:11.5px; color:var(--ink-2); width:100%}
+.held{display:flex; gap:8px; align-items:center; font-size:12px; color:var(--ink-2); background:var(--muted); border-radius:6px; padding:6px 8px; margin:6px 0}
+.held svg{width:22px; height:22px; flex:none; color:var(--ink)}
+.held svg use{stroke:currentColor}
+.twins{display:grid; grid-template-columns:auto 1fr 38px; gap:6px 10px; align-items:center; margin:6px 0; font-size:12px}
+.twins svg{width:26px; height:26px; color:var(--ink-2)}
+.twins svg use{stroke:currentColor}
+.twins .on svg{color:var(--thread)}
+.ptrack{height:12px; background:var(--muted); border-radius:2px; overflow:hidden}
+.ptrack span{display:block; height:100%; background:var(--ink-2)}
+.ptrack.on span{background:var(--thread)}
+.twins b{font-size:12.5px; text-align:right}
+.twins .who{line-height:1.2}
+.twins .who small{display:block; color:var(--ink-2); font-size:11px}
+.tiers{display:flex; flex-direction:column; gap:4px; margin:6px 0}
+.tier{display:flex; align-items:center; gap:8px; font-size:12.5px}
+.tier b{min-width:72px}
+.meter{display:inline-flex; gap:2px}
+.meter i{width:6px; height:12px; border-radius:1px; background:var(--thread)}
+.meter i.off{background:var(--rule)}
+.quad{display:grid; grid-template-columns:auto 1fr 1fr; grid-template-rows:1fr 1fr auto; gap:3px; margin:6px 0; font-size:11.5px}
+.quad .qq{border-radius:4px; padding:6px 7px; background:var(--muted); line-height:1.25}
+.quad .qq.best{background:var(--thread); color:#fff; font-weight:700}
+.quad .ax{font-size:10.5px; color:var(--ink-2)}
+.quad .ay{writing-mode:vertical-rl; transform:rotate(180deg); text-align:center; font-size:10.5px; color:var(--ink-2); grid-row:1 / 3}
+.quad .ax-x{grid-column:2 / 4; text-align:center}
+.reach{display:flex; gap:6px; margin:6px 0; flex-wrap:wrap}
+.reach span{font-size:12px; font-weight:600; border:1px solid var(--rule); border-radius:4px; padding:3px 8px}
+.reach span.on{border-color:var(--thread); color:var(--thread); background:var(--thread-soft)}
+.flagrow{display:flex; flex-direction:column; gap:6px; margin:6px 0}
+.flag{display:flex; gap:8px; align-items:center; font-size:12.5px}
+.flag .w{width:24px; height:24px; border-radius:4px; display:grid; place-items:center; font-size:14px; flex:none; border:1px solid var(--rule)}
+.flag .w.warn{color:var(--energy); border-color:var(--energy)}
+.gpair{display:grid; grid-template-columns:1fr 1fr; gap:28px}
+.gpair h4{font-size:13px; margin:0 0 2px}
+.gpair svg.scale{max-width:380px}
+.sizes{font-size:12px; color:var(--ink-2); margin:4px 0 0}
 
-.across{margin-top:22px; display:grid; grid-template-columns:repeat(3,1fr); gap:18px; border-top:1px solid var(--rule); padding-top:18px}
-.across h3{margin:0 0 4px; font-size:15px}
-.across p{font-size:13px; color:var(--ink-2)}
-.across .aico{display:flex; gap:12px}
-.across svg{width:36px; height:36px; flex:none; color:var(--thread)}
-.caveat{margin-top:16px; font-size:12px; color:var(--ink-2); border-left:3px solid var(--rule); padding-left:10px}
+/* worked example */
+.example{margin-top:24px; border:1.5px solid var(--ink); border-radius:12px; padding:18px 20px 16px}
+.ex-head{display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:6px}
+.ex-head h3{margin:0; font-size:17px}
+.ex-head .small{font-style:italic}
+.ex-case{font-size:13.5px; color:var(--ink-2); margin:0 0 12px}
+.ex-case b{color:var(--ink)}
+.concl{display:grid; grid-template-columns:1fr 1fr; grid-template-rows:repeat(4,auto); grid-auto-flow:column; gap:0 28px}
+.cl{display:grid; grid-template-columns:24px 112px 1fr; gap:10px; align-items:center; padding:9px 0; border-top:1px solid var(--rule)}
+.cl .kb{width:22px; height:22px; border-radius:50%; background:var(--thread); color:#fff; font-weight:700; font-size:11.5px; display:grid; place-items:center}
+.cl .val{font-size:16px; font-weight:800; line-height:1.15}
+.cl .val small{display:block; font-size:11px; font-weight:600; color:var(--ink-2)}
+.cl p{margin:0; font-size:13px}
+.summary{margin-top:12px; background:var(--thread-soft); border-left:4px solid var(--thread); border-radius:0 8px 8px 0; padding:10px 14px; font-size:14px}
+.summary b{color:var(--thread)}
+
+.remind{margin-top:18px; display:grid; grid-template-columns:repeat(3,1fr); gap:14px; background:var(--ink); color:var(--paper); border-radius:10px; padding:14px 18px}
+.remind div{display:flex; gap:10px; align-items:center; font-size:13px}
+.remind svg{width:28px; height:28px; flex:none; color:var(--thread-soft)}
+.remind svg use{stroke:currentColor}
+.remind b{display:block; font-size:13.5px}
+.remind span{opacity:.82}
 
 /* ---------- Responsive ---------- */
 @media (max-width: 980px){
@@ -192,7 +249,9 @@ p{margin:0 0 6px}
   .flow.s5,.flow.s6{grid-template-columns:repeat(3,1fr); row-gap:22px}
   .phases{display:none}
   .funnel-band{grid-template-columns:1fr}
-  .findings,.across{grid-template-columns:1fr}
+  .keys{grid-template-columns:repeat(2,1fr)}
+  .concl{grid-template-columns:1fr; grid-template-rows:none; grid-auto-flow:row}
+  .remind{grid-template-columns:1fr}
   .twin{grid-template-columns:1fr}
 }
 @media (max-width: 620px){
@@ -211,5 +270,9 @@ p{margin:0 0 6px}
   .station:last-child .line{background:linear-gradient(180deg,var(--thread),transparent)}
   .station h3{margin-top:4px}
   .fbar .bar{font-size:13px}
-  .big{font-size:36px}
+  .keys{grid-template-columns:1fr}
+  .gpair{grid-template-columns:1fr; gap:14px}
+  .cl{grid-template-columns:22px 1fr; row-gap:4px}
+  .cl p{grid-column:2}
+  .example{padding:14px 14px 12px}
 }

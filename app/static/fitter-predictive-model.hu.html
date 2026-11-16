@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mire történik a kockázatok előrejelzése</title>
 <link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/fitter-predictive-model.css">
 </head>
 <body>
@@ -33,6 +36,7 @@
     <symbol id="i-wallet" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h26a2 2 0 0 1 2 2v18a2 2 0 0 1-2 2H6Z"/><path d="M6 12 26 6v6"/><path d="M34 19h-7a3 3 0 0 0 0 6h7"/></g></symbol>
     <symbol id="i-crowd" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="14" r="3"/><circle cx="20" cy="12" r="3"/><circle cx="30" cy="14" r="3"/><path d="M4 28c0-4 2.5-7 6-7s6 3 6 7M14 26c0-4 2.5-7 6-7s6 3 6 7M24 28c0-4 2.5-7 6-7s6 3 6 7"/></g></symbol>
     <symbol id="i-globe" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="20" r="15"/><path d="M5 20h30M20 5c5 5 5 25 0 30M20 5c-5 5-5 25 0 30"/></g></symbol>
+  <symbol id="i-person" viewBox="0 0 40 40"><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="12" r="6"/><path d="M8 36c0-7 5-12 12-12s12 5 12 12"/></g></symbol>
   </defs>
 </svg>
 
@@ -46,7 +50,7 @@
       <span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       <button class="tab" role="tab" id="t2" aria-controls="s2" aria-selected="false" tabindex="-1"><span class="n">2</span><span class="t"><b>A előrejelzési modell építése</b><span>Nézetek a előrejelzésekig</span></span></button>
       <span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-      <button class="tab" role="tab" id="t3" aria-controls="s3" aria-selected="false" tabindex="-1"><span class="n">3</span><span class="t"><b>Eredmények</b><span>Ki a legérzékenyebb</span></span></button>
+      <button class="tab" role="tab" id="t3" aria-controls="s3" aria-selected="false" tabindex="-1"><span class="n">3</span><span class="t"><b>Az eredmények értelmezése</b><span>Mit jelentenek az egyes értékek</span></span></button>
     </div>
   </div>
 
@@ -273,55 +277,298 @@
   </section>
 
   <!-- ===================== SLIDE 3 ===================== -->
-  <section class="slide" id="s3" role="tabpanel" aria-labelledby="t3" hidden>
+    <section class="slide" id="s3" role="tabpanel" aria-labelledby="t3" hidden>
+    
     <div class="slide-top">
-      <h2>Kiválasztott hazadhoz: mely csoportok a legmagasabban valószínűnek számolnak, és hány százalékkal magasabbak azok a valószínűségek, mint mások?</h2>
-      <span class="src">Milyen eredményt kapott a modell? <b>Eredmények,</b></span>
+      
+      <h2>Hogyan olvassuk a modell eredményét?</h2>
+      
+      <span class="src">Eredménytáblázatok, <b>FITTER-EU D4.4</b></span>
+    
     </div>
-    <p class="lede">FITTER-EU D4.4</p>
+    
+    <p class="lede3">Minden eredmény egy embercsoportot kapcsol össze egy kockázattal. Hét érték írja le a kapcsolatot. Az alábbiakban bemutatjuk, mit jelentenek.</p>
 
-    <div class="findings">
-      <article class="fcard" style="--c:var(--energy)">
-        <div class="fhead"><svg><use href="#i-solar"/></svg><div><h3>A leggyakoribban megerősített csoport minden szektornál, és hány százalékkal magasabbak azok az oddsuk, mint hasonló emberek más csoportjában.</h3><span class="small">Energiát</span></div></div>
-        <div class="big">Napelemek, 407 ember, 5 ország <small>≈6× </small></div>
-        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="lbl">az odds</span><span class="p"></span></div>
-        <div class="who">vs</div>
-        <ul class="also">
-          <li>Azok a személyek, akik két vagy több alkalommal hátrányos helyzetben voltak az áramköltségekkel kapcsolatban</li>
-          <li>Alacsony bizalom a fizetésben és egy középkori házban élésében is felmerül félelem</li>
-        </ul>
-      </article>
+    
 
-      <article class="fcard" style="--c:var(--housing)">
-        <div class="fhead"><svg><use href="#i-house"/></svg><div><h3>A félelmeket mindhárom országban hasonlóan mérik</h3><span class="small">Házasság</span></div></div>
-        <div class="big">Retrofitting, 263 ember, 3 ország <small>2–3× </small></div>
-        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on"></span><span class="p on" style="opacity:.45"></span><span class="lbl">az odds</span><span class="p"></span></div>
-        <div class="who">vs</div>
-        <ul class="also">
-          <li>Azok a házak, akik a legkisebb házhoz kötött árú kategóriában élnek, négy hazadon keresztül</li>
-          <li>5-13 hazad közül 5-en az esetekben mindannyian vannak érintve, nem egy csoport</li>
-        </ul>
-      </article>
+    <div class="keys">
+      
+      <div class="key"><span class="kb">A</span><div>
+        
+        <h3>Kiket hasonlítunk össze?</h3>
+        
+        <div class="q">Mely emberekről szól az eredmény?</div>
+        
+        <div class="cats">
+          
+          <span class="lab">Példajellemző: elmaradás a rezsiszámlákkal</span>
+          
+          <span class="cat ref"><small>Referencia</small>Soha</span>
+          
+          <span class="cat">Egyszer</span>
+          
+          <span class="cat">Kétszer vagy többször</span>
+        
+        </div>
+        
+        <p>A kérdés minden válaszát egy <b>referenciaválasszal</b>, általában a leggyakoribb válasszal hasonlítjuk össze. A „Kétszer vagy többször” eredmény mindig azokhoz viszonyít, akik azt válaszolták: „Soha”.</p>
+        
+        <div class="held"><svg><use href="#i-confirm"/></svg><span>A modell által ismert minden más tényezőt (életkor, jövedelem, otthon, ország) azonosnak tekintünk, így a különbség ehhez az egy jellemzőhöz kapcsolható.</span></div>
+      
+      </div></div>
 
-      <article class="fcard" style="--c:var(--transport)">
-        <div class="fhead"><svg><use href="#i-car"/></svg><div><h3>Csak az egyik szektornál számít az ország: Portugália magasabb félelmet mutat, mint Németország</h3><span class="small">Vélemény</span></div></div>
-        <div class="big">Elektronikus járművek, 358 ember, 2 ország <small>1.8× </small></div>
-        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on" style="opacity:.6"></span><span class="lbl">az odds</span><span class="p"></span></div>
-        <div class="who">vs</div>
-        <ul class="also">
-          <li>Azok a személyek, akik nem beszélnek az országhoz tartozó nyelvet, és ez növekszik 2.3-ig hosszabb utakon</li>
-          <li>Nővégek, munkanélküliek és gyakori utazók is magasabban vannak a félelmeik</li>
-        </ul>
-      </article>
+      
+
+      <div class="key"><span class="kb">B</span><div>
+        
+        <h3>Esélyhányados</h3>
+        
+        <div class="q">Milyen irányú és mekkora a különbség?</div>
+        
+        <div class="viz"><svg class="scale" viewBox="0 0 240 64" role="img" aria-label="Az esélyhányados skálája 0,25-től 4-ig tart; az 1 nem jelent különbséget">
+
+<rect x="10" y="20" width="110" height="10" fill="var(--housing)" opacity=".18"/><rect x="120" y="20" width="110" height="10" fill="var(--energy)" opacity=".18"/>
+
+<line x1="10" y1="25" x2="230" y2="25" stroke="var(--ink-2)" stroke-width="1"/><line x1="10" y1="22" x2="10" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="10" y="39" text-anchor="middle">0.25</text><line x1="65" y1="22" x2="65" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="65" y="39" text-anchor="middle">0.5</text><line x1="120" y1="22" x2="120" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="120" y="39" text-anchor="middle" class="strong">1</text><line x1="175" y1="22" x2="175" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="175" y="39" text-anchor="middle">2</text><line x1="230" y1="22" x2="230" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="230" y="39" text-anchor="middle">4</text><line x1="120" y1="12" x2="120" y2="34" stroke="var(--ink)" stroke-width="2"/>
+
+<circle cx="193" cy="25" r="5.5" fill="var(--thread)"/><text x="193" y="12" text-anchor="middle" class="acc">2.5</text>
+
+<text x="10" y="58">◂ Kevésbé aggódik</text><text x="116" y="10" text-anchor="end" class="strong">Nincs különbség</text><text x="230" y="58" text-anchor="end">Jobban aggódik ▸</text></svg></div>
+        
+        <p><b>1 felett:</b> a csoport jobban aggódik. <b>1 alatt:</b> kevésbé aggódik. <b>1:</b> nincs különbség.</p>
+        
+        <p>A 2,5 azt jelenti, hogy 2,5-szeres az esélye a magasabb aggodalmi szintnek. A 0,5 ennek a fele.</p>
+      
+      </div></div>
+
+      
+
+      <div class="key"><span class="kb">C</span><div>
+        
+        <h3>95%-os tartomány</h3>
+        
+        <div class="q">Mennyire biztos az esélyhányados?</div>
+        
+        <div class="viz"><svg class="scale cvz" viewBox="0 0 375 224" role="img" aria-label="A felmérés megismétlése kissé eltérő eredményeket ad; ezek 95%-a ezen a tartományon belül van. Ha a tartomány teljesen 1 felett van, az aggodalom egyértelműen nagyobb; ha alatta, kisebb. Ha metszi az 1-et, az irány nem biztos.">
+
+<text x="0" y="9" class="strong">Ha más emberekkel ismételnénk meg a felmérést…</text>
+
+<circle cx="154" cy="60.0" r="2.4" fill="var(--rule)"/><circle cx="161" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="168" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="168" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="168" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="175" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="175" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="175" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="175" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="182" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="182" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="182" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="182" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="182" cy="38.4" r="2.4" fill="var(--thread)"/><circle cx="189" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="189" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="189" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="189" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="189" cy="38.4" r="2.4" fill="var(--thread)"/><circle cx="189" cy="33.0" r="2.4" fill="var(--thread)"/><circle cx="196" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="196" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="196" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="196" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="196" cy="38.4" r="2.4" fill="var(--thread)"/><circle cx="196" cy="33.0" r="2.4" fill="var(--thread)"/><circle cx="196" cy="27.6" r="2.4" fill="var(--thread)"/><circle cx="203" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="203" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="203" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="203" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="203" cy="38.4" r="2.4" fill="var(--thread)"/><circle cx="210" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="210" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="210" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="210" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="217" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="217" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="217" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="224" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="231" cy="60.0" r="2.4" fill="var(--rule)"/><line x1="10" y1="66" x2="230" y2="66" stroke="var(--ink-2)"/>
+
+<line x1="120" y1="20" x2="120" y2="70" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="3 3"/><text x="120" y="80" text-anchor="middle" class="strong">1</text>
+
+<path d="M157 72 v5 H228 v-5" fill="none" stroke="var(--thread)" stroke-width="1.6"/>
+
+<text x="193" y="90" text-anchor="middle" class="acc">95%-os tartomány: 1,6–3,9</text>
+
+<text x="244" y="44">Minden pont egy</text><text x="244" y="56">lehetséges eredmény</text>
+
+<text x="0" y="112" class="strong">A tartomány értelmezése</text>
+
+<line x1="120" y1="120" x2="120" y2="208" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+<line x1="157" y1="132" x2="228" y2="132" stroke="var(--energy)" stroke-width="4" stroke-linecap="round"/><circle cx="193" cy="132" r="4.5" fill="var(--energy)"/><text x="244" y="130" class="strong">Mind 1 felett</text><text x="244" y="142">egyértelműen jobban aggódik</text>
+
+<line x1="10" y1="162" x2="79" y2="162" stroke="var(--housing)" stroke-width="4" stroke-linecap="round"/><circle cx="47" cy="162" r="4.5" fill="var(--housing)"/><text x="244" y="160" class="strong">Mind 1 alatt</text><text x="244" y="172">egyértelműen kevésbé aggódik</text>
+
+<line x1="79" y1="192" x2="183" y2="192" stroke="var(--ink-2)" stroke-width="4" stroke-linecap="round"/><circle cx="131" cy="192" r="4.5" fill="var(--ink-2)"/><text x="244" y="190" class="strong">Metszi az 1-et</text><text x="244" y="202">az irány nem biztos</text>
+
+<text x="120" y="222" text-anchor="middle" class="strong">1 = nincs különbség</text></svg></div>
+        
+        <p>A felmérésben nem mindenki vett részt, csak egy minta. Más emberekkel kissé eltérő esélyhányadost kapnánk. A valódi érték nagy valószínűséggel (95%) a tartományon belül van.</p>
+        
+        <p><b>Szűk tartomány:</b> a nagyság pontos. <b>Széles tartomány:</b> a nagyság bizonytalan.</p>
+      
+      </div></div>
+
+      
+
+      <div class="key"><span class="kb">D</span><div>
+        
+        <h3>A nagyon magas aggodalom változása</h3>
+        
+        <div class="q">Mekkora a különbség hétköznapi számokkal?</div>
+        
+        <div class="twins" aria-label="Két azonos, tipikus ember; a másodikra jellemző ez a tulajdonság">
+          
+          <svg><use href="#i-person"/></svg><span class="who">Nélküle<small>egy tipikus ember</small></span><span></span>
+          
+          <span></span><span class="ptrack"><span style="width:12%"></span></span><b>12%</b>
+          
+          <span class="on"><svg><use href="#i-person"/></svg></span><span class="who">Vele<small>ugyanaz az ember, csak ez változott</small></span><span></span>
+          
+          <span></span><span class="ptrack on"><span style="width:30%"></span></span><b>30%</b>
+        
+        </div>
+        
+        <p>A modell megbecsüli, hogy egy tipikus válaszadó mekkora eséllyel kerül a <b>nagyon magas aggodalmi</b> szintre (a felső ötödbe). Ezután bekapcsolja a jellemzőt, minden mást változatlanul hagy, majd újra becsül.</p>
+        
+        <div class="viz"><svg class="scale" viewBox="0 0 240 64" role="img" aria-label="Változás százalékpontban mínusz 30-tól plusz 30-ig; a 0 nem jelent változást">
+
+<rect x="15" y="20" width="105" height="10" fill="var(--housing)" opacity=".18"/><rect x="120" y="20" width="105" height="10" fill="var(--energy)" opacity=".18"/>
+
+<line x1="15" y1="25" x2="225" y2="25" stroke="var(--ink-2)"/><line x1="15" y1="22" x2="15" y2="28" stroke="var(--ink-2)"/><text x="15" y="40" text-anchor="middle">-30</text><line x1="68" y1="22" x2="68" y2="28" stroke="var(--ink-2)"/><text x="68" y="40" text-anchor="middle">-15</text><line x1="120" y1="22" x2="120" y2="28" stroke="var(--ink-2)"/><text x="120" y="40" text-anchor="middle" class="strong">0</text><line x1="172" y1="22" x2="172" y2="28" stroke="var(--ink-2)"/><text x="172" y="40" text-anchor="middle">+15</text><line x1="225" y1="22" x2="225" y2="28" stroke="var(--ink-2)"/><text x="225" y="40" text-anchor="middle">+30</text><line x1="120" y1="12" x2="120" y2="34" stroke="var(--ink)" stroke-width="2"/>
+
+<circle cx="183" cy="25" r="5.5" fill="var(--thread)"/><text x="183" y="12" text-anchor="middle" class="acc">+18</text>
+
+<text x="15" y="58">◂ Kevésbé valószínű</text><text x="116" y="10" text-anchor="end" class="strong">Nincs változás</text><text x="225" y="58" text-anchor="end">Valószínűbb ▸</text></svg></div>
+        
+        <p>A különbség mértékegysége: <b>százalékpont</b>: 12%-ról 30%-ra, azaz +18 százalékpont.</p>
+      
+      </div></div>
+
+      
+
+      <div class="key"><span class="kb">E</span><div>
+        
+        <h3>Mennyire megbízható?</h3>
+        
+        <div class="q">Valós és megismételhető a kapcsolat?</div>
+        
+        <div class="tiers">
+          
+          <div class="tier"><span class="meter"><i></i><i></i><i></i></span><b>Erős</b><span class="small">p kisebb, mint 0,001</span></div>
+          
+          <div class="tier"><span class="meter"><i></i><i></i><i class="off"></i></span><b>Közepes</b><span class="small">p kisebb, mint 0,01</span></div>
+          
+          <div class="tier"><span class="meter"><i></i><i class="off"></i><i class="off"></i></span><b>Határeset</b><span class="small">p legfeljebb 0,05; óvatosan értelmezendő</span></div>
+        
+        </div>
+        
+        <div class="quad" aria-label="Robusztusság: új mintákban ismét kiválasztják-e a tényezőt, és szignifikáns marad-e">
+          
+          <span class="ay">Szignifikáns marad</span>
+          
+          <span class="qq">A gyakorlatban ritka</span><span class="qq best">Kétszeresen robusztus: a legmegbízhatóbb</span>
+          
+          <span class="qq">Mindkettőben gyenge: csak jelzésértékű</span><span class="qq">Újra kiválasztják, a szignifikancia változó</span>
+          
+          <span></span><span class="ax ax-x">Új mintákban ismét kiválasztják</span>
+        
+        </div>
+        
+        <div class="reach"><span>Csak ennél a kockázatnál</span><span>Csak az egész ágazatban</span><span class="on">Mindkettő: a legkövetkezetesebb</span></div>
+      
+      </div></div>
+
+      
+
+      <div class="key"><span class="kb">F</span><div>
+        
+        <h3>Figyelmeztetés kis csoportokra</h3>
+        
+        <div class="q">Elég sokan vannak a hatás nagyságának becsléséhez?</div>
+        
+        <div class="flagrow">
+          
+          <div class="flag"><span class="w">–</span><span><b>Nincs jelzés:</b> elegendő résztvevő; a nagyság megbízható</span></div>
+          
+          <div class="flag"><span class="w warn" aria-hidden="true">⚠</span><span><b>Jelzés:</b> kevés résztvevő a csoportban. Az irány megbízható, a pontos nagyság nem</span></div>
+        
+        </div>
+        
+        <span class="tag">Kevesebb mint 5 esemény tényezőnként</span>
+      
+      </div></div>
+
+      
+
+      <div class="key wide"><span class="kb">G</span><div>
+        
+        <h3>Hatásnagyság: számít a gyakorlatban?</h3>
+        
+        <div class="q">Egy eredmény lehet valós (E), de kicsi. A B és D egy csoportot mér; ez a két mutató a teljes jellemzőt.</div>
+        
+        <div class="gpair">
+          
+          <div>
+            
+            <h4>A különbségek magyarázott aránya</h4>
+            
+            <div class="viz"><svg class="scale" viewBox="0 0 240 54" role="img" aria-label="Magyarázott arány: 1% alatt nagyon kicsi, 1–6 kicsi, 6–14 közepes, 14% felett nagy"><text x="21" y="12" text-anchor="middle">1%</text><text x="76" y="12" text-anchor="middle">6%</text><text x="164" y="12" text-anchor="middle">14%</text><rect x="10.0" y="18" width="11.0" height="14" fill="var(--muted)"/><rect x="21.0" y="18" width="55.0" height="14" fill="var(--thread)" opacity=".25"/><rect x="76.0" y="18" width="88.0" height="14" fill="var(--thread)" opacity=".5"/><rect x="164.0" y="18" width="66.0" height="14" fill="var(--thread)" opacity=".85"/><text x="16" y="48" text-anchor="middle">nagyon kicsi</text><text x="48" y="48" text-anchor="middle" class="strong">Kicsi</text><text x="120" y="48" text-anchor="middle" class="strong">Közepes</text><text x="197" y="48" text-anchor="middle" class="strong">Nagy</text></svg></div>
+            
+            <p>Az emberek aggodalmának mértéke különbözik. Ez az arány azt mutatja, hogy e különbségekből mennyit magyaráz önmagában a jellemző. <b>A közepes vagy nagy</b> hatások indokolják a beavatkozást.</p>
+            
+            <span class="tag">η² (éta-négyzet)</span><span class="tag">Cohen-féle viszonyítási értékek</span>
+          
+          </div>
+          
+          <div>
+            
+            <h4>Különbség a csoportok között</h4>
+            
+            <div class="viz"><svg class="scale" viewBox="0 0 240 54" role="img" aria-label="Átlagos aggodalmi pontszám 1–25-ig: legkevésbé aggódó csoport 10,2; leginkább aggódó 15,4; különbség 5,2 pont">
+
+<line x1="10" y1="28" x2="230" y2="28" stroke="var(--ink-2)"/><text x="10" y="44" text-anchor="middle">1</text><text x="47" y="44" text-anchor="middle">5</text><text x="92" y="44" text-anchor="middle">10</text><text x="138" y="44" text-anchor="middle">15</text><text x="184" y="44" text-anchor="middle">20</text><text x="230" y="44" text-anchor="middle">25</text>
+
+<line x1="94" y1="28" x2="142" y2="28" stroke="var(--thread)" stroke-width="4"/>
+
+<circle cx="94" cy="28" r="5" fill="var(--card)" stroke="var(--ink-2)" stroke-width="2"/><circle cx="142" cy="28" r="5" fill="var(--thread)"/>
+
+<text x="94" y="14" text-anchor="end">legkevésbé aggódó</text><text x="142" y="14" text-anchor="start">leginkább aggódó</text>
+
+<text x="118" y="22" text-anchor="middle" class="acc">különbség</text></svg></div>
+            
+            <p>Az átlagos aggodalmi pontszám (1–25) különbsége a legkevésbé és leginkább aggódó válaszok között. A nagyobb különbség feltűnőbb eltérést jelent.</p>
+            
+            <span class="tag">ANOVA</span><span class="tag">Különbség pontokban</span>
+          
+          </div>
+        
+        </div>
+      
+      </div></div>
+    
     </div>
 
-    <div class="across">
-      <div class="aico"><svg><use href="#i-wallet"/></svg><div><h3>A távolról dolgozók alacsonyabbak a félelmeikben</h3><p>Finanszírozási nehézség először jelentkezik</p></div></div>
-      <div class="aico"><svg><use href="#i-crowd"/></svg><div><h3>Minden szektornál az already finanszírozási nyomás alatt lévő emberek a transzzió hazadokat jobban érzik</h3><p>A közös aggályok széles válaszokra igényelnek</p></div></div>
-      <div class="aico"><svg><use href="#i-globe"/></svg><div><h3>A leggyakoribb érzett hazadok, mint például magasabb áramköltségek, az egyik csoporthoz legnehezebb kapcsolni. Ilyenkor a megoldások mindenki számára elérhetők kellene.</h3><p>Az esetek fontosabbak az országnál</p></div></div>
+    
+
+    <div class="example">
+      
+      <div class="ex-head">
+        
+        <h3>Az összkép: egy példa</h3>
+        
+        <span class="small">Szemléltető értékek, nem valódi eredmény</span>
+      
+      </div>
+      
+      <p class="ex-case">Kockázat: <b>Magasabb villanyszámlák</b>. Jellemző: <b>elmaradás a rezsiszámlákkal</b>.</p>
+      
+      <div class="concl">
+        
+        <div class="cl"><span class="kb">A</span><span class="val">Kétszer vagy többször<small>a „Soha” válaszhoz képest</small></span><p>Azok, akik legalább kétszer elmaradtak a számlákkal, összehasonlítva hasonló emberekkel, akiknél ez soha nem fordult elő.</p></div>
+        
+        <div class="cl"><span class="kb">B</span><span class="val">2.5<small>esélyhányados</small></span><p>Az 1 feletti érték nagyobb aggodalmat jelent: 2,5-szeres esélyt a magasabb aggodalmi szintre.</p></div>
+        
+        <div class="cl"><span class="kb">C</span><span class="val">1,6–3,9<small>95%-os tartomány</small></span><p>A teljes tartomány 1 felett van, tehát egyértelműen nagyobb az aggodalom. A valódi esélyhányados 1,6 és 3,9 közé esik.</p></div>
+        
+        <div class="cl"><span class="kb">D</span><span class="val">+18 százalékpont<small>12% → 30%</small></span><p>Egy tipikus embernél a számlákkal való elmaradás 12%-ról 30%-ra növeli a nagyon magas aggodalom esélyét.</p></div>
+        
+        <div class="cl"><span class="kb">E</span><span class="val">Erős<small>mindkét szinten robusztus</small></span><p>A kapcsolat valós, új mintákban is megjelenik, és erre a kockázatra, valamint az egész ágazatra is érvényes.</p></div>
+        
+        <div class="cl"><span class="kb">F</span><span class="val">Nincs jelzés<small>figyelmeztetés kis csoportokra</small></span><p>Elegendően sokan vannak a csoportban, ezért a nagyság megbízható.</p></div>
+        
+        <div class="cl"><span class="kb">G</span><span class="val">7%, 5,2 pont<small>magyarázott, különbség</small></span><p>Közepes hatás: a gyakorlatban is számít, nem csak statisztikailag.</p></div>
+      
+      </div>
+      
+      <div class="summary"><b>Egyszerűen fogalmazva:</b> Akik ismételten elmaradnak a számláikkal, egyértelműen és megbízhatóan jobban aggódnak a magasabb villanyszámlák miatt, mint akik nem maradnak el.</div>
+    
     </div>
 
-    <p class="caveat">Az ország csak magyarázza 1–4%-ot a félelmek eltérésében. A megoldásokat az emberek helyzetére lehet építeni, és ezeket több országban is alkalmazni.</p>
+    
+
+    <div class="remind">
+      
+      <div><svg><use href="#i-people"/></svg><p style="margin:0"><b>Észlelt, nem mért</b><span>Az eredmények azt mutatják, hogyan érzékelik az emberek a kockázatot, nem a ténylegesen bekövetkezett károkat.</span></p></div>
+      
+      <div><svg><use href="#i-confirm"/></svg><p style="margin:0"><b>Összefügg, nem okoz</b><span>Egy csoport jobban aggódik. A modell nem mutatja meg, miért.</span></p></div>
+      
+      <div><svg><use href="#i-globe"/></svg><p style="margin:0"><b>Csak a felmérés országai</b><span>Minden ágazat azokat az országokat tükrözi, ahol a felmérés készült.</span></p></div>
+    
+    </div>
+  
   </section>
 
   <div class="nav">

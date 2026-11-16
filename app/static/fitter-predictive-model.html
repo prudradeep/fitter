@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>How Hazards Are Predicted</title>
 <link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/fitter-predictive-model.css">
 </head>
 <body>
@@ -33,6 +36,7 @@
     <symbol id="i-wallet" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h26a2 2 0 0 1 2 2v18a2 2 0 0 1-2 2H6Z"/><path d="M6 12 26 6v6"/><path d="M34 19h-7a3 3 0 0 0 0 6h7"/></g></symbol>
     <symbol id="i-crowd" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="14" r="3"/><circle cx="20" cy="12" r="3"/><circle cx="30" cy="14" r="3"/><path d="M4 28c0-4 2.5-7 6-7s6 3 6 7M14 26c0-4 2.5-7 6-7s6 3 6 7M24 28c0-4 2.5-7 6-7s6 3 6 7"/></g></symbol>
     <symbol id="i-globe" viewBox="0 0 40 40"><g fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="20" r="15"/><path d="M5 20h30M20 5c5 5 5 25 0 30M20 5c-5 5-5 25 0 30"/></g></symbol>
+  <symbol id="i-person" viewBox="0 0 40 40"><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="12" r="6"/><path d="M8 36c0-7 5-12 12-12s12 5 12 12"/></g></symbol>
   </defs>
 </svg>
 
@@ -46,7 +50,7 @@
       <span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       <button class="tab" role="tab" id="t2" aria-controls="s2" aria-selected="false" tabindex="-1"><span class="n">2</span><span class="t"><b>Building the predictive model</b><span>From ratings to predictions</span></span></button>
       <span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-      <button class="tab" role="tab" id="t3" aria-controls="s3" aria-selected="false" tabindex="-1"><span class="n">3</span><span class="t"><b>Key results</b><span>Who is most concerned</span></span></button>
+      <button class="tab" role="tab" id="t3" aria-controls="s3" aria-selected="false" tabindex="-1"><span class="n">3</span><span class="t"><b>Reading the results</b><span>What each number means</span></span></button>
     </div>
   </div>
 
@@ -275,53 +279,150 @@
   <!-- ===================== SLIDE 3 ===================== -->
   <section class="slide" id="s3" role="tabpanel" aria-labelledby="t3" hidden>
     <div class="slide-top">
-      <h2>What the model found</h2>
-      <span class="src">Results, <b>FITTER-EU D4.4</b></span>
+      <h2>How to read a model result</h2>
+      <span class="src">Result tables, <b>FITTER-EU D4.4</b></span>
     </div>
-    <p class="lede">The strongest confirmed group in each sector, and how much higher their odds of high concern are compared with similar people outside that group.</p>
+    <p class="lede3">Each result links one group of people to one hazard. Seven values describe it. Here is what each one means.</p>
 
-    <div class="findings">
-      <article class="fcard" style="--c:var(--energy)">
-        <div class="fhead"><svg><use href="#i-solar"/></svg><div><h3>Energy</h3><span class="small">Solar panels, 407 people, 5 countries</span></div></div>
-        <div class="big">≈6× <small>the odds</small></div>
-        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="p on"></span><span class="lbl">vs</span><span class="p"></span></div>
-        <div class="who">People who fell behind on utility bills two or more times</div>
-        <ul class="also">
-          <li>Low confidence in paying bills and living in a mid-century home also raise concern</li>
-          <li>Concern levels are similar across all five countries</li>
-        </ul>
-      </article>
+    <div class="keys">
+      <div class="key"><span class="kb">A</span><div>
+        <h3>Who is compared</h3>
+        <div class="q">Which people is the result about?</div>
+        <div class="cats">
+          <span class="lab">Example characteristic: behind on utility bills</span>
+          <span class="cat ref"><small>Reference</small>Never</span>
+          <span class="cat">Once</span>
+          <span class="cat">Twice or more</span>
+        </div>
+        <p>Every answer to a question is compared with one <b>reference answer</b>, usually the most common one. A result for “Twice or more” always means: compared with people who answered “Never”.</p>
+        <div class="held"><svg><use href="#i-confirm"/></svg><span>Everything else the model knows (age, income, home, country) is held equal, so the difference belongs to this one characteristic.</span></div>
+      </div></div>
 
-      <article class="fcard" style="--c:var(--housing)">
-        <div class="fhead"><svg><use href="#i-house"/></svg><div><h3>Housing</h3><span class="small">Retrofitting, 263 people, 3 countries</span></div></div>
-        <div class="big">2–3× <small>the odds</small></div>
-        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on"></span><span class="p on" style="opacity:.45"></span><span class="lbl">vs</span><span class="p"></span></div>
-        <div class="who">Households in the lowest housing-cost band, across four hazards</div>
-        <ul class="also">
-          <li>For 5 of 13 hazards, concern is shared by everyone rather than one group</li>
-          <li>The only sector where country matters: Portugal is more concerned than Germany</li>
-        </ul>
-      </article>
+      <div class="key"><span class="kb">B</span><div>
+        <h3>Odds ratio</h3>
+        <div class="q">Which way, and how strongly?</div>
+        <div class="viz"><svg class="scale" viewBox="0 0 240 64" role="img" aria-label="Odds ratio scale from 0.25 to 4; 1 means no difference">
+<rect x="10" y="20" width="110" height="10" fill="var(--housing)" opacity=".18"/><rect x="120" y="20" width="110" height="10" fill="var(--energy)" opacity=".18"/>
+<line x1="10" y1="25" x2="230" y2="25" stroke="var(--ink-2)" stroke-width="1"/><line x1="10" y1="22" x2="10" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="10" y="39" text-anchor="middle">0.25</text><line x1="65" y1="22" x2="65" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="65" y="39" text-anchor="middle">0.5</text><line x1="120" y1="22" x2="120" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="120" y="39" text-anchor="middle" class="strong">1</text><line x1="175" y1="22" x2="175" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="175" y="39" text-anchor="middle">2</text><line x1="230" y1="22" x2="230" y2="28" stroke="var(--ink-2)" stroke-width="1"/><text x="230" y="39" text-anchor="middle">4</text><line x1="120" y1="12" x2="120" y2="34" stroke="var(--ink)" stroke-width="2"/>
+<circle cx="193" cy="25" r="5.5" fill="var(--thread)"/><text x="193" y="12" text-anchor="middle" class="acc">2.5</text>
+<text x="10" y="58">◂ Less concerned</text><text x="116" y="10" text-anchor="end" class="strong">No difference</text><text x="230" y="58" text-anchor="end">More concerned ▸</text></svg></div>
+        <p><b>Above 1:</b> the group is more concerned. <b>Below 1:</b> less concerned. <b>1:</b> no difference.</p>
+        <p>2.5 means 2.5 times the odds of being at a higher concern level. 0.5 means half the odds.</p>
+      </div></div>
 
-      <article class="fcard" style="--c:var(--transport)">
-        <div class="fhead"><svg><use href="#i-car"/></svg><div><h3>Transport</h3><span class="small">Electric vehicles, 358 people, 2 countries</span></div></div>
-        <div class="big">1.8× <small>the odds</small></div>
-        <div class="odds" aria-hidden="true"><span class="p on"></span><span class="p on" style="opacity:.6"></span><span class="lbl">vs</span><span class="p"></span></div>
-        <div class="who">People who do not speak the national language, rising to 2.3× for longer journeys</div>
-        <ul class="also">
-          <li>Women, unemployed people and frequent travellers are also more concerned</li>
-          <li>Remote workers are less concerned</li>
-        </ul>
-      </article>
+      <div class="key"><span class="kb">C</span><div>
+        <h3>95% range</h3>
+        <div class="q">How sure can we be of the odds ratio?</div>
+        <div class="viz"><svg class="scale cvz" viewBox="0 0 375 224" role="img" aria-label="Repeating the survey gives slightly different results; 95 percent of them fall within the range. A range fully above 1 means clearly more concerned, fully below 1 clearly less concerned, crossing 1 means the direction is not certain.">
+<text x="0" y="9" class="strong">If the survey were repeated with other people…</text>
+<circle cx="154" cy="60.0" r="2.4" fill="var(--rule)"/><circle cx="161" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="168" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="168" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="168" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="175" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="175" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="175" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="175" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="182" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="182" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="182" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="182" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="182" cy="38.4" r="2.4" fill="var(--thread)"/><circle cx="189" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="189" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="189" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="189" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="189" cy="38.4" r="2.4" fill="var(--thread)"/><circle cx="189" cy="33.0" r="2.4" fill="var(--thread)"/><circle cx="196" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="196" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="196" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="196" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="196" cy="38.4" r="2.4" fill="var(--thread)"/><circle cx="196" cy="33.0" r="2.4" fill="var(--thread)"/><circle cx="196" cy="27.6" r="2.4" fill="var(--thread)"/><circle cx="203" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="203" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="203" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="203" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="203" cy="38.4" r="2.4" fill="var(--thread)"/><circle cx="210" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="210" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="210" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="210" cy="43.8" r="2.4" fill="var(--thread)"/><circle cx="217" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="217" cy="54.6" r="2.4" fill="var(--thread)"/><circle cx="217" cy="49.2" r="2.4" fill="var(--thread)"/><circle cx="224" cy="60.0" r="2.4" fill="var(--thread)"/><circle cx="231" cy="60.0" r="2.4" fill="var(--rule)"/><line x1="10" y1="66" x2="230" y2="66" stroke="var(--ink-2)"/>
+<line x1="120" y1="20" x2="120" y2="70" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="3 3"/><text x="120" y="80" text-anchor="middle" class="strong">1</text>
+<path d="M157 72 v5 H228 v-5" fill="none" stroke="var(--thread)" stroke-width="1.6"/>
+<text x="193" y="90" text-anchor="middle" class="acc">95% range: 1.6 to 3.9</text>
+<text x="244" y="44">Each dot is one</text><text x="244" y="56">possible result</text>
+<text x="0" y="112" class="strong">How to read the range</text>
+<line x1="120" y1="120" x2="120" y2="208" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<line x1="157" y1="132" x2="228" y2="132" stroke="var(--energy)" stroke-width="4" stroke-linecap="round"/><circle cx="193" cy="132" r="4.5" fill="var(--energy)"/><text x="244" y="130" class="strong">All above 1</text><text x="244" y="142">clearly more concerned</text>
+<line x1="10" y1="162" x2="79" y2="162" stroke="var(--housing)" stroke-width="4" stroke-linecap="round"/><circle cx="47" cy="162" r="4.5" fill="var(--housing)"/><text x="244" y="160" class="strong">All below 1</text><text x="244" y="172">clearly less concerned</text>
+<line x1="79" y1="192" x2="183" y2="192" stroke="var(--ink-2)" stroke-width="4" stroke-linecap="round"/><circle cx="131" cy="192" r="4.5" fill="var(--ink-2)"/><text x="244" y="190" class="strong">Crosses 1</text><text x="244" y="202">direction not certain</text>
+<text x="120" y="222" text-anchor="middle" class="strong">1 = no difference</text></svg></div>
+        <p>The survey asked some people, not everyone. Asking different people would give a slightly different odds ratio. The true value is very likely (95%) inside the range.</p>
+        <p><b>Narrow range:</b> the size is precise. <b>Wide range:</b> the size is uncertain.</p>
+      </div></div>
+
+      <div class="key"><span class="kb">D</span><div>
+        <h3>Change in very high concern</h3>
+        <div class="q">How much more likely, in everyday numbers?</div>
+        <div class="twins" aria-label="Two identical typical people; the second has the characteristic">
+          <svg><use href="#i-person"/></svg><span class="who">Without it<small>a typical person</small></span><span></span>
+          <span></span><span class="ptrack"><span style="width:12%"></span></span><b>12%</b>
+          <span class="on"><svg><use href="#i-person"/></svg></span><span class="who">With it<small>same person, only this changed</small></span><span></span>
+          <span></span><span class="ptrack on"><span style="width:30%"></span></span><b>30%</b>
+        </div>
+        <p>The model takes a typical respondent and predicts their chance of being in the <b>very high concern</b> level (the top fifth). It then switches on the characteristic, keeps everything else the same, and predicts again.</p>
+        <div class="viz"><svg class="scale" viewBox="0 0 240 64" role="img" aria-label="Change in percentage points from minus 30 to plus 30; 0 means no change">
+<rect x="15" y="20" width="105" height="10" fill="var(--housing)" opacity=".18"/><rect x="120" y="20" width="105" height="10" fill="var(--energy)" opacity=".18"/>
+<line x1="15" y1="25" x2="225" y2="25" stroke="var(--ink-2)"/><line x1="15" y1="22" x2="15" y2="28" stroke="var(--ink-2)"/><text x="15" y="40" text-anchor="middle">-30</text><line x1="68" y1="22" x2="68" y2="28" stroke="var(--ink-2)"/><text x="68" y="40" text-anchor="middle">-15</text><line x1="120" y1="22" x2="120" y2="28" stroke="var(--ink-2)"/><text x="120" y="40" text-anchor="middle" class="strong">0</text><line x1="172" y1="22" x2="172" y2="28" stroke="var(--ink-2)"/><text x="172" y="40" text-anchor="middle">+15</text><line x1="225" y1="22" x2="225" y2="28" stroke="var(--ink-2)"/><text x="225" y="40" text-anchor="middle">+30</text><line x1="120" y1="12" x2="120" y2="34" stroke="var(--ink)" stroke-width="2"/>
+<circle cx="183" cy="25" r="5.5" fill="var(--thread)"/><text x="183" y="12" text-anchor="middle" class="acc">+18</text>
+<text x="15" y="58">◂ Less likely</text><text x="116" y="10" text-anchor="end" class="strong">No change</text><text x="225" y="58" text-anchor="end">More likely ▸</text></svg></div>
+        <p>The difference is in <b>percentage points</b>: 12% to 30% is +18 points.</p>
+      </div></div>
+
+      <div class="key"><span class="kb">E</span><div>
+        <h3>How much to trust it</h3>
+        <div class="q">Is the link real and repeatable?</div>
+        <div class="tiers">
+          <div class="tier"><span class="meter"><i></i><i></i><i></i></span><b>Strong</b><span class="small">p below 0.001</span></div>
+          <div class="tier"><span class="meter"><i></i><i></i><i class="off"></i></span><b>Moderate</b><span class="small">p below 0.01</span></div>
+          <div class="tier"><span class="meter"><i></i><i class="off"></i><i class="off"></i></span><b>Borderline</b><span class="small">p up to 0.05, use with care</span></div>
+        </div>
+        <div class="quad" aria-label="Robustness: whether the factor is picked again and stays significant in reshuffled samples">
+          <span class="ay">Stays significant</span>
+          <span class="qq">Rare in practice</span><span class="qq best">Doubly robust: most reliable</span>
+          <span class="qq">Fragile on both: indicative only</span><span class="qq">Picked again, significance varies</span>
+          <span></span><span class="ax ax-x">Picked again in new samples</span>
+        </div>
+        <div class="reach"><span>This hazard only</span><span>Whole sector only</span><span class="on">Both: most consistent</span></div>
+      </div></div>
+
+      <div class="key"><span class="kb">F</span><div>
+        <h3>Small-group warning</h3>
+        <div class="q">Are there enough people to size the effect?</div>
+        <div class="flagrow">
+          <div class="flag"><span class="w">–</span><span><b>No flag:</b> enough people, the size can be relied on</span></div>
+          <div class="flag"><span class="w warn" aria-hidden="true">⚠</span><span><b>Flag:</b> few people in the group. Trust the direction, not the exact size</span></div>
+        </div>
+        <span class="tag">Fewer than 5 events per factor</span>
+      </div></div>
+
+      <div class="key wide"><span class="kb">G</span><div>
+        <h3>Effect size: does it matter in practice?</h3>
+        <div class="q">A result can be real (E) but small. B and D size one group; these two size the whole characteristic.</div>
+        <div class="gpair">
+          <div>
+            <h4>Share of differences explained</h4>
+            <div class="viz"><svg class="scale" viewBox="0 0 240 54" role="img" aria-label="Share of differences explained: below 1 percent tiny, 1 to 6 small, 6 to 14 medium, 14 percent or more large"><text x="21" y="12" text-anchor="middle">1%</text><text x="76" y="12" text-anchor="middle">6%</text><text x="164" y="12" text-anchor="middle">14%</text><rect x="10.0" y="18" width="11.0" height="14" fill="var(--muted)"/><rect x="21.0" y="18" width="55.0" height="14" fill="var(--thread)" opacity=".25"/><rect x="76.0" y="18" width="88.0" height="14" fill="var(--thread)" opacity=".5"/><rect x="164.0" y="18" width="66.0" height="14" fill="var(--thread)" opacity=".85"/><text x="16" y="48" text-anchor="middle">tiny</text><text x="48" y="48" text-anchor="middle" class="strong">Small</text><text x="120" y="48" text-anchor="middle" class="strong">Medium</text><text x="197" y="48" text-anchor="middle" class="strong">Large</text></svg></div>
+            <p>People differ in how concerned they are. This is the share of those differences that the characteristic explains on its own. <b>Medium or large</b> effects are the ones worth acting on.</p>
+            <span class="tag">η² (eta-squared)</span><span class="tag">Cohen benchmarks</span>
+          </div>
+          <div>
+            <h4>Gap between groups</h4>
+            <div class="viz"><svg class="scale" viewBox="0 0 240 54" role="img" aria-label="Average concern score on a 1 to 25 scale: least concerned group at 10.2, most concerned at 15.4, a gap of 5.2 points">
+<line x1="10" y1="28" x2="230" y2="28" stroke="var(--ink-2)"/><text x="10" y="44" text-anchor="middle">1</text><text x="47" y="44" text-anchor="middle">5</text><text x="92" y="44" text-anchor="middle">10</text><text x="138" y="44" text-anchor="middle">15</text><text x="184" y="44" text-anchor="middle">20</text><text x="230" y="44" text-anchor="middle">25</text>
+<line x1="94" y1="28" x2="142" y2="28" stroke="var(--thread)" stroke-width="4"/>
+<circle cx="94" cy="28" r="5" fill="var(--card)" stroke="var(--ink-2)" stroke-width="2"/><circle cx="142" cy="28" r="5" fill="var(--thread)"/>
+<text x="94" y="14" text-anchor="end">least concerned</text><text x="142" y="14" text-anchor="start">most concerned</text>
+<text x="118" y="22" text-anchor="middle" class="acc">gap</text></svg></div>
+            <p>The difference in average concern score (1 to 25) between the most and least concerned answers. A bigger gap means a more visible difference.</p>
+            <span class="tag">ANOVA</span><span class="tag">Gap points</span>
+          </div>
+        </div>
+      </div></div>
     </div>
 
-    <div class="across">
-      <div class="aico"><svg><use href="#i-wallet"/></svg><div><h3>Financial strain comes first</h3><p>In every sector, people already under financial pressure see transition hazards as more serious.</p></div></div>
-      <div class="aico"><svg><use href="#i-crowd"/></svg><div><h3>Shared worries need broad answers</h3><p>The most widely felt hazards, such as higher bills, are hardest to link to one group. They call for measures that reach everyone.</p></div></div>
-      <div class="aico"><svg><use href="#i-globe"/></svg><div><h3>Circumstances matter more than country</h3><p>Country explains only 1–4% of differences in concern. Measures can be designed around people's situations and applied across countries.</p></div></div>
+    <div class="example">
+      <div class="ex-head">
+        <h3>Putting it together: an example</h3>
+        <span class="small">Illustrative values, not a real result</span>
+      </div>
+      <p class="ex-case">Hazard: <b>Higher electricity bills</b>. Characteristic: <b>behind on utility bills</b>.</p>
+      <div class="concl">
+        <div class="cl"><span class="kb">A</span><span class="val">Twice or more<small>vs “Never”</small></span><p>People who fell behind twice or more, compared with otherwise similar people who never did.</p></div>
+        <div class="cl"><span class="kb">B</span><span class="val">2.5<small>odds ratio</small></span><p>Above 1, so they are more concerned: 2.5 times the odds of a higher concern level.</p></div>
+        <div class="cl"><span class="kb">C</span><span class="val">1.6 – 3.9<small>95% range</small></span><p>The whole range is above 1, so they are clearly more concerned. The true odds ratio is somewhere between 1.6 and 3.9.</p></div>
+        <div class="cl"><span class="kb">D</span><span class="val">+18 pts<small>12% → 30%</small></span><p>For a typical person, falling behind on bills raises the chance of very high concern from 12% to 30%.</p></div>
+        <div class="cl"><span class="kb">E</span><span class="val">Strong<small>doubly robust, both</small></span><p>The link is real, repeats in new samples, and holds for this hazard and the whole sector.</p></div>
+        <div class="cl"><span class="kb">F</span><span class="val">No flag<small>small-group warning</small></span><p>Enough people in the group, so the size can be relied on.</p></div>
+        <div class="cl"><span class="kb">G</span><span class="val">7%, 5.2 pts<small>explained, gap</small></span><p>A medium effect: large enough to matter in practice, not just statistically.</p></div>
+      </div>
+      <div class="summary"><b>In plain words:</b> people who repeatedly fall behind on their bills are clearly, reliably and noticeably more worried about higher electricity bills than people who do not.</div>
     </div>
 
-    <p class="caveat">These results describe how surveyed people perceive hazards, not harm that has been measured. Odds compare a group with otherwise similar people outside it.</p>
+    <div class="remind">
+      <div><svg><use href="#i-people"/></svg><p style="margin:0"><b>Perceived, not measured</b><span>Results show how people see a hazard, not harm that has happened.</span></p></div>
+      <div><svg><use href="#i-confirm"/></svg><p style="margin:0"><b>Linked, not caused</b><span>A group is more concerned. The model does not show why.</span></p></div>
+      <div><svg><use href="#i-globe"/></svg><p style="margin:0"><b>Survey countries only</b><span>Each sector reflects the countries where it was surveyed.</span></p></div>
+    </div>
   </section>
 
   <div class="nav">
