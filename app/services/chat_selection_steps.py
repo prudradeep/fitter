@@ -2313,7 +2313,12 @@ class ChatSelectionStepsMixin:
                 continue
             seen.add(hazard_key)
             profiles = self._stored_hazard_profiles(session, hazard_name)
-            if not profiles or self._profiles_have_population_percentages(profiles):
+            if not profiles:
+                continue
+            if (
+                self._profiles_have_population_percentages(profiles)
+                and self._profiles_have_indicator_labels(profiles)
+            ):
                 continue
             enriched_profiles[hazard_name] = (
                 await self._additional_profiles_with_population_context(
@@ -2342,3 +2347,16 @@ class ChatSelectionStepsMixin:
             ):
                 return True
         return False
+
+    @staticmethod
+    def _profiles_have_indicator_labels(
+        profiles: list[dict[str, object]],
+    ) -> bool:
+        return all(
+            not isinstance(profile, dict)
+            or (
+                str(profile.get("proposed_eurostat_dataset") or "").strip()
+                and str(profile.get("proposed_indicator_label") or "").strip()
+            )
+            for profile in profiles
+        )

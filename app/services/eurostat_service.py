@@ -12,10 +12,6 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Country, EurostatPopulationCache, Region, Sector, SystemHazard
-from app.services.profile_category_matching import (
-    match_profile_category,
-    match_profile_category_semantic,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +59,7 @@ class EurostatService:
             "region": region,
             "sector": sector,
             "hazard": hazard,
-            "confirmed_predictor_category": confirmed_predictor_category,
+            "indicator": confirmed_predictor_category,
             "run_mode": "full_analysis",
         }
         logger.info(
@@ -107,15 +103,8 @@ class EurostatService:
         hazard: str | None = None,
         confirmed_predictor_category: str | None = None,
     ) -> dict[str, object] | None:
-        category = match_profile_category(confirmed_predictor_category)
-        if category is None:
-            category = await match_profile_category_semantic(
-                confirmed_predictor_category, predictor_name
-            )
-        if category is None:
-            return None
-        mapping = predictor_eurostat_mapping(category)
-        if mapping is None:
+        profile = str(confirmed_predictor_category or predictor_name).strip()
+        if not profile:
             return None
         region = nuts_code or country_code
         response = await self.get_profile_population(
@@ -123,24 +112,30 @@ class EurostatService:
             region=region,
             sector=sector or "",
             hazard=hazard or "",
-            confirmed_predictor_category=category,
+            confirmed_predictor_category=profile,
         )
         cache_row = self._profile_population_cache_row(
             country=country_code,
             region=region,
             sector=sector or "",
             hazard=hazard or "",
-            profile=category,
+            profile=profile,
         )
         percentages = population_percentages(response)
-        if percentages["regional_pct"] is None:
-            return None
         eurostat_data = _eurostat_response_data(response)
+        metadata = eurostat_data.get("metadata")
+        indicator_mapping = (
+            metadata.get("indicator_mapping") if isinstance(metadata, dict) else None
+        )
+        if not isinstance(indicator_mapping, dict):
+            indicator_mapping = {}
         dataset_code = _first_text(
             eurostat_data.get("dataset_code"),
+            indicator_mapping.get("proposed_eurostat_dataset"),
             response.get("dataset_code"),
         )
         indicator_label = _first_text(
+            indicator_mapping.get("proposed_indicator_label"),
             eurostat_data.get("indicator_label"),
             eurostat_data.get("proposed_indicator_label"),
             eurostat_data.get("indicator_name"),
@@ -148,17 +143,23 @@ class EurostatService:
             response.get("proposed_indicator_label"),
             response.get("indicator_name"),
         )
+        if percentages["regional_pct"] is None and not (dataset_code or indicator_label):
+            return None
         return {
             "eurostat_population_cache_id": cache_row.id if cache_row is not None else None,
-            "prevalence": percentages["regional_pct"] / 100,
+            "prevalence": (
+                percentages["regional_pct"] / 100
+                if percentages["regional_pct"] is not None
+                else None
+            ),
             "population_pct": percentages["regional_pct"],
             "national_population_pct": percentages["national_pct"],
             "source": "Population analysis API cache",
             "dataset": dataset_code or "NA",
             "proposed_eurostat_dataset": dataset_code or "NA",
-            "proposed_indicator_label": indicator_label or category,
+            "proposed_indicator_label": indicator_label or profile,
             "geo": region,
-            "bucket": mapping.bucket,
+            "bucket": 1,
         }
 
     def _cached_profile_population(

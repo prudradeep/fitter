@@ -882,6 +882,7 @@ class ChatHazardProfilesMixin:
                 category = categories_by_profile.get(id(profile))
                 if category:
                     updated["confirmed_predictor_category"] = category
+                self._copy_population_indicator_labels(updated, matches)
                 enriched.append(_mark_profile_population_unavailable(updated))
                 continue
             self._store_matched_profile_population_references(
@@ -959,6 +960,8 @@ class ChatHazardProfilesMixin:
                 "national_population_pct": prevalence.get("national_population_pct"),
                 "source": prevalence.get("source"),
                 "dataset": prevalence.get("dataset"),
+                "proposed_eurostat_dataset": prevalence.get("proposed_eurostat_dataset"),
+                "proposed_indicator_label": prevalence.get("proposed_indicator_label"),
                 "geo": prevalence.get("geo"),
             }
         ]
@@ -975,12 +978,12 @@ class ChatHazardProfilesMixin:
         sector = self.db.get(Sector, session.sector_id) if session.sector_id else None
         region = self.db.get(Region, session.region_id) if session.region_id else None
         if country is None or sector is None:
-            return profiles
+            return self._ensure_additional_profile_indicator_labels(profiles)
         country_name = str(country.name or "").strip()
         region_name = str((region.name if region else country.name) or "").strip()
         sector_name = str(sector.name or "").strip()
         if not country_name or not region_name or not sector_name:
-            return profiles
+            return self._ensure_additional_profile_indicator_labels(profiles)
 
         enriched: list[dict[str, str]] = []
         for profile in profiles:
@@ -988,22 +991,26 @@ class ChatHazardProfilesMixin:
                 enriched.append(profile)
                 continue
             lookup_labels = self._additional_profile_population_lookup_labels(profile)
-            category = await match_profile_data_semantic(profile)
+            profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
             updated = dict(profile)
-            if category:
-                updated["confirmed_predictor_category"] = category
-            if category is None:
+            self._set_additional_profile_indicator_label_fallbacks(
+                updated,
+                profile_name,
+            )
+            if profile_name:
+                updated["confirmed_predictor_category"] = profile_name
+            if not profile_name:
                 enriched.append(_mark_profile_population_unavailable(updated))
                 continue
             population_profiles: list[dict[str, object]] = []
             try:
                 prevalence = await self.eurostat.get_prevalence(
-                    category,
+                    profile_name,
                     country_code=country_name,
                     nuts_code=region_name,
                     sector=sector_name,
                     hazard=hazard,
-                    confirmed_predictor_category=category,
+                    confirmed_predictor_category=profile_name,
                 )
             except Exception:
                 logger.exception(
@@ -1013,7 +1020,7 @@ class ChatHazardProfilesMixin:
             if prevalence is not None:
                 population_profiles.append(
                     {
-                        "name": category,
+                        "name": profile_name,
                         "eurostat_population_cache_id": prevalence.get(
                             "eurostat_population_cache_id"
                         ),
@@ -1021,6 +1028,12 @@ class ChatHazardProfilesMixin:
                         "national_population_pct": prevalence.get("national_population_pct"),
                         "source": prevalence.get("source"),
                         "dataset": prevalence.get("dataset"),
+                        "proposed_eurostat_dataset": prevalence.get(
+                            "proposed_eurostat_dataset"
+                        ),
+                        "proposed_indicator_label": prevalence.get(
+                            "proposed_indicator_label"
+                        ),
                         "geo": prevalence.get("geo"),
                     }
                 )
@@ -1029,6 +1042,8 @@ class ChatHazardProfilesMixin:
                 if population_profiles
                 else None
             )
+            if prevalence is not None:
+                self._copy_population_indicator_labels(updated, [prevalence])
             if percentages is None:
                 enriched.append(_mark_profile_population_unavailable(updated))
                 continue
@@ -1038,14 +1053,50 @@ class ChatHazardProfilesMixin:
             updated["population_source"] = "Eurostat"
             updated["population_lookup_labels"] = lookup_labels
             updated["population_data_status"] = "available"
-            updated["proposed_eurostat_dataset"] = prevalence.get(
-                "proposed_eurostat_dataset", "NA"
+            updated["proposed_eurostat_dataset"] = (
+                prevalence.get("proposed_eurostat_dataset") or "NA"
             )
-            updated["proposed_indicator_label"] = prevalence.get(
-                "proposed_indicator_label", category
+            updated["proposed_indicator_label"] = (
+                prevalence.get("proposed_indicator_label") or profile_name or "NA"
             )
             enriched.append(updated)
         return enriched
+
+    @classmethod
+    def _ensure_additional_profile_indicator_labels(
+        cls,
+        profiles: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        enriched: list[dict[str, str]] = []
+        for profile in profiles:
+            updated = dict(profile)
+            name = str(updated.get("name") or updated.get("profile") or "").strip()
+            cls._set_additional_profile_indicator_label_fallbacks(updated, name)
+            enriched.append(updated)
+        return enriched
+
+    @staticmethod
+    def _set_additional_profile_indicator_label_fallbacks(
+        profile: dict[str, object],
+        profile_name: str,
+    ) -> None:
+        if not str(profile.get("proposed_eurostat_dataset") or "").strip():
+            profile["proposed_eurostat_dataset"] = "NA"
+        if not str(profile.get("proposed_indicator_label") or "").strip():
+            profile["proposed_indicator_label"] = profile_name or "NA"
+
+    @staticmethod
+    def _copy_population_indicator_labels(
+        target: dict[str, object],
+        matches: list[dict[str, object]],
+    ) -> None:
+        for key in ("proposed_eurostat_dataset", "proposed_indicator_label"):
+            value = next(
+                (str(match.get(key) or "").strip() for match in matches if match.get(key)),
+                "",
+            )
+            if value:
+                target[key] = value
 
     @classmethod
     def _additional_profile_population_lookup_labels(
@@ -1208,7 +1259,11 @@ class ChatHazardProfilesMixin:
             for profile in profiles
             if isinstance(profile, dict)
             and str(profile.get("name") or "").strip()
-            and profile.get("population_pct") is not None
+            and (
+                profile.get("population_pct") is not None
+                or str(profile.get("proposed_eurostat_dataset") or "").strip()
+                or str(profile.get("proposed_indicator_label") or "").strip()
+            )
         ]
 
     def _matched_population_profile_from_db(

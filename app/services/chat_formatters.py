@@ -434,6 +434,11 @@ def _append_hazard_profiles(
         if isinstance(item, dict)
     }
     profile_items: list[dict[str, object]] = []
+    additional_hazard_keys = {
+        _normalize_key(item)
+        for item in [*(session.additional_hazards or []), *(session.custom_hazards or [])]
+    }
+    is_additional_hazard = _normalize_key(hazard) in additional_hazard_keys
     for profile in profile_list:
         if isinstance(profile, dict):
             if _profile_has_protective_effect(profile):
@@ -473,6 +478,9 @@ def _append_hazard_profiles(
                 or (population.get("proposed_eurostat_dataset") if isinstance(population, dict) else None)
                 or "NA"
             )
+        if is_additional_hazard:
+            proposed_dataset = proposed_dataset or "NA"
+            proposed_indicator_label = proposed_indicator_label or name or "NA"
         profile_data = profile if isinstance(profile, dict) else {}
         has_ranked_population = isinstance(population, dict) and population.get("population_pct") is not None
         has_profile_population = str(

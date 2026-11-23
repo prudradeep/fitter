@@ -1096,18 +1096,18 @@ class ChatCustomHazardPopulationStepsMixin:
         compared_profiles: list[dict[str, str]] = []
         for profile in profiles:
             updated = dict(profile)
-            category = await match_profile_data_semantic(profile)
+            profile_name = str(profile.get("name") or profile.get("profile") or "").strip()
             prevalence = None
-            if category is not None:
-                updated["confirmed_predictor_category"] = category
+            if profile_name:
+                updated["confirmed_predictor_category"] = profile_name
                 try:
                     prevalence = await self.eurostat.get_prevalence(
-                        category,
+                        profile_name,
                         country_code=str(session.country or ""),
                         nuts_code=str(region.name),
                         sector=str(session.sector or ""),
                         hazard=hazard,
-                        confirmed_predictor_category=category,
+                        confirmed_predictor_category=profile_name,
                     )
                 except Exception:
                     logger.exception(
@@ -1121,21 +1121,23 @@ class ChatCustomHazardPopulationStepsMixin:
                 prevalence.get("national_population_pct") if prevalence is not None else None
             )
             updated["population_data_status"] = (
-                "available" if prevalence is not None else "unavailable"
+                "available"
+                if prevalence is not None and prevalence.get("population_pct") is not None
+                else "unavailable"
             )
             updated["population_source"] = (
                 prevalence.get("source") if prevalence is not None else ""
             )
-            if category is not None:
+            if profile_name:
                 updated["proposed_eurostat_dataset"] = (
                     prevalence.get("proposed_eurostat_dataset", "NA")
                     if prevalence is not None
                     else "NA"
                 )
                 updated["proposed_indicator_label"] = (
-                    prevalence.get("proposed_indicator_label", category)
+                    prevalence.get("proposed_indicator_label", profile_name)
                     if prevalence is not None
-                    else category
+                    else profile_name
                 )
             compared_profiles.append(updated)
         return compared_profiles

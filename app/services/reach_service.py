@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 
 from sqlalchemy import func, select
@@ -13,11 +12,9 @@ from app.models import (
     SystemHazardSocioDemographic,
     SystemHazardSocioDemographicPopulationMatch,
 )
-from app.services.eurostat_service import (
-    EurostatService,
-    predictor_eurostat_mapping_semantic,
-)
+from app.services.eurostat_service import EurostatService
 from app.services.hazard_effect_size import hazard_predictor_effect_rows
+from app.services.system_hazard_profile_names import profile_name_for_variable
 
 
 class ReachService:
@@ -39,14 +36,6 @@ class ReachService:
         region: str,
     ) -> dict[str, object]:
         predictors = hazard_predictor_effect_rows(sector=sector, hazard=hazard, min_or=1.0)
-        mappings = await asyncio.gather(
-            *(
-                predictor_eurostat_mapping_semantic(
-                    str(predictor.get("predictor") or "")
-                )
-                for predictor in predictors
-            )
-        )
         total_predictors = len(predictors)
         mapped_predictors = 0
         used_predictors = 0
@@ -54,15 +43,18 @@ class ReachService:
         profiles: list[dict[str, object]] = []
         skipped: list[dict[str, object]] = []
 
-        for predictor, mapping in zip(predictors, mappings, strict=False):
+        for predictor in predictors:
             predictor_name = str(predictor.get("predictor") or "")
-            profile_name = predictor_profile_name(predictor_name)
+            profile_name = profile_name_for_variable(
+                predictor_name,
+                fallback=predictor_profile_name(predictor_name),
+            )
             log_effect = float(predictor.get("log_effect") or 0.0)
-            if mapping is None:
+            if not predictor_name.strip():
                 skipped.append(
                     {
                         "predictor": predictor_name,
-                        "reason": "No Eurostat mapping configured",
+                        "reason": "Profile is empty",
                         "bucket": 3,
                     }
                 )
@@ -74,13 +66,46 @@ class ReachService:
                 nuts_code=region,
                 sector=sector,
                 hazard=hazard_name or hazard,
-                confirmed_predictor_category=mapping.dimensions["profile"],
+                confirmed_predictor_category=profile_name,
             )
             if prevalence is None:
                 skipped.append(
                     {
                         "predictor": predictor_name,
                         "reason": "Eurostat value unavailable",
+                        "bucket": 2,
+                    }
+                )
+                continue
+            if prevalence.get("prevalence") is None:
+                profiles.append(
+                    {
+                        "name": profile_name,
+                        "predictor": predictor_name,
+                        "variable_name": predictor_name,
+                        "profile_key": predictor_name,
+                        "confirmed_predictor_category": profile_name,
+                        "eurostat_population_cache_id": prevalence.get(
+                            "eurostat_population_cache_id"
+                        ),
+                        "population_pct": None,
+                        "national_population_pct": None,
+                        "source": prevalence["source"],
+                        "dataset": prevalence["dataset"],
+                        "proposed_eurostat_dataset": prevalence.get(
+                            "proposed_eurostat_dataset"
+                        ),
+                        "proposed_indicator_label": prevalence.get(
+                            "proposed_indicator_label"
+                        ),
+                        "geo": prevalence["geo"],
+                        "weighted_effect": None,
+                    }
+                )
+                skipped.append(
+                    {
+                        "predictor": predictor_name,
+                        "reason": "Population percentage unavailable",
                         "bucket": 2,
                     }
                 )
@@ -94,7 +119,7 @@ class ReachService:
                     "predictor": predictor_name,
                     "variable_name": predictor_name,
                     "profile_key": predictor_name,
-                    "confirmed_predictor_category": mapping.dimensions["profile"],
+                    "confirmed_predictor_category": profile_name,
                     "eurostat_population_cache_id": prevalence.get("eurostat_population_cache_id"),
                     "population_pct": round(float(prevalence["population_pct"]), 1),
                     "national_population_pct": (
