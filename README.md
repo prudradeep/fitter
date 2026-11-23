@@ -1,8 +1,8 @@
-# Dr Transition
+# Fitter FairImpact Platform
 
 API developers: see the [Swagger and API usage guide](docs/API_USAGE_GUIDE.md) for the OpenAPI documents, endpoint reference, authentication, and request examples.
 
-Dr Transition is a FastAPI application for guided Twin-Transition policy
+Fitter FairImpact Platform is a FastAPI application for guided Twin-Transition policy
 analysis. It supports two deployment shapes:
 
 - Central server mode uses FastAPI with MySQL as the authoritative shared
@@ -312,7 +312,7 @@ LLM exchange logs, plus anonymised Systems Inquiry telemetry events, according t
 Windows Task Scheduler example:
 
 ```powershell
-schtasks /Create /TN "Dr Transition Retention Cleanup" /SC DAILY /ST 02:30 /TR "cmd /c cd /d F:\Dr Transition && uv run python scripts\cleanup_retained_data.py"
+schtasks /Create /TN "Fitter FairImpact Platform Retention Cleanup" /SC DAILY /ST 02:30 /TR "cmd /c cd /d F:\Fitter FairImpact Platform && uv run python scripts\cleanup_retained_data.py"
 ```
 
 systemd timer example:
@@ -320,7 +320,7 @@ systemd timer example:
 ```ini
 # /etc/systemd/system/dr-transition-cleanup.service
 [Unit]
-Description=Dr Transition retention cleanup
+Description=Fitter FairImpact Platform retention cleanup
 
 [Service]
 Type=oneshot
@@ -331,7 +331,7 @@ ExecStart=/usr/bin/uv run python scripts/cleanup_retained_data.py
 ```ini
 # /etc/systemd/system/dr-transition-cleanup.timer
 [Unit]
-Description=Run Dr Transition retention cleanup daily
+Description=Run Fitter FairImpact Platform retention cleanup daily
 
 [Timer]
 OnCalendar=*-*-* 02:30:00

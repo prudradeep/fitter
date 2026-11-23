@@ -174,7 +174,7 @@ fn main() {
                 url::Url::parse("http://127.0.0.1:8000/").context("backend URL should be valid")?;
             let external_open_app = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                .title("Dr Transition")
+                .title("Fitter FairImpact Platform")
                 .inner_size(1280.0, 820.0)
                 .min_inner_size(1000.0, 780.0)
                 .on_new_window(move |url, features| {
@@ -190,7 +190,7 @@ fn main() {
                             label,
                             WebviewUrl::External("about:blank".parse().expect("valid URL")),
                         )
-                        .title("Dr Transition Document")
+                        .title("Fitter FairImpact Platform Document")
                         .inner_size(1000.0, 780.0)
                         .window_features(features)
                         .build();
@@ -231,7 +231,7 @@ fn main() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error while running Dr Transition");
+        .expect("error while running Fitter FairImpact Platform");
 }
 
 #[tauri::command]
@@ -394,7 +394,7 @@ fn check_runtime(config: &DesktopConfig, env_config: &RuntimeEnv, log_dir: &Path
         } else {
             format!("Ollama is not reachable at {ollama_base_url}.")
         },
-        action: "Install Ollama and start it before launching Dr Transition.".to_string(),
+        action: "Install Ollama and start it before launching Fitter FairImpact Platform.".to_string(),
     });
 
     let models = ollama_models(ollama_base_url).unwrap_or_default();
@@ -418,9 +418,9 @@ fn check_runtime(config: &DesktopConfig, env_config: &RuntimeEnv, log_dir: &Path
     RuntimeDiagnostics {
         ready,
         title: if ready {
-            "Dr Transition is ready".to_string()
+            "Fitter FairImpact Platform is ready".to_string()
         } else {
-            "Setup needed before Dr Transition can start".to_string()
+            "Setup needed before Fitter FairImpact Platform can start".to_string()
         },
         summary: if ready {
             "All required local dependencies were detected.".to_string()
@@ -487,7 +487,7 @@ fn set_diagnostics(state: &RuntimeState, diagnostics: RuntimeDiagnostics) {
 
 fn open_diagnostics_window(app: &tauri::App) -> Result<()> {
     WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-        .title("Dr Transition Setup")
+        .title("Fitter FairImpact Platform Setup")
         .inner_size(980.0, 720.0)
         .min_inner_size(760.0, 560.0)
         .build()?;

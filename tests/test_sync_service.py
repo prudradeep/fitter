@@ -1899,7 +1899,7 @@ class SyncServiceTests(unittest.TestCase):
             password_hash=hash_password("Password!1"),
             designation="Lead",
             organisation_type="Local",
-            organisation_name="Dr Transition",
+            organisation_name="Fitter FairImpact Platform",
             role=role,
         )
         self.db.add(user)

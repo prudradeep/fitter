@@ -1,9 +1,9 @@
-# Software Requirements Specification: Dr Transition
+# Software Requirements Specification: Fitter FairImpact Platform
 
 Version: 1.0  
 Date: 2026-08-11  
 Status: Draft  
-Prepared for: Dr Transition product and engineering team
+Prepared for: Fitter FairImpact Platform product and engineering team
 
 ## Index
 
@@ -31,7 +31,7 @@ Prepared for: Dr Transition product and engineering team
 
 ## 1. Purpose
 
-Dr Transition is a guided policy-analysis tool for exploring regional twin-transition risks and mitigation options. It helps authenticated users select a geography and sector, review hazards, create custom hazards, identify affected population groups, create mitigation measures, complete evaluation and system inquiry, and export the completed analysis as a PDF report.
+Fitter FairImpact Platform is a guided policy-analysis tool for exploring regional twin-transition risks and mitigation options. It helps authenticated users select a geography and sector, review hazards, create custom hazards, identify affected population groups, create mitigation measures, complete evaluation and system inquiry, and export the completed analysis as a PDF report.
 
 This SRS describes the current intended flow of the tool.
 
@@ -65,7 +65,7 @@ The tool uses seeded reference data, session data, user inputs, evidence URLs/fi
 
 ## 4. Reviewer Rationale
 
-Dr Transition exists to make transition-risk analysis easier to review, challenge, and reuse. The workflow is structured because non-technical policy reviewers need to understand why a hazard or mitigation measure is being considered, which evidence supports it, which groups may be affected, and where uncertainty remains.
+Fitter FairImpact Platform exists to make transition-risk analysis easier to review, challenge, and reuse. The workflow is structured because non-technical policy reviewers need to understand why a hazard or mitigation measure is being considered, which evidence supports it, which groups may be affected, and where uncertainty remains.
 
 The tool must therefore do more than collect answers. It must:
 
@@ -82,7 +82,7 @@ Content quality is treated as a product requirement. A saved hazard, affected gr
 
 ### 5.1 Authentication
 
-1. The user opens Dr Transition.
+1. The user opens Fitter FairImpact Platform.
 2. If the user is not authenticated, the tool shows login or signup.
 3. Signup collects email, name, designation, organisation type, organisation name, password, and password confirmation.
 4. Login validates the user's credentials.

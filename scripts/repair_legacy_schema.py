@@ -12,7 +12,7 @@ from app.db.session import validate_database_connection
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the legacy Dr Transition schema repair path. "
+            "Run the legacy Fitter FairImpact Platform schema repair path. "
             "Use only for controlled local or installer recovery after a database backup."
         )
     )

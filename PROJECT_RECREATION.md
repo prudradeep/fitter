@@ -1,10 +1,10 @@
-# Dr Transition — Project Recreation Specification
+# Fitter FairImpact Platform — Project Recreation Specification
 
-This document is the source-of-truth brief for recreating the current **Dr Transition** project. Rebuild the application as a local, browser-based policy-analysis coach with the same architecture, workflows, visual language, persistence model, and integrations described below. Do not reduce it to a generic chatbot or a static mock-up.
+This document is the source-of-truth brief for recreating the current **Fitter FairImpact Platform** project. Rebuild the application as a local, browser-based policy-analysis coach with the same architecture, workflows, visual language, persistence model, and integrations described below. Do not reduce it to a generic chatbot or a static mock-up.
 
 ## 1. Product definition
 
-Dr Transition is an authenticated digital coach for **Twin-Transition policy analysis**. It guides a policy practitioner through a structured conversation:
+Fitter FairImpact Platform is an authenticated digital coach for **Twin-Transition policy analysis**. It guides a policy practitioner through a structured conversation:
 
 1. Choose a country.
 2. Choose a region.
@@ -115,7 +115,7 @@ Keep domain truth prompts, statistical CSVs, response templates, and images as f
 Read configuration from `.env`, ignoring unknown keys. Provide these names and defaults:
 
 ```env
-APP_NAME="Dr Transition"
+APP_NAME="Fitter FairImpact Platform"
 APP_ENV="development"
 APP_DEBUG=false
 SECRET_KEY="development-only-secret"
@@ -164,7 +164,7 @@ Unauthenticated visits to `/` redirect to `/login`. `/login` and `/signup` rende
 
 ### Auth dialog
 
-- Centered white modal with logo, Dr Transition title, Login and Sign up tabs.
+- Centered white modal with logo, Fitter FairImpact Platform title, Login and Sign up tabs.
 - Login fields: email and password.
 - Signup is a two-step form: **Account** then **Organisation**.
 - Account fields: email, name, password, confirmation.
@@ -183,7 +183,7 @@ The page fills the viewport and deliberately avoids document-level scrolling. In
 
 A 92px black header contains:
 
-- Logo, `Dr Transition`, and subtitle `A digital coach for Twin-Transition policy`.
+- Logo, `Fitter FairImpact Platform`, and subtitle `A digital coach for Twin-Transition policy`.
 - An animated white voice waveform when text-to-speech is active.
 - `Manage Sessions` and `New Session` dark buttons.
 - Circular settings button.
@@ -438,7 +438,7 @@ Return:
 - `DELETE /api/knowledge/{document_id}` — delete only an owned document and its vectors/chunks.
 - `POST /api/sector-prompts/reindex` — rebuild sector truth-prompt vectors.
 - `POST /api/sector-prompts/search` — search Energy, Housing, or Transport prompt chunks.
-- `GET /health` — `{"status":"ok","service":"Dr Transition"}`.
+- `GET /health` — `{"status":"ok","service":"Fitter FairImpact Platform"}`.
 
 ## 10. Data model
 

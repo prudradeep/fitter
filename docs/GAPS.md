@@ -1,4 +1,4 @@
-# Dr Transition SRS v2 Gaps
+# Fitter FairImpact Platform SRS v2 Gaps
 
 ## 1. Code Exists But Behaviour Could Not Be Determined
 

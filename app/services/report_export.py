@@ -164,7 +164,7 @@ def _report_lines(
     )
     hazard_details = _hazard_details(db, session_data, measures)
     lines = [
-        "FITTER Digital Platform (Dr Transition) Report",
+        "FITTER Digital Platform (Fitter FairImpact Platform) Report",
         title,
         datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
         "",
@@ -1045,7 +1045,7 @@ def _layout_pdf_pages(lines: list[str]) -> list[str]:
         "Comparison of Mitigation Measures",
         "Conclusions and Recommendations",
     }
-    title = lines[0] if lines else "FITTER Digital Platform (Dr Transition) Report"
+    title = lines[0] if lines else "FITTER Digital Platform (Fitter FairImpact Platform) Report"
     subtitle = lines[1] if len(lines) > 1 else "Mitigation report"
     generated = lines[2] if len(lines) > 2 else ""
     body = lines[4:] if len(lines) > 4 else lines[3:]
@@ -1331,7 +1331,7 @@ def _cover_page(title: str, subtitle: str, generated: str) -> list[str]:
     cover = [
         _rect(0, 618, 612, 174, 0.07, 0.11, 0.20),
         _rect(0, 600, 612, 20, 0.36, 0.16, 0.75),
-        _text(48, 735, "FITTER Digital Platform (Dr Transition)", "/F2", 13, 0.85, 0.78, 1.0),
+        _text(48, 735, "FITTER Digital Platform (Fitter FairImpact Platform)", "/F2", 13, 0.85, 0.78, 1.0),
         _text(48, 700, "Report", "/F2", 25, 1, 1, 1),
     ]
     if subtitle:
@@ -1349,7 +1349,7 @@ def _page_shell(page_number: int, subtitle: str) -> list[str]:
     return [
         _rect(0, 0, 612, 792, 1, 1, 1),
         _rect(0, 772, 612, 20, 0.07, 0.11, 0.20),
-        _text(42, 778, "FITTER Digital Platform (Dr Transition)", "/F2", 8, 1, 1, 1),
+        _text(42, 778, "FITTER Digital Platform (Fitter FairImpact Platform)", "/F2", 8, 1, 1, 1),
         _text(420, 778, _fit_text(subtitle, 34), "/F1", 7, 0.83, 0.87, 0.94),
         _line(42, 44, 570, 44, 0.86, 0.88, 0.92),
         _text(42, 28, "Report", "/F1", 8, 0.40, 0.46, 0.55),

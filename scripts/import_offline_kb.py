@@ -75,7 +75,7 @@ def _validate_bundle(source: Path) -> None:
         raise ValueError(f"Offline seed bundle manifest is missing: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("format") != "dr-transition-offline-seed-v1":
-        raise ValueError("Source is not a Dr Transition OfflineAdmin seed bundle")
+        raise ValueError("Source is not a Fitter FairImpact Platform OfflineAdmin seed bundle")
     if manifest.get("database_file") != source.name:
         raise ValueError("Bundle manifest database filename does not match --source")
     if _sha256(source) != manifest.get("database_sha256"):

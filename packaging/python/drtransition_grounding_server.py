@@ -10,7 +10,7 @@ from runtime_stdio import ensure_standard_streams
 
 def main() -> None:
     ensure_standard_streams()
-    parser = argparse.ArgumentParser(description="Run a Dr Transition grounding service.")
+    parser = argparse.ArgumentParser(description="Run a Fitter FairImpact Platform grounding service.")
     parser.add_argument("--service", choices=("reranker", "nli"), required=True)
     args = parser.parse_args()
 

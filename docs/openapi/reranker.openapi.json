@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Dr Transition Reranker",
+    "title": "Fitter FairImpact Platform Reranker",
     "version": "0.1.0"
   },
   "paths": {

@@ -54,7 +54,7 @@ class SeedDataTests(unittest.TestCase):
                     password_hash=hash_password("OldPassword!1"),
                     designation="User",
                     organisation_type="Local",
-                    organisation_name="Dr Transition",
+                    organisation_name="Fitter FairImpact Platform",
                     role="user",
                 )
             )
@@ -76,7 +76,7 @@ class SeedDataTests(unittest.TestCase):
             name="Default User",
             designation="User",
             organisation_type="Local",
-            organisation_name="Dr Transition",
+            organisation_name="Fitter FairImpact Platform",
             role=role,
         )
 

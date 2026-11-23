@@ -38,7 +38,7 @@ async def login_page(
         request,
         "login.html",
         {
-            "page_title": "Dr Transition",
+            "page_title": "Fitter FairImpact Platform",
             "error": None,
             "email": "",
             "values": {},
@@ -231,7 +231,7 @@ def _signup_error(
         request,
         "signup.html",
         {
-            "page_title": "Dr Transition",
+            "page_title": "Fitter FairImpact Platform",
             "error": error,
             "email": values.get("email", ""),
             "values": values,
@@ -251,7 +251,7 @@ def _login_error(request: Request, email: str, error: str, status_code: int) -> 
         request,
         "login.html",
         {
-            "page_title": "Dr Transition",
+            "page_title": "Fitter FairImpact Platform",
             "error": error,
             "email": email,
             "values": {},

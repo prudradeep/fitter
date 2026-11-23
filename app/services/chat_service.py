@@ -1013,7 +1013,7 @@ class ChatService(
     @staticmethod
     def _common_user_input_quality_purpose(session: ChatSession) -> str:
         phase = str(session.phase or "").strip().replace("_", " ") or "chat"
-        return f"a user-entered {phase} message in the Dr Transition policy workflow"
+        return f"a user-entered {phase} message in the Fitter FairImpact Platform policy workflow"
 
     def _primary_other_nav_options(self, session: ChatSession, step: str) -> list[Option]:
         return [
@@ -1031,7 +1031,7 @@ class ChatService(
     async def _other_actions_message_from_llm(self, session: ChatSession) -> str:
         options = self._other_nav_options(session, "complete")
         fallback = (
-            "No problem. Choose another action below to continue working in Dr Transition."
+            "No problem. Choose another action below to continue working in Fitter FairImpact Platform."
         )
         context = load_nested_prompt_file("llm/other_actions_navigation.txt")
         messages = [
@@ -1400,7 +1400,7 @@ class ChatService(
                     f"User type: {stats['user_type']}\n\n"
                     "Required content:\n"
                     "- Return this exact message, without Markdown or additional text: "
-                    "Welcome back to Dr Transition. Let's start by setting a policy context. "
+                    "Welcome back to Fitter FairImpact Platform. Let's start by setting a policy context. "
                     "Select your country. \n\n"
                     "To explore policy contexts beyond the 6 case study countries, [Click here](https://ekbbo0tw5gtz4n1ipghnu348.152.67.156.137.sslip.io/)."
                 ),
@@ -1474,7 +1474,7 @@ class ChatService(
         previous_sessions = int(stats.get("previous_sessions") or 0)
         if previous_sessions:
             message = (
-                "Welcome back to Dr Transition. "
+                "Welcome back to Fitter FairImpact Platform. "
                 "Let's start by setting a policy context. Select your country.\n\n"
                 "To explore policy contexts beyond the 6 case study countries, [Click here](https://ekbbo0tw5gtz4n1ipghnu348.152.67.156.137.sslip.io/)."
             )

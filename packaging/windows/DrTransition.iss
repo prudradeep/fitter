@@ -1,6 +1,6 @@
-#define MyAppName "Dr Transition"
+#define MyAppName "Fitter FairImpact Platform"
 #define MyAppVersion "1.0.0"
-#define MyAppPublisher "Dr Transition"
+#define MyAppPublisher "Fitter FairImpact Platform"
 #define MyAppExeName "DrTransition.exe"
 #ifndef InstallerPayloadPath
 #define InstallerPayloadPath "..\..\build\windows-installer\payload"
@@ -11,8 +11,8 @@ AppId={{9A34E5CC-A8AA-40E4-9F81-6E20E3E3A8D8}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\Dr Transition
-DefaultGroupName=Dr Transition
+DefaultDirName={autopf}\Fitter FairImpact Platform
+DefaultGroupName=Fitter FairImpact Platform
 DisableProgramGroupPage=yes
 OutputDir=..\..\build\windows-installer
 #ifdef OfflineAdminInstaller
@@ -54,8 +54,8 @@ Source: "..\..\.env.client.dev"; DestDir: "{app}\config"; DestName: ".env"; Flag
 Source: "scripts\Get-ModelRecommendation.ps1"; Flags: dontcopy
 
 [Icons]
-Name: "{group}\Dr Transition"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\Dr Transition"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\Fitter FairImpact Platform"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\Fitter FairImpact Platform"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [UninstallDelete]
 ; Remove client-owned databases, indexes, uploads, configuration, and runtime logs.
@@ -64,7 +64,7 @@ Name: "{localappdata}\DrTransition"; Type: filesandordirs
 
 [Run]
 Filename: "{cmd}"; Parameters: "/C if exist ""{app}\config\.env"" if not exist ""{commonappdata}\DrTransition\.env"" copy /Y ""{app}\config\.env"" ""{commonappdata}\DrTransition\.env"""; Flags: runhidden
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch Dr Transition"; Flags: nowait postinstall skipifsilent; Check: CanLaunchApp
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch Fitter FairImpact Platform"; Flags: nowait postinstall skipifsilent; Check: CanLaunchApp
 
 [Code]
 var
@@ -100,7 +100,7 @@ begin
   Result := IsWin64;
   if not Result then
   begin
-    MsgBox('Dr Transition requires 64-bit Windows.', mbCriticalError, MB_OK);
+    MsgBox('Fitter FairImpact Platform requires 64-bit Windows.', mbCriticalError, MB_OK);
     Exit;
   end;
 
@@ -291,7 +291,7 @@ begin
     if ShowSuccess then
       MsgBox(
         'MySQL is not installed on this computer.' + #13#10#13#10 +
-        'Dr Transition Setup will install and configure MySQL automatically.',
+        'Fitter FairImpact Platform Setup will install and configure MySQL automatically.',
         mbInformation,
         MB_OK);
     Result := True;
@@ -345,8 +345,8 @@ begin
     ExistingInstallPage := CreateInputOptionPage(
       wpWelcome,
       'Existing Installation',
-      'Dr Transition is already installed.',
-      'Choose what to do before setup continues. Close Dr Transition first if you choose to reset its data.',
+      'Fitter FairImpact Platform is already installed.',
+      'Choose what to do before setup continues. Close Fitter FairImpact Platform first if you choose to reset its data.',
       True,
       False
     );
@@ -358,7 +358,7 @@ begin
   end;
 
   MessageText :=
-    'The installer will install the Dr Transition desktop launcher, bundled backend executables, and local runtime configuration.' + #13#10#13#10 +
+    'The installer will install the Fitter FairImpact Platform desktop launcher, bundled backend executables, and local runtime configuration.' + #13#10#13#10 +
     'Recommended minimums:' + #13#10 +
     '- 64-bit Windows' + #13#10 +
     '- 8 GB RAM minimum, 16 GB+ recommended' + #13#10 +
@@ -371,14 +371,14 @@ begin
   CompatibilityPage := CreateOutputMsgPage(
     AfterPageID,
     'System Compatibility',
-    'Review the Dr Transition desktop requirements.',
+    'Review the Fitter FairImpact Platform desktop requirements.',
     MessageText
   );
 
   DatabasePage := CreateInputQueryPage(
     CompatibilityPage.ID,
     'Database Setup',
-    'Create or reuse the local Dr Transition database.',
+    'Create or reuse the local Fitter FairImpact Platform database.',
     'Enter the local MySQL credentials. If MySQL is missing, setup will install it automatically.'
   );
   DatabasePage.Add('Database name:', False);
@@ -633,7 +633,7 @@ begin
 
   if ResultCode = -1 then
   begin
-    MsgBox('Dr Transition could not check this computer for local LLM support. Setup will close without installing the app.', mbError, MB_OK);
+    MsgBox('Fitter FairImpact Platform could not check this computer for local LLM support. Setup will close without installing the app.', mbError, MB_OK);
     SetupStoppedByCompatibility := True;
     WizardForm.Close;
     Result := False;
@@ -647,12 +647,12 @@ begin
   end;
 
   if Trim(Reason) = '' then
-    Reason := 'This computer does not meet the minimum hardware requirements for local Dr Transition model inference.';
+    Reason := 'This computer does not meet the minimum hardware requirements for local Fitter FairImpact Platform model inference.';
 
   if ResultCode = 42 then
-    MsgBox('Dr Transition cannot be installed on this computer for local model inference.' + #13#10#13#10 + Trim(Reason) + #13#10#13#10 + 'Setup will close without installing the app.', mbInformation, MB_OK)
+    MsgBox('Fitter FairImpact Platform cannot be installed on this computer for local model inference.' + #13#10#13#10 + Trim(Reason) + #13#10#13#10 + 'Setup will close without installing the app.', mbInformation, MB_OK)
   else
-    MsgBox('Dr Transition could not complete the local model compatibility check.' + #13#10#13#10 + Trim(Reason) + #13#10#13#10 + 'Setup will close without installing the app.', mbError, MB_OK);
+    MsgBox('Fitter FairImpact Platform could not complete the local model compatibility check.' + #13#10#13#10 + Trim(Reason) + #13#10#13#10 + 'Setup will close without installing the app.', mbError, MB_OK);
 
   SetupStoppedByCompatibility := True;
   WizardForm.Close;
@@ -683,12 +683,12 @@ begin
   end;
 
   if Trim(Reason) = '' then
-    Reason := 'This computer does not meet the minimum hardware requirements for local Dr Transition model inference.';
+    Reason := 'This computer does not meet the minimum hardware requirements for local Fitter FairImpact Platform model inference.';
 
   if ResultCode = 42 then
-    Result := 'Dr Transition cannot be installed on this computer for local model inference.' + #13#10#13#10 + Trim(Reason)
+    Result := 'Fitter FairImpact Platform cannot be installed on this computer for local model inference.' + #13#10#13#10 + Trim(Reason)
   else
-    Result := 'Dr Transition could not complete the local model compatibility check.' + #13#10#13#10 + Trim(Reason);
+    Result := 'Fitter FairImpact Platform could not complete the local model compatibility check.' + #13#10#13#10 + Trim(Reason);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -712,7 +712,7 @@ begin
           if not DataRemoved then
           begin
             MsgBox(
-              'Some client data could not be removed. Close Dr Transition and try again.',
+              'Some client data could not be removed. Close Fitter FairImpact Platform and try again.',
               mbError, MB_OK);
             Result := False;
             Exit;
@@ -727,7 +727,7 @@ begin
             WizardForm.Close;
           end
           else
-            MsgBox('Dr Transition could not be uninstalled. Setup will not continue.',
+            MsgBox('Fitter FairImpact Platform could not be uninstalled. Setup will not continue.',
               mbCriticalError, MB_OK);
           Result := False;
           Exit;
@@ -779,7 +779,7 @@ begin
     begin
       MsgBox(
         'Please enter an Application Database user name.' + #13#10#13#10 +
-        'This account will be used by Dr Transition to access its local database.',
+        'This account will be used by Fitter FairImpact Platform to access its local database.',
         mbError,
         MB_OK);
       WizardForm.ActiveControl := DatabasePage.Edits[3];
@@ -804,7 +804,7 @@ begin
     begin
       MsgBox(
         'Please enter an Application Database password.' + #13#10#13#10 +
-        'This password will be used by Dr Transition to connect to the local database.',
+        'This password will be used by Fitter FairImpact Platform to connect to the local database.',
         mbError,
         MB_OK);
       WizardForm.ActiveControl := DatabasePage.Edits[4];
@@ -869,10 +869,10 @@ begin
     '  "PullModels": true,' + #13#10 +
 #ifdef OfflineAdminInstaller
     '  "DefaultAppUserEmail": "admin@drtransition.local",' + #13#10 +
-    '  "DefaultAppUserName": "Dr Transition Admin",' + #13#10 +
+    '  "DefaultAppUserName": "Fitter FairImpact Platform Admin",' + #13#10 +
     '  "DefaultAppUserDesignation": "Administrator",' + #13#10 +
     '  "DefaultAppUserOrganisationType": "Local",' + #13#10 +
-    '  "DefaultAppUserOrganisationName": "Dr Transition",' + #13#10 +
+    '  "DefaultAppUserOrganisationName": "Fitter FairImpact Platform",' + #13#10 +
     '  "DefaultAppUserRole": "admin",' + #13#10 +
     '  "DefaultAppUserCredentialsPath": "' + JsonEscape(ExpandConstant('{tmp}\drtransition-default-admin.txt')) + '",' + #13#10 +
     '  "DisableSync": true,' + #13#10 +
@@ -943,7 +943,7 @@ begin
     begin
       CredentialsForCopy := Trim(CredentialsText);
       MsgBox(
-        'Dr Transition offline admin setup completed.' + #13#10#13#10 +
+        'Fitter FairImpact Platform offline admin setup completed.' + #13#10#13#10 +
         'Seeded admin user:' + #13#10 +
         CredentialsForCopy + #13#10#13#10 +
         'Bundled KB PDFs are being seeded into the local knowledge base in the background.' + #13#10#13#10 +
@@ -955,14 +955,14 @@ begin
     end
     else
       MsgBox(
-        'Dr Transition offline admin setup completed.' + #13#10#13#10 +
+        'Fitter FairImpact Platform offline admin setup completed.' + #13#10#13#10 +
         'The local database was seeded, and bundled KB PDFs are being seeded in the background. Check the setup log for the admin user details.',
         mbInformation,
         MB_OK
       );
 #else
     MsgBox(
-      'Dr Transition setup completed.' + #13#10#13#10 +
+      'Fitter FairImpact Platform setup completed.' + #13#10#13#10 +
       'No default app user was created. Create your account from the sign-up screen when you first open the app.',
       mbInformation,
       MB_OK

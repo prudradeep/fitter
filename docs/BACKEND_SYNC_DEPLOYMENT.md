@@ -1,6 +1,6 @@
 # Backend Sync Server Deployment
 
-This document describes how to deploy a central Dr Transition backend for
+This document describes how to deploy a central Fitter FairImpact Platform backend for
 syncing user data and shared knowledge-base data from local installations.
 
 For a complete Ubuntu server and local client setup walkthrough, see:
@@ -464,7 +464,7 @@ unit:
 
 ```ini
 [Unit]
-Description=Dr Transition central sync backend
+Description=Fitter FairImpact Platform central sync backend
 After=network.target
 
 [Service]

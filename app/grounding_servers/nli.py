@@ -7,7 +7,7 @@ from app.config import get_settings
 from app.grounding_servers.model_runtime import nli_labels, nli_model, softmax
 from app.services.llm_logging import log_llm_exchange, new_llm_request_id
 
-app = FastAPI(title="Dr Transition NLI")
+app = FastAPI(title="Fitter FairImpact Platform NLI")
 
 
 class EntailmentPair(BaseModel):

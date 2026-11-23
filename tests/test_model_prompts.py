@@ -69,7 +69,7 @@ class ModelPromptTests(unittest.TestCase):
             prompt = prompt_loader.load_nested_prompt_file("llm/dr_transition_coach.txt")
 
         self.assertTrue(prompt.startswith("MODEL OPTIMIZATION - ministral-3:14b"))
-        self.assertIn("You are Dr Transition, a digital coach", prompt)
+        self.assertIn("You are Fitter FairImpact Platform, a digital coach", prompt)
 
     def test_prompt_store_file_source_skips_database_reads(self) -> None:
         session_local = MagicMock()

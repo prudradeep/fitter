@@ -108,7 +108,7 @@ class ApiRouteIntegrationTests(unittest.TestCase):
             password_hash=hash_password("OldPassword!1"),
             designation="Lead",
             organisation_type="Local",
-            organisation_name="Dr Transition",
+            organisation_name="Fitter FairImpact Platform",
             role="admin",
         )
         self.db.add(self.user)
@@ -1233,7 +1233,7 @@ class ApiRouteIntegrationTests(unittest.TestCase):
             password_hash=hash_password("OldPassword!1"),
             designation="Analyst",
             organisation_type="Local",
-            organisation_name="Dr Transition",
+            organisation_name="Fitter FairImpact Platform",
             role="user",
         )
         self.db.add(regular_user)

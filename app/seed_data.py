@@ -21,10 +21,10 @@ from app.services.sector_prompt_rag import SectorPromptRagService
 
 DEFAULT_APP_USER_EMAIL = "admin@drtransition.local"
 DEFAULT_APP_USER_PASSWORD = os.getenv("DEFAULT_APP_USER_PASSWORD", "")
-DEFAULT_APP_USER_NAME = "Dr Transition Admin"
+DEFAULT_APP_USER_NAME = "Fitter FairImpact Platform Admin"
 DEFAULT_APP_USER_DESIGNATION = "Administrator"
 DEFAULT_APP_USER_ORGANISATION_TYPE = "Local"
-DEFAULT_APP_USER_ORGANISATION_NAME = "Dr Transition"
+DEFAULT_APP_USER_ORGANISATION_NAME = "Fitter FairImpact Platform"
 KB_ROOT = resource_path("kb")
 
 

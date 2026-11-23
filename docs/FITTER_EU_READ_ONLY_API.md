@@ -2,11 +2,11 @@
 
 This document follows the FITTER-EU contribution section in the *FITTER-EU Data Schema Cookbook v0.1*. It describes the read-only listing endpoints and existing session/report endpoints for the current development API. The public base URL and final authentication mechanism will be released toward the end of the project for public use.
 
-**Purpose of the cookbook and APIs.** The cookbook documents the FITTER-EU data structure, field definitions, relationships, and contribution conventions so that data can be prepared and interpreted consistently. The APIs provide authenticated, read-only access to that reference data and related analysis through a consistent interface, without requiring clients to query the underlying database directly. Together, they connect a shared data model to practical use of policy, hazard, population, and mitigation information in Dr Transition and other compatible tools.
+**Purpose of the cookbook and APIs.** The cookbook documents the FITTER-EU data structure, field definitions, relationships, and contribution conventions so that data can be prepared and interpreted consistently. The APIs provide authenticated, read-only access to that reference data and related analysis through a consistent interface, without requiring clients to query the underlying database directly. Together, they connect a shared data model to practical use of policy, hazard, population, and mitigation information in Fitter FairImpact Platform and other compatible tools.
 
 ## 1.1 Project Overview
 
-Dr Transition guides users through an analysis of how transition policies may create or worsen hazards, which population groups may be affected, and what mitigation measures could address those effects. The workflow brings policy, hazard, population, and mitigation information together for a selected place and economic sector. The read-only APIs documented here let an authenticated user retrieve the relevant reference data and analysis results, inspect their saved conversations, and download reports.
+Fitter FairImpact Platform guides users through an analysis of how transition policies may create or worsen hazards, which population groups may be affected, and what mitigation measures could address those effects. The workflow brings policy, hazard, population, and mitigation information together for a selected place and economic sector. The read-only APIs documented here let an authenticated user retrieve the relevant reference data and analysis results, inspect their saved conversations, and download reports.
 
 The conversation proceeds through these stages:
 

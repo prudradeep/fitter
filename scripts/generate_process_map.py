@@ -34,7 +34,7 @@ def sheet(wb, title, headers, rows, widths=None):
 wb = Workbook()
 ws = wb.active
 ws.title = "Read Me"
-ws.append(["Dr Transition workflow map", "Implementation-based guide"])
+ws.append(["Fitter FairImpact Platform workflow map", "Implementation-based guide"])
 ws.append(["Scope", "From initial Country selection through Region, Sector, Policy, hazard and population context, mitigation choice, proposal/adaptation branches, shared review, summary and evaluation."])
 ws.append(["How to read", "Each row is a step or decision. Branch rows identify their own next journey. Option sources distinguish database/reference data, user input, runtime retrieval, LLM-generated content and fixed interface actions."])
 ws.append(["Coverage note", "The initial Country → Region → Sector selection is database-backed. Policy selection is policy/reference data plus user-added policy paths. Suggested content later in the flow is source-grounded runtime output, not a fixed list of options. Exact prompts and available choices can vary with configured data and retrieved evidence."])

@@ -1,4 +1,4 @@
-# Dr Transition — Systemic Blind-Spot Probing Module
+# Fitter FairImpact Platform — Systemic Blind-Spot Probing Module
 
 ## Implementation Specification v1.0
 

@@ -11,10 +11,10 @@
     [string]$AppDbPassword = "",
     [string]$DefaultAppUserEmail = "admin@drtransition.local",
     [string]$DefaultAppUserPassword = "",
-    [string]$DefaultAppUserName = "Dr Transition Admin",
+    [string]$DefaultAppUserName = "Fitter FairImpact Platform Admin",
     [string]$DefaultAppUserDesignation = "Administrator",
     [string]$DefaultAppUserOrganisationType = "Local",
-    [string]$DefaultAppUserOrganisationName = "Dr Transition",
+    [string]$DefaultAppUserOrganisationName = "Fitter FairImpact Platform",
     [string]$DefaultAppUserRole = "auto",
     [string]$DefaultAppUserCredentialsPath = "",
     [string]$OllamaModel = "",
@@ -1970,12 +1970,12 @@ function Ensure-OllamaModel {
 }
 
 try {
-    Write-SetupLog "Starting Dr Transition dependency setup"
+    Write-SetupLog "Starting Fitter FairImpact Platform dependency setup"
 
     if ($DependenciesOnly) {
         Write-SetupLog "Dependencies-only mode enabled; installing/checking Ollama only"
         Ensure-Ollama | Out-Null
-        Write-SetupLog "Dr Transition Ollama dependency setup completed"
+        Write-SetupLog "Fitter FairImpact Platform Ollama dependency setup completed"
         return
     }
 
@@ -2039,7 +2039,7 @@ try {
     Invoke-DatabaseSeed
     Start-BackgroundKnowledgeBaseSeed
 
-    Write-SetupLog "Dr Transition dependency setup completed"
+    Write-SetupLog "Fitter FairImpact Platform dependency setup completed"
 } catch {
     Write-SetupLog "ERROR: $($_.Exception.Message)"
     throw

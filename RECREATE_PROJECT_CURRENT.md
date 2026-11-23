@@ -1,10 +1,10 @@
-# Dr Transition — Current Project Recreation Guide
+# Fitter FairImpact Platform — Current Project Recreation Guide
 
-This guide explains how to recreate the current **Dr Transition** project as it exists in this repository. It covers the runtime stack, source assets, database setup, seed process, app commands, and behavior that must be preserved.
+This guide explains how to recreate the current **Fitter FairImpact Platform** project as it exists in this repository. It covers the runtime stack, source assets, database setup, seed process, app commands, and behavior that must be preserved.
 
 ## 1. Product summary
 
-Dr Transition is a local browser-based FastAPI application for guided **Twin-Transition policy analysis**. It uses an authenticated chat workflow to help a policy practitioner:
+Fitter FairImpact Platform is a local browser-based FastAPI application for guided **Twin-Transition policy analysis**. It uses an authenticated chat workflow to help a policy practitioner:
 
 1. Select a country, region, and sector.
 2. Review ranked hazards and additional hazards.
@@ -129,7 +129,7 @@ Copy-Item .env.example .env
 Important settings:
 
 ```env
-APP_NAME="Dr Transition"
+APP_NAME="Fitter FairImpact Platform"
 APP_ENV=development
 APP_DEBUG=true
 SECRET_KEY="change-this-secret-key-before-production"
@@ -283,7 +283,7 @@ http://localhost:8000/health
 Expected response:
 
 ```json
-{"status":"ok","service":"Dr Transition"}
+{"status":"ok","service":"Fitter FairImpact Platform"}
 ```
 
 ## 10. Ollama setup
@@ -684,7 +684,7 @@ After recreating the project:
 2. MySQL is reachable from `DATABASE_URL`.
 3. `.\scripts\seed_database.ps1` completes.
 4. `uv run uvicorn app.main:app --reload --reload-dir app` starts.
-5. `/health` returns `{"status":"ok","service":"Dr Transition"}`.
+5. `/health` returns `{"status":"ok","service":"Fitter FairImpact Platform"}`.
 6. Signup works.
 7. Login/logout works.
 8. Country → Region → Sector flow works.

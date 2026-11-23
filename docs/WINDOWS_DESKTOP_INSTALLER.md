@@ -1,6 +1,6 @@
 # Windows Desktop Installer
 
-This project now includes the first production packaging layer for a Windows desktop build of Dr Transition.
+This project now includes the first production packaging layer for a Windows desktop build of Fitter FairImpact Platform.
 
 The target runtime is:
 

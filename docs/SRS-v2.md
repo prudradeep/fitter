@@ -1,14 +1,14 @@
-# Dr Transition Software Requirements Specification v2
+# Fitter FairImpact Platform Software Requirements Specification v2
 
 Version: 2.0. Verification date: 2026-08-14.
 
 ## Purpose
 
-This SRS specifies the behaviour implemented in the Dr Transition codebase as of this verification pass. Every requirement below is based on implementation reads and carries a code citation. Behaviour not determined from code is excluded from the requirement set and recorded in [GAPS.md](GAPS.md).
+This SRS specifies the behaviour implemented in the Fitter FairImpact Platform codebase as of this verification pass. Every requirement below is based on implementation reads and carries a code citation. Behaviour not determined from code is excluded from the requirement set and recorded in [GAPS.md](GAPS.md).
 
 ## Scope
 
-Dr Transition is a FastAPI web application packaged with a Tauri Windows desktop launcher; the launcher starts the backend, reranker, and Natural Language Inference (NLI) services as local processes and writes their stdout/stderr to log files. [desktop/tauri/src-tauri/src/main.rs :: start_service()] [desktop/tauri/src-tauri/src/main.rs :: log_dir()] [packaging/windows/config/default.config.json :: backend/grounding/paths]
+Fitter FairImpact Platform is a FastAPI web application packaged with a Tauri Windows desktop launcher; the launcher starts the backend, reranker, and Natural Language Inference (NLI) services as local processes and writes their stdout/stderr to log files. [desktop/tauri/src-tauri/src/main.rs :: start_service()] [desktop/tauri/src-tauri/src/main.rs :: log_dir()] [packaging/windows/config/default.config.json :: backend/grounding/paths]
 
 The backend supports authentication, guided chat sessions, hazard selection and creation, mitigation measure creation, self-evaluation, STSI probing, knowledge ingestion and retrieval, PDF report generation, JSON session export/import, and optional database Cloud Sync. [app/routes/auth.py :: login()] [app/routes/api.py :: chat()] [app/routes/api.py :: export_mitigation_report()] [app/routes/api.py :: export_session()] [app/routes/sync.py :: sync_exchange()]
 

@@ -1,4 +1,4 @@
-"""Versioned SQLite migrations for Dr Transition client/offline databases.
+"""Versioned SQLite migrations for Fitter FairImpact Platform client/offline databases.
 
 The server keeps its MySQL migrations in ``db/migrations``.  Client/offline
 SQLite databases are upgraded here because the MySQL migration SQL contains

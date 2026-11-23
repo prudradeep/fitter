@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Dr Transition NLI",
+    "title": "Fitter FairImpact Platform NLI",
     "version": "0.1.0"
   },
   "paths": {

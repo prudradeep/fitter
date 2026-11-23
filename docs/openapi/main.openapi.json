@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Dr Transition",
+    "title": "Fitter FairImpact Platform",
     "version": "0.1.0",
     "description": "Read-only API surface for the FITTER-EU API cookbook. This schema includes only the documented GET endpoints plus POST /login for Swagger session authentication. The public base URL and final authentication mechanism will be released toward the end of the project; connection details and examples are illustrative until then."
   },
@@ -174,7 +174,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -319,7 +319,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -423,7 +423,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -519,7 +519,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -587,7 +587,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -666,7 +666,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -725,7 +725,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -811,7 +811,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -911,7 +911,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -1011,7 +1011,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -1128,7 +1128,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -1289,7 +1289,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -1457,7 +1457,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],
@@ -1591,7 +1591,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Dr Transition Auth"
+              "title": "Fitter FairImpact Platform Auth"
             }
           }
         ],

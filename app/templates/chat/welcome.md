@@ -1,6 +1,6 @@
 👋 Welcome to **Fitter FairImpact Platform**, that allows you to evaluate the social and distributional effects of green-and-digital transition policies in Europe. 
 
-I'm Dr Transition your avatar on the platform. 
+I'm Fitter FairImpact Platform your avatar on the platform. 
 
 I will help you work through a local policy context step by step. You will choose a country, region, sector and set a policy context; identify relevant hazards and affected population groups; co-develop mitigation measures; use evidence to support inputs; and reflect on the feasibility and transformative impact of the mitigation.
 

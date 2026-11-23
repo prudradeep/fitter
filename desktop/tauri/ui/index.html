@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Dr Transition Setup</title>
+    <title>Fitter FairImpact Platform Setup</title>
     <style>
       :root {
         color-scheme: light;
@@ -120,7 +120,7 @@
   <body>
     <main>
       <header>
-        <h1 id="title">Checking Dr Transition</h1>
+        <h1 id="title">Checking Fitter FairImpact Platform</h1>
         <p id="summary">Reading local runtime status...</p>
       </header>
 
@@ -143,7 +143,7 @@
       function render(status) {
         const checks = document.getElementById("checks");
         const logs = document.getElementById("logs");
-        document.getElementById("title").textContent = status?.title || "Dr Transition Setup";
+        document.getElementById("title").textContent = status?.title || "Fitter FairImpact Platform Setup";
         document.getElementById("summary").textContent = status?.summary || "Runtime status is not available.";
 
         const rows = status?.checks || [];

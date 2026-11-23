@@ -403,7 +403,7 @@ def validate_counts(counts: dict[str, int]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Seed required Dr Transition reference data into SQLite.")
+    parser = argparse.ArgumentParser(description="Seed required Fitter FairImpact Platform reference data into SQLite.")
     parser.add_argument("--database", help="Path to dr_transition.db. Defaults to SQLITE_DATABASE_PATH/DATABASE_URL.")
     args = parser.parse_args()
     db_path = resolve_db_path(args.database)

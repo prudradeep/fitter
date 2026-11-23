@@ -10,7 +10,7 @@ from app.db.session import validate_database_connection
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Apply Dr Transition database migrations.")
+    parser = argparse.ArgumentParser(description="Apply Fitter FairImpact Platform database migrations.")
     parser.add_argument(
         "--apply-base-schema",
         action="store_true",

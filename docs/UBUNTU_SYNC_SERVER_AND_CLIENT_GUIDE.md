@@ -1,6 +1,6 @@
 # Ubuntu Central Sync Server And Client Configuration Guide
 
-This guide explains how to host the Dr Transition central sync service and
+This guide explains how to host the Fitter FairImpact Platform central sync service and
 database on an Ubuntu server, then configure local client installations to sync
 with it.
 
@@ -11,7 +11,7 @@ database IDs, and sync with the server through global `sync_id` values.
 ## Architecture
 
 ```text
-Local Dr Transition client
+Local Fitter FairImpact Platform client
   -> local SQLite + FAISS
   -> HTTPS
   -> Nginx reverse proxy on Ubuntu
@@ -223,7 +223,7 @@ sudo nano /etc/dr-transition.env
 Example:
 
 ```env
-APP_NAME="Dr Transition"
+APP_NAME="Fitter FairImpact Platform"
 APP_ENV=production
 APP_DEBUG=false
 SECRET_KEY="long-random-secret-key"
@@ -398,7 +398,7 @@ Example:
 
 ```ini
 [Unit]
-Description=Dr Transition central sync backend
+Description=Fitter FairImpact Platform central sync backend
 After=network.target mysql.service
 Wants=mysql.service
 
@@ -541,7 +541,7 @@ see Ollama, embedding, reranker, or NLI requests from the central sync server.
 
 ## 12. Configure Local Clients
 
-On each local Dr Transition installation, add these values to the runtime `.env`.
+On each local Fitter FairImpact Platform installation, add these values to the runtime `.env`.
 
 Windows desktop installed app commonly reads from:
 
@@ -608,7 +608,7 @@ Then it imports the server bundle back into the local DB.
 
 Users can also run sync from the app UI:
 
-1. Open Dr Transition on the local client.
+1. Open Fitter FairImpact Platform on the local client.
 2. Open **Settings**.
 3. Click **Sync Now**.
 
@@ -712,7 +712,7 @@ sudo nano /etc/systemd/system/dr-transition-cleanup.service
 
 ```ini
 [Unit]
-Description=Dr Transition retention cleanup
+Description=Fitter FairImpact Platform retention cleanup
 
 [Service]
 Type=oneshot
@@ -731,7 +731,7 @@ sudo nano /etc/systemd/system/dr-transition-cleanup.timer
 
 ```ini
 [Unit]
-Description=Run Dr Transition retention cleanup daily
+Description=Run Fitter FairImpact Platform retention cleanup daily
 
 [Timer]
 OnCalendar=*-*-* 02:30:00

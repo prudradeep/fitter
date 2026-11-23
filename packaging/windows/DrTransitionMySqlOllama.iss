@@ -2,16 +2,16 @@
 #define MyAppVersion "0.1.8"
 #endif
 
-#define MyAppName "Dr Transition Offline Dependencies"
-#define MyAppPublisher "Dr Transition"
+#define MyAppName "Fitter FairImpact Platform Offline Dependencies"
+#define MyAppPublisher "Fitter FairImpact Platform"
 
 [Setup]
 AppId={{5E69DAE7-6E4C-4F2A-9C1B-46BD6972733E}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\Dr Transition Dependencies
-DefaultGroupName=Dr Transition Dependencies
+DefaultDirName={autopf}\Fitter FairImpact Platform Dependencies
+DefaultGroupName=Fitter FairImpact Platform Dependencies
 DisableProgramGroupPage=yes
 OutputDir=..\..\build\windows-dependencies-installer
 #ifdef PrepackageDependenciesInstaller
@@ -101,6 +101,6 @@ begin
   if not Exec(PowerShell, Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
   begin
     DependencySetupFailed := True;
-    MsgBox('Offline dependency setup failed. Check the Dr Transition installer log.', mbError, MB_OK);
+    MsgBox('Offline dependency setup failed. Check the Fitter FairImpact Platform installer log.', mbError, MB_OK);
   end;
 end;

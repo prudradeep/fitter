@@ -65,7 +65,7 @@ def _frozen_program_data_path(relative_path: str) -> str:
 
 
 class Settings(BaseSettings):
-    app_name: str = "Dr Transition"
+    app_name: str = "Fitter FairImpact Platform"
     auth_only_mode: bool = False
     auth_only_message: str = ""
     app_mode: str = ""

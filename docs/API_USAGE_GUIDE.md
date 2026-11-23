@@ -1,6 +1,6 @@
 # Swagger and API usage guide
 
-This guide covers the HTTP APIs exposed by the main Dr Transition app and its two optional grounding services. The main app's Swagger UI and checked-in OpenAPI schema show the 14 documented read-only GET endpoints plus `POST /login` so users can establish a session in Swagger. The checked-in OpenAPI 3.1 files are [`openapi/main.openapi.json`](openapi/main.openapi.json), [`openapi/reranker.openapi.json`](openapi/reranker.openapi.json), and [`openapi/nli.openapi.json`](openapi/nli.openapi.json). Regenerate them after route changes with `uv run python scripts/export_openapi.py` from the repository root.
+This guide covers the HTTP APIs exposed by the main Fitter FairImpact Platform app and its two optional grounding services. The main app's Swagger UI and checked-in OpenAPI schema show the 14 documented read-only GET endpoints plus `POST /login` so users can establish a session in Swagger. The checked-in OpenAPI 3.1 files are [`openapi/main.openapi.json`](openapi/main.openapi.json), [`openapi/reranker.openapi.json`](openapi/reranker.openapi.json), and [`openapi/nli.openapi.json`](openapi/nli.openapi.json). Regenerate them after route changes with `uv run python scripts/export_openapi.py` from the repository root.
 
 ## Open Swagger UI
 

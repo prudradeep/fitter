@@ -150,7 +150,7 @@ async def swagger_docs() -> HTMLResponse:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dr Transition API — Swagger UI</title>
+  <title>Fitter FairImpact Platform API — Swagger UI</title>
   <link rel="stylesheet" href="/static/vendor/swagger-ui/swagger-ui.css">
 </head>
 <body>

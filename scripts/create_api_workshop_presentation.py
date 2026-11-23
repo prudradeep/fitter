@@ -151,7 +151,7 @@ def build():
     prs.slide_height = Inches(SH)
     prs.core_properties.title = "FITTER-EU Read-Only API Workshop"
     prs.core_properties.subject = "Hands-on workshop for the FITTER-EU API cookbook"
-    prs.core_properties.author = "Dr Transition"
+    prs.core_properties.author = "Fitter FairImpact Platform"
 
     # 1 — Cover
     s = prs.slides.add_slide(prs.slide_layouts[6])
@@ -205,7 +205,7 @@ def build():
          0.92, 6.42, 11.4, 0.35, 11, MUTED, italic=True, align=PP_ALIGN.CENTER)
 
     # 4 — Platform overview
-    s = base_slide(prs, "Platform overview · From context to a shareable analysis", "How Dr Transition uses the API")
+    s = base_slide(prs, "Platform overview · From context to a shareable analysis", "How Fitter FairImpact Platform uses the API")
     overview = [
         ("1", "Choose context", "Country · optional region · sector", TEAL),
         ("2", "Review policy", "Policies available for the selected context", VIOLET),

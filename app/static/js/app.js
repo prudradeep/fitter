@@ -3435,7 +3435,7 @@ function addMessage(role, text, isError = false, targetLog = chatLog) {
   avatar.className = `chat-avatar ${role === "bot" ? "teacher-avatar" : "user-avatar"}`;
   if (role === "bot") {
     avatar.src = teacherAvatarPath;
-    avatar.alt = "Dr Transition";
+    avatar.alt = "Fitter FairImpact Platform";
   } else {
     avatar.setAttribute("aria-label", "User");
   }
@@ -3811,11 +3811,11 @@ function addTyping(targetLog = chatLog) {
   row.dataset.typing = "true";
   const avatar = createElement("img", {
     className: "chat-avatar teacher-avatar",
-    attrs: { src: teacherAvatarPath, alt: "Dr Transition" },
+    attrs: { src: teacherAvatarPath, alt: "Fitter FairImpact Platform" },
   });
   const typing = createElement(
     "span",
-    { className: "typing", attrs: { "aria-label": "Dr Transition is typing" } },
+    { className: "typing", attrs: { "aria-label": "Fitter FairImpact Platform is typing" } },
     [createElement("span"), createElement("span"), createElement("span")],
   );
   row.append(avatar, createElement("div", { className: "bubble" }, [typing]));
