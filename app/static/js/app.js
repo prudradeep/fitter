@@ -4898,6 +4898,7 @@ function openHazardEvidenceDialog(evidence, sourceTable = "") {
   } catch (error) {
     rows = [];
   }
+  rows = rows.filter((row) => String(row?.field || "").trim().toLowerCase() !== "source");
   clearElement(hazardEvidenceDialogBody);
   if (rows.length) {
     const table = createElement("table", { className: "source-data-table" }, [
@@ -7611,6 +7612,7 @@ changePasswordForm?.addEventListener("submit", async (event) => {
 logoutForm?.addEventListener("submit", () => {
   clearCurrentInputState();
   localStorage.removeItem(sessionKey);
+  localStorage.removeItem(uiTourStorageKey());
 });
 
 document.addEventListener("DOMContentLoaded", () => {
