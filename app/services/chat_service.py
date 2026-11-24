@@ -1,6 +1,5 @@
 import logging
 import re
-from datetime import datetime, timezone
 from time import perf_counter
 
 from app.llm import ask_llm_chat
@@ -13,7 +12,6 @@ from app.models import (
     EvaluationQuestion,
     QuestionOption,
     Region,
-    UserSession,
 )
 from app.schemas import ChatResponse, Option
 from app.services.chat_formatters import (
@@ -1383,104 +1381,8 @@ class ChatService(
         )
 
     async def _intro_message_from_llm(self, session_id: str) -> str:
-        stats = self._user_visit_stats(session_id)
-        fallback = self._intro_fallback(stats)
-        if stats.get("user_type") == "first_time":
-            return fallback
-        context = load_nested_prompt_file("llm/intro_message.txt")
-        messages = [
-            {
-                "role": "user",
-                "content": (
-                    "Write the intro message shown before country selection.\n\n"
-                    f"Previous sessions by this user: {stats['previous_sessions']}\n"
-                    f"Active visit days: {stats['active_visit_days']}\n"
-                    f"Sessions in the last 30 days: {stats['recent_sessions_30_days']}\n"
-                    f"Last visit label: {stats['last_visit_label']}\n"
-                    f"User type: {stats['user_type']}\n\n"
-                    "Required content:\n"
-                    "- Return this exact message, without Markdown or additional text: "
-                    "Welcome back to Fitter FairImpact Platform. Let's start by setting a policy context. "
-                    "Select your country. \n\n"
-                    "To explore policy contexts beyond the 6 case study countries, [Click here](https://ekbbo0tw5gtz4n1ipghnu348.152.67.156.137.sslip.io/)."
-                ),
-            }
-        ]
-        response = await ask_llm_chat(
-            context=context,
-            messages=messages,
-            temperature=0.45,
-            max_tokens=220,
-        )
-        if is_llm_unavailable_response(response) or not response.strip():
-            return fallback
-        return markdown_to_html(response.strip())
-
-    def _user_visit_stats(self, current_session_id: str) -> dict[str, object]:
-        if self.user_id is None:
-            return {
-                "previous_sessions": 0,
-                "active_visit_days": 0,
-                "recent_sessions_30_days": 0,
-                "last_visit_label": "first visit",
-                "user_type": "first_time",
-            }
-
-        try:
-            sessions = self.db.scalars(
-                select(UserSession)
-                .where(
-                    UserSession.user_id == self.user_id,
-                    UserSession.session_key != current_session_id,
-                )
-                .order_by(UserSession.updated_at.desc())
-            ).all()
-        except Exception:
-            logger.exception("Failed to calculate user visit stats")
-            sessions = []
-
-        previous_sessions = len(sessions)
-        dates = {
-            (row.updated_at or row.created_at).date()
-            for row in sessions
-            if row.updated_at or row.created_at
-        }
-        now = datetime.now(timezone.utc)
-        recent_sessions = 0
-        for row in sessions:
-            timestamp = row.updated_at or row.created_at
-            if timestamp is None:
-                continue
-            if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=timezone.utc)
-            if (now - timestamp).days <= 30:
-                recent_sessions += 1
-
-        last_visit_label = "first visit"
-        if sessions:
-            timestamp = sessions[0].updated_at or sessions[0].created_at
-            if timestamp is not None:
-                last_visit_label = timestamp.date().isoformat()
-
-        return {
-            "previous_sessions": previous_sessions,
-            "active_visit_days": len(dates),
-            "recent_sessions_30_days": recent_sessions,
-            "last_visit_label": last_visit_label,
-            "user_type": "returning" if previous_sessions else "first_time",
-        }
-
-    def _intro_fallback(self, stats: dict[str, object]) -> str:
-        previous_sessions = int(stats.get("previous_sessions") or 0)
-        if previous_sessions:
-            message = (
-                "Welcome back to Fitter FairImpact Platform. "
-                "Let's start by setting a policy context. Select your country.\n\n"
-                "To explore policy contexts beyond the 6 case study countries, [Click here](https://ekbbo0tw5gtz4n1ipghnu348.152.67.156.137.sslip.io/)."
-            )
-        else:
-            message = render_message("welcome.md")
-        return markdown_to_html(message)
+        """Show the full introduction at the start of every visit."""
+        return mark_workflow_copy(markdown_to_html(self.welcome_message))
 
     @staticmethod
     def _format_pending_additional_dgs(session: ChatSession) -> str:

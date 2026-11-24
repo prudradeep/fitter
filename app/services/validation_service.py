@@ -1092,14 +1092,31 @@ class ChatValidationServiceMixin:
             if deterministic_review is not None:
                 return deterministic_review
 
-        context = render_prompt_template(
-            "llm/custom_hazard_input_classifier.txt",
-            sector=session.sector or "Not selected",
-            country=session.country or "Not selected",
-            region=session.region or "Not selected",
-            hazard=hazard,
-            existing_hazards=self._custom_hazard_classifier_existing_hazards(session),
-        )
+        if use_llm_for_title:
+            context = (
+                "Review one user-submitted hazard and extract a concise title. A valid hazard is a "
+                "negative consequence, risk, or vulnerability caused or materially worsened by a "
+                "green or digital transition in the selected sector. At this title stage, accept an "
+                "obvious harm even when its mechanism or affected group is implied. Do not accept a "
+                "general topic, benefit, recommendation, or mitigation measure as a hazard. Ask for "
+                "clarification only when materially different meanings remain or no transition link "
+                "can reasonably be inferred. For valid input, preserve the user's meaning and extract "
+                "a concise title under 100 characters; omit background and proposed solutions. Do not "
+                "invent facts.\n\n"
+                "Return only JSON with these fields: status (valid, invalid, or needs_clarification), "
+                "is_valid (boolean, true only for valid), validation_code (short string), confidence "
+                "(0 to 1), normalized_hazard (string or null), reason (concise string), and "
+                "clarification_question (string or null)."
+            )
+        else:
+            context = render_prompt_template(
+                "llm/custom_hazard_input_classifier.txt",
+                sector=session.sector or "Not selected",
+                country=session.country or "Not selected",
+                region=session.region or "Not selected",
+                hazard=hazard,
+                existing_hazards=self._custom_hazard_classifier_existing_hazards(session),
+            )
         clarification_block = ""
         if clarification_context:
             clarification_block = (
@@ -1147,7 +1164,7 @@ class ChatValidationServiceMixin:
             context=context,
             messages=messages,
             temperature=0.0,
-            max_tokens=1200,
+            max_tokens=500 if use_llm_for_title else 1200,
         )
         if is_llm_unavailable_response(response):
             settings = get_settings()

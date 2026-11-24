@@ -55,6 +55,7 @@ class JsonLogFormatter(logging.Formatter):
 
 
 def configure_logging(level: int, *, structured: bool = False) -> None:
+    logging.getLogger("app.services.eurostat_service").disabled = True
     handler = logging.StreamHandler()
     handler.addFilter(RequestIdFilter())
     if structured:

@@ -2163,20 +2163,24 @@ class ChatHazardStepsMixin:
         if preparation_status == "complete":
             if not self._load_hazard_listing_cache(session):
                 clear_hazard_preparation(job_key)
-                self._start_hazard_preparation(session_id, session)
-                await wait_for_hazard_preparation(job_key)
-                if not self._load_hazard_listing_cache(session):
+                try:
+                    # A completed background job can leave a cache that is
+                    # immediately stale when its source fingerprint changes.
+                    # Build into this request's session so cache visibility or
+                    # fingerprint churn cannot block the first hazard display.
+                    await self._prepare_hazard_listing(session_id, session)
+                except Exception:
                     logger.error(
-                        "Hazard preparation completed but listing cache could not be applied after retry: "
+                        "Hazard listing could not be loaded from cache or prepared in request: "
                         "session_id=%s user_id=%s country_id=%s region_id=%s sector_id=%s "
-                        "selected_policy_id=%s job_status=%s",
+                        "selected_policy_id=%s",
                         session_id,
                         self.user_id,
                         session.country_id,
                         session.region_id,
                         session.sector_id,
                         session.selected_context_policy_id,
-                        hazard_preparation_status(job_key),
+                        exc_info=True,
                     )
                     return ChatResponse(
                         session_id=session_id,
