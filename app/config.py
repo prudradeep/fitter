@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen3.5:4b"
     ollama_embedding_model: str = "nomic-embed-text"
+    ollama_context_length: int = Field(default=8192, ge=2048)
     ollama_timeout_seconds: int = 1200
     llm_provider: str = "ollama"
     embedding_provider: str = "ollama"

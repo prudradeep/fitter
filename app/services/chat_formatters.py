@@ -169,7 +169,7 @@ def format_hazards(
     survey_hazards = [
         hazard
         for hazard in (session.hazards or [])
-        if session.selected_context_policy_id or _hazard_has_profiles(session, hazard)
+        if _hazard_has_displayable_profiles(session, hazard)
     ]
     additional_content = format_additional_hazards(
         session, show_admin_details=show_admin_details
@@ -184,8 +184,8 @@ def format_hazards(
         and not custom_content
     ):
         return (
-            '<p class="hazard-group-intro">No hazards are currently linked to the '
-            "selected policy in the reference data.</p>"
+            '<p class="hazard-group-intro">No hazards with displayable population '
+            "profiles are available for the selected policy and context.</p>"
         )
     survey_source_button = (
         '<button class="survey-source-button" type="button" '
@@ -934,6 +934,32 @@ def _hazard_relevance_badge(session: ChatSession, hazard: str) -> str:
         f"<strong>{relevance}</strong>"
         "</span>"
     )
+
+
+def _hazard_has_displayable_profiles(session: ChatSession, hazard: str) -> bool:
+    """Only list predictive hazards that will render at least one DG row."""
+    profiles = session.hazard_profiles or {}
+    values = profiles.get(hazard)
+    if values is None:
+        key = normalize_markdown_text(hazard).casefold()
+        values = next(
+            (
+                stored_values
+                for stored_hazard, stored_values in profiles.items()
+                if normalize_markdown_text(str(stored_hazard)).casefold() == key
+            ),
+            None,
+        )
+    items = [values] if isinstance(values, str) else list(values or [])
+    for item in items:
+        if isinstance(item, dict):
+            if _profile_has_protective_effect(item):
+                continue
+            if str(item.get("name") or item.get("profile") or "").strip():
+                return True
+        elif str(item).strip():
+            return True
+    return False
 
 
 def _metric_label_html(label: str, tooltip: str) -> str:

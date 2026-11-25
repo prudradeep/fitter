@@ -108,6 +108,7 @@ async def ask_llm_chat(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
+            "num_ctx": settings.ollama_context_length,
         },
     }
     if should_disable_thinking(settings.ollama_model):

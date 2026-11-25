@@ -99,9 +99,14 @@ VOID_TAGS = {
 
 
 def extract_pdf_page_texts(content: bytes, max_pages: int | None = None) -> list[str]:
-    reader = PdfReader(io.BytesIO(content))
-    pages = reader.pages if max_pages is None else reader.pages[:max_pages]
-    return [page.extract_text(extraction_mode="layout") or "" for page in pages]
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        pages = reader.pages if max_pages is None else reader.pages[:max_pages]
+        return [page.extract_text(extraction_mode="layout") or "" for page in pages]
+    except Exception as exc:
+        raise ValueError(
+            "PDF could not be read; it may be incomplete, corrupted, or password protected."
+        ) from exc
 
 
 def extract_docx_text(content: bytes) -> str:
